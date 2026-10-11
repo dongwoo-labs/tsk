@@ -17,6 +17,7 @@ pub enum Surface {
     Setup,
     Update,
     Guide,
+    Threads,
     FindBoardPane,
     FindBoardTab,
     GlobalHelp,
@@ -71,6 +72,7 @@ pub fn route<S: AsRef<str>>(
             "setup" => Surface::Setup,
             "update" => Surface::Update,
             "guide" => Surface::Guide,
+            "threads" => Surface::Threads,
             "help" => Surface::Help,
             _ => Surface::Usage,
         };
@@ -100,6 +102,12 @@ mod tests {
             route(["tsk", "add", "-t", "--find-board-pane"], None),
             Surface::Add
         );
+    }
+
+    #[test]
+    fn threads_is_a_surface_and_keeps_its_own_flags() {
+        assert_eq!(route(["tsk", "threads"], Some("capture")), Surface::Threads);
+        assert_eq!(route(["tsk", "threads", "--json"], None), Surface::Threads);
     }
 
     #[test]

@@ -11,6 +11,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- Threads pane. `tsk threads` (or the **Open tsk threads** Herdr action) lists the live `lead-` and `thr-` agent sessions grouped as NEEDS YOU, IN MOTION and ON DECK, with each one's Herdr status, how long it has held, and the inbox mod's one-line status; `Enter` focuses the selected session's tab and pane. `tsk threads --json` and `tsk threads focus <name>` do the same headlessly. It only reads Herdr and never writes the board.
 - Reorder steps. On the task page, `alt+↑` / `alt+↓` moves the selected step (also **move step up** / **move step down** in the `:` palette, which now opens on the task page too), and `ctrl+a` with a step selected adds the new step directly below it. From the CLI, `tsk steps T12 move <short-id> --before|--after <short-id>` or `--first`/`--last`, and `tsk steps T12 add "…"` with the same place flags. A moved step keeps its short ID and checked state. Thanks @LukasGold (#159).
 
 ### Fixed
