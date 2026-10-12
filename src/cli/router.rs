@@ -17,6 +17,7 @@ pub enum Surface {
     Sync,
     /// Git's merge driver for `tsk.json`, installed by `tsk sync --init`; never in help.
     MergeDriver,
+    Import,
     Setup,
     Update,
     Guide,
@@ -73,6 +74,7 @@ pub fn route<S: AsRef<str>>(
             "project" => Surface::Project,
             "sync" => Surface::Sync,
             "merge-driver" => Surface::MergeDriver,
+            "import" => Surface::Import,
             "setup" => Surface::Setup,
             "update" => Surface::Update,
             "guide" => Surface::Guide,
@@ -194,6 +196,11 @@ mod tests {
     #[test]
     fn no_args_selects_board() {
         assert_eq!(route(["tsk"], None), Surface::Board);
+    }
+
+    #[test]
+    fn import_selects_import_surface() {
+        assert_eq!(route(["tsk", "import", "linear"], None), Surface::Import);
     }
 
     #[test]

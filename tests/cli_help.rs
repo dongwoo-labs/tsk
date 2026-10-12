@@ -161,6 +161,20 @@ verb_help_test!(
     ]
 );
 verb_help_test!(
+    import_help_has_reference_sections,
+    ["import", "--help"],
+    [
+        "usage:",
+        "Linear filters",
+        "Scope",
+        "Output",
+        "Values",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
     setup_help_has_reference_sections,
     ["setup", "--help"],
     [
@@ -221,6 +235,7 @@ fn command_help_lines_have_no_trailing_whitespace() {
         &["unarchive", "--help"],
         &["project", "--help"],
         &["trash", "--help"],
+        &["import", "--help"],
         &["setup", "--help"],
         &["update", "--help"],
         &["guide", "--help"],
@@ -247,6 +262,7 @@ fn every_command_help_purpose_is_a_capitalized_sentence() {
         &["unarchive", "--help"],
         &["project", "--help"],
         &["trash", "--help"],
+        &["import", "--help"],
         &["setup", "--help"],
         &["update", "--help"],
         &["guide", "--help"],

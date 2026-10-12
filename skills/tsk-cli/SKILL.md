@@ -1,6 +1,6 @@
 ---
 name: tsk-cli
-description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always `tsk add|list|status|edit|steps|archive|trash`, never the TUI.
+description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always `tsk add|list|status|edit|steps|archive|trash|import`, never the TUI.
 version: 1.5.0
 ---
 
@@ -99,6 +99,11 @@ the local board is unchanged. Never run `tsk sync --init` unless asked.
 omitted `project` takes the default scope. The result lists `created`, `existing` and `failed`
 items; on exit 1 retry only the `failed` items, never the whole plan. Full shape:
 https://gettsk.sh/docs/cli.md#json-plans.
+
+**Import from Linear.** Only when the user asks to pull Linear issues onto the board. Run
+`tsk import linear --dry-run` with their filters first, show the report, then run it without
+`--dry-run`. It needs `LINEAR_API_KEY`; on `missing-api-key` ask the user to set it, never ask
+for the key itself. Do not pass `--update` unless asked: it overwrites board status with Linear's.
 
 ## Refine a task
 

@@ -21,7 +21,7 @@ Install the skill with `tsk setup pi`, or use your [agent's setup target](#setup
 
 The CLI can mark a task done with `tsk status <task> done`. Agent lifecycle does not change task status automatically.
 
-Use `--json` on `add` or `list` for machine-readable output. Read the [exit contract](#exit-contract) before retrying a write.
+Use `--json` on `add`, `list`, or `import` for machine-readable output. Read the [exit contract](#exit-contract) before retrying a write.
 
 ## Commands
 
@@ -38,6 +38,7 @@ Use `--json` on `add` or `list` for machine-readable output. Read the [exit cont
 | `tsk project archive` / `tsk project unarchive` | Hide or restore a project |
 | `tsk trash restore` | Restore a task from trash |
 | `tsk sync` | Share the board through git |
+| `tsk import linear` | Import Linear issues as tasks, one way |
 | `tsk setup` | Configure Herdr or install an agent skill |
 | `tsk update` | Upgrade an installer-managed copy, or print Homebrew guidance |
 | `tsk guide` | Print the agent workflow |
@@ -294,6 +295,58 @@ JSON output: `committed`, `commit` (short hash or `null`), `upstream` (`origin/<
 | `2` | Invalid arguments; nothing changed |
 | `3` | A git step (often fetch or push) or the store failed partway: `state is indeterminate, run tsk sync again`. A rerun is always safe |
 
+## import
+
+```sh
+export LINEAR_API_KEY=lin_api_…
+tsk import linear --dry-run
+tsk import linear --team ENG --desk
+tsk import linear --assignee any --linear-project atlas -p atlas --json
+tsk import linear --state backlog,unstarted,started,completed --update
+```
+
+```text
+tsk import linear [--team <key>] [--linear-project <name>] [--assignee me|<email>|any] [--state <types>] [--limit <n>] [-p <project> | --desk] [--update] [--dry-run] [--json] [--state-dir <dir>]
+```
+
+One-way import from [Linear](https://linear.app): reads issues through Linear's GraphQL API and creates a task for each one that is not on the board yet. Nothing is ever written back to Linear. Set `LINEAR_API_KEY` to a Linear personal API key (Linear: Settings › Security & access). On macOS and Linux the request runs through the system curl (`TSK_UPDATE_CURL` overrides its path, see [storage](/docs/storage/#update-check)); the key reaches curl on stdin, never on its command line. Import ignores curl's default configuration file so trace or verbose settings cannot log the key. Transport failures report only the curl exit status, not its raw diagnostic output. Windows is not supported yet.
+
+| Option | Purpose |
+| --- | --- |
+| `--team <key>` | Only this team, by key (such as `ENG`) |
+| `--linear-project <name>` | Only this Linear project, by name, ignoring case |
+| `--assignee me\|<email>\|any` | Whose issues; default `me` (the key's owner) |
+| `--state <types>` | Comma-separated Linear state types: `triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled`; default `backlog,unstarted,started` |
+| `--limit <n>` | Fetch at most `n` issues, following pages; default 100 |
+| `-p`, `--project` or `--desk` | Destination for new tasks, resolved like [`add`](#scope) |
+| `--update` | Refresh the title and status of existing copies from Linear |
+| `--dry-run` | Report what would happen; write nothing |
+| `--json` | One report object |
+| `--state-dir <dir>` | Alternate state directory |
+
+`-p`/`--project` is the tsk destination, as on every other command; the Linear project filter is `--linear-project`.
+
+**Mapping.** The title is `<IDENTIFIER> <title>`, for example `ENG-123 Fix login timeout`. Notes start with a `Linear: <IDENTIFIER> <url>` line, then a blank line and the issue description, cut after 2000 characters with a truncation note. Status follows the Linear state type:
+
+| Linear state type | Task status |
+| --- | --- |
+| `triage`, `backlog`, `unstarted` | `open` |
+| `started` | `started`, or `review` when the state name contains "review" (any case) |
+| `completed` | `done` |
+| `canceled` (including duplicates) | Skipped, counted in the report |
+
+**Existing copies.** A task whose notes contain a line starting with `Linear: <IDENTIFIER> ` is that issue's copy, in any scope and with any status, including done and archived; soft-deleted tasks do not count. An issue with a copy is never added again. By default the copy is left untouched, since the human status on the board is the source of truth. With `--update`, a copy whose title or status differs from Linear is refreshed (notes, scope, and thread stay as they are). A whole run, creates and updates together, is one store write.
+
+Plain output starts with `fetched <n> · created <n> · updated <n> · unchanged <n> · skipped <n>`, then one line per issue. With `--dry-run` it starts with `dry run, nothing written` and says `would create` / `would update`.
+
+JSON output is one object: `dry_run`, `fetched`, and four arrays. `created`, `updated`, and `unchanged` rows carry `identifier`, `number` (`null` for a dry-run create), `title`, and `status`; `skipped` rows carry `identifier` and the Linear `state` type.
+
+```json
+{"dry_run":false,"fetched":3,"created":[{"identifier":"ENG-123","number":14,"title":"ENG-123 Fix login timeout","status":"started"}],"updated":[],"unchanged":[{"identifier":"ENG-120","number":9,"title":"ENG-120 Draft release notes","status":"review"}],"skipped":[{"identifier":"ENG-99","state":"canceled"}]}
+```
+
+Every issue is fetched before anything is written, so a missing key, a network or HTTP failure, or a GraphQL error refuses with exit 1 and saves nothing. Exit 3 is reserved for a store error during the single write.
+
 ## help and version
 
 ```sh
@@ -389,6 +442,7 @@ After an uncertain add, inspect `tsk list --all --json`. Also check `--done` and
 | Status | `unknown-task`, `soft-deleted-task` |
 | Edit | `unknown-task`, `soft-deleted-task`, `empty-title`, `invalid-title` |
 | Archive / unarchive | `unknown-task`, `soft-deleted-task` |
+| Import | `missing-api-key`, `linear-error`, `unsupported-platform`, `unknown-project`, `project-archived` |
 
 A refusal prints as `tsk <command>: <code>: <message>` on stderr, for example `tsk status: unknown-task: T99 is not on the board`. Branch on the code; the message is for people and may change.
 

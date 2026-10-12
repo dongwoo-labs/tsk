@@ -8,11 +8,13 @@ Canonical terms for this repo. No implementation detail.
 - **edit command**: headless `tsk edit` subcommand that updates a task's title and/or notes without changing scope or thread.
 - **sync command**: headless `tsk sync` subcommand that shares the board through a git repository in the state directory: commit, then fetch, merge, push. `--init` sets the repository up. Exit `0` synced, `1` refused with the board unchanged, `2` usage, `3` a git or store step failed partway; run it again.
 - **merge driver**: the hidden `tsk merge-driver` verb git calls to merge two `tsk.json` documents task by task.
+- **import command**: headless `tsk import linear` subcommand that reads Linear issues and creates a task for each one without a **Linear copy**. One-way: nothing is written back to Linear. Fetching finishes before any write, so a missing key or Linear error is a refusal (exit `1`) that persisted nothing; exit `3` stays store I/O.
+- **Linear copy**: the live (not soft-deleted) task, in any scope or status, whose notes contain a line starting with `Linear: <IDENTIFIER> `. At most one per issue; `import` leaves it untouched unless `--update` is given.
 - **bulk add**: one `add` invocation that accepts many items, reports each, and makes one durable write of the successes.
 - **invocation default**: capture scope used when the caller omits `project` / `-p`. The cwd repo when known, otherwise the desk.
 - **desk**: your desk holds everything not tied to a project. Selected by `--desk` and by bare `!p`. Stored as scope value `global`.
 - **tiny result**: JSON report from a plan-shaped `add`. `created` and `existing` rows carry index, id, title. `failed` rows carry index, title (string or null), error code, and human error text. Notes are not echoed.
-- **exit contract**: `add`/`list`/`status`/`edit`/`steps` exit `0` means the write happened or was already true (or list succeeded). `1` means one or more item refusals: retry only the failed subset. `2` means usage or parse error: nothing persisted. `3` means store I/O: commit is indeterminate; verify with `list` and retry only what is missing.
+- **exit contract**: `add`/`list`/`status`/`edit`/`steps`/`import` exit `0` means the write happened or was already true (or list succeeded). `1` means one or more item refusals: retry only the failed subset. `2` means usage or parse error: nothing persisted. `3` means store I/O: commit is indeterminate; verify with `list` and retry only what is missing.
 - **error code**: stable machine-matchable token on a failed item (`empty-title`, `invalid-title`, `invalid-item`). Any C0 control makes a title `invalid-title` before trimming, including a control-only title. The human `error` string is not a contract.
 - **persisted**: a later `list` against the same store returns that task.
 - **nothing persisted**: a later `list` against the same store shows no task created by that invocation.

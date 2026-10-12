@@ -9,6 +9,7 @@ pub mod add;
 pub mod archive;
 pub mod edit;
 pub mod guide;
+pub mod import;
 pub mod list;
 pub mod parser;
 pub mod presenter;
@@ -72,6 +73,7 @@ where
         Some("project") => run_project(args),
         Some("sync") => run_sync(args),
         Some("merge-driver") => run_merge_driver(args),
+        Some("import") => run_import(args),
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -81,7 +83,7 @@ where
             run_archive(args, verb, archive)
         }
         _ => presenter::usage(
-            "expected add, steps, list, status, edit, trash, archive, unarchive, project, or sync command",
+            "expected add, steps, list, status, edit, trash, archive, unarchive, project, import, or sync command",
         ),
     }
 }
@@ -104,6 +106,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
             "sync" => presenter::sync_help(),
+            "import" => presenter::import_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),
@@ -256,6 +259,21 @@ fn run_merge_driver(args: Vec<String>) -> CliOutput {
             code: 0,
         },
         Err(reason) => presenter::merge_driver_failed(&reason),
+    }
+}
+
+fn run_import(args: Vec<String>) -> CliOutput {
+    let input = match import::parse(&args) {
+        Ok(input) => input,
+        Err(reason) => return presenter::import_usage(&reason),
+    };
+    if input.help {
+        return presenter::import_help();
+    }
+    let json = input.json;
+    match import::run(input) {
+        Ok(report) => presenter::imported(report, json),
+        Err(error) => presenter::import_rejected(error),
     }
 }
 

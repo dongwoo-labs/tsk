@@ -6,6 +6,7 @@ use super::CliOutput;
 use crate::cli::add::{AddError, FlagAddResult};
 use crate::cli::archive::{ArchiveCliError, ArchiveResult, ProjectResult};
 use crate::cli::edit::{EditError, EditResult};
+use crate::cli::import::{ImportError, ImportReport};
 use crate::cli::list::{ListError, ListResult, ListRow, ListView};
 use crate::cli::parser::TaskAddress;
 use crate::cli::status::{StatusError, StatusResult};
@@ -119,7 +120,8 @@ pub fn top_level_help() -> String {
         "  list     inspect tasks\n",
         "  status   set a task's human status\n",
         "  edit     update a task's title or notes\n",
-        "  steps    add, toggle, rename, move, or remove one step on a task\n\n",
+        "  steps    add, toggle, rename, move, or remove one step on a task\n",
+        "  import   import Linear issues as tasks (one way)\n\n",
         "Board\n",
         "  archive    keep a task off the working views\n",
         "  unarchive  put an archived task back\n",
@@ -1479,6 +1481,153 @@ pub fn rejected(error: AddError) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!("tsk add: {detail}\n"),
+        code,
+    }
+}
+
+const IMPORT_USAGE: &str = "tsk import linear [--team <key>] [--linear-project <name>] [--assignee me|<email>|any] [--state <types>] [--limit <n>] [-p <project> | --desk] [--update] [--dry-run] [--json] [--state-dir <dir>]";
+
+pub fn import_help() -> CliOutput {
+    help(HelpDoc {
+        usage: vec![IMPORT_USAGE.into()],
+        purpose: "Import Linear issues as tasks, one way. Needs LINEAR_API_KEY. Each task's notes start with a `Linear: <ID> <url>` line, and an issue that already has a task is never added twice.".into(),
+        groups: vec![
+            group("Linear filters", &[
+                ("--team <key>", "team key, such as ENG"),
+                ("--linear-project <name>", "Linear project name, ignoring case"),
+                ("--assignee me|<email>|any", "whose issues (default me)"),
+                ("--state <types>", "comma-separated state types: triage, backlog, unstarted, started, completed, canceled (default backlog,unstarted,started)"),
+                ("--limit <n>", "fetch at most n issues (default 100)"),
+            ]),
+            group("Scope", &[("-p, --project <project>", "create new tasks in a project"), ("--desk", "create new tasks on your desk")]),
+            group("Output", &[("--json", "print one report object"), ("--dry-run", "report what would change, write nothing")]),
+            group("Values", &[
+                ("--update", "refresh title and status of existing copies from Linear"),
+                ("--state-dir <dir>", "use another board store"),
+                ("--flag=<value>", "equals syntax works for every value flag"),
+            ]),
+        ],
+        examples: vec![
+            "tsk import linear --dry-run".into(),
+            "tsk import linear --team ENG --desk".into(),
+            "tsk import linear --assignee any --linear-project tsk -p atlas --json".into(),
+            "tsk import linear --state backlog,unstarted,started,completed --update".into(),
+        ],
+        refusals: vec![
+            "missing-api-key".into(),
+            "linear-error (HTTP, network, or GraphQL error)".into(),
+            "unsupported-platform (Windows)".into(),
+            "unknown-project".into(),
+            "project-archived".into(),
+        ],
+        exit: exit_line("import finished, including nothing to do", Some("refused, nothing persisted"), true),
+    })
+}
+
+pub fn import_usage(reason: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!(
+            "tsk import: {}\nusage: {IMPORT_USAGE}\n",
+            human_reason(reason)
+        ),
+        code: 2,
+    }
+}
+
+pub fn imported(report: ImportReport, json: bool) -> CliOutput {
+    let stdout = if json {
+        format!(
+            "{}\n",
+            serde_json::to_string(&report).expect("import report is serializable")
+        )
+    } else {
+        import_human(&report)
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+fn import_human(report: &ImportReport) -> String {
+    let mut output = String::new();
+    let (created, updated) = if report.dry_run {
+        ("would create", "would update")
+    } else {
+        ("created", "updated")
+    };
+    if report.dry_run {
+        output.push_str("dry run, nothing written\n");
+    }
+    output.push_str(&format!(
+        "fetched {} · {created} {} · {updated} {} · unchanged {} · skipped {}\n",
+        report.fetched,
+        report.created.len(),
+        report.updated.len(),
+        report.unchanged.len(),
+        report.skipped.len()
+    ));
+    let number = |number: Option<u64>| number.map(|n| format!("T{n} ")).unwrap_or_default();
+    for (label, rows) in [(created, &report.created), (updated, &report.updated)] {
+        for row in rows {
+            output.push_str(&format!(
+                "  {label} {}{} ({})\n",
+                number(row.number),
+                terminal_text(&row.title),
+                row.status
+            ));
+        }
+    }
+    for row in &report.unchanged {
+        output.push_str(&format!(
+            "  unchanged {}{}\n",
+            number(row.number),
+            terminal_text(&row.identifier)
+        ));
+    }
+    for row in &report.skipped {
+        output.push_str(&format!(
+            "  skipped {} ({})\n",
+            terminal_text(&row.identifier),
+            terminal_text(&row.state)
+        ));
+    }
+    output
+}
+
+pub fn import_rejected(error: ImportError) -> CliOutput {
+    let (detail, code) = match &error {
+        ImportError::MissingApiKey => (
+            format!(
+                "missing-api-key: set {} to a Linear personal API key (Settings > Security & access)",
+                crate::cli::import::API_KEY_ENV
+            ),
+            1,
+        ),
+        ImportError::Linear(detail) => (format!("linear-error: {}", terminal_text(detail)), 1),
+        ImportError::Unsupported => (
+            "unsupported-platform: tsk import linear is not supported on Windows yet".into(),
+            1,
+        ),
+        ImportError::UnknownProject(detail) => {
+            (format!("unknown-project: {}", terminal_text(detail)), 1)
+        }
+        ImportError::ProjectArchived(name) => {
+            let name = terminal_text(name);
+            (
+                format!(
+                    "project-archived: project {name} is archived. Use --desk, -p <other project>, or tsk project unarchive {name}"
+                ),
+                1,
+            )
+        }
+        ImportError::Store(detail) => (detail.clone(), 3),
+    };
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk import: {detail}\n"),
         code,
     }
 }
