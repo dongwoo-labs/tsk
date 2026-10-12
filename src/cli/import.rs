@@ -34,7 +34,7 @@ const PAGE_SIZE: usize = 50;
 #[cfg(unix)]
 const CURL_TIMEOUT_SECS: u32 = 30;
 
-const ISSUES_QUERY: &str = "query TskImport($filter: IssueFilter, $first: Int!, $after: String) { issues(filter: $filter, first: $first, after: $after) { nodes { identifier title url description state { name type } team { key } } pageInfo { hasNextPage endCursor } } }";
+const ISSUES_QUERY: &str = "query TskImport($filter: IssueFilter, $first: Int!, $after: String) { issues(filter: $filter, first: $first, after: $after) { nodes { identifier title url description state { name type } team { key } parent { identifier url } } pageInfo { hasNextPage endCursor } } }";
 
 /// Who the imported issues must be assigned to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,6 +275,13 @@ pub struct LinearIssue {
     pub state_name: String,
     pub state_type: String,
     pub team_key: Option<String>,
+    pub parent: Option<LinearParent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinearParent {
+    pub identifier: String,
+    pub url: String,
 }
 
 /// What a Linear state means on the board, or why the issue is skipped.
@@ -324,6 +331,12 @@ pub fn marker_line(issue: &LinearIssue) -> String {
 /// Notes for a new task: marker line, blank line, description (cut at [`NOTES_LIMIT`]).
 pub fn task_notes(issue: &LinearIssue) -> String {
     let mut notes = marker_line(issue);
+    if let Some(parent) = &issue.parent {
+        notes.push_str(&format!(
+            "\nParent: Linear {} {}",
+            parent.identifier, parent.url
+        ));
+    }
     let description: String = issue
         .description
         .as_deref()
@@ -455,6 +468,23 @@ pub fn parse_page(response: &Value) -> Result<Page, ImportError> {
                 .pointer("/team/key")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            parent: match node.get("parent") {
+                None | Some(Value::Null) => None,
+                Some(parent) => Some(LinearParent {
+                    identifier: parent
+                        .get("identifier")
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.trim().is_empty())
+                        .ok_or_else(|| ImportError::Linear("parent without identifier".into()))?
+                        .trim()
+                        .to_string(),
+                    url: parent
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                }),
+            },
             identifier: identifier.trim().to_string(),
         });
     }
@@ -574,7 +604,10 @@ pub fn run_with(
                     return Ok((Err(ImportError::ProjectArchived(short)), false));
                 }
             }
-            let report = apply(domain, &issues, scope, &input);
+            let report = match apply(domain, &issues, scope, &input) {
+                Ok(report) => report,
+                Err(error) => return Ok((Err(error), false)),
+            };
             let changed =
                 !input.dry_run && (!report.created.is_empty() || !report.updated.is_empty());
             Ok((Ok(report), changed))
@@ -589,7 +622,7 @@ fn apply(
     issues: &[LinearIssue],
     scope: TaskScope,
     input: &ImportInput,
-) -> ImportReport {
+) -> Result<ImportReport, ImportError> {
     let mut report = ImportReport {
         dry_run: input.dry_run,
         fetched: issues.len(),
@@ -599,6 +632,7 @@ fn apply(
         skipped: Vec::new(),
     };
     let mut seen = HashSet::new();
+    let mut new_children = Vec::new();
     for issue in issues {
         if !seen.insert(issue.identifier.clone()) {
             continue;
@@ -658,6 +692,14 @@ fn apply(
                 status,
             ))
         };
+        if !input.dry_run {
+            if let Some(parent) = &issue.parent {
+                let id = find_existing(domain, &issue.identifier)
+                    .expect("newly imported task exists")
+                    .id;
+                new_children.push((id, parent.identifier.clone()));
+            }
+        }
         report.created.push(ReportRow {
             identifier: issue.identifier.clone(),
             number,
@@ -665,7 +707,15 @@ fn apply(
             status: status_name(status),
         });
     }
-    report
+    // Only new children participate. Existing copies never reconcile, even with --update.
+    for (child, identifier) in new_children {
+        if let Some(parent) = find_existing(domain, &identifier).map(|task| task.id) {
+            domain
+                .set_parent(child, Some(parent))
+                .map_err(|error| ImportError::Linear(error.to_string()))?;
+        }
+    }
+    Ok(report)
 }
 
 fn create(
@@ -838,6 +888,7 @@ mod tests {
 
     fn issue(identifier: &str, state_type: &str, state_name: &str) -> LinearIssue {
         LinearIssue {
+            parent: None,
             identifier: identifier.into(),
             title: format!("title of {identifier}"),
             url: format!(

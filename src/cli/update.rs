@@ -615,7 +615,7 @@ mod tests {
     }
 
     /// A curl stand-in that records its argv, then writes `payload` to the `-o` target
-    /// and exits with `exit`.
+    /// and exits with `exit`. Pin utility lookup because parallel setup tests mutate PATH.
     #[cfg(unix)]
     fn fake_curl(dir: &Path, payload: &str, exit: u8) -> (PathBuf, PathBuf) {
         let argv = dir.join("curl-argv");
@@ -623,7 +623,7 @@ mod tests {
             dir,
             "curl",
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nout=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then out=$2; shift; fi; shift; done\nls -ld \"$(dirname \"$out\")\" | cut -c1-10 > '{}'\nprintf '%s' '{payload}' > \"$out\"\nexit {exit}\n",
+                "#!/bin/sh\nPATH=/usr/bin:/bin\nexport PATH\nprintf '%s\\n' \"$@\" > '{}'\nout=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then out=$2; shift; fi; shift; done\nls -ld \"$(dirname \"$out\")\" | cut -c1-10 > '{}'\nprintf '%s' '{payload}' > \"$out\"\nexit {exit}\n",
                 argv.display(),
                 dir.join("curl-dir-mode").display()
             ),
@@ -641,12 +641,55 @@ mod tests {
             dir,
             "sh",
             &format!(
-                "#!/bin/sh\n[ $# -eq 0 ] || exit 99\ncat > '{}'\nprintf '%s|%s|%s|%s' \"$TSK_INSTALL_DIR\" \"$TSK_UPDATE\" \"$TSK_CURRENT_VERSION\" \"${{TSK_VERSION-unset}}\" > '{}'\n",
+                "#!/bin/sh\nPATH=/usr/bin:/bin\nexport PATH\n[ $# -eq 0 ] || exit 99\ncat > '{}'\nprintf '%s|%s|%s|%s' \"$TSK_INSTALL_DIR\" \"$TSK_UPDATE\" \"$TSK_CURRENT_VERSION\" \"${{TSK_VERSION-unset}}\" > '{}'\n",
                 script_copy.display(),
                 env_log.display()
             ),
         );
         (shell, script_copy, env_log)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installer_fixtures_work_without_system_utilities_on_the_inherited_path() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
+
+        let dir = temp_dir("fixture-path");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("scratch permissions");
+        let empty_bin = dir.join("empty-bin");
+        fs::create_dir(&empty_bin).expect("empty PATH directory");
+        let (curl, _) = fake_curl(&dir, "installer-payload", 0);
+        let download = dir.join("download");
+        let curl_status = Command::new(curl)
+            .env("PATH", &empty_bin)
+            .args(["-o", download.to_str().expect("download path")])
+            .status()
+            .expect("run curl fixture");
+        assert!(curl_status.success());
+        assert_eq!(
+            fs::read_to_string(&download).expect("download"),
+            "installer-payload"
+        );
+
+        let (shell, script_copy, _) = fake_sh(&dir);
+        let shell_status = Command::new(shell)
+            .env("PATH", &empty_bin)
+            .stdin(Stdio::from(
+                fs::File::open(&download).expect("installer input"),
+            ))
+            .status()
+            .expect("run shell fixture");
+        assert!(shell_status.success());
+        assert_eq!(
+            fs::read_to_string(script_copy).expect("captured installer"),
+            "installer-payload"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("curl-dir-mode")).expect("scratch mode"),
+            "drwx------\n"
+        );
+        fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[cfg(unix)]

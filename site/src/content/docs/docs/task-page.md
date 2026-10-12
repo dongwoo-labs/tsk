@@ -71,6 +71,10 @@ While editing a field, use its edit keys. Save or cancel to return to the task's
 
 Scroll with the wheel or scrollbar while editing. Typing or moving the Notes cursor brings it back into view.
 
+## Related tasks from the CLI
+
+A child Task is separate tracked work; a Step remains part of this task. Use `tsk add --parent T10` or `tsk edit T12 --parent T10` to connect tasks, and `tsk edit T12 --no-parent` to clear a parent. `tsk list T10` shows direct children and their Done/total count. Parents can belong to a different scope. Archive and Done do not break a relationship; a deleted or missing parent keeps its UUID as unresolved. Nothing completes, deletes, or starts a child automatically. The current task-page editor preserves relationships but does not provide parent controls.
+
 ## Notes markdown
 
 Notes display basic Markdown. Editing shows the original text.
