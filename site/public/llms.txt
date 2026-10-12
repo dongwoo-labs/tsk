@@ -17,6 +17,8 @@ Press `/` on any board tab to filter the rows it shows. Projects Overview matche
 
 The quit shortcut exits from non-editor board surfaces, including task pages, Help, pickers, and the wide project preview. Text entry keeps its editing behavior; save recovery must be resolved first. Unsaved drafts block quitting, including drafts parked outside the focused project preview. Quit attempts preserve the pending save's failure message. Escape dismisses editors and overlays first, then collapses either wide split to its full-width board or projects index. Task drafts stay parked; unsaved work in a project preview prevents closing it. Escape then quits without confirmation at the full-board root on any tab, never switching tabs first. A narrow resize that hides the right column also exposes that root; parked drafts still block quitting. The browser demo releases keyboard focus at root instead of exiting. See the Keys guide for shortcuts.
 
+`tsk threads` opens a read-only Herdr view of live lead and issue-thread sessions, grouped only by Herdr execution status: BLOCKED, IN MOTION, ON DECK. It never reads or writes the task or question store. Inbox metadata is optional annotation only; it does not change grouping or indicate a wait for the user. See the Threads guide: https://gettsk.sh/docs/threads.md
+
 ## For agents
 
 - `tsk guide` prints the workflow; `tsk setup` detects agents and can install the skill; `tsk setup <agent>` targets one agent

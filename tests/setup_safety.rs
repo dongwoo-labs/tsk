@@ -116,9 +116,10 @@ fn bare_path_install_materializes_capture_and_version_without_printing_the_root(
         .parse::<toml_edit::DocumentMut>()
         .unwrap();
     let actions = doc["actions"].as_array_of_tables().unwrap();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 3);
     for (id, script) in [
         ("open-board", "scripts/open-board.sh"),
+        ("open-threads", "scripts/open-threads.sh"),
         ("quick-capture", "scripts/open-capture.sh"),
     ] {
         let action = actions
@@ -140,6 +141,12 @@ fn bare_path_install_materializes_capture_and_version_without_printing_the_root(
         doc["panes"].as_array_of_tables().unwrap().get(0).unwrap()["command"][0].as_str(),
         h.bin.join("tsk").to_str()
     );
+    // The threads pane runs the same installed binary with its subcommand kept.
+    let threads = &doc["panes"].as_array_of_tables().unwrap().get(1).unwrap()["command"];
+    assert_eq!(threads[0].as_str(), h.bin.join("tsk").to_str());
+    assert_eq!(threads[1].as_str(), Some("threads"));
+    let launcher = fs::read_to_string(root.join("scripts/open-threads.sh")).unwrap();
+    assert!(launcher.contains(&format!("plugin_bin='{}'", h.bin.join("tsk").display())));
 }
 #[test]
 fn rejected_native_config_leaves_config_untouched_and_never_links() {

@@ -17,6 +17,12 @@ title = "tsk"
 placement = "split"
 command = ["./target/release/tsk"]
 
+[[panes]]
+id = "threads"
+title = "tsk threads"
+placement = "split"
+command = ["./target/release/tsk", "threads"]
+
 [[actions]]
 id = "open-board"
 platforms = ["linux", "macos"]
@@ -30,6 +36,13 @@ platforms = ["windows"]
 title = "Open tsk board"
 description = "Open the tsk board in a split pane beside the current work."
 command = ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/open-board.ps1"]
+
+[[actions]]
+id = "open-threads"
+platforms = ["linux", "macos"]
+title = "Open tsk threads"
+description = "Open the live lead and issue-thread status pane; Enter focuses a thread."
+command = ["bash", "scripts/open-threads.sh"]
 
 [[actions]]
 id = "quick-capture"
