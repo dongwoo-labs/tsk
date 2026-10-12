@@ -361,6 +361,50 @@ pub struct RelationRow {
     /// Labels and the none / not-found states paint dim; a resolved parent and each child
     /// paint plain.
     pub dim: bool,
+    /// The relation action every wrapped row of this entry carries: 0 is the parent line,
+    /// `1 + k` is the k-th direct child. Labels and hints carry none.
+    pub target: Option<usize>,
+    /// First row of the entry the page's relation cursor rests on: it paints the `▸` gutter.
+    pub selected: bool,
+    /// Children paint after the steps' `+ step` row; the parent line paints before the steps.
+    pub after_steps: bool,
+}
+
+/// Row-scroll state of a wrapping picker (the parent chooser). The reducer moves the
+/// option selection and the row scroll; the painter records each option's wrapped height
+/// and the painted window, so the keyboard and the wheel can reach every row.
+#[derive(Debug, Clone, Default)]
+pub struct PickerRowState {
+    /// First painted row, in wrapped rows across all options.
+    pub scroll: std::cell::Cell<usize>,
+    /// Bring the selected option into view at the next paint: `Some(false)` shows its first
+    /// row, `Some(true)` its last row. Cleared by the paint.
+    pub follow: std::cell::Cell<Option<bool>>,
+    /// Wrapped row count of each visible option at the last paint.
+    pub heights: std::cell::RefCell<Vec<usize>>,
+    /// Option rows the last paint showed.
+    pub window: std::cell::Cell<usize>,
+}
+
+impl PickerRowState {
+    /// A fresh state that shows the selected option's first row at the next paint.
+    pub fn following() -> Self {
+        let state = Self::default();
+        state.follow.set(Some(false));
+        state
+    }
+
+    /// First wrapped row and row count of visible option `index` at the last paint.
+    pub fn option_span(&self, index: usize) -> Option<(usize, usize)> {
+        let heights = self.heights.borrow();
+        let height = *heights.get(index)?;
+        Some((heights.iter().take(index).sum(), height))
+    }
+
+    /// Total wrapped rows at the last paint.
+    pub fn total_rows(&self) -> usize {
+        self.heights.borrow().iter().sum()
+    }
 }
 
 /// The task page's in-place step editor. Its rows replace the selected stored step's text, or
@@ -442,6 +486,9 @@ pub enum QueueOverlay<'a> {
         title: Option<&'a str>,
         /// Search query echoed in the card title (searchable list pickers).
         query: Option<&'a str>,
+        /// Wrap long options onto continuation rows and window by painted rows. Only the
+        /// parent chooser sets it; every other picker keeps one row per option.
+        wrap: Option<&'a PickerRowState>,
     },
     /// Inline title edit surface (accordion row on standard; full takeover on compact).
     EditTitle { draft: String, cursor_col: u16 },
@@ -696,6 +743,9 @@ pub enum QueueHitTarget {
     Step(usize),
     /// The dim trailing task-page control that starts a new inline step.
     StepAdd,
+    /// One painted row of a task-page relation entry (every wrapped row of it), indexed
+    /// like [`RelationRow::target`]: 0 is the parent line, `1 + k` the k-th child.
+    Relation(usize),
     /// One painted option in a shared form's scope dropdown, indexed into that form's own
     /// `TaskScope` choices. It cannot name the board selector's all-projects choice.
     FormScopeOption(usize),
@@ -1605,10 +1655,17 @@ fn paint_overlay(
             tabs,
             title,
             query,
+            wrap,
         } => {
-            paint_scope_dropdown(
-                frame, geo, surface, options, *selected, *tabs, *title, *query, hits,
-            );
+            if let Some(state) = wrap {
+                paint_wrapping_picker(
+                    frame, geo, surface, options, *selected, *title, *query, state, hits,
+                );
+            } else {
+                paint_scope_dropdown(
+                    frame, geo, surface, options, *selected, *tabs, *title, *query, hits,
+                );
+            }
         }
         QueueOverlay::EditTitle {
             ref draft,
@@ -2536,14 +2593,17 @@ pub struct StepsWindow {
 }
 
 /// A shared page-content flow: steps follow the notes with two blank rows between
-/// them, and the whole resulting stream scrolls. A task page's relationship block (parent,
-/// then direct children) sits between the notes and the steps, with one blank row on
-/// each side of it.
+/// them, and the whole resulting stream scrolls. A task page's parent line sits between the
+/// notes and the steps, with one blank row on each side of it; its direct children follow
+/// the steps' trailing `+ step` row after one blank row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageContentLayout {
-    /// First relationship row; equals `steps_start` when the block is empty.
+    /// First parent-block row; equals `steps_start` when the block is empty.
     pub relation_start: usize,
     pub steps_start: usize,
+    /// First children-block row, after the `+ step` row and one blank row. Equals
+    /// `total_rows` when the block is empty.
+    pub children_start: usize,
     pub total_rows: usize,
     pub max_scroll: usize,
 }
@@ -2551,6 +2611,7 @@ pub struct PageContentLayout {
 pub fn page_content_layout(
     note_rows: usize,
     relation_rows: usize,
+    child_rows: usize,
     steps: usize,
     viewport_rows: u16,
 ) -> PageContentLayout {
@@ -2573,10 +2634,17 @@ pub fn page_content_layout(
     } else {
         steps_start
     };
-    let total_rows = steps_start + usize::from(steps > 0) + steps + 1;
+    let steps_end = steps_start + usize::from(steps > 0) + steps;
+    let (children_start, total_rows) = if child_rows > 0 {
+        let start = steps_end + 1;
+        (start, start + child_rows + 1)
+    } else {
+        (steps_end + 1, steps_end + 1)
+    };
     PageContentLayout {
         relation_start,
         steps_start,
+        children_start,
         total_rows,
         max_scroll: total_rows.saturating_sub(viewport),
     }
@@ -2673,6 +2741,39 @@ pub fn task_column_layout(geo: &TierGeometry) -> TaskPageLayout {
         notes_rows: content_end.saturating_sub(notes_y),
         meta_y,
     }
+}
+
+/// One relationship row. The entry the relation cursor rests on takes the `▸` gutter on its
+/// first row and paints plain, like a selected step; every wrapped row of an actionable
+/// entry carries the same [`QueueHitTarget::Relation`] hit.
+fn paint_relation_row(
+    frame: &mut Frame<'_>,
+    surface: Rect,
+    hits: &mut QueueHitMap,
+    y: u16,
+    content_width: u16,
+    row: &RelationRow,
+) {
+    let gutter = if row.selected { "\u{25b8} " } else { "  " };
+    let style = if row.dim && !row.selected {
+        style_dim()
+    } else {
+        style_plain()
+    };
+    put_line(
+        frame,
+        surface,
+        y,
+        content_width,
+        paint_bounded_line(&format!("{gutter}{} ", row.text), content_width, style),
+    );
+    if let Some(target) = row.target {
+        hits.push(
+            QueueHitTarget::Relation(target),
+            Rect::new(0, y, content_width, 1),
+        );
+    }
+    hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
 }
 
 /// The task page: full-height takeover hiding the selector row, header + notes + meta
@@ -2871,10 +2972,14 @@ fn paint_task_page(
     // notes, and the header and metadata footer never participate in this scroll.
     let note_count = notes_rows.len().max(1);
     let step_rows: usize = step_views.iter().map(|step| step.rows.len().max(1)).sum();
+    // The parent line paints before the steps, the children after the `+ step` row.
+    let (child_rows, parent_rows): (Vec<&RelationRow>, Vec<&RelationRow>) =
+        relation_rows.iter().partition(|row| row.after_steps);
     // Every checklist has a trailing add control, including an empty one.
     let content = page_content_layout(
         note_count,
-        relation_rows.len(),
+        parent_rows.len(),
+        child_rows.len(),
         step_rows + 1,
         lay.notes_rows,
     );
@@ -2942,22 +3047,16 @@ fn paint_task_page(
             );
             // Notes body past the two-cell gutter (and the trailing pad space).
             hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
-        } else if (content.relation_start..content.relation_start + relation_rows.len())
+        } else if (content.relation_start..content.relation_start + parent_rows.len())
             .contains(&absolute)
         {
-            let row = &relation_rows[absolute - content.relation_start];
-            put_line(
-                frame,
-                surface,
-                y,
-                content_width,
-                paint_bounded_line(
-                    &format!("  {} ", row.text),
-                    content_width,
-                    if row.dim { style_dim() } else { style_plain() },
-                ),
-            );
-            hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
+            let row = parent_rows[absolute - content.relation_start];
+            paint_relation_row(frame, surface, hits, y, content_width, row);
+        } else if (content.children_start..content.children_start + child_rows.len())
+            .contains(&absolute)
+        {
+            let row = child_rows[absolute - content.children_start];
+            paint_relation_row(frame, surface, hits, y, content_width, row);
         } else if absolute == content.steps_start {
             put_line(
                 frame,
@@ -2970,7 +3069,7 @@ fn paint_task_page(
                     style_dim(),
                 ),
             );
-        } else if absolute > content.steps_start {
+        } else if absolute > content.steps_start && absolute < content.children_start {
             let mut row = absolute - content.steps_start - 1;
             let mut found = None;
             for (index, step) in step_views.iter().enumerate() {
@@ -3515,6 +3614,151 @@ fn paint_scope_dropdown(
         } else {
             hits.push(QueueHitTarget::ProjectOption(j), rect);
         }
+        hits.push_copyable(rect);
+    }
+}
+
+/// The parent chooser: the searchable list card of [`paint_scope_dropdown`], but options
+/// wrap instead of clipping. A continuation row indents under the option text, every row of
+/// the selected option paints reversed, and every row carries the option's filtered index.
+/// The window counts painted rows, so a tall option scrolls row by row.
+#[allow(clippy::too_many_arguments)]
+fn paint_wrapping_picker(
+    frame: &mut Frame<'_>,
+    geo: &TierGeometry,
+    surface: Rect,
+    options: &[String],
+    selected: usize,
+    title: Option<&str>,
+    query: Option<&str>,
+    state: &PickerRowState,
+    hits: &mut QueueHitMap,
+) {
+    if geo.row_width == 0 {
+        return;
+    }
+    let bounds = Rect::new(0, 0, geo.row_width, geo.height);
+    let capacity = bounds
+        .height
+        .saturating_sub(modal_chrome_rows(geo.tier, true)) as usize;
+    let min_content_width = options
+        .iter()
+        .map(|option| display_width(option) + 2)
+        .max()
+        .unwrap_or(0)
+        .min(u16::MAX as usize) as u16;
+    let pad: u16 = if geo.tier == Tier::Compact { 0 } else { 1 };
+    let card_w = modal_card_width(geo, bounds, min_content_width);
+    let text_width = (card_w.saturating_sub(2 + 2 * pad) as usize)
+        .saturating_sub(2)
+        .max(1);
+    let wrapped: Vec<Vec<String>> = options
+        .iter()
+        .map(|option| {
+            let rows: Vec<String> = crate::ui::edit::wrap_text(option, text_width)
+                .into_iter()
+                .map(|row| row.text)
+                .collect();
+            if rows.is_empty() {
+                vec![String::new()]
+            } else {
+                rows
+            }
+        })
+        .collect();
+    let heights: Vec<usize> = wrapped.iter().map(Vec::len).collect();
+    let total: usize = heights.iter().sum();
+    let window = if geo.tier == Tier::Compact {
+        capacity.max(1)
+    } else {
+        total.min(12).min(capacity.max(1))
+    }
+    .min(total.max(1))
+    .max(1);
+    *state.heights.borrow_mut() = heights;
+    state.window.set(window);
+    let selected = selected.min(options.len().saturating_sub(1));
+    let mut scroll = state.scroll.get();
+    if let (Some(end), Some((start, height))) = (state.follow.take(), state.option_span(selected)) {
+        let finish = start + height;
+        if height > window {
+            scroll = if end { finish - window } else { start };
+        } else if start < scroll {
+            scroll = start;
+        } else if finish > scroll + window {
+            scroll = finish - window;
+        }
+    }
+    let scroll = scroll.min(total.saturating_sub(window));
+    state.scroll.set(scroll);
+    let above = scroll > 0;
+    let below = scroll + window < total;
+    let base_title = title.unwrap_or("parent");
+    let card_title = match query {
+        Some(query) if !query.is_empty() => {
+            titled_with_scroll_marker(&format!("{base_title}: {query}"), above, below)
+        }
+        _ => titled_with_scroll_marker(base_title, above, below),
+    };
+    let content = paint_modal_card(
+        frame,
+        geo,
+        surface,
+        bounds,
+        ModalCardSpec {
+            title: &card_title,
+            content_rows: window as u16,
+            min_content_width,
+            legend: SCOPE_FOOTER,
+            dismiss: None,
+            legend_hits: None,
+        },
+        hits,
+    );
+    if content.width == 0 || content.height == 0 {
+        return;
+    }
+    if options.is_empty() {
+        put_line_at(
+            frame,
+            surface,
+            Rect::new(content.x, content.y, content.width, 1),
+            paint_bounded_line("  no matching options", content.width, style_dim()),
+        );
+        return;
+    }
+    let rows: Vec<(usize, usize)> = wrapped
+        .iter()
+        .enumerate()
+        .flat_map(|(index, rows)| (0..rows.len()).map(move |row| (index, row)))
+        .collect();
+    for (offset, &(index, row)) in rows
+        .iter()
+        .skip(scroll)
+        .take(window.min(content.height as usize))
+        .enumerate()
+    {
+        let y = content.y.saturating_add(offset as u16);
+        let marker = if row == 0 && index == selected {
+            "▸ "
+        } else {
+            "  "
+        };
+        let text = format!("{marker}{}", wrapped[index][row]);
+        let style = if index == selected {
+            style_reverse()
+        } else {
+            style_plain()
+        };
+        let rect = Rect::new(content.x, y, content.width, 1);
+        put_line_at(
+            frame,
+            surface,
+            rect,
+            paint_bounded_line(&text, content.width, style),
+        );
+        // Every wrapped row selects the same option: `index` is its filtered position.
+        hits.push(QueueHitTarget::ListPickerOption(index), rect);
         hits.push_copyable(rect);
     }
 }
@@ -4511,24 +4755,36 @@ mod tests {
 
     #[test]
     fn steps_start_two_rows_after_the_notes_block() {
-        let layout = page_content_layout(1, 0, 3, 16);
+        let layout = page_content_layout(1, 0, 0, 3, 16);
         assert_eq!(layout.steps_start, 3);
 
-        let layout = page_content_layout(5, 0, 3, 16);
+        let layout = page_content_layout(5, 0, 0, 3, 16);
         assert_eq!(layout.steps_start, 7);
     }
 
     #[test]
     fn relationship_rows_sit_between_notes_and_steps_with_a_blank_each_side() {
         // notes 0..2, blank 2, relations 3..5, blank 5, steps label 6.
-        let layout = page_content_layout(2, 2, 3, 16);
+        let layout = page_content_layout(2, 2, 0, 3, 16);
         assert_eq!(layout.relation_start, 3);
         assert_eq!(layout.steps_start, 6);
         assert_eq!(layout.total_rows, 6 + 1 + 3 + 1);
+        assert_eq!(layout.children_start, layout.total_rows);
         // No relationship rows: the original two-blank gap is unchanged.
-        let layout = page_content_layout(2, 0, 3, 16);
+        let layout = page_content_layout(2, 0, 0, 3, 16);
         assert_eq!(layout.steps_start, 4);
         assert_eq!(layout.relation_start, layout.steps_start);
+    }
+
+    #[test]
+    fn children_follow_the_add_step_row_after_one_blank() {
+        // notes 0..2, blank 2, parent 3, blank 4, steps label 5, steps 6..9 (+ step at 8),
+        // blank 9, children 10..12, trailing blank 12.
+        let layout = page_content_layout(2, 1, 2, 3, 16);
+        assert_eq!(layout.relation_start, 3);
+        assert_eq!(layout.steps_start, 5);
+        assert_eq!(layout.children_start, 10);
+        assert_eq!(layout.total_rows, 13);
     }
 
     #[test]

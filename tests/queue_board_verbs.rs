@@ -2884,6 +2884,10 @@ fn view_tab_selection_wraps_without_starting_task_edit_and_ctrl_e_opens_inline_s
         .expect("Tab selects second");
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("Tab selects add target");
+    // The ring passes the parent line (this task has no children) before the first step.
+    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
+        .expect("Tab reaches the parent line");
+    assert!(rendered_board(&model, 80, 24).contains("▸ parent  none · P to set"));
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("Tab wraps to first");
     assert!(rendered_board(&model, 80, 24).contains("▸ ▪ first step"));
@@ -3694,7 +3698,8 @@ fn active_cursor_up_precedes_shared_scroll() {
     );
 }
 
-/// Up from the active first step deactivates without moving the shared body. A subsequent
+/// Up from the active first step reaches the parent line, and Up there deactivates without
+/// moving the shared body. A subsequent
 /// inactive Up scrolls, and Tab selects a step again from the task edit session.
 #[test]
 fn first_step_up_deactivates_before_inactive_up_scrolls_then_down_reactivates() {
@@ -3721,12 +3726,20 @@ fn first_step_up_deactivates_before_inactive_up_scrolls_then_down_reactivates() 
         "the bar keeps the task verb with a step selected (Enter owns the step): {active_verbs:?}"
     );
 
+    // Up from the first step reaches the parent line above the steps; Up there deactivates.
     apply_intent(&mut domain, &mut model, BoardIntent::PageScrollUp, None)
-        .expect("deactivate first step");
+        .expect("first step up to the parent line");
+    let on_parent = rendered_board(&model, 80, 24);
+    assert!(
+        on_parent.contains("▸ parent  none · P to set"),
+        "Up at step zero must reach the parent line:\n{on_parent}"
+    );
+    apply_intent(&mut domain, &mut model, BoardIntent::PageScrollUp, None)
+        .expect("deactivate the parent line");
     let deactivated = rendered_board(&model, 80, 24);
     assert!(
         !deactivated.contains("▸"),
-        "Up at step zero must clear the active cursor:\n{deactivated}"
+        "Up at the parent line must clear the active cursor:\n{deactivated}"
     );
     // Page chrome changes from the active step verb to the task verb. Compare only
     // the shared body, normalizing its sole cursor glyph, so this fails if Up scrolls.

@@ -1774,13 +1774,31 @@ fn tab_and_field_focus_on_a_read_only_task_page_stay_in_view_mode() {
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("page");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
-    let refusal = "project app is archived \u{b7} ctrl+u unarchive";
+    // View-mode Tab, shift+Tab, and a step click only move the page selection (reading), so
+    // the read-only page lets them through without starting an edit session.
     for intent in [
         BoardIntent::FormFocusNext,
         BoardIntent::FormFocusPrev,
+        BoardIntent::SelectStep(0),
+    ] {
+        apply_intent(&mut domain, &mut model, intent.clone(), None)
+            .unwrap_or_else(|error| panic!("{intent:?} applies: {error}"));
+        assert_eq!(
+            model.input_mode(),
+            BoardInputMode::TaskPage,
+            "{intent:?} must not enter edit mode (AC-44)"
+        );
+        assert!(!model.task_editing(), "{intent:?} started no edit session");
+        assert!(
+            !model.task_session_dirty(),
+            "{intent:?} started no edit session"
+        );
+    }
+
+    let refusal = "project app is archived \u{b7} ctrl+u unarchive";
+    for intent in [
         BoardIntent::FocusFormField(CaptureField::Notes),
         BoardIntent::FocusFormField(CaptureField::Title),
-        BoardIntent::SelectStep(0),
     ] {
         apply_intent(&mut domain, &mut model, intent.clone(), None)
             .unwrap_or_else(|error| panic!("{intent:?} applies: {error}"));

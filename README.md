@@ -33,6 +33,7 @@ Use `tsk add -t "Implement parser" --parent T10` to create a child task, and
 `tsk list T10` shows direct children and their calculated Done/total count.
 On the board, press `P` on a task page to choose its parent and `U` to clear it;
 the page lists the direct children, and their parent's row shows `⊂done/total`.
+Press `Enter` on the parent or a child line to open it, and `Esc` to go back.
 Relationships never complete or delete other tasks. See the [CLI guide](https://gettsk.sh/docs/cli/#edit).
 
 ### Coming soon

@@ -994,6 +994,13 @@ fn board_keyboard_intent(
     {
         return Some(BoardIntent::ToggleStep);
     }
+    // Bare Enter on a selected relation acts on it: the parent-none line opens the parent
+    // picker, a parent or child opens its page. Resolved here for the same reason.
+    if mode == BoardInputMode::TaskPage && key.code == KeyCode::Enter && key.modifiers.is_empty() {
+        if let Some(target) = model.selected_relation() {
+            return Some(crate::ui::board::BoardModel::relation_intent(target));
+        }
+    }
     // Task-page Thread has a selected state before its text cursor opens. It owns Enter and
     // Tab itself, while capture's direct Thread editor keeps the shared form mapper.
     if matches!(
@@ -5115,6 +5122,15 @@ mod tests {
         assert_eq!(
             board_keyboard_intent(&model, BoardInputMode::TaskPage, enter),
             Some(BoardIntent::OpenTaskPage)
+        );
+
+        // The ring continues to the parent line (this task has no children). Enter there is
+        // the parent-none action: it opens the parent picker, not the page route.
+        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("parent");
+        assert!(!model.stored_step_selected());
+        assert_eq!(
+            board_keyboard_intent(&model, BoardInputMode::TaskPage, enter),
+            Some(BoardIntent::OpenParentPicker)
         );
 
         // Shift+Enter never becomes a toggle.

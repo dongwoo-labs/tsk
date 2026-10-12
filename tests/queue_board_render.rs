@@ -590,6 +590,7 @@ fn full_thread_selector_and_dropdown_values_are_not_capped_to_the_old_prefix_bud
             tabs: None,
             title: Some("thread"),
             query: None,
+            wrap: None,
         };
         let dropdown = paint(width, height, &model).0.join("\n");
         assert!(
@@ -1158,6 +1159,7 @@ fn overlay_rows_are_padded_exact_no_base_bleed() {
             tabs: None,
             title: None,
             query: None,
+            wrap: None,
         };
         let (rows, _geo) = paint(80, 24, &model);
         let desk_row = rows

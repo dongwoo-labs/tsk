@@ -375,6 +375,13 @@ pub enum BoardIntent {
     ConfirmParentPicker,
     /// Mouse: choose a visible parent-chooser row by index and apply it in one step.
     SelectParentOption(usize),
+    /// `Enter` or a click on a task-page parent or child row: open that task's page and
+    /// retain the current page for `Esc`. A missing or deleted target refuses and keeps the
+    /// stored link.
+    OpenRelatedTask(uuid::Uuid),
+    /// Wheel over the parent chooser: scroll its wrapped rows; the selection stays.
+    ListPickerScrollUp,
+    ListPickerScrollDown,
 }
 
 /// Bottom chrome: compact key legend for primary board actions.
@@ -1806,7 +1813,10 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::OpenParentPicker
         | BoardIntent::ClearParent
         | BoardIntent::ConfirmParentPicker
-        | BoardIntent::SelectParentOption(_) => None,
+        | BoardIntent::SelectParentOption(_)
+        | BoardIntent::OpenRelatedTask(_)
+        | BoardIntent::ListPickerScrollUp
+        | BoardIntent::ListPickerScrollDown => None,
     }
 }
 

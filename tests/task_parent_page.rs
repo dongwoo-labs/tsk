@@ -11,6 +11,7 @@ use uuid::Uuid;
 use tsk_tui::app::{apply_board_intent_with_save_recovery, BoardSaveContext};
 use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::save_recovery::SaveRecovery;
+use tsk_tui::ui::board::RelationTarget;
 use tsk_tui::ui::input::{map_key, route_responsive_key, ResponsiveKeyRoute};
 use tsk_tui::ui::mouse::{left_click, map_responsive_board_mouse};
 use tsk_tui::ui::render::{assert_buffer_mono, QueueHitMap, QueueHitTarget};
@@ -555,4 +556,539 @@ fn a_failed_parent_save_enters_recovery_and_cancel_restores_the_baseline() {
     );
     assert_eq!(board.model.input_mode(), BoardInputMode::TaskPage);
     assert_eq!(board.model.edit_target(), Some(board.child));
+}
+
+// ---- Relation navigation: Enter / click open a related task, Esc goes back ----
+
+fn link(board: &mut Board, child: Uuid, parent: Uuid) {
+    board.domain.set_parent(child, Some(parent)).expect("link");
+    board.model.sync_from_domain(&board.domain);
+}
+
+/// Tab the view-mode ring (parent, steps, `+ step`, children) until `target` is selected.
+fn select_relation(board: &mut Board, target: RelationTarget) {
+    for _ in 0..12 {
+        if board.model.selected_relation() == Some(target) {
+            return;
+        }
+        apply(board, BoardIntent::FormFocusNext);
+    }
+    panic!(
+        "the ring never reached {target:?}; selected {:?}",
+        board.model.selected_relation()
+    );
+}
+
+/// Enter on the selected relation, resolved the way the keyboard boundary resolves it.
+fn enter_relation(board: &mut Board) -> IntentOutcome {
+    let target = board
+        .model
+        .selected_relation()
+        .expect("a relation is selected");
+    apply(board, BoardModel::relation_intent(target))
+}
+
+fn index_of(board: &Board, id: Uuid) -> usize {
+    board
+        .model
+        .visible_ids()
+        .iter()
+        .position(|visible| *visible == id)
+        .expect("task is on the board")
+}
+
+#[test]
+fn enter_opens_the_parent_and_a_child_and_esc_walks_back() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    open_page(&mut board, child);
+
+    select_relation(&mut board, RelationTarget::Open(parent));
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(
+        page.contains("▸ parent  ↑ T10 Ship the relationship view · open"),
+        "the selected parent line carries the cursor: {page}"
+    );
+    assert_eq!(enter_relation(&mut board), IntentOutcome::None);
+    assert_eq!(board.model.edit_target(), Some(parent));
+    assert_eq!(board.model.input_mode(), BoardInputMode::TaskPage);
+
+    // The parent's page lists the child after the `+ step` row; Enter on it opens it.
+    let (page, _) = render(&board.model, 80, 24);
+    let add = page.find("+ step").expect("+ step row");
+    let children = page.find("children 0/1 done").expect("children label");
+    assert!(add < children, "children follow the steps: {page}");
+    select_relation(&mut board, RelationTarget::Open(child));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(child));
+
+    // Esc walks back through the trail, then closes the page as before.
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.edit_target(), Some(parent));
+    assert_eq!(board.model.input_mode(), BoardInputMode::TaskPage);
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.edit_target(), Some(child));
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.input_mode(), BoardInputMode::Normal);
+}
+
+#[test]
+fn an_off_list_relation_keeps_the_lens_and_cursor_and_verbs_act_on_the_page() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    // The project lens shows the child only; its desk parent is outside the list.
+    board
+        .model
+        .set_selected_project(Some(std::path::PathBuf::from(REPO)));
+    assert_eq!(board.model.visible_ids(), vec![child]);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(parent));
+    assert_eq!(
+        board.model.selected_id(),
+        Some(child),
+        "the list cursor stays on its own row"
+    );
+    assert_eq!(board.model.visible_ids(), vec![child], "the lens is kept");
+
+    // A status verb acts on the displayed task only.
+    let child_before = board.domain.get(child).expect("child").clone();
+    assert_eq!(
+        apply(&mut board, BoardIntent::SetStatus(HumanStatus::Blocked)),
+        IntentOutcome::Persist
+    );
+    assert_eq!(
+        board.domain.get(parent).expect("parent").status,
+        HumanStatus::Blocked
+    );
+    assert_eq!(
+        board.domain.get(child).expect("child").revision,
+        child_before.revision
+    );
+
+    // J/K refuse an off-list page and keep the trail.
+    apply(&mut board, BoardIntent::NextTask);
+    assert_eq!(
+        board.model.message(),
+        Some("this task is not in the list · esc back")
+    );
+    assert_eq!(board.model.edit_target(), Some(parent));
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(
+        board.model.edit_target(),
+        Some(child),
+        "Back survives a refusal"
+    );
+}
+
+#[test]
+fn a_successful_j_k_or_list_reselection_clears_back_and_a_refusal_keeps_it() {
+    // A successful J/K ends the trail: Esc then closes the page.
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    apply(&mut board, BoardIntent::NextTask);
+    if board.model.edit_target() == Some(parent) {
+        apply(&mut board, BoardIntent::PrevTask);
+    }
+    let stepped = board.model.edit_target();
+    assert_ne!(stepped, Some(parent), "J or K moved to a list neighbour");
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(
+        board.model.input_mode(),
+        BoardInputMode::Normal,
+        "no Back after a successful J/K"
+    );
+
+    // A dirty refusal keeps the trail: cancel the edit, then Esc goes back.
+    let mut board = self::board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    apply(&mut board, BoardIntent::BeginEditTitle);
+    apply(&mut board, BoardIntent::EditInsert('!'));
+    apply(&mut board, BoardIntent::NextTask);
+    assert_eq!(
+        board.model.message(),
+        Some("save or cancel edits before switching tasks")
+    );
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert!(!board.model.task_session_dirty());
+    assert_eq!(board.model.edit_target(), Some(parent));
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.edit_target(), Some(child), "Back survives");
+
+    // A direct list reselection ends the trail too.
+    let mut board = self::board();
+    let (parent, child, other) = (board.parent, board.child, board.other);
+    link(&mut board, child, parent);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    let index = index_of(&board, other);
+    apply(&mut board, BoardIntent::FocusBoardAndSelectIndex(index));
+    assert_eq!(board.model.selected_id(), Some(other));
+    apply(&mut board, BoardIntent::FocusDetail);
+    assert_eq!(board.model.edit_target(), Some(other));
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(
+        board.model.wide_stage(),
+        WideStage::Board,
+        "Esc closes the reselected page instead of restoring an earlier one"
+    );
+}
+
+#[test]
+fn esc_skips_a_deleted_back_target_and_back_comes_before_a_pinned_search() {
+    let mut board = board();
+    let (parent, child, other) = (board.parent, board.child, board.other);
+    link(&mut board, child, parent);
+    link(&mut board, parent, other);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    select_relation(&mut board, RelationTarget::Open(other));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(other));
+    board
+        .domain
+        .soft_delete(parent)
+        .expect("delete the middle page");
+    board.model.sync_from_domain(&board.domain);
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(
+        board.model.edit_target(),
+        Some(child),
+        "the deleted page is skipped, never reopened"
+    );
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.input_mode(), BoardInputMode::Normal);
+
+    // Pinned search: Back first, then the search clears, then the page closes.
+    let mut board = self::board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    apply(&mut board, BoardIntent::FocusSearch);
+    for character in "paint".chars() {
+        apply(&mut board, BoardIntent::SearchQueryInsert(character));
+    }
+    apply(&mut board, BoardIntent::PinSearch);
+    assert!(board.model.search_pinned());
+    assert_eq!(board.model.visible_ids(), vec![child]);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.edit_target(), Some(child));
+    assert!(board.model.search_pinned(), "Back comes before the search");
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert!(!board.model.search_pinned());
+    assert_eq!(board.model.input_mode(), BoardInputMode::TaskPage);
+    apply(&mut board, BoardIntent::CloseLayer);
+    assert_eq!(board.model.input_mode(), BoardInputMode::Normal);
+}
+
+#[test]
+fn parent_none_enter_opens_the_picker_and_a_missing_parent_refuses() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::SetParent);
+    enter_relation(&mut board);
+    assert_eq!(board.model.input_mode(), BoardInputMode::ParentPicker);
+    apply(&mut board, BoardIntent::CancelListPicker);
+
+    link(&mut board, child, parent);
+    board.domain.soft_delete(parent).expect("delete parent");
+    board.model.sync_from_domain(&board.domain);
+    select_relation(&mut board, RelationTarget::Missing(parent));
+    assert_eq!(enter_relation(&mut board), IntentOutcome::None);
+    assert_eq!(
+        board.model.message(),
+        Some(format!("{parent} not found · link kept").as_str())
+    );
+    assert_eq!(board.model.edit_target(), Some(child));
+    assert_eq!(
+        board.domain.get(child).expect("child").parent_task_id,
+        Some(parent)
+    );
+}
+
+#[test]
+fn a_click_on_any_wrapped_relation_row_opens_that_task() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    board
+        .domain
+        .edit(
+            child,
+            format!("{} tail-end", "wrapping child title ".repeat(6)),
+            Some("child notes".to_string()),
+            TaskScope::Project {
+                path: REPO.to_string(),
+            },
+            None,
+        )
+        .expect("long child title");
+    link(&mut board, child, parent);
+    open_page(&mut board, parent);
+    let area = Rect::new(0, 0, 80, 24);
+    let (page, hits) = render(&board.model, 80, 24);
+    let rows: Vec<Rect> = hits
+        .regions
+        .iter()
+        .filter(|hit| hit.target == QueueHitTarget::Relation(1))
+        .map(|hit| hit.area)
+        .collect();
+    assert!(rows.len() >= 2, "the child wraps onto more rows: {page}");
+    let last = *rows.last().expect("continuation row");
+    let intent =
+        map_responsive_board_mouse(&board.model, &hits, area, left_click(last.x + 4, last.y))
+            .expect("a continuation-row click maps");
+    assert_eq!(intent, BoardIntent::OpenRelatedTask(child));
+    apply(&mut board, intent);
+    assert_eq!(board.model.edit_target(), Some(child));
+}
+
+#[test]
+fn an_archived_project_page_reached_by_relation_navigates_but_refuses_changes() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    board.domain.archive_project(REPO).expect("archive project");
+    board.model.sync_from_domain(&board.domain);
+    assert!(!board.model.visible_ids().contains(&child));
+    open_page(&mut board, parent);
+    select_relation(&mut board, RelationTarget::Open(child));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(child));
+
+    // Reading: the ring still moves (parent line, `+ step`, back to the parent line).
+    select_relation(&mut board, RelationTarget::Open(parent));
+    apply(&mut board, BoardIntent::FormFocusNext);
+    assert_eq!(board.model.selected_relation(), None, "Tab reached + step");
+    assert_eq!(board.model.input_mode(), BoardInputMode::TaskPage);
+
+    // Changing: status, parent, undo, and the step editor all refuse.
+    let before = board.domain.clone();
+    for intent in [
+        BoardIntent::SetStatus(HumanStatus::Done),
+        BoardIntent::OpenParentPicker,
+        BoardIntent::ClearParent,
+        BoardIntent::Undo,
+        BoardIntent::OpenTaskPage,
+        BoardIntent::BeginEditTitle,
+    ] {
+        assert_eq!(apply(&mut board, intent.clone()), IntentOutcome::None);
+        assert_eq!(
+            board.model.message(),
+            Some("project tsk is archived · read only"),
+            "{intent:?}"
+        );
+        assert_eq!(
+            board.model.input_mode(),
+            BoardInputMode::TaskPage,
+            "{intent:?}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(&board.domain).expect("encode"),
+        serde_json::to_value(&before).expect("encode"),
+        "nothing changed"
+    );
+
+    // Opening the parent back is still a read.
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(parent));
+}
+
+#[test]
+fn undo_on_an_archived_off_list_page_unarchives_that_task_only() {
+    let mut board = board();
+    let (parent, child, other) = (board.parent, board.child, board.other);
+    link(&mut board, child, parent);
+    board.domain.archive_task(child).expect("archive child");
+    // A later change sits on top of the undo stack; ctrl+u must not pop it.
+    board
+        .domain
+        .set_status(other, HumanStatus::Started)
+        .expect("start other");
+    board.model.sync_from_domain(&board.domain);
+    assert!(!board.model.visible_ids().contains(&child));
+    open_page(&mut board, parent);
+    select_relation(&mut board, RelationTarget::Open(child));
+    enter_relation(&mut board);
+    assert_eq!(board.model.edit_target(), Some(child));
+    assert_eq!(board.model.selected_id(), Some(parent));
+
+    assert_eq!(apply(&mut board, BoardIntent::Undo), IntentOutcome::Persist);
+    let after = board.domain.get(child).expect("child");
+    assert!(!after.archived, "the displayed task is unarchived");
+    assert_eq!(after.parent_task_id, Some(parent));
+    assert!(!board.domain.get(parent).expect("parent").archived);
+    assert_eq!(
+        board.domain.get(other).expect("other").status,
+        HumanStatus::Started,
+        "no global undo ran"
+    );
+}
+
+#[test]
+fn palette_keeps_an_off_list_page_target_after_a_sync_empties_the_list() {
+    let mut board = board();
+    let (parent, child) = (board.parent, board.child);
+    link(&mut board, child, parent);
+    board
+        .model
+        .set_selected_project(Some(std::path::PathBuf::from(REPO)));
+    open_page(&mut board, child);
+    select_relation(&mut board, RelationTarget::Open(parent));
+    enter_relation(&mut board);
+    // A disk change removes the only list row.
+    board.domain.soft_delete(child).expect("delete child");
+    board.model.sync_from_domain(&board.domain);
+    assert!(board.model.visible_ids().is_empty());
+    assert_eq!(board.model.selected_id(), None);
+    assert_eq!(board.model.edit_target(), Some(parent));
+
+    apply(&mut board, BoardIntent::OpenCommandPalette);
+    let commands = board.model.visible_commands();
+    let labels: Vec<&str> = commands.iter().map(|command| command.label).collect();
+    assert!(labels.contains(&"delete"), "{labels:?}");
+    let index = labels
+        .iter()
+        .position(|label| *label == "set status: started")
+        .expect("the page task's status commands stay offered");
+    assert_eq!(
+        apply(&mut board, BoardIntent::SelectCommand(index)),
+        IntentOutcome::Persist
+    );
+    assert_eq!(
+        board.domain.get(parent).expect("parent").status,
+        HumanStatus::Started
+    );
+}
+
+// ---- Parent picker: long options wrap, every row is reachable ----
+
+fn long_board() -> (Board, Uuid) {
+    let mut board = board();
+    let long = board
+        .domain
+        .create(
+            format!(
+                "{} tail-end",
+                "a very long candidate parent title ".repeat(5)
+            ),
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create long");
+    board.domain = numbered(
+        &board.domain,
+        &[
+            (board.parent, 10),
+            (board.child, 11),
+            (board.other, 12),
+            (long, 13),
+        ],
+    );
+    board.model.sync_from_domain(&board.domain);
+    (board, long)
+}
+
+#[test]
+fn parent_picker_wraps_long_options_without_an_ellipsis() {
+    for (width, height) in [(80u16, 24u16), (40, 10)] {
+        let (mut board, _) = long_board();
+        let id = board.child;
+        open_page(&mut board, id);
+        press(&mut board, key(KeyCode::Char('P'))).expect("P maps");
+        // Select the long option (the last one) and let the painter follow it.
+        for _ in 0..3 {
+            press(&mut board, key(KeyCode::Down)).expect("down maps");
+            render(&board.model, width, height);
+        }
+        let mut seen = String::new();
+        let mut reached = false;
+        for _ in 0..12 {
+            let (frame, _) = render(&board.model, width, height);
+            for line in frame.lines().filter(|line| line.contains("candidate")) {
+                assert!(!line.contains('…'), "{width}x{height} never clips: {frame}");
+            }
+            seen.push_str(&frame);
+            if frame.contains("tail-end") {
+                reached = true;
+                break;
+            }
+            press(&mut board, key(KeyCode::Down)).expect("down maps");
+        }
+        assert!(reached, "{width}x{height}: ↓ reveals the option's last row");
+        assert!(seen.contains("T13 a very long"), "{seen}");
+        assert_eq!(
+            board
+                .model
+                .selected_list_picker_option()
+                .map(|(_, o)| o.label.starts_with("T13")),
+            Some(true),
+            "{width}x{height}: revealing rows keeps the selection"
+        );
+    }
+}
+
+#[test]
+fn parent_picker_continuation_rows_select_the_same_option_after_a_filter_and_the_wheel_scrolls() {
+    let (mut board, long) = long_board();
+    let id = board.child;
+    open_page(&mut board, id);
+    press(&mut board, key(KeyCode::Char('P'))).expect("P maps");
+    type_text(&mut board, "candidate");
+    let area = Rect::new(0, 0, 40, 10);
+    let (frame, hits) = render(&board.model, 40, 10);
+    let rows: Vec<Rect> = hits
+        .regions
+        .iter()
+        .filter(|hit| hit.target == QueueHitTarget::ListPickerOption(0))
+        .map(|hit| hit.area)
+        .collect();
+    assert!(rows.len() >= 2, "the filtered long option wraps: {frame}");
+    let intent = map_responsive_board_mouse(
+        &board.model,
+        &hits,
+        area,
+        left_click(rows[1].x + 2, rows[1].y),
+    )
+    .expect("continuation click maps");
+    assert_eq!(intent, BoardIntent::SelectParentOption(0));
+
+    // The wheel scrolls rows and keeps the selection.
+    let selected = board.model.list_picker_selected();
+    let mut reached = false;
+    for _ in 0..12 {
+        let (frame, _) = render(&board.model, 40, 10);
+        if frame.contains("tail-end") {
+            reached = true;
+            break;
+        }
+        apply(&mut board, BoardIntent::ListPickerScrollDown);
+    }
+    assert!(reached, "the wheel reaches the last wrapped row");
+    assert_eq!(board.model.list_picker_selected(), selected);
+
+    assert_eq!(apply(&mut board, intent), IntentOutcome::Persist);
+    assert_eq!(
+        board.domain.get(id).expect("child").parent_task_id,
+        Some(long)
+    );
 }

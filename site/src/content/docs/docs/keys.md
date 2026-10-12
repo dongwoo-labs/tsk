@@ -55,9 +55,10 @@ These keys apply in **view mode**:
 
 | Action | Key |
 | --- | --- |
-| Select steps and **+ step** | `Tab` / `Shift+Tab` |
-| Activate first step, then move among steps | `↓`, then `↑` / `↓` |
+| Select the parent line, steps, **+ step**, and children | `Tab` / `Shift+Tab` |
+| Activate first step, then move among the parent, steps, and children | `↓`, then `↑` / `↓` |
 | Toggle selected step | `Enter` |
+| Open the selected parent or child; on `parent  none`, choose a parent | `Enter` |
 | Add step (below the selected step, else at the end) | `ctrl+a` |
 | Move selected step up or down | `alt+↑` / `alt+↓` |
 | Edit title or selected step | `ctrl+e` |
@@ -68,10 +69,10 @@ These keys apply in **view mode**:
 | Mark/remove selected step; otherwise confirm/delete task | `ctrl+x` |
 | Command palette | `:` |
 | All shortcuts | `?` |
-| Close task (back to the list at 110+ columns) | `Esc` |
+| Back to the task a relation opened from; else close task (back to the list at 110+ columns) | `Esc` |
 | Quit the board | `ctrl+q` |
 
-Click a step to select it. Click **+ step** to add at the end. Field clicks become editable only after task editing starts.
+Click a step to select it. Click **+ step** to add at the end. Click any row of a parent or child line to open that task. Field clicks become editable only after task editing starts.
 
 `alt+↑` / `alt+↓` and the parent keys `P` / `U` are the mutating shortcuts without `ctrl`. macOS reserves `ctrl+arrows` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
 
@@ -125,7 +126,7 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 | Project archive | `ctrl+f` archives; on archived tab, `ctrl+f` or `ctrl+u` restores |
 | Archived project view | `ctrl+u` restores; `Esc` or `p` leaves |
 | Thread filter | Type or paste to filter; arrows or `Tab` select; `Enter` chooses; `Esc` closes |
-| Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select; `Enter` saves the parent (or **no parent**); a click saves that row; `Esc` closes without saving |
+| Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select, and on a long wrapped title `↑` / `↓` first show its other rows; the wheel scrolls rows; `Enter` saves the parent (or **no parent**); a click on any row of an option saves it; `Esc` closes without saving |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
 | Palette | Type to filter; arrows or `Tab` select; `Enter` runs; `Esc` closes |
 | Help | Type or paste to filter by key or action; arrows, page keys, or wheel scroll; `Esc` clears the search, then closes |

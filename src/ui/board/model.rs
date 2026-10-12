@@ -212,6 +212,17 @@ pub struct ListPickerOption {
     pub value: ListPickerValue,
 }
 
+/// What `Enter` or a click does on one task-page relation entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationTarget {
+    /// The parent-none line: opens the parent picker.
+    SetParent,
+    /// An existing parent or child: opens its task page.
+    Open(Uuid),
+    /// A parent link whose task is missing or deleted: refuses and keeps the link.
+    Missing(Uuid),
+}
+
 /// What confirming a list-picker option applies: a thread-filter choice or a parent choice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListPickerValue {
@@ -233,6 +244,8 @@ pub(super) struct ListPickerState {
     pub options: Vec<ListPickerOption>,
     pub selected: usize,
     pub query: String,
+    /// Row scroll of the wrapping parent chooser; unused by the one-row-per-option pickers.
+    pub rows: crate::ui::render::PickerRowState,
 }
 /// The immutable value a board form carries for its whole lifetime.
 ///
@@ -621,6 +634,28 @@ pub(super) struct StepsPageState {
     /// Step text wrap width at the last paint, so a step added between paints can be
     /// measured before the renderer records its row count.
     pub(super) text_width: std::cell::Cell<usize>,
+    /// View-mode relation selection: 0 is the parent line, `1 + k` the k-th direct child
+    /// ([`BoardModel::relation_targets`]). Mutually exclusive with `cursor` and
+    /// `add_selected`: [`super::apply::apply_intent`] drops it whenever either is set.
+    pub(super) relation_cursor: Option<usize>,
+    /// Absolute content row and row count of each relation entry at the last paint
+    /// (renderer-recorded), so keyboard movement can keep the selected entry in view.
+    pub(super) relation_geometry: std::cell::RefCell<Vec<(usize, usize)>>,
+}
+
+/// Keep relation entry `target` inside the renderer-recorded shared content viewport.
+pub(super) fn relation_scroll_to(form: &mut BoardForm, target: usize) {
+    let Some((start, rows)) = form.steps.relation_geometry.borrow().get(target).copied() else {
+        return;
+    };
+    let window = form.steps.window_rows.get().max(1);
+    let end = start + rows.max(1);
+    if start < form.notes_scroll {
+        form.notes_scroll = start;
+    } else if end > form.notes_scroll.saturating_add(window) {
+        form.notes_scroll = end.saturating_sub(window).min(start);
+    }
+    form.notes_scroll = form.notes_scroll.min(form.notes_max_scroll.get());
 }
 
 /// Keep the selected step in the renderer-recorded shared content viewport.
@@ -750,6 +785,10 @@ pub struct BoardModel {
     mark_mode: bool,
     /// Session-only tasks included in the next bulk verb. Every id remains visible in this lens.
     pub(super) marked_ids: BTreeSet<Uuid>,
+    /// Session-only task pages a relation open left behind, newest last. A clean `Esc` on
+    /// the task page restores the newest one that still exists; closing the page, a list
+    /// retarget, a scope change, or a board-tab route clears it.
+    pub(super) page_back: Vec<Uuid>,
     /// The last task-row click (time + id), kept only to detect a double-click that opens
     /// the task page. Presentation-only, never persisted.
     pub(super) last_row_click: Option<(Instant, Uuid)>,
@@ -875,6 +914,7 @@ impl BoardModel {
             selection_id: None,
             mark_mode: false,
             marked_ids: BTreeSet::new(),
+            page_back: Vec::new(),
             last_row_click: None,
             help_query: String::new(),
             help_scroll: 0,
@@ -1750,6 +1790,7 @@ impl BoardModel {
             options,
             selected,
             query: String::new(),
+            rows: crate::ui::render::PickerRowState::following(),
         });
     }
 
@@ -1791,6 +1832,26 @@ impl BoardModel {
     pub(super) fn move_list_picker(&mut self, forward: bool) {
         let len = self.visible_list_picker_options().len();
         if let Some(picker) = self.list_picker.as_mut() {
+            // The parent chooser wraps tall options: ↓/↑ first reveal the rest of the selected
+            // option inside the painted window, then move to the next/previous option.
+            if matches!(picker.kind, ListPickerKind::Parent { .. }) && len > 0 {
+                let rows = &picker.rows;
+                let window = rows.window.get();
+                let scroll = rows.scroll.get();
+                if let (Some((start, height)), true) =
+                    (rows.option_span(picker.selected), window > 0)
+                {
+                    if forward && start + height > scroll + window {
+                        rows.scroll.set(scroll + 1);
+                        return;
+                    }
+                    if !forward && start < scroll {
+                        rows.scroll.set(scroll - 1);
+                        return;
+                    }
+                }
+                rows.follow.set(Some(!forward));
+            }
             picker.selected = if len == 0 {
                 0
             } else if forward {
@@ -1801,24 +1862,52 @@ impl BoardModel {
         }
     }
 
+    /// Wheel over the parent chooser: scroll its wrapped rows, selection unchanged.
+    pub(super) fn scroll_list_picker_rows(&mut self, down: bool) {
+        let Some(picker) = self.list_picker.as_mut() else {
+            return;
+        };
+        let rows = &picker.rows;
+        rows.follow.set(None);
+        let max = rows.total_rows().saturating_sub(rows.window.get());
+        let scroll = rows.scroll.get();
+        rows.scroll.set(if down {
+            (scroll + 1).min(max)
+        } else {
+            scroll.saturating_sub(1)
+        });
+    }
+
+    /// The parent chooser's row-scroll state, for the painter.
+    pub fn list_picker_rows(&self) -> Option<&crate::ui::render::PickerRowState> {
+        self.list_picker.as_ref().map(|picker| &picker.rows)
+    }
+
+    /// A new query starts the filtered list from its top.
+    fn reset_list_picker_rows(picker: &mut ListPickerState) {
+        picker.selected = 0;
+        picker.rows.scroll.set(0);
+        picker.rows.follow.set(Some(false));
+    }
+
     pub(super) fn list_picker_query_insert(&mut self, character: char) {
         if let Some(picker) = self.list_picker.as_mut() {
             picker.query.push(character);
-            picker.selected = 0;
+            Self::reset_list_picker_rows(picker);
         }
     }
 
     pub(super) fn list_picker_query_backspace(&mut self) {
         if let Some(picker) = self.list_picker.as_mut() {
             picker.query.pop();
-            picker.selected = 0;
+            Self::reset_list_picker_rows(picker);
         }
     }
 
     pub(super) fn list_picker_query_insert_text(&mut self, text: &str) {
         if let Some(picker) = self.list_picker.as_mut() {
             picker.query.push_str(text);
-            picker.selected = 0;
+            Self::reset_list_picker_rows(picker);
         }
     }
 
@@ -1935,6 +2024,7 @@ impl BoardModel {
             options,
             selected,
             query: String::new(),
+            rows: crate::ui::render::PickerRowState::following(),
         });
         true
     }
@@ -2111,7 +2201,69 @@ impl BoardModel {
         if self.task_list_owns_input() && self.mark_mode && !self.marked_ids.is_empty() {
             self.marked_ids.iter().copied().collect()
         } else {
-            self.selected_id().into_iter().collect()
+            self.action_target_id().into_iter().collect()
+        }
+    }
+
+    /// The task the focused task page shows, when the task side owns input. A related task
+    /// opened from the page may sit outside the list, so this is not always `selected_id`.
+    pub(super) fn focused_page_task(&self) -> Option<Uuid> {
+        if self.focused_surface() != FocusedSurface::Task {
+            return None;
+        }
+        self.form
+            .as_ref()
+            .filter(|form| form.is_task())
+            .and_then(BoardForm::task_id)
+    }
+
+    /// The task a cursor verb acts on: the focused page's own task while the task side owns
+    /// input, otherwise the list selection. `selected_id` keeps its list meaning.
+    pub(super) fn action_target_id(&self) -> Option<Uuid> {
+        self.focused_page_task().or_else(|| self.selected_id())
+    }
+
+    /// Relation actions of the focused page, indexed like the painted relation rows: 0 is
+    /// the parent line, `1 + k` the k-th direct child.
+    pub(super) fn relation_targets(&self) -> Vec<RelationTarget> {
+        let Some(task) = self
+            .focused_page_task()
+            .and_then(|id| self.tasks.iter().find(|task| task.id == id))
+        else {
+            return Vec::new();
+        };
+        let mut targets = vec![match crate::domain::parent_in(&self.tasks, task) {
+            None => RelationTarget::SetParent,
+            Some(crate::domain::ParentRelation::Resolved(parent)) => {
+                RelationTarget::Open(parent.id)
+            }
+            Some(crate::domain::ParentRelation::Unresolved(id)) => RelationTarget::Missing(id),
+        }];
+        targets.extend(
+            crate::domain::direct_children_in(&self.tasks, task.id)
+                .into_iter()
+                .map(|child| RelationTarget::Open(child.id)),
+        );
+        targets
+    }
+
+    /// The archived project holding the focused page's task, when the list itself is not
+    /// already the read-only archived focus. A relation open can reach such a task from a
+    /// working lens; its page is read-only like the archived focus.
+    pub(super) fn page_archived_project(&self) -> Option<String> {
+        if self.focus_is_archived() {
+            return None;
+        }
+        let task = self
+            .focused_page_task()
+            .and_then(|id| self.tasks.iter().find(|task| task.id == id))?;
+        match &task.scope {
+            TaskScope::Project { path }
+                if archived_path_contains(&self.archived_projects, path) =>
+            {
+                Some(path.clone())
+            }
+            _ => None,
         }
     }
 
@@ -2690,6 +2842,44 @@ impl BoardModel {
             .is_some_and(|step| !form.steps.removals.contains(&step.id))
     }
 
+    /// The relation entry the task page's view-mode cursor rests on, resolved to its action.
+    /// `Enter` acts on it instead of closing the page. An edit session has no relation cursor.
+    pub fn selected_relation(&self) -> Option<RelationTarget> {
+        if self.input_mode != BoardInputMode::TaskPage || self.task_editing() {
+            return None;
+        }
+        let form = self.form.as_ref().filter(|form| form.is_task())?;
+        if form.steps.cursor.is_some() || form.steps.add_selected {
+            return None;
+        }
+        let index = form.steps.relation_cursor?;
+        self.relation_targets().get(index).copied()
+    }
+
+    /// The intent one relation entry stands for: the parent-none line opens the parent
+    /// picker; a parent or child (missing ones included, which then refuse) opens its page.
+    /// Resolved at the keyboard and mouse boundaries, so the read-only gate and the save
+    /// boundary classify the real intent.
+    pub fn relation_intent(target: RelationTarget) -> crate::ui::input::BoardIntent {
+        match target {
+            RelationTarget::SetParent => crate::ui::input::BoardIntent::OpenParentPicker,
+            RelationTarget::Open(id) | RelationTarget::Missing(id) => {
+                crate::ui::input::BoardIntent::OpenRelatedTask(id)
+            }
+        }
+    }
+
+    /// The intent of the relation entry at `index` on the focused page, for a row click.
+    pub fn relation_intent_at(&self, index: usize) -> Option<crate::ui::input::BoardIntent> {
+        if self.input_mode != BoardInputMode::TaskPage || self.task_editing() {
+            return None;
+        }
+        self.relation_targets()
+            .get(index)
+            .copied()
+            .map(Self::relation_intent)
+    }
+
     /// Whether the current task page has entered its edit session.
     pub fn task_editing(&self) -> bool {
         self.form
@@ -3027,6 +3217,11 @@ impl BoardModel {
                 BoardInputMode::Normal
             };
         }
+        // A direct list reselection ends the relation trail: Back belongs to the page the
+        // relation opens left behind, not to the next task the list picks.
+        if source == SelectionRetarget::Explicit {
+            self.page_back.clear();
+        }
         self.selection_id = requested;
         true
     }
@@ -3154,6 +3349,7 @@ impl BoardModel {
 
     pub(super) fn set_board_scope(&mut self, scope: ProjectScopeOption) {
         self.close_popup();
+        self.page_back.clear();
         self.search_query.clear();
         self.search_pinned = false;
         if self.input_mode == BoardInputMode::Search {

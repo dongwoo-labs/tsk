@@ -581,19 +581,51 @@ fn build_task_page_overlay<'a>(
         )
     };
     let step_rows: usize = step_views.iter().map(|step| step.rows.len().max(1)).sum();
+    // Relation actions are view-mode navigation: an edit session paints no relation cursor.
+    let relation_cursor = (!form.editing)
+        .then_some(form.steps.relation_cursor)
+        .flatten();
     let relation_rows = bound_task
-        .map(|task| relation_rows(&model.tasks, task, notes_width))
+        .map(|task| relation_rows(&model.tasks, task, notes_width, relation_cursor))
         .unwrap_or_default();
+    let parent_rows = relation_rows.iter().filter(|row| !row.after_steps).count();
+    let child_rows = relation_rows.len() - parent_rows;
     // Match the painter's stream exactly: it always paints one notes row and a trailing
     // `+ step` row, even when both stored notes and stored steps are empty.
     let content = render::page_content_layout(
         notes_rows.len().max(1),
-        relation_rows.len(),
+        parent_rows,
+        child_rows,
         step_rows + 1,
         lay.notes_rows,
     );
     form.notes_max_scroll.set(content.max_scroll);
     form.steps.content_start.set(content.steps_start);
+    // Absolute first row and row count of every relation entry, so keyboard movement can
+    // scroll the selected entry into the shared viewport.
+    {
+        let mut geometry: Vec<(usize, usize)> = Vec::new();
+        let mut parent_offset = 0usize;
+        let mut child_offset = 0usize;
+        for row in &relation_rows {
+            let absolute = if row.after_steps {
+                child_offset += 1;
+                content.children_start + child_offset - 1
+            } else {
+                parent_offset += 1;
+                content.relation_start + parent_offset - 1
+            };
+            let Some(target) = row.target else {
+                continue;
+            };
+            // Targets arrive in order (0, then 1 + k per child), each over contiguous rows.
+            match geometry.get_mut(target) {
+                Some(entry) => entry.1 += 1,
+                None => geometry.push((absolute, 1)),
+            }
+        }
+        *form.steps.relation_geometry.borrow_mut() = geometry;
+    }
     form.notes_width.set(notes_width);
 
     // Meta footer: thread · scope · created · updated (ages only while the bound task is
@@ -732,65 +764,100 @@ fn identifier_prefix(task: &Task) -> String {
         .unwrap_or_default()
 }
 
+/// One relation entry before wrapping: its action index, if it has one, and where it paints.
+struct RelationEntry<'a> {
+    lead: &'a str,
+    text: &'a str,
+    dim: bool,
+    target: Option<usize>,
+    after_steps: bool,
+}
+
 /// Wrap `text` to `width` cells: the first row carries `lead`, later rows align under the text.
+/// Every wrapped row keeps the entry's action target; only the first carries the cursor.
 fn push_wrapped_relation(
     rows: &mut Vec<RelationRow>,
-    lead: &str,
-    text: &str,
+    entry: RelationEntry<'_>,
     width: usize,
-    dim: bool,
+    cursor: Option<usize>,
 ) {
-    let lead_w = render::display_width(lead);
-    let wrapped = wrap_text(text, width.saturating_sub(lead_w).max(1));
+    let lead_w = render::display_width(entry.lead);
+    let wrapped = wrap_text(entry.text, width.saturating_sub(lead_w).max(1));
     for (index, row) in wrapped.iter().enumerate() {
         let prefix = if index == 0 {
-            lead.to_string()
+            entry.lead.to_string()
         } else {
             " ".repeat(lead_w)
         };
         rows.push(RelationRow {
             text: format!("{prefix}{}", row.text),
-            dim,
+            dim: entry.dim,
+            target: entry.target,
+            selected: index == 0 && entry.target.is_some() && entry.target == cursor,
+            after_steps: entry.after_steps,
         });
     }
 }
 
-/// The task page's relationship block: one parent line (none, resolved, or not found), then
-/// the direct children with their done count. Counting matches `tsk list`: every scope and
-/// status, archived included, deleted tasks and notices excluded. A missing or deleted parent
-/// keeps its stored id on screen; nothing here changes either task.
-fn relation_rows(tasks: &[Task], task: &Task, width: usize) -> Vec<RelationRow> {
+/// The task page's relationship block: one parent line (none, resolved, or not found) before
+/// the steps, then the direct children with their done count after the `+ step` row.
+/// Counting matches `tsk list`: every scope and status, archived included, deleted tasks and
+/// notices excluded. A missing or deleted parent keeps its stored id on screen; nothing here
+/// changes either task. Action indices match [`BoardModel::relation_targets`].
+fn relation_rows(
+    tasks: &[Task],
+    task: &Task,
+    width: usize,
+    cursor: Option<usize>,
+) -> Vec<RelationRow> {
     let mut rows = Vec::new();
-    match parent_in(tasks, task) {
-        None => push_wrapped_relation(&mut rows, "parent  ", "none · P to set", width, true),
-        Some(ParentRelation::Resolved(parent)) => {
-            let text = format!(
+    let parent_text = match parent_in(tasks, task) {
+        None => ("none · P to set".to_string(), true),
+        Some(ParentRelation::Resolved(parent)) => (
+            format!(
                 "\u{2191} {}{} · {}",
                 identifier_prefix(parent),
                 terminal_text(&parent.title),
                 page_status_word(parent)
-            );
-            push_wrapped_relation(&mut rows, "parent  ", &text, width, false);
-        }
-        Some(ParentRelation::Unresolved(id)) => push_wrapped_relation(
-            &mut rows,
-            "parent  ",
-            &format!("\u{2191} {id} not found · link kept"),
-            width,
-            true,
+            ),
+            false,
         ),
-    }
+        Some(ParentRelation::Unresolved(id)) => {
+            (format!("\u{2191} {id} not found · link kept"), true)
+        }
+    };
+    push_wrapped_relation(
+        &mut rows,
+        RelationEntry {
+            lead: "parent  ",
+            text: &parent_text.0,
+            dim: parent_text.1,
+            target: Some(0),
+            after_steps: false,
+        },
+        width,
+        cursor,
+    );
     let children = direct_children_in(tasks, task.id);
     if !children.is_empty() {
         let done = children
             .iter()
             .filter(|child| child.status == HumanStatus::Done)
             .count();
-        rows.push(RelationRow {
-            text: format!("children {done}/{} done", children.len()),
-            dim: true,
-        });
-        for child in &children {
+        let label = format!("children {done}/{} done", children.len());
+        push_wrapped_relation(
+            &mut rows,
+            RelationEntry {
+                lead: "",
+                text: &label,
+                dim: true,
+                target: None,
+                after_steps: true,
+            },
+            width,
+            cursor,
+        );
+        for (index, child) in children.iter().enumerate() {
             let lead = format!("{} ", render::status_glyph(child.status));
             let mut text = format!(
                 "{}{}",
@@ -800,15 +867,31 @@ fn relation_rows(tasks: &[Task], task: &Task, width: usize) -> Vec<RelationRow> 
             if child.archived {
                 text.push_str(" · archived");
             }
-            push_wrapped_relation(&mut rows, &lead, &text, width, child.archived);
+            push_wrapped_relation(
+                &mut rows,
+                RelationEntry {
+                    lead: &lead,
+                    text: &text,
+                    dim: child.archived,
+                    target: Some(1 + index),
+                    after_steps: true,
+                },
+                width,
+                cursor,
+            );
         }
         if done == children.len() && task.status != HumanStatus::Done {
             push_wrapped_relation(
                 &mut rows,
-                "",
-                "all children done · ctrl+d completes this task",
+                RelationEntry {
+                    lead: "",
+                    text: "all children done · ctrl+d completes this task",
+                    dim: true,
+                    target: None,
+                    after_steps: true,
+                },
                 width,
-                true,
+                cursor,
             );
         }
     }
@@ -1140,6 +1223,10 @@ impl<'a> OverlayPayloads<'a> {
                 tabs: None,
                 title: Some(title),
                 query: self.list_picker_query.as_deref(),
+                // Only the parent chooser wraps; the thread filter keeps one row per option.
+                wrap: (model.input_mode() == BoardInputMode::ParentPicker)
+                    .then(|| model.list_picker_rows())
+                    .flatten(),
             });
         }
         if model.popup() == BoardPopup::ProjectPicker {
@@ -1149,6 +1236,7 @@ impl<'a> OverlayPayloads<'a> {
                 tabs: self.scope_tabs,
                 title: None,
                 query: None,
+                wrap: None,
             });
         }
         None

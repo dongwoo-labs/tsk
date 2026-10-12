@@ -230,6 +230,10 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   multi-select set is session-only, lives beside the cursor, and clears at every verb and
   lens boundary rather than pinning hidden rows. Status verbs act on the set when it is
   non-empty; `Enter`, `ctrl+e`, and task-page actions stay cursor-only.
+- A focused task page may show a task the list does not (a relation open). Cursor verbs
+  then target `BoardModel::action_target_id`, the page's task; `selected_id` keeps its
+  list meaning and the page never pins the selection to an unpainted row. The `Esc`
+  trail (`page_back`) is session-only and clears at every list retarget, scope, or close.
 - Board search is a per-lens filter applied in `queue_view` after `queue::query_board`,
   never a second row source. Overview rows filter by project name; everything else by task
   content. `Enter` pins the query and hands keys back to the board; `Esc` clears it first.

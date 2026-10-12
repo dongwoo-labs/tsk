@@ -17,7 +17,7 @@ use crate::ui::queue::{ARCHIVED_HEADER_ROW_ID, INBOX_HEADER_ROW_ID};
 use crate::ui::tier::{FocusedSurface, WideStage};
 
 use super::commands::{resolve_board_command, CommandSurface};
-use super::model::{steps_scroll_to_cursor, steps_scroll_to_row};
+use super::model::{relation_scroll_to, steps_scroll_to_cursor, steps_scroll_to_row};
 use super::model::{
     BoardForm, BoardInputMode, BoardLocation, BoardModel, IntentOutcome, ListPickerValue,
     PickerTab, ProjectPickerState, ProjectScopeOption, StepEditor, StepEditorSave, TaskEditSave,
@@ -219,12 +219,35 @@ fn apply_chrome_row_lifetime(model: &mut BoardModel, intent: &BoardIntent) {
 /// [`IntentOutcome::Persist`]. The capture snapshot is retained by the form.
 /// Intents the read-only archived focus refuses (AC-42): everything that would mutate a
 /// task or open a capture/edit surface. `Undo` is excluded: it is the unarchive route.
-fn read_only_focus_refuses(intent: &BoardIntent) -> bool {
+/// The refusal a read-only task page paints: the archived focus's own, or, for a page a
+/// relation open reached inside an archived project, that project's read-only line.
+fn read_only_page_refusal(model: &BoardModel) -> Option<String> {
+    if let Some(refusal) = model.archived_focus_refusal() {
+        return Some(refusal);
+    }
+    let path = model.page_archived_project()?;
+    let name = crate::ui::render::short_project(&path).to_string();
+    Some(format!("project {name} is archived \u{b7} read only"))
+}
+
+fn read_only_focus_refuses(model: &BoardModel, intent: &BoardIntent) -> bool {
     if matches!(intent, BoardIntent::Undo) {
         return false;
     }
     if board_intent_may_persist(intent) {
         return true;
+    }
+    // On a task page in view mode, Tab, shift+Tab, and a step click only move the page's
+    // selection (steps, `+ step`, relations): reading, not editing. `Enter` on `+ step`
+    // and every edit entry stay refused below and in the `OpenTaskPage` arm.
+    if matches!(
+        intent,
+        BoardIntent::FormFocusNext | BoardIntent::FormFocusPrev | BoardIntent::SelectStep(_)
+    ) && model.input_mode == BoardInputMode::TaskPage
+        && model.focused_page_task().is_some()
+        && !model.task_editing()
+    {
+        return false;
     }
     matches!(
         intent,
@@ -320,9 +343,23 @@ pub fn apply_intent(
         && model.popup() == BoardPopup::None
         && model.project_picker.is_none()
         && model.surface == CommandSurface::None
-        && read_only_focus_refuses(&intent)
+        && read_only_focus_refuses(model, &intent)
     {
         if let Some(refusal) = model.archived_focus_refusal() {
+            model.set_message(refusal);
+        }
+        return Ok(IntentOutcome::None);
+    }
+    // A relation open can reach a task of an archived project from a working lens. Its page
+    // is read-only the same way, and `ctrl+u` refuses too: unarchiving a project is the
+    // project picker's route, not a task page's.
+    if model.page_archived_project().is_some()
+        && model.popup() == BoardPopup::None
+        && model.project_picker.is_none()
+        && model.surface == CommandSurface::None
+        && (matches!(intent, BoardIntent::Undo) || read_only_focus_refuses(model, &intent))
+    {
+        if let Some(refusal) = read_only_page_refusal(model) {
             model.set_message(refusal);
         }
         return Ok(IntentOutcome::None);
@@ -333,6 +370,13 @@ pub fn apply_intent(
     );
     let mutating = board_intent_may_persist(&intent);
     let result = apply_board_intent(domain, model, intent, snapshot);
+    // One page selection at a time: a step or `+ step` selected by any route takes it over
+    // from a relation entry.
+    if let Some(form) = model.form.as_mut() {
+        if form.steps.cursor.is_some() || form.steps.add_selected {
+            form.steps.relation_cursor = None;
+        }
+    }
     // A command confirmation carries no lifetime of its own: it recurses with the command it
     // resolved to, and that intent is classified on the way through, so it is the recursion
     // that restores.
@@ -383,11 +427,15 @@ fn apply_board_intent(
                 | BoardInputMode::FormScopeDropdown
         )
     {
+        // Only onto a row the list paints: a page reached through a relation, or a task that
+        // left the lens, keeps the list cursor where it is. Verbs follow the page through
+        // `BoardModel::action_target_id`, not through this pin.
         if let Some(bound) = model
             .form
             .as_ref()
             .filter(|form| form.is_task())
             .and_then(BoardForm::task_id)
+            .filter(|bound| model.visible_ids().contains(bound))
         {
             model.selection_id = Some(bound);
         }
@@ -658,7 +706,10 @@ fn apply_board_intent(
                     } else if !move_step_within_edit_group(model, true) {
                         select_add_step(model);
                     }
-                } else if !move_step_with_tab(model, true) && !select_first_step_from_page(model) {
+                } else if !move_page_ring(model, true)
+                    && !select_first_step_from_page(model)
+                    && read_only_page_refusal(model).is_none()
+                {
                     model.enter_page_field_focus();
                 }
             } else if model.input_mode == BoardInputMode::EditNotes
@@ -718,8 +769,14 @@ fn apply_board_intent(
                     } else if !move_step_within_edit_group(model, false) {
                         model.focus_form_field(CaptureField::Notes);
                     }
-                } else if !move_step_with_tab(model, false) {
-                    model.enter_page_field_focus();
+                } else if !move_page_ring(model, false) {
+                    // A read-only page has no edit session to enter: shift+Tab starts the
+                    // ring from its far end instead.
+                    if read_only_page_refusal(model).is_some() {
+                        select_ring_end(model);
+                    } else {
+                        model.enter_page_field_focus();
+                    }
                 }
                 return Ok(IntentOutcome::None);
             }
@@ -1378,6 +1435,8 @@ fn apply_board_intent(
             return Ok(IntentOutcome::None);
         }
         BoardIntent::SelectNavTab(tab) => {
+            // The board-tab route ends the relation trail, like a scope change.
+            model.page_back.clear();
             if model.select_nav_tab(tab) {
                 model.clear_marks();
             }
@@ -1443,6 +1502,16 @@ fn apply_board_intent(
             };
             model.cancel_list_picker();
             model.input_mode = back;
+            return Ok(IntentOutcome::None);
+        }
+        BoardIntent::ListPickerScrollUp | BoardIntent::ListPickerScrollDown => {
+            if model.input_mode == BoardInputMode::ParentPicker {
+                model.scroll_list_picker_rows(intent == BoardIntent::ListPickerScrollDown);
+            }
+            return Ok(IntentOutcome::None);
+        }
+        BoardIntent::OpenRelatedTask(id) => {
+            open_related_task(domain, model, id);
             return Ok(IntentOutcome::None);
         }
         BoardIntent::OpenParentPicker => {
@@ -1768,6 +1837,12 @@ fn apply_board_intent(
                 .as_ref()
                 .is_some_and(|form| form.steps.add_selected)
             {
+                // Selecting `+ step` is reading; opening its editor is an edit entry, which a
+                // read-only page refuses like every other.
+                if let Some(refusal) = read_only_page_refusal(model) {
+                    model.set_message(refusal);
+                    return Ok(IntentOutcome::None);
+                }
                 open_step_editor(model, "", None);
                 return Ok(IntentOutcome::None);
             }
@@ -1905,7 +1980,18 @@ fn apply_board_intent(
                 }
                 return Ok(IntentOutcome::None);
             }
+            // ↑ from the first step reaches the parent line; ↑ from a child walks back
+            // through the steps. ↑ on the parent line deactivates, as on the first step.
+            if model.input_mode == BoardInputMode::TaskPage && move_page_arrow(model, false) {
+                return Ok(IntentOutcome::None);
+            }
             if let Some(form) = model.form.as_mut().filter(|form| form.is_task()) {
+                if model.input_mode == BoardInputMode::TaskPage
+                    && form.steps.relation_cursor.is_some()
+                {
+                    form.steps.relation_cursor = None;
+                    return Ok(IntentOutcome::None);
+                }
                 if model.input_mode == BoardInputMode::TaskPage {
                     // Keyboard arrows own an active step cursor before they move the
                     // shared stream. Wheel intents above remain the explicit reading
@@ -1948,7 +2034,25 @@ fn apply_board_intent(
                 }
                 return Ok(IntentOutcome::None);
             }
+            // ↓ from the parent line reaches the first step, ↓ from the last step the first
+            // child. At the last entry the selection stays where it is.
+            if model.input_mode == BoardInputMode::TaskPage
+                && model.form.as_ref().is_some_and(|form| {
+                    form.is_task()
+                        && (form.steps.relation_cursor.is_some()
+                            || form.steps.cursor.is_some()
+                            || form.steps.add_selected)
+                })
+                && move_page_arrow(model, true)
+            {
+                return Ok(IntentOutcome::None);
+            }
             if let Some(form) = model.form.as_mut().filter(|form| form.is_task()) {
+                if model.input_mode == BoardInputMode::TaskPage
+                    && form.steps.relation_cursor.is_some()
+                {
+                    return Ok(IntentOutcome::None);
+                }
                 if model.input_mode == BoardInputMode::TaskPage {
                     let steps = form
                         .task_id()
@@ -2094,6 +2198,18 @@ fn apply_board_intent(
                 model.input_mode = model.search_return_mode;
                 model.clear_message();
                 model.reanchor_selection(previous, &previous_visible);
+                return Ok(IntentOutcome::None);
+            }
+            // Back after a relation open comes before the pinned search: the search belongs
+            // to the list, the trail to the page the user is reading. A dirty draft never
+            // gets here as Back; it keeps its own cancel route below.
+            if model.input_mode == BoardInputMode::TaskPage
+                && model.focused_page_task().is_some()
+                && !model.task_editing()
+                && !model.task_session_dirty()
+                && !model.page_back.is_empty()
+                && restore_previous_page(domain, model)
+            {
                 return Ok(IntentOutcome::None);
             }
             if model.search_pinned {
@@ -2414,8 +2530,9 @@ fn apply_board_intent(
             }
             model.close_popup();
             // ctrl+u on an archived selection is the unarchive route, never an undo:
-            // the stack is not popped (AC-3).
-            if let Some(id) = model.selected_id() {
+            // the stack is not popped (AC-3). On a focused page that is the page's own task,
+            // which a relation open may have reached outside the list.
+            if let Some(id) = model.action_target_id() {
                 if domain.get(id).is_some_and(|task| task.archived) {
                     domain.unarchive_task(id)?;
                     model.sync_from_domain(domain);
@@ -2503,6 +2620,7 @@ fn focus_list(model: &mut BoardModel) {
         return;
     }
     model.wide_stage = WideStage::Board;
+    model.page_back.clear();
     model.clear_message();
 }
 
@@ -2516,6 +2634,7 @@ fn enter_task_stage(model: &mut BoardModel) {
 /// parked so the detail column still shows it; a narrow frame closes a clean page.
 fn leave_task_page(model: &mut BoardModel) {
     model.wide_stage = WideStage::Board;
+    model.page_back.clear();
     if !model.frame_wide() && !model.task_session_dirty() {
         model.form = None;
         model.input_mode = if model.quick_add.is_some() {
@@ -2609,7 +2728,56 @@ fn step_task_page(domain: &DomainState, model: &mut BoardModel, forward: bool) {
     };
     model.selection_id = Some(next);
     open_task_page_on(domain, model, next);
+    // A successful list step ends the relation trail; the refusals above keep it.
+    model.page_back.clear();
     model.follow_list.set(true);
+}
+
+/// Open a related task (a parent or a direct child) on the focused page. The list keeps its
+/// lens, search, sort, and cursor: the selection follows only when the list paints the
+/// target. The page left behind is retained for `Esc`.
+fn open_related_task(domain: &DomainState, model: &mut BoardModel, id: Uuid) {
+    let Some(current) = model.focused_page_task() else {
+        return;
+    };
+    if model.task_session_dirty() {
+        model.set_message(DIRTY_TASK_SWITCH_REFUSAL);
+        return;
+    }
+    if model.input_mode != BoardInputMode::TaskPage || model.task_editing() {
+        return;
+    }
+    if domain.get(id).is_none_or(|task| task.soft_deleted) {
+        model.set_message(related_not_found(id));
+        return;
+    }
+    model.page_back.push(current);
+    open_task_page_on(domain, model, id);
+    if model.visible_ids().contains(&id) {
+        model.selection_id = Some(id);
+        model.follow_list.set(true);
+    }
+}
+
+/// `Esc` on a clean page after a relation open: restore the newest retained page that still
+/// exists, skipping missing or deleted ones. Returns false when none is left.
+fn restore_previous_page(domain: &DomainState, model: &mut BoardModel) -> bool {
+    while let Some(id) = model.page_back.pop() {
+        if domain.get(id).is_some_and(|task| !task.soft_deleted) {
+            open_task_page_on(domain, model, id);
+            if model.visible_ids().contains(&id) {
+                model.selection_id = Some(id);
+                model.follow_list.set(true);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// A relation whose task is missing or deleted: the link stays as stored.
+fn related_not_found(id: Uuid) -> String {
+    format!("{id} not found \u{b7} link kept")
 }
 
 fn open_task_page_on(domain: &DomainState, model: &mut BoardModel, id: Uuid) {
@@ -2967,47 +3135,135 @@ fn select_first_step_from_page(model: &mut BoardModel) -> bool {
     true
 }
 
-/// Cycle view-mode Tab through every stored step and then its trailing add target.
-fn move_step_with_tab(model: &mut BoardModel, forward: bool) -> bool {
-    let state = model.form.as_ref().and_then(|form| {
-        if !form.is_task() {
-            return None;
-        }
-        let task_id = form.task_id()?;
-        let count = model
-            .tasks
-            .iter()
-            .find(|task| task.id == task_id)?
-            .steps
-            .len();
-        Some((form.steps.cursor, form.steps.add_selected, count))
-    });
-    let Some((cursor, add_selected, count)) = state else {
-        return false;
+/// One view-mode page selection: the parent line, a stored step, `+ step`, or a child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PageRingSlot {
+    Relation(usize),
+    Step(usize),
+    Add,
+}
+
+/// The view-mode ring in page order: parent, steps, `+ step`, children. Empty without a
+/// focused task page.
+fn page_ring(model: &BoardModel) -> Vec<PageRingSlot> {
+    let Some(task) = model
+        .focused_page_task()
+        .and_then(|id| model.tasks.iter().find(|task| task.id == id))
+    else {
+        return Vec::new();
     };
-    if add_selected {
-        if count == 0 {
-            return true;
-        }
-        let index = if forward { 0 } else { count - 1 };
-        let form = model.form.as_mut().expect("task form remains open");
-        form.steps.cursor = Some(index);
-        form.steps.add_selected = false;
-        steps_scroll_to_cursor(form, index);
-        return true;
+    let relations = model.relation_targets().len();
+    let mut ring = Vec::with_capacity(relations + task.steps.len() + 1);
+    if relations > 0 {
+        ring.push(PageRingSlot::Relation(0));
     }
-    let Some(index) = cursor else {
+    ring.extend((0..task.steps.len()).map(PageRingSlot::Step));
+    ring.push(PageRingSlot::Add);
+    ring.extend((1..relations).map(PageRingSlot::Relation));
+    ring
+}
+
+fn select_ring_slot(model: &mut BoardModel, slot: PageRingSlot) {
+    let Some(form) = model.form.as_mut().filter(|form| form.is_task()) else {
+        return;
+    };
+    match slot {
+        PageRingSlot::Relation(index) => {
+            form.steps.cursor = None;
+            form.steps.add_selected = false;
+            form.steps.relation_cursor = Some(index);
+            relation_scroll_to(form, index);
+        }
+        PageRingSlot::Step(index) => {
+            form.steps.relation_cursor = None;
+            form.steps.cursor = Some(index);
+            form.steps.add_selected = false;
+            steps_scroll_to_cursor(form, index);
+        }
+        PageRingSlot::Add => {
+            form.steps.relation_cursor = None;
+            select_add_step(model);
+        }
+    }
+}
+
+/// Move the view-mode page selection one slot around the ring (Tab / shift+Tab). Returns
+/// false when nothing on the page is selected yet, so the caller keeps its entry route.
+fn move_page_ring(model: &mut BoardModel, forward: bool) -> bool {
+    let current = model
+        .form
+        .as_ref()
+        .filter(|form| form.is_task())
+        .and_then(|form| {
+            if form.steps.add_selected {
+                Some(PageRingSlot::Add)
+            } else if let Some(index) = form.steps.cursor {
+                Some(PageRingSlot::Step(index))
+            } else {
+                form.steps.relation_cursor.map(PageRingSlot::Relation)
+            }
+        });
+    let Some(current) = current else {
         return false;
     };
-    if (forward && index + 1 == count) || (!forward && index == 0) {
-        select_add_step(model);
+    let ring = page_ring(model);
+    let Some(position) = ring.iter().position(|slot| *slot == current) else {
+        return false;
+    };
+    let next = if forward {
+        (position + 1) % ring.len()
     } else {
-        let next = if forward { index + 1 } else { index - 1 };
-        let form = model.form.as_mut().expect("task form remains open");
-        form.steps.cursor = Some(next);
-        form.steps.add_selected = false;
-        steps_scroll_to_cursor(form, next);
+        position.checked_sub(1).unwrap_or(ring.len() - 1)
+    };
+    select_ring_slot(model, ring[next]);
+    true
+}
+
+/// Select the ring's last slot: shift+Tab's entry on a read-only page, where entering the
+/// edit session is refused.
+fn select_ring_end(model: &mut BoardModel) {
+    if let Some(&slot) = page_ring(model).last() {
+        select_ring_slot(model, slot);
     }
+}
+
+/// Move the view-mode selection one slot by arrow, without wrapping: ↑ from the first step
+/// reaches the parent line, ↓ from the last step or `+ step` reaches the first child.
+/// Returns false at either end, so the caller keeps its own end behaviour.
+fn move_page_arrow(model: &mut BoardModel, forward: bool) -> bool {
+    let current = model
+        .form
+        .as_ref()
+        .filter(|form| form.is_task())
+        .and_then(|form| {
+            if form.steps.add_selected {
+                Some(PageRingSlot::Add)
+            } else if let Some(index) = form.steps.cursor {
+                Some(PageRingSlot::Step(index))
+            } else {
+                form.steps.relation_cursor.map(PageRingSlot::Relation)
+            }
+        });
+    let Some(current) = current else {
+        return false;
+    };
+    // Arrows walk the stored rows: `+ step` is a Tab/click target, not an arrow stop.
+    let ring: Vec<PageRingSlot> = page_ring(model)
+        .into_iter()
+        .filter(|slot| *slot != PageRingSlot::Add || current == PageRingSlot::Add)
+        .collect();
+    let Some(position) = ring.iter().position(|slot| *slot == current) else {
+        return false;
+    };
+    let next = if forward {
+        ring.get(position + 1)
+    } else {
+        position.checked_sub(1).and_then(|index| ring.get(index))
+    };
+    let Some(&next) = next else {
+        return false;
+    };
+    select_ring_slot(model, next);
     true
 }
 

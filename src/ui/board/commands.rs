@@ -62,7 +62,9 @@ impl BoardModel {
             ];
         }
         let mut commands = Vec::new();
-        if self.selected_id().is_some() {
+        if self.action_target_id().is_some() {
+            // The focused page's own task counts even when a relation open reached it outside
+            // the list (the list cursor may then be empty).
             // the tail: set status x4, edit notes, change scope, then shared tail.
             // No park / resume / link / dispatch entries.
             commands.extend_from_slice(&[
@@ -101,7 +103,7 @@ impl BoardModel {
         // The status commands above are absolute, so `set status: open` replaces the old
         // done-only `reopen` entry and stays useful from every status.
         commands.push(command("new task", BoardIntent::OpenCapture));
-        if self.selected_id().is_some() {
+        if self.action_target_id().is_some() {
             commands.push(command("delete", BoardIntent::SoftDelete));
         }
         commands.extend_from_slice(&[

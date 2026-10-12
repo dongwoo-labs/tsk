@@ -110,7 +110,7 @@ At **110 usable columns** or wider, the board is always two columns: the list on
 | `J` / `K` | On the detail or task page, open the next or previous task in list order |
 | `P` / `U` | On the detail or task page, choose or clear the task's parent |
 
-`J` and `K` skip group headings and follow the current scope, sort, search, and drawer. At either end they stay put and say `last task in this list` or `first task in this list`; if the open task has left the list, they say `this task is not in the list · esc back`. A task draft with unsaved changes refuses to switch until you save or cancel it.
+`J` and `K` skip group headings and follow the current scope, sort, search, and drawer. At either end they stay put and say `last task in this list` or `first task in this list`; if the open task has left the list, or a parent or child line opened a task the list does not show, they say `this task is not in the list · esc back`. `Enter` on a parent or child line of the detail opens that task without changing the list; `Esc` returns to the task before it. A task draft with unsaved changes refuses to switch until you save or cancel it.
 
 The list keeps the done drawer and archived fold state, so a done task opened from the drawer stays selected beside its detail. While editing, arrows move the text cursor instead.
 

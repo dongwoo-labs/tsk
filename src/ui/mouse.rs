@@ -665,6 +665,11 @@ fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardI
             MouseEventKind::ScrollDown => Some(BoardIntent::HelpScrollDown),
             _ => None,
         },
+        BoardInputMode::ParentPicker => match kind {
+            MouseEventKind::ScrollUp => Some(BoardIntent::ListPickerScrollUp),
+            MouseEventKind::ScrollDown => Some(BoardIntent::ListPickerScrollDown),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -815,6 +820,9 @@ pub fn map_board_mouse(
             // the inline editor only when the task edit session is already active.
             Some(QueueHitTarget::Step(index)) => Some(BoardIntent::SelectStep(index)),
             Some(QueueHitTarget::StepAdd) => Some(BoardIntent::BeginAppendStep),
+            // A relation row acts in view mode, on every wrapped row: the parent-none line
+            // opens the parent picker, a parent or child opens its page.
+            Some(QueueHitTarget::Relation(index)) => model.relation_intent_at(index),
             Some(QueueHitTarget::PageScroll(offset)) => Some(BoardIntent::PageScrollTo(offset)),
             Some(QueueHitTarget::Verb(index)) => verb_intent(model, index),
             _ => None,
