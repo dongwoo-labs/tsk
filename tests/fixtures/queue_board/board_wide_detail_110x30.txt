@@ -25,7 +25,7 @@
 │                                            │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
-│                                            │   created 1062d ago · updated 1062d ago                         │
+│                                            │   created 3m ago · updated 3m ago                               │
 │──────────────────────────────────────────────────────────────────────────────────────────────────────────────│
 │ all                                                                                                 → detail │
 │ enter open · ctrl+o todo · ctrl+d done · ? help                                                              │

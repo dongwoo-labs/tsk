@@ -99,12 +99,20 @@ for width in (40, 78, 109, 110):
             while b'DOING' not in first and time.monotonic() < deadline:
                 first += drain()
             assert b'DOING' in first, repr(first)
+            # `1` is the board tab; startup in the Git project opens that project's board.
             key(b'1', 'initial')
             assert 'TODO' in '\n'.join(screen.display)
-            key(b'\x1b[C', 'peek-or-split')
-            if width < 110:
-                assert '└─ tsk-parity' in '\n'.join(screen.display)
-            key(b'\x1b[D', 'closed')
+            # Narrow frames show the list or a task, never a peek: `→` is inert below 110.
+            # Wide frames always pair list and detail; `→` focuses the detail, `←` the list.
+            key(b'\x1b[C', 'list-or-detail-focus')
+            detail_shown = 'Confirm the wording' in '\n'.join(screen.display)
+            assert detail_shown == (width >= 110), (width, detail_shown)
+            key(b'\x1b[D', 'list-focus')
+            # T13 is a desk task: `p` opens the scope picker on the project, `↑` selects desk.
+            key(b'p', 'scope-picker')
+            key(b'\x1b[A', 'scope-desk-selected')
+            key(b'\r', 'desk')
+            assert 'T13' in '\n'.join(screen.display)
             key(b'\x1b[B', 'selected')
             key(b'\x13', 'started')
             assert saved_task(13, lambda t: t['status'] == 'doing')['status'] == 'doing'
@@ -114,7 +122,8 @@ for width in (40, 78, 109, 110):
             key(b'\r', 'step-toggled')
             task = saved_task(13, lambda t: t['steps'][0]['done'])
             assert task['steps'][0]['done'] and task['status'] == 'doing'
-            key(b'\x01', 'step-add-editor')
+            # Bare `a` (like `ctrl+a`) opens the step editor on the task page.
+            key(b'a', 'step-add-editor')
             key(b'New step\r', 'step-added')
             assert len(saved_task(13, lambda t: len(t['steps']) == 3)['steps']) == 3
             key(b'\x1b', 'step-add-canceled')
@@ -123,7 +132,7 @@ for width in (40, 78, 109, 110):
             key(b'\x11', 'quit')
             child.wait(timeout=5)
             assert child.returncode == 0
-            print(f'{width}x24: initial, peek/split, select, persisted start, page, persisted step toggle/add, back, clean quit OK')
+            print(f'{width}x24: initial, list-or-detail focus, desk scope, select, persisted start, page, persisted step toggle/add, back, clean quit OK')
         finally:
             if child.poll() is None:
                 child.kill()
@@ -138,5 +147,5 @@ for width in (40, 78, 109, 110):
     'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
     'sizes': [[w, 24] for w in (40, 78, 109, 110)],
     'clock': 'real system clock; timestamps differ from fixed browser clock',
-    'scope': 'fixture project path relocated to temporary tsk-parity project; key 1 opens desk',
+    'scope': 'fixture project path relocated to temporary tsk-parity project; key 1 is the board tab, p then up selects desk',
 }, indent=2) + '\n')

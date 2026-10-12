@@ -63,6 +63,26 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, secs_ago: 
     }
 }
 
+/// The same tasks with every timestamp shifted so the fixed fixture "now" lands on the wall
+/// clock: relative ages stay as authored for painters that read `SystemTime::now()`.
+fn tasks_rebased_on_wall_clock(tasks: &[Task]) -> Vec<Task> {
+    let shift = SystemTime::now()
+        .duration_since(now())
+        .expect("wall clock after fixture now");
+    tasks
+        .iter()
+        .cloned()
+        .map(|mut task| {
+            task.created_at += shift;
+            task.updated_at += shift;
+            for event in &mut task.history {
+                event.at += shift;
+            }
+            task
+        })
+        .collect()
+}
+
 fn project(path: &str) -> TaskScope {
     TaskScope::Project {
         path: path.to_string(),
@@ -2470,8 +2490,13 @@ fn golden_scenes() -> Vec<GoldenScene> {
 
     // Wide scenes stay on the real board painter: the list + detail columns and their
     // shared footer are not representable by a standalone QueueFrameModel.
+    // The real painter reads the wall clock for the detail's "created/updated … ago" footer,
+    // so these scenes rebase the fixture onto it; the golden then pins a fixed age.
     let mut wide_domain = DomainState::new();
-    let mut wide_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
+    let mut wide_model = BoardModel::from_tasks(
+        tasks_rebased_on_wall_clock(&tasks),
+        Some(PathBuf::from("/repos/tsk")),
+    );
     let board_wide_rows = board_rows(&wide_model, 110, 30);
     apply_intent(
         &mut wide_domain,
