@@ -125,6 +125,9 @@ test("demo keeps the one board tab with scope, sort, search, archive, and the do
   assert.match(demo, /taskMatchesSearch/);
   assert.match(demo, /searchPinned/);
   assert.match(demo, /e\.key === "z" \|\| e\.key === "D"/);
+  // A closed drawer keeps the DONE heading and count, with the done rows hidden.
+  assert.match(demo, /if \(!state\.drawer && done\.length\)/);
+  assert.match(demo, /data-drawer="1"><span class="sec">/);
 });
 
 test("demo rows show number, title, question marks, and the child count only", async () => {

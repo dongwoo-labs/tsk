@@ -2842,3 +2842,17 @@ html[data-theme="light"] .pane {
 .tsk-q-line.is-chosen:has(input) { color: inherit; background: none; display: flex; width: auto; }
 .tsk-q-line input.tsk-field { flex: 1 1 auto; min-width: 0; }
 .tsk-q-detail { overflow: auto; min-height: 0; }
+
+/* A closed done drawer keeps its DONE heading as the button that opens it. */
+button.tsk-sec {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+button.tsk-sec:hover {
+  color: var(--ink);
+}

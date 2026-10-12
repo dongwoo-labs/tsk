@@ -13,7 +13,7 @@
 │         │  ↑↓ / jk            move                                   │         │
 │   T7 Glo│  shift+M            multi-select                           │         │
 │         │  shift+↑↓           mark and move (multi-select)           │         │
-│         │                                                            │         │
+│ DONE ───│                                                            │ to open │
 │         ├────────────────────────────────────────────────────────────┤         │
 │         │ type search · ↑↓ scroll · esc clear/close                  │         │
 │         └────────────────────────────────────────────────────────────┘         │

@@ -405,10 +405,18 @@ import { parseCapture } from "./capture.js";
       live.filter((t) => t.status === "todo" && match(t)),
       "todo",
     );
+    const done = live
+      .filter((t) => t.status === "done" && match(t))
+      .sort(byStatusChange);
+    // Closed, DONE keeps its heading and count with no rows, as in the app.
+    if (!state.drawer && done.length)
+      rows.push({
+        kind: "section",
+        label: "DONE",
+        count: done.length,
+        collapsed: true,
+      });
     if (state.drawer) {
-      const done = live
-        .filter((t) => t.status === "done" && match(t))
-        .sort(byStatusChange);
       if (done.length) {
         rows.push({ kind: "section", label: "DONE", count: done.length });
         for (const t of done)
@@ -1593,6 +1601,8 @@ import { parseCapture } from "./capture.js";
     ensureSelection(rows);
     const body = rows
       .map((row) => {
+        if (row.kind === "section" && row.collapsed)
+          return `<button type="button" class="tsk-sec" data-drawer="1"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count} · z to open</span></button>`;
         if (row.kind === "section")
           return `<div class="tsk-sec"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count}</span></div>`;
         if (row.kind === "sub")

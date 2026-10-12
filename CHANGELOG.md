@@ -37,6 +37,7 @@ the GitHub release notes verbatim.
 
 - Board rows show the number and title only, then the question marks and a dim `⊂done/total` count on a task with children; the section already names the status. Tabs read `1 board` and `2 questions`. A task's project appears in its detail.
 - Board sections list rows by task number. A status change moves a task to its new section without putting it on top.
+- The **DONE** heading stays on the board while the done drawer is closed, with its count and `d to open`; its rows still appear only in the open drawer.
 - Quick-add from **all** or **desk** goes to your desk; from a project board it goes to that project. Restoring an archived launch project with `y` opens its board.
 
 ### Fixed

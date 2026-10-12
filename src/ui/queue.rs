@@ -345,7 +345,7 @@ fn query_all(
         sections.push(section_from(SectionKind::InMotion, None, &motion));
     }
     push_deck(&mut sections, None, &deck, &need);
-    append_done(&mut sections, &live, drawer_open);
+    append_done(&mut sections, &live, drawer_open, search);
     append_archived(&mut sections, &archived_pool, drawer_open);
 
     QueueView {
@@ -408,7 +408,7 @@ fn query_desk(
     }
     push_deck(&mut sections, None, &deck, &need);
 
-    append_done(&mut sections, &live, drawer_open);
+    append_done(&mut sections, &live, drawer_open, search);
     append_archived(&mut sections, &archived_pool, drawer_open);
 
     QueueView {
@@ -472,7 +472,7 @@ fn query_project_focus(
     }
     push_deck(&mut sections, Some(label.clone()), &ready, &need);
 
-    append_done(&mut sections, &live, drawer_open);
+    append_done(&mut sections, &live, drawer_open, search);
     let in_scope: Vec<&Task> = tasks
         .iter()
         .filter(|task| task_matches_scope(task, path, identities))
@@ -507,19 +507,35 @@ fn query_project_focus(
     }
 }
 
-fn append_done(sections: &mut Vec<QueueSection>, live: &[&Task], drawer_open: bool) {
-    if !drawer_open {
-        return;
-    }
+/// DONE paints its rows only while the drawer is open. Closed, it keeps its heading and
+/// the count of done tasks the lens and search would show, with no rows: the collapsed
+/// section has no `task_ids`, so selection, marks, and `J`/`K` never reach a done task.
+fn append_done(
+    sections: &mut Vec<QueueSection>,
+    live: &[&Task],
+    drawer_open: bool,
+    search: &[String],
+) {
     let mut done: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Done)
+        .filter(|t| t.status == HumanStatus::Done && task_matches(t, search))
         .collect();
-    sort_by_status_change_desc(&mut done);
-    if !done.is_empty() {
-        sections.push(section_from(SectionKind::Done, None, &done));
+    if done.is_empty() {
+        return;
     }
+    if !drawer_open {
+        sections.push(QueueSection {
+            kind: SectionKind::Done,
+            project_label: None,
+            task_ids: Vec::new(),
+            count: done.len(),
+            empty_hint: false,
+        });
+        return;
+    }
+    sort_by_status_change_desc(&mut done);
+    sections.push(section_from(SectionKind::Done, None, &done));
 }
 
 /// The done drawer's archived group: individually archived tasks the drawer's scope
@@ -824,6 +840,13 @@ mod tests {
         );
         assert_eq!(closed.counts.in_motion, 1);
         assert_eq!(closed.counts.done, 2, "closed drawer is not searched");
+        let heading: Vec<_> = closed
+            .sections
+            .iter()
+            .filter(|s| s.kind == SectionKind::Done)
+            .map(|s| (s.count, s.task_ids.len()))
+            .collect();
+        assert_eq!(heading, vec![(1, 0)], "the closed heading counts matches");
         assert!(
             closed.sections.iter().all(|section| !section.empty_hint),
             "content search hides empty section hints"
@@ -1246,8 +1269,19 @@ mod tests {
             task(4, HumanStatus::Todo, TaskScope::Global, false, 50),
         ];
 
+        // Closed, DONE keeps its heading and count but no rows, so nothing selects them.
         let closed = query_lens(&tasks, BoardLens::Desk, false);
-        assert!(closed.sections.iter().all(|s| s.kind != SectionKind::Done));
+        let heading: Vec<_> = closed
+            .sections
+            .iter()
+            .filter(|s| s.kind == SectionKind::Done)
+            .map(|s| (s.count, s.task_ids.len()))
+            .collect();
+        assert_eq!(heading, vec![(2, 0)]);
+        assert_eq!(
+            visible_task_ids(&closed, false, false),
+            vec![Uuid::from_u128(4)]
+        );
 
         let open = query_lens(&tasks, BoardLens::Desk, true);
         let done: Vec<_> = open

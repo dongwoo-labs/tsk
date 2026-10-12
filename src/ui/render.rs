@@ -4086,8 +4086,15 @@ fn paint_section_header(
     let title = section_title(section, surface);
     let left = present_line(&format!(" {title} "), width as usize);
     let right_budget = (width as usize).saturating_sub(display_width(&left));
+    // A closed done drawer keeps its heading and count with no rows; `d` opens it.
+    let collapsed = section.kind == SectionKind::Done && section.task_ids.is_empty();
     let right = if right_budget == 0 {
         String::new()
+    } else if collapsed {
+        present_line(
+            &format!("{} \u{b7} d to open ", section.count),
+            right_budget,
+        )
     } else {
         present_line(&format!("{} ", section.count), right_budget)
     };

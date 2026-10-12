@@ -38,7 +38,7 @@ Press `p` to choose a scope: **all**, **desk**, or a project.
 
 Press `/` to search the rows the board currently shows. It matches tasks by title, notes, step text, or task number such as `T12`, case-insensitively. Every whitespace-separated word must match somewhere in the same task.
 
-Typing or pasting filters immediately. Empty sections disappear and section counts show only matches. The done drawer is searched only while it is open.
+Typing or pasting filters immediately. Empty sections disappear and section counts show only matches, the closed **DONE** heading's count included. Done rows appear only while the drawer is open.
 
 Press `Enter` to pin the query and return to board keys. Navigation, task actions, the done drawer, and a second `Enter` then act on the filtered rows; the query remains in the footer. Press `Esc` while typing to clear and close search, or press it once on a pinned board to clear the query before normal `Esc` behavior resumes. Changing scope also clears it.
 
@@ -143,7 +143,7 @@ Narrowing the pane shows one surface, the one that had focus; widening it restor
 
 ## Completed tasks
 
-Press `d` to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
+The **DONE** heading starts closed: it shows the count of done tasks in the current scope with `d to open`, and no done rows, so the cursor, marks, and `J` / `K` skip them. Press `d` or click the heading to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
 
 The drawer's **archived** group starts closed. Click its heading or press `Enter` on it to expand. `g` folds or unfolds the group while the drawer is open.
 

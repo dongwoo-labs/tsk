@@ -22,7 +22,17 @@ test("the done drawer and its archived group follow the scope", async ({
 }) => {
   await page.goto(LANDING);
   await page.locator("#board-demo").focus();
-  await page.keyboard.press("z");
+  // Closed, DONE shows its heading and count but no done rows.
+  const heading = page.locator(".tsk-sec[data-drawer]");
+  await expect(heading).toContainText("DONE");
+  await expect(heading).toContainText("2 · z to open");
+  const doneRow = page
+    .locator("[data-task]")
+    .filter({ hasText: "Add a health check for the worker pool" });
+  await expect(doneRow).toHaveCount(0);
+  await heading.click();
+  await expect(page.locator(".tsk-sec[data-drawer]")).toHaveCount(0);
+  await expect(doneRow).toHaveCount(1);
   await page.locator("[data-archived-header]").click();
   await expect(
     page
