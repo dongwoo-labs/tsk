@@ -38,6 +38,6 @@ The pane re-reads Herdr every 1.5 seconds. A failed read says why on the second 
 | --- | --- |
 | `tsk threads` | Open the pane |
 | `tsk threads --json [--all]` | Print the visible sessions as JSON: name, issue, group, status, inbox, agent, workspace, tab, pane, focused |
-| `tsk threads focus <name>` | Focus the live agent with that Herdr name (or pane id) |
+| `tsk threads focus <name>` | Focus the live agent with that Herdr name |
 
 `--json` and `focus` exit `3` when Herdr cannot be read, `1` when the named agent is not live or focus fails, and `2` on a usage error.
