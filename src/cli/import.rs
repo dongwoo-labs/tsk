@@ -749,6 +749,9 @@ pub fn post_graphql_with(
     // The shared hardened policy, minus `--fail`: Linear reports GraphQL errors with a
     // 4xx status and a JSON body worth showing.
     let mut child = Command::new(curl)
+        // Must be the first argument: caller curlrc trace/verbose settings can log
+        // the Authorization header even though it is supplied only on stdin.
+        .arg("-q")
         .args([
             "--proto",
             "=https",
@@ -789,10 +792,10 @@ pub fn post_graphql_with(
         .wait_with_output()
         .map_err(|error| ImportError::Linear(format!("curl failed: {error}")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Raw curl diagnostics can contain credentials; report only process status.
         return Err(ImportError::Linear(format!(
-            "could not reach Linear: {}",
-            stderr.trim()
+            "could not reach Linear: curl failed ({})",
+            output.status
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);

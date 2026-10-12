@@ -190,6 +190,148 @@ fn graphql_error_refuses_with_exit_one() {
     assert!(!state.join("tsk.json").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn curl_failure_reports_status_without_credential_bearing_stderr() {
+    use std::os::unix::fs::PermissionsExt;
+    let (root, state, _) = setup("curl-error");
+    let curl = root.0.join("curl");
+    fs::write(
+        &curl,
+        "#!/bin/sh\ncat >&2\nprintf 'private curl diagnostic\\n' >&2\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tsk"))
+        .args(["import", "linear", "--desk", "--dry-run"])
+        .env("TSK_STATE_DIR", &state)
+        .env("TSK_UPDATE_CURL", &curl)
+        .env("LINEAR_API_KEY", "synthetic-import-regression-key")
+        .env_remove("TSK_LINEAR_FIXTURE")
+        .env("HOME", &root.0)
+        .env("CURL_HOME", &root.0)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "tsk import: linear-error: could not reach Linear: curl failed (exit status: 7)\n"
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!state.join("tsk.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn curl_ignores_default_trace_configuration() {
+    assert_curl_ignores_default_configuration("trace-ascii");
+}
+
+#[cfg(unix)]
+#[test]
+fn curl_ignores_default_verbose_configuration() {
+    assert_curl_ignores_default_configuration("verbose");
+}
+
+#[cfg(unix)]
+fn assert_curl_ignores_default_configuration(config: &str) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::os::unix::fs::PermissionsExt;
+    let (root, state, _) = setup("curl-config");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let size = stream.read(&mut buffer).unwrap();
+            assert_ne!(size, 0);
+            request.extend_from_slice(&buffer[..size]);
+            if let Some(end) = request.windows(4).position(|x| x == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..end]);
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_lowercase()
+                            .strip_prefix("content-length: ")
+                            .map(|n| n.parse().unwrap())
+                    })
+                    .unwrap();
+                if request.len() >= end + 4 + length {
+                    assert!(headers.contains("Authorization: synthetic-import-regression-key"));
+                    break;
+                }
+            }
+        }
+        let body = r#"{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let trace = root.0.join("trace");
+    let config_text = if config == "verbose" {
+        "verbose\n".to_string()
+    } else {
+        format!("trace-ascii = {}\n", trace.display())
+    };
+    fs::write(root.0.join(".curlrc"), config_text).unwrap();
+    let diagnostics = root.0.join("curl-stderr");
+    let curl = root.0.join("curl");
+    // Only redirect the HTTPS endpoint/protocol to a local HTTP fixture. Real curl
+    // still parses its own argv and default config; TLS is covered by live acceptance.
+    fs::write(
+        &curl,
+        format!(
+            r#"#!/bin/bash
+args=("$@")
+for ((i=0; i<${{#args[@]}}; i++)); do
+  case "${{args[i]}}" in
+    '=https') args[i]='=http';;
+    'https://api.linear.app/graphql') args[i]='http://{address}/graphql';;
+  esac
+done
+exec /usr/bin/curl "${{args[@]}}" --noproxy '*' 2>'{diagnostics}'
+"#,
+            diagnostics = diagnostics.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tsk"))
+        .args(["import", "linear", "--desk", "--dry-run", "--json"])
+        .env("TSK_STATE_DIR", &state)
+        .env("TSK_UPDATE_CURL", &curl)
+        .env("LINEAR_API_KEY", "synthetic-import-regression-key")
+        .env_remove("TSK_LINEAR_FIXTURE")
+        .env("HOME", &root.0)
+        .env("CURL_HOME", &root.0)
+        .env("XDG_CONFIG_HOME", &root.0)
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["fetched"], 0);
+    assert!(output.stderr.is_empty());
+    assert!(
+        !trace.exists(),
+        "default curl config must not create a trace"
+    );
+    assert!(
+        fs::read(diagnostics).unwrap().is_empty(),
+        "default curl config must not enable verbose diagnostics"
+    );
+    assert!(!state.join("tsk.json").exists());
+}
+
 #[test]
 fn bad_flags_are_usage_errors() {
     let (_root, state, fixture) = setup("usage");

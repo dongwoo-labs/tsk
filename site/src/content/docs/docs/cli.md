@@ -281,7 +281,7 @@ tsk import linear --state backlog,unstarted,started,completed --update
 tsk import linear [--team <key>] [--linear-project <name>] [--assignee me|<email>|any] [--state <types>] [--limit <n>] [-p <project> | --desk] [--update] [--dry-run] [--json] [--state-dir <dir>]
 ```
 
-One-way import from [Linear](https://linear.app): reads issues through Linear's GraphQL API and creates a task for each one that is not on the board yet. Nothing is ever written back to Linear. Set `LINEAR_API_KEY` to a Linear personal API key (Linear: Settings › Security & access). On macOS and Linux the request runs through the system curl (`TSK_UPDATE_CURL` overrides its path, see [storage](/docs/storage/#update-check)); the key reaches curl on stdin, never on its command line. Windows is not supported yet.
+One-way import from [Linear](https://linear.app): reads issues through Linear's GraphQL API and creates a task for each one that is not on the board yet. Nothing is ever written back to Linear. Set `LINEAR_API_KEY` to a Linear personal API key (Linear: Settings › Security & access). On macOS and Linux the request runs through the system curl (`TSK_UPDATE_CURL` overrides its path, see [storage](/docs/storage/#update-check)); the key reaches curl on stdin, never on its command line. Import ignores curl's default configuration file so trace or verbose settings cannot log the key. Transport failures report only the curl exit status, not its raw diagnostic output. Windows is not supported yet.
 
 | Option | Purpose |
 | --- | --- |
