@@ -37,23 +37,23 @@ impl Drop for TempDir {
 const FIXTURE: &str = r#"[
   {"data": {"issues": {
     "nodes": [
-      {"identifier": "DONGWOO-2654", "title": "tsk fork: import Linear issues",
-       "url": "https://linear.app/acme/issue/DONGWOO-2654/import",
+      {"identifier": "ENG-2654", "title": "tsk fork: import Linear issues",
+       "url": "https://linear.app/acme/issue/ENG-2654/import",
        "description": "Pull assigned issues onto the board.",
-       "state": {"name": "In Progress", "type": "started"}, "team": {"key": "DONGWOO"}},
-      {"identifier": "DONGWOO-2655", "title": "Review importer",
-       "url": "https://linear.app/acme/issue/DONGWOO-2655/review", "description": null,
-       "state": {"name": "In Review", "type": "started"}, "team": {"key": "DONGWOO"}}
+       "state": {"name": "In Progress", "type": "started"}, "team": {"key": "ENG"}},
+      {"identifier": "ENG-2655", "title": "Review importer",
+       "url": "https://linear.app/acme/issue/ENG-2655/review", "description": null,
+       "state": {"name": "In Review", "type": "started"}, "team": {"key": "ENG"}}
     ],
     "pageInfo": {"hasNextPage": true, "endCursor": "page-2"}}}},
   {"data": {"issues": {
     "nodes": [
-      {"identifier": "DONGWOO-2656", "title": "Dropped",
-       "url": "https://linear.app/acme/issue/DONGWOO-2656/dropped", "description": "",
-       "state": {"name": "Canceled", "type": "canceled"}, "team": {"key": "DONGWOO"}},
-      {"identifier": "DONGWOO-2657", "title": "Backlog item",
-       "url": "https://linear.app/acme/issue/DONGWOO-2657/backlog", "description": "Later.",
-       "state": {"name": "Backlog", "type": "backlog"}, "team": {"key": "DONGWOO"}}
+      {"identifier": "ENG-2656", "title": "Dropped",
+       "url": "https://linear.app/acme/issue/ENG-2656/dropped", "description": "",
+       "state": {"name": "Canceled", "type": "canceled"}, "team": {"key": "ENG"}},
+      {"identifier": "ENG-2657", "title": "Backlog item",
+       "url": "https://linear.app/acme/issue/ENG-2657/backlog", "description": "Later.",
+       "state": {"name": "Backlog", "type": "backlog"}, "team": {"key": "ENG"}}
     ],
     "pageInfo": {"hasNextPage": false, "endCursor": null}}}}
 ]"#;
@@ -102,9 +102,9 @@ fn import_creates_once_and_reports_json() {
     assert_eq!(report["dry_run"], false);
     assert_eq!(report["fetched"], 4);
     assert_eq!(report["created"].as_array().unwrap().len(), 3);
-    assert_eq!(report["skipped"][0]["identifier"], "DONGWOO-2656");
+    assert_eq!(report["skipped"][0]["identifier"], "ENG-2656");
     assert_eq!(report["skipped"][0]["state"], "canceled");
-    assert_eq!(report["created"][0]["identifier"], "DONGWOO-2654");
+    assert_eq!(report["created"][0]["identifier"], "ENG-2654");
     assert_eq!(report["created"][0]["number"], 1);
     assert_eq!(report["created"][0]["status"], "started");
     assert_eq!(report["created"][1]["status"], "review");
@@ -114,12 +114,12 @@ fn import_creates_once_and_reports_json() {
     let first = tasks
         .tasks()
         .iter()
-        .find(|task| task.title == "DONGWOO-2654 tsk fork: import Linear issues")
+        .find(|task| task.title == "ENG-2654 tsk fork: import Linear issues")
         .expect("imported task");
     assert_eq!(first.status, HumanStatus::Started);
     assert_eq!(
         first.notes.as_deref(),
-        Some("Linear: DONGWOO-2654 https://linear.app/acme/issue/DONGWOO-2654/import\n\nPull assigned issues onto the board.")
+        Some("Linear: ENG-2654 https://linear.app/acme/issue/ENG-2654/import\n\nPull assigned issues onto the board.")
     );
 
     let again = tsk(

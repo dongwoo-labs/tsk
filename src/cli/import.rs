@@ -844,7 +844,7 @@ mod tests {
             description: Some("Body text".into()),
             state_name: state_name.into(),
             state_type: state_type.into(),
-            team_key: Some("DONGWOO".into()),
+            team_key: Some("ENG".into()),
         }
     }
 
@@ -853,28 +853,28 @@ mod tests {
         "issues": {
           "nodes": [
             {
-              "identifier": "DONGWOO-2654",
+              "identifier": "ENG-2654",
               "title": "tsk fork: import Linear issues",
-              "url": "https://linear.app/acme/issue/DONGWOO-2654/tsk-fork-import",
+              "url": "https://linear.app/acme/issue/ENG-2654/tsk-fork-import",
               "description": "Pull my issues onto the board.\r\n\nSecond paragraph.",
               "state": { "name": "In Progress", "type": "started" },
-              "team": { "key": "DONGWOO" }
+              "team": { "key": "ENG" }
             },
             {
-              "identifier": "DONGWOO-2655",
+              "identifier": "ENG-2655",
               "title": "Review the importer",
-              "url": "https://linear.app/acme/issue/DONGWOO-2655/review",
+              "url": "https://linear.app/acme/issue/ENG-2655/review",
               "description": null,
               "state": { "name": "In Review", "type": "started" },
-              "team": { "key": "DONGWOO" }
+              "team": { "key": "ENG" }
             },
             {
-              "identifier": "DONGWOO-2656",
+              "identifier": "ENG-2656",
               "title": "Dropped idea",
-              "url": "https://linear.app/acme/issue/DONGWOO-2656/dropped",
+              "url": "https://linear.app/acme/issue/ENG-2656/dropped",
               "description": "",
               "state": { "name": "Canceled", "type": "canceled" },
-              "team": { "key": "DONGWOO" }
+              "team": { "key": "ENG" }
             }
           ],
           "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
@@ -888,10 +888,10 @@ mod tests {
         assert_eq!(page.next.as_deref(), Some("cursor-1"));
         assert_eq!(page.issues.len(), 3);
         let first = &page.issues[0];
-        assert_eq!(first.identifier, "DONGWOO-2654");
+        assert_eq!(first.identifier, "ENG-2654");
         assert_eq!(first.state_type, "started");
         assert_eq!(first.state_name, "In Progress");
-        assert_eq!(first.team_key.as_deref(), Some("DONGWOO"));
+        assert_eq!(first.team_key.as_deref(), Some("ENG"));
         assert_eq!(page.issues[1].description, None);
     }
 
@@ -949,19 +949,19 @@ mod tests {
 
     #[test]
     fn notes_lead_with_the_marker_and_truncate_long_descriptions() {
-        let mut long = issue("DONGWOO-1", "started", "In Progress");
+        let mut long = issue("ENG-1", "started", "In Progress");
         long.description = Some("x".repeat(NOTES_LIMIT + 10));
         let notes = task_notes(&long);
         let mut lines = notes.lines();
         assert_eq!(
             lines.next(),
-            Some("Linear: DONGWOO-1 https://linear.app/acme/issue/dongwoo-1")
+            Some("Linear: ENG-1 https://linear.app/acme/issue/eng-1")
         );
         assert_eq!(lines.next(), Some(""));
         assert!(notes.ends_with(TRUNCATION_MARK));
         assert_eq!(notes.matches('x').count(), NOTES_LIMIT);
 
-        let mut empty = issue("DONGWOO-2", "started", "In Progress");
+        let mut empty = issue("ENG-2", "started", "In Progress");
         empty.description = None;
         assert_eq!(task_notes(&empty), marker_line(&empty));
     }
@@ -973,7 +973,7 @@ mod tests {
             "import",
             "linear",
             "--team",
-            "DONGWOO",
+            "ENG",
             "--linear-project",
             "tsk",
             "--assignee",
@@ -989,7 +989,7 @@ mod tests {
             issue_filter(&input),
             json!({
                 "state": {"type": {"in": ["started", "completed"]}},
-                "team": {"key": {"eq": "DONGWOO"}},
+                "team": {"key": {"eq": "ENG"}},
                 "project": {"name": {"eqIgnoreCase": "tsk"}},
                 "assignee": {"email": {"eq": "a@b.c"}},
             })
@@ -1130,9 +1130,9 @@ mod tests {
 
     fn sample() -> Vec<LinearIssue> {
         vec![
-            issue("DONGWOO-1", "unstarted", "Todo"),
-            issue("DONGWOO-2", "started", "In Review"),
-            issue("DONGWOO-3", "canceled", "Canceled"),
+            issue("ENG-1", "unstarted", "Todo"),
+            issue("ENG-2", "started", "In Review"),
+            issue("ENG-3", "canceled", "Canceled"),
         ]
     }
 
@@ -1144,17 +1144,17 @@ mod tests {
         assert_eq!(
             report.skipped,
             vec![SkippedRow {
-                identifier: "DONGWOO-3".into(),
+                identifier: "ENG-3".into(),
                 state: "canceled".into()
             }]
         );
         let state = TaskStore::new(&dir).load().unwrap();
-        let review = find_existing(&state, "DONGWOO-2").unwrap();
+        let review = find_existing(&state, "ENG-2").unwrap();
         assert_eq!(review.status, HumanStatus::Review);
-        assert_eq!(review.title, "DONGWOO-2 title of DONGWOO-2");
-        assert!(find_existing(&state, "DONGWOO-3").is_none());
+        assert_eq!(review.title, "ENG-2 title of ENG-2");
+        assert!(find_existing(&state, "ENG-3").is_none());
         // A prefix identifier never matches a longer one.
-        assert!(find_existing(&state, "DONGWOO-").is_none());
+        assert!(find_existing(&state, "ENG-").is_none());
 
         let again = run_with(desk_input(&dir), &mut fixture_transport(sample())).unwrap();
         assert!(again.created.is_empty());
@@ -1176,7 +1176,7 @@ mod tests {
         assert!(default.updated.is_empty());
         let state = TaskStore::new(&dir).load().unwrap();
         assert_eq!(
-            find_existing(&state, "DONGWOO-1").unwrap().status,
+            find_existing(&state, "ENG-1").unwrap().status,
             HumanStatus::Open
         );
 
@@ -1189,14 +1189,10 @@ mod tests {
         assert_eq!(report.updated[0].status, "done");
         assert_eq!(report.unchanged.len(), 1);
         let state = TaskStore::new(&dir).load().unwrap();
-        let task = find_existing(&state, "DONGWOO-1").unwrap();
+        let task = find_existing(&state, "ENG-1").unwrap();
         assert_eq!(task.status, HumanStatus::Done);
-        assert_eq!(task.title, "DONGWOO-1 renamed upstream");
-        assert!(task
-            .notes
-            .as_deref()
-            .unwrap()
-            .starts_with("Linear: DONGWOO-1 "));
+        assert_eq!(task.title, "ENG-1 renamed upstream");
+        assert!(task.notes.as_deref().unwrap().starts_with("Linear: ENG-1 "));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1206,12 +1202,12 @@ mod tests {
         run_with(desk_input(&dir), &mut fixture_transport(sample())).unwrap();
         let store = TaskStore::new(&dir);
         let mut state = store.load().unwrap();
-        let id = find_existing(&state, "DONGWOO-1").unwrap().id;
+        let id = find_existing(&state, "ENG-1").unwrap().id;
         state.soft_delete(id).unwrap();
         store.save(&state).unwrap();
         let report = run_with(desk_input(&dir), &mut fixture_transport(sample())).unwrap();
         assert_eq!(report.created.len(), 1);
-        assert_eq!(report.created[0].identifier, "DONGWOO-1");
+        assert_eq!(report.created[0].identifier, "ENG-1");
         let _ = std::fs::remove_dir_all(dir);
     }
 
