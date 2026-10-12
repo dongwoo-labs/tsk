@@ -536,7 +536,20 @@ fn build_task_page_overlay<'a>(
         .then_some(form.steps.relation_cursor)
         .flatten();
     let relation_rows = bound_task
-        .map(|task| relation_rows(&model.tasks, task, notes_width, relation_cursor))
+        .map(|task| {
+            let mut rows = relation_rows(&model.tasks, task, notes_width, relation_cursor);
+            let first = 1 + crate::domain::direct_children_in(&model.tasks, task.id).len();
+            question_and_link_rows(
+                &mut rows,
+                &model.tasks,
+                task,
+                &model.page_questions(task.id),
+                notes_width,
+                relation_cursor,
+                first,
+            );
+            rows
+        })
         .unwrap_or_default();
     let parent_rows = relation_rows.iter().filter(|row| !row.after_steps).count();
     let child_rows = relation_rows.len() - parent_rows;
@@ -806,6 +819,122 @@ fn relation_rows(
     rows
 }
 
+/// The task page's question, finding, and reference sections, after the children. Action
+/// indices continue from `first` and match [`BoardModel::relation_targets`].
+fn question_and_link_rows(
+    rows: &mut Vec<RelationRow>,
+    tasks: &[Task],
+    task: &Task,
+    records: &[&crate::domain::QuestionRecord],
+    width: usize,
+    cursor: Option<usize>,
+    first: usize,
+) {
+    use crate::domain::QuestionKind;
+    let mut next = first;
+    let questions: Vec<_> = records
+        .iter()
+        .filter(|record| record.reference.kind != QuestionKind::Finding)
+        .collect();
+    let findings: Vec<_> = records
+        .iter()
+        .filter(|record| record.reference.kind == QuestionKind::Finding)
+        .collect();
+    let section = |rows: &mut Vec<RelationRow>, label: String| {
+        push_wrapped_relation(
+            rows,
+            RelationEntry {
+                lead: "",
+                text: &label,
+                dim: true,
+                target: None,
+                after_steps: true,
+            },
+            width,
+            cursor,
+        );
+    };
+    if !questions.is_empty() {
+        let open = questions.iter().filter(|record| record.is_open()).count();
+        section(rows, format!("questions {open} open"));
+        for record in questions {
+            let lead = if record.reference.kind == QuestionKind::Approval {
+                "! "
+            } else {
+                "? "
+            };
+            let text = format!(
+                "Q{} {} · {}",
+                record.reference.number,
+                terminal_text(&record.reference.summary),
+                crate::ui::questions::state_label(record, tasks)
+            );
+            push_wrapped_relation(
+                rows,
+                RelationEntry {
+                    lead,
+                    text: &text,
+                    dim: !record.is_open(),
+                    target: Some(next),
+                    after_steps: true,
+                },
+                width,
+                cursor,
+            );
+            next += 1;
+        }
+    }
+    if !findings.is_empty() {
+        section(rows, "findings".to_string());
+        for record in findings {
+            let kind = match record.draft.finding.as_ref().map(|finding| finding.kind) {
+                Some(crate::domain::FindingKind::Opportunity) => "opportunity",
+                _ => "issue",
+            };
+            let text = format!(
+                "Q{} {kind} · {} · {}",
+                record.reference.number,
+                terminal_text(&record.reference.summary),
+                crate::ui::questions::state_label(record, tasks)
+            );
+            push_wrapped_relation(
+                rows,
+                RelationEntry {
+                    lead: "◇ ",
+                    text: &text,
+                    dim: !record.is_open(),
+                    target: Some(next),
+                    after_steps: true,
+                },
+                width,
+                cursor,
+            );
+            next += 1;
+        }
+    }
+    let links = crate::ui::links::task_links(task.notes.as_deref());
+    if !links.is_empty() {
+        section(rows, "links".to_string());
+        for link in links {
+            let lead = format!("{:<7}", link.label());
+            let text = terminal_text(&link.text());
+            push_wrapped_relation(
+                rows,
+                RelationEntry {
+                    lead: &lead,
+                    text: &text,
+                    dim: matches!(link, crate::ui::links::TaskLink::UnverifiableThread { .. }),
+                    target: Some(next),
+                    after_steps: true,
+                },
+                width,
+                cursor,
+            );
+            next += 1;
+        }
+    }
+}
+
 /// Idle status-row context for the active lens. Stored paths reach the
 /// renderer only through its `present_line` path before they are painted.
 fn status_idle(model: &BoardModel, surface: BoardSurface, has_message: bool) -> String {
@@ -849,6 +978,7 @@ fn nav_paint(model: &BoardModel) -> NavPaint {
     };
     NavPaint {
         active: model.nav_tab(),
+        questions_tab: crate::ui::questions::tab_texts(&model.questions.feed).1,
         scope_label,
         sort_label: model.sort().label(),
     }
@@ -1255,6 +1385,24 @@ fn draw_board_impl(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
 
 fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap {
     let area = frame.area();
+    // Tab 2 owns the frame unless help or the palette is open over it.
+    if model.questions.active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        let message = model.message().map(str::to_string);
+        return crate::ui::questions::draw(
+            frame,
+            &crate::ui::questions::QuestionsFrame {
+                state: &model.questions,
+                tasks: &model.tasks,
+                message: message.as_deref(),
+            },
+            area,
+        );
+    }
     // A capture draft (quick-add expanded with Tab) owns the whole frame at every width; the
     // wide task column paints task forms only. `responsive_geometry` folds that rule in.
     let responsive = model.responsive_geometry(area);
@@ -1310,6 +1458,8 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         inbox_collapsed: model.inbox_collapsed,
         inbox_header_selected: model.inbox_header_selected(),
         rows_dim: model.focus_is_archived(),
+        waiting: crate::ui::questions::waiting_line(&model.questions.feed),
+        task_marks: crate::ui::questions::task_marks(&model.questions.feed),
     };
     let (hits, painted_list_scroll) = render::draw_queue_frame(frame, &frame_model, &geo, area);
     if let Some((scroll, max_scroll)) = painted_list_scroll {
@@ -1478,6 +1628,8 @@ fn draw_wide_board(
         inbox_collapsed: model.inbox_collapsed,
         inbox_header_selected: model.inbox_header_selected(),
         rows_dim: model.focus_is_archived(),
+        waiting: crate::ui::questions::waiting_line(&model.questions.feed),
+        task_marks: crate::ui::questions::task_marks(&model.questions.feed),
     };
     let task_frame = QueueFrameModel {
         overlay: task_overlay.clone(),

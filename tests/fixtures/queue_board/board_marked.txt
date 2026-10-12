@@ -1,19 +1,19 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ board  ·  all ▾  ·  sort number ▾                                              │
+│ 1 board  ·  2 questions  ·  all ▾  ·  sort number ▾                            │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▪ ● T1 Smoke-test worktree dispatch                                             │
-│▸▪● T2 Edit target binding pin                                                  │
-│  ● T5 Wire dispatch cleanup receipts                                           │
-│  ● T6 Docs refresh pass after F9 ships                                         │
+│ ▪ T1 Smoke-test worktree dispatch                                              │
+│▸▪ T2 Edit target binding pin                                                   │
+│   T5 Wire dispatch cleanup receipts                                            │
+│   T6 Docs refresh pass after F9 ships                                          │
 │                                                                                │
 │ TODO ────────────────────────────────────────────────────────────────────────3 │
 │                                                                                │
-│  ○ T3 Prototype the queue-style board UI                                       │
-│  ○ T4 Cut rust-toolchain pin into CI docs                                      │
-│  ○ T7 Global backlog note                                                      │
+│   T3 Prototype the queue-style board UI                                        │
+│   T4 Cut rust-toolchain pin into CI docs                                       │
+│   T7 Global backlog note                                                       │
 │                                                                                │
 │                                                                                │
 │                                                                                │

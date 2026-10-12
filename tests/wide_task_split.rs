@@ -244,14 +244,14 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
     let list = |y: u16| column_text(&rows, geometry.board, y);
     assert!(list(0).trim().is_empty(), "list row 0 blank: {:?}", list(0));
     assert!(
-        list(1).contains("board  ·  all ▾  ·  sort number ▾"),
+        list(1).contains("1 board  ·  2 questions  ·  all ▾  ·  number ▾"),
         "selector row: {}",
         list(1)
     );
     assert!(list(3).starts_with(" DOING ─"), "{}", list(3));
-    assert!(list(5).starts_with("▸ ● T12 Frame the wide task view"));
+    assert!(list(5).starts_with("▸  T12 Frame the wide task view"));
     assert!(list(7).starts_with(" TODO ─"), "{}", list(7));
-    assert!(list(9).starts_with("  ○ T15 Renew domain"));
+    assert!(list(9).starts_with("   T15 Renew domain"));
     assert_eq!(rows[5].chars().nth(geometry.rule.x as usize), Some('│'));
     // The detail shows the selected task beside the list.
     let detail = geometry.task_content();
@@ -272,7 +272,7 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
         column_text(&rows, geometry.board, 5),
         "the list keeps painting while the detail owns focus"
     );
-    assert!(column_text(&rows, geometry.board, 5).starts_with("▸ ● T12 Frame"));
+    assert!(column_text(&rows, geometry.board, 5).starts_with("▸  T12 Frame"));
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn rows_paint_the_title_only() {
     let geometry = resolve_responsive(130, 24, WideStage::Board);
     let (rows, _) = render(&model, 130, 24);
     let row = column_text(&rows, geometry.board, 5);
-    assert_eq!(row.trim_end(), "▸ ● T12 Frame the wide task view", "{row}");
+    assert_eq!(row.trim_end(), "▸  T12 Frame the wide task view", "{row}");
     assert!(!rows.iter().any(|row| row.contains("└─ tsk")));
 }
 
@@ -499,11 +499,11 @@ fn narrow_board_paints_one_surface_and_no_crumb() {
     let (_, model) = fixture();
     let (rows, _) = render(&model, 109, 24);
     assert!(
-        rows[1].contains("board  ·  all ▾  ·  sort number ▾"),
+        rows[1].contains("1 board  ·  2 questions  ·  all ▾  ·  sort number ▾"),
         "{:?}",
         rows[1]
     );
-    assert!(rows[5].starts_with("▸ ● T12 Frame the wide task view"));
+    assert!(rows[5].starts_with("▸  T12 Frame the wide task view"));
     assert!(
         !rows[22].contains("→ detail"),
         "no crumb below the wide threshold"
@@ -2012,8 +2012,7 @@ fn list_keeps_the_done_drawer_and_selects_the_open_done_task() {
         "the list keeps the done drawer:\n{text}"
     );
     assert!(
-        text.lines()
-            .any(|row| row.starts_with("▸ ✓ T4 Shipped fix")),
+        text.lines().any(|row| row.starts_with("▸  T4 Shipped fix")),
         "the open done task stays selected:\n{text}"
     );
     assert!(text.contains("archived · 1"), "archived heading:\n{text}");

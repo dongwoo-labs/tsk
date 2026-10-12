@@ -65,6 +65,15 @@ pub fn focus_commands(row: &ThreadRow) -> Result<Vec<Vec<String>>, String> {
     Ok(commands)
 }
 
+/// Submit an identifier-only hint to the live agent `name`. Exit 0 means Herdr accepted the
+/// prompt; it is not evidence that the agent ran a turn or started anything.
+pub fn prompt(name: &str, hint: &str) -> Result<(), String> {
+    if !flag_safe(name) {
+        return Err(format!("refusing unsafe agent target {name:?}"));
+    }
+    run(&["agent", "prompt", name, hint]).map(|_| ())
+}
+
 /// Focus `row`'s pane. Stops at the first failing step and names it.
 pub fn focus(row: &ThreadRow) -> Result<(), String> {
     for command in focus_commands(row)? {

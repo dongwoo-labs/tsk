@@ -162,13 +162,23 @@ fn bare_page_keys_never_mutate_steps() {
     let mut model = BoardModel::from_domain(&domain, None);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
     let before = domain.get(id).expect("task").clone();
-    for key in [
-        KeyCode::Char('a'),
-        KeyCode::Char('s'),
-        KeyCode::Char(' '),
-        KeyCode::Char('x'),
-        KeyCode::Char('e'),
-    ] {
+    // Bare `e` and `a` open the title or step editor (no mutation until a save); the
+    // other bare letters stay dead.
+    assert_eq!(
+        map_key(
+            BoardInputMode::TaskPage,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)
+        ),
+        Some(BoardIntent::BeginEditTitle)
+    );
+    assert_eq!(
+        map_key(
+            BoardInputMode::TaskPage,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)
+        ),
+        Some(BoardIntent::BeginAddStep)
+    );
+    for key in [KeyCode::Char('s'), KeyCode::Char(' '), KeyCode::Char('x')] {
         assert_eq!(
             map_key(
                 BoardInputMode::TaskPage,

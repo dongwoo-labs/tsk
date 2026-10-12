@@ -4,7 +4,7 @@
 //! `Modifier::{BOLD, DIM, UNDERLINED, REVERSED}`, plus [`draw_queue_frame`] for the
 //! the deck-only board skeleton.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -113,6 +113,22 @@ pub struct TaskRowPaint<'a> {
     /// Dim right-aligned tag on the first line, such as the `⊂1/3` child count. The title
     /// wraps inside the room left beside it.
     pub badge: Option<&'a str>,
+    /// Bold right-aligned marks before the badge: `!` and `?n` for questions waiting on you.
+    pub alert: Option<&'a str>,
+}
+
+impl TaskRowPaint<'_> {
+    /// Cells the right-aligned marks take, with their one-cell gaps.
+    fn tail_width(&self) -> usize {
+        let alert = self.alert.map(display_width).unwrap_or(0);
+        let badge = self.badge.map(display_width).unwrap_or(0);
+        match (alert, badge) {
+            (0, 0) => 0,
+            (0, b) => b + 1,
+            (a, 0) => a + 1,
+            (a, b) => a + b + 2,
+        }
+    }
 }
 
 /// One painted task-row line plus the title-content cells a text selection may copy.
@@ -134,11 +150,13 @@ pub fn paint_task_row_lines(
     let row_w = geo.row_width.saturating_sub(2) as usize;
     let title_budget = row_w;
     let glyph_cells = display_width(&super::terminal_text(row.glyph));
-    let prefix_cells = leading_indent + 2 + glyph_cells + 1;
+    // A row without a glyph (the board list) has a three-cell gutter: the cursor, the
+    // mark, one space. Every row keeps the same title column in and out of mark mode.
+    let prefix_cells = leading_indent + 2 + if glyph_cells > 0 { glyph_cells + 1 } else { 1 };
     let identifier_width = row.identifier.map(display_width).unwrap_or(0);
     let identifier_gap = usize::from(identifier_width > 0);
     let title_x = prefix_cells.saturating_add(identifier_width + identifier_gap);
-    let badge_reserve = row.badge.map(|badge| display_width(badge) + 1).unwrap_or(0);
+    let badge_reserve = row.tail_width();
     let room = title_budget
         .saturating_sub(title_x)
         .saturating_sub(badge_reserve)
@@ -220,16 +238,28 @@ fn paint_task_row_with_indent(
         (false, true) => "▪ ",
         (false, false) => "  ",
     };
-    let prefix = format!("{}{marker}{glyph} ", " ".repeat(leading_indent));
+    let prefix = if glyph.is_empty() {
+        let cursor = if row.selected { "▸" } else { " " };
+        let mark = if row.marked { "▪" } else { " " };
+        format!("{}{cursor}{mark} ", " ".repeat(leading_indent))
+    } else {
+        format!("{}{marker}{glyph} ", " ".repeat(leading_indent))
+    };
     let identifier = row.identifier.unwrap_or_default();
     let identifier_gap = if identifier.is_empty() { "" } else { " " };
     let badge = row.badge.unwrap_or_default();
-    let badge_w = display_width(badge);
+    let alert = row.alert.unwrap_or_default();
+    let tail = match (alert.is_empty(), badge.is_empty()) {
+        (false, false) => format!("{alert} "),
+        (false, true) => alert.to_string(),
+        _ => String::new(),
+    };
+    let badge_w = display_width(badge) + display_width(&tail);
     let title_room = title_budget
         .saturating_sub(display_width(&prefix))
         .saturating_sub(display_width(identifier))
         .saturating_sub(display_width(identifier_gap))
-        .saturating_sub(if badge.is_empty() { 0 } else { badge_w + 1 });
+        .saturating_sub(row.tail_width());
     let title = present_line(row.title, title_room);
     let left_w = display_width(&prefix)
         .saturating_add(display_width(identifier))
@@ -261,6 +291,12 @@ fn paint_task_row_with_indent(
     spans.push(Span::styled(title, title_style));
     if !leader.is_empty() {
         spans.push(Span::styled(leader, leader_style));
+    }
+    if !tail.is_empty() {
+        spans.push(Span::styled(
+            tail,
+            if row.dim { style_dim() } else { style_bold() },
+        ));
     }
     if !badge.is_empty() {
         spans.push(Span::styled(badge.to_string(), style_dim()));
@@ -631,6 +667,10 @@ pub struct QueueFrameModel<'a> {
     pub inbox_header_selected: bool,
     /// Every task row paints dim: the read-only archived focus (AC-41).
     pub rows_dim: bool,
+    /// The waiting-on-you line above the sections, when questions wait on the user.
+    pub waiting: Option<String>,
+    /// Per-task question marks (`!`, `?n`) painted before the child badge.
+    pub task_marks: BTreeMap<Uuid, String>,
 }
 
 /// Persistent navigation row paint: the tabs, then the scope and sort controls.
@@ -638,6 +678,8 @@ pub struct QueueFrameModel<'a> {
 pub struct NavPaint {
     /// Which tab is active (underlined).
     pub active: NavTab,
+    /// The questions tab's text, with its waiting count when one is known.
+    pub questions_tab: String,
     /// The scope control's label: `all`, `desk`, a project name, or `name · archived` in
     /// read-only focus.
     pub scope_label: String,
@@ -666,6 +708,10 @@ pub struct PickerTabsPaint {
 pub enum QueueHitTarget {
     /// One painted persistent navigation tab.
     NavTab(NavTab),
+    /// One painted questions-tab row.
+    Question(Uuid),
+    /// The board's waiting-on-you line: opens the questions tab.
+    Waiting,
     /// The scope control (`p`).
     ScopeChip,
     /// The sort control (`S`).
@@ -783,7 +829,7 @@ pub struct QueueHitMap {
 }
 
 impl QueueHitMap {
-    fn push(&mut self, target: QueueHitTarget, area: Rect) {
+    pub(crate) fn push(&mut self, target: QueueHitTarget, area: Rect) {
         if area.width > 0 && area.height > 0 {
             self.regions.push(QueueHit { target, area });
         }
@@ -3703,6 +3749,8 @@ enum ListRow {
         line: Line<'static>,
     },
     Hint(Line<'static>),
+    /// The waiting-on-you line: a click opens the questions tab.
+    Waiting(Line<'static>),
     Task {
         id: Uuid,
         line: Line<'static>,
@@ -3783,6 +3831,12 @@ fn paint_list_row(
             }
         }
         ListRow::Hint(line) => put_line(frame, surface, y, content_width, line.clone()),
+        ListRow::Waiting(line) => {
+            put_line(frame, surface, y, content_width, line.clone());
+            if base_list_interactive {
+                hits.push(QueueHitTarget::Waiting, Rect::new(0, y, content_width, 1));
+            }
+        }
         ListRow::Task {
             id,
             line,
@@ -3813,6 +3867,17 @@ fn build_list_rows(
     // Every section heading has one blank list row above it. This row remains ordinary list
     // content, so selection scrolling keeps the section and its first task reachable.
     out.push(ListRow::Blank);
+    if let Some(waiting) = model.waiting.as_deref() {
+        // The line wraps like every other text; each row keeps the tab-2 target.
+        let room = usize::from(geo.row_width.saturating_sub(1)).max(1);
+        for row in crate::ui::edit::wrap_text(waiting, room) {
+            out.push(ListRow::Waiting(paint_bounded_line(
+                &format!(" {}", row.text),
+                geo.row_width,
+                style_bold(),
+            )));
+        }
+    }
     // `⊂done/total` on a task with direct children, counted across every scope and status
     // like `tsk list`, never only the rows this lens shows.
     let child_counts = crate::domain::child_counts_by_parent(model.tasks);
@@ -3832,9 +3897,10 @@ fn build_list_rows(
             let badge = child_counts
                 .get(&task.id)
                 .map(|(done, total)| format!("\u{2282}{done}/{total}"));
+            // The row is number, title, and marks only: the section already names the status.
             let lines = paint_task_row_lines(
                 &TaskRowPaint {
-                    glyph: status_glyph(task.status),
+                    glyph: "",
                     identifier: identifier.as_deref(),
                     title: &task.title,
                     selected,
@@ -3843,6 +3909,7 @@ fn build_list_rows(
                     // AC-41: every row of a read-only archived focus paints dim.
                     dim: dim || model.rows_dim,
                     badge: badge.as_deref(),
+                    alert: model.task_marks.get(&task.id).map(String::as_str),
                 },
                 geo,
                 0,
@@ -4256,21 +4323,36 @@ fn paint_status_line(
 /// Measured selector controls: the board tab, the scope control, and the sort control. Only
 /// the scope label is shortened at narrow widths. The same result drives paint, wrapping,
 /// and hit regions.
-fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTarget, String); 3] {
-    let board = " board ".to_string();
-    let sort = format!(" sort {} \u{25be} ", model.nav.sort_label);
-    let scope_budget = width
-        .saturating_sub(display_width(&board))
-        .saturating_sub(display_width(&sort))
-        // Two ` · ` separators, then the scope control's own ` ` + ` ▾ ` padding.
-        .saturating_sub(6)
-        .saturating_sub(4);
+fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTarget, String); 4] {
+    let board = " 1 board ".to_string();
+    let budget = |questions: &str, sort: &str| {
+        width
+            .saturating_sub(display_width(&board))
+            .saturating_sub(display_width(questions))
+            .saturating_sub(display_width(sort))
+            // Three ` · ` separators, then the scope control's own ` ` + ` ▾ ` padding.
+            .saturating_sub(9)
+            .saturating_sub(4)
+    };
+    let mut questions = model.nav.questions_tab.clone();
+    let mut sort = format!(" sort {} \u{25be} ", model.nav.sort_label);
+    // A narrow column keeps the scope readable: the sort control, then the questions tab,
+    // drop their words first.
+    let wanted = display_width(&model.nav.scope_label).min(12);
+    if budget(&questions, &sort) < wanted {
+        sort = format!(" {} \u{25be} ", model.nav.sort_label);
+    }
+    if budget(&questions, &sort) < wanted {
+        questions = questions.replacen(" questions", "", 1);
+    }
+    let scope_budget = budget(&questions, &sort);
     let scope = format!(
         " {} \u{25be} ",
         present_line(&model.nav.scope_label, scope_budget)
     );
     [
         (QueueHitTarget::NavTab(NavTab::Board), board),
+        (QueueHitTarget::NavTab(NavTab::Questions), questions),
         (QueueHitTarget::ScopeChip, scope),
         (QueueHitTarget::SortChip, sort),
     ]
@@ -4548,6 +4630,7 @@ mod tests {
             selection_id: None,
             marked_ids: BTreeSet::new(),
             nav: NavPaint {
+                questions_tab: " 2 questions ".to_string(),
                 active: NavTab::Board,
                 scope_label: scope.to_string(),
                 sort_label: "number",
@@ -4572,6 +4655,8 @@ mod tests {
             inbox_collapsed: false,
             inbox_header_selected: false,
             rows_dim: false,
+            waiting: None,
+            task_marks: Default::default(),
         }
     }
 
@@ -4580,8 +4665,8 @@ mod tests {
         let model = selector_model(&"x".repeat(32));
         let (line, hits) = paint_selector_row(&model, &tier::resolve(40, 24));
         let text = plain(&line);
-        assert!(text.contains("board"), "{text}");
-        assert!(text.contains("sort number"), "{text}");
+        assert!(text.contains("1 board"), "{text}");
+        assert!(text.contains("number"), "{text}");
         assert!(
             text.matches('▾').count() == 2,
             "both controls keep a chevron: {text}"
@@ -4592,6 +4677,7 @@ mod tests {
             targets,
             vec![
                 QueueHitTarget::NavTab(NavTab::Board),
+                QueueHitTarget::NavTab(NavTab::Questions),
                 QueueHitTarget::ScopeChip,
                 QueueHitTarget::SortChip
             ]
@@ -4618,7 +4704,7 @@ mod tests {
             .filter(|span| span.style.add_modifier.contains(Modifier::UNDERLINED))
             .map(|span| span.content.as_ref())
             .collect();
-        assert_eq!(underlined, "board");
+        assert_eq!(underlined, "1 board");
     }
 
     #[test]
@@ -4680,6 +4766,7 @@ mod tests {
                 title_bold: false,
                 dim: false,
                 badge: None,
+                alert: None,
             };
             let lines = paint_task_row_lines(&row, &geo, 0);
             assert_eq!(lines.len(), 2);
@@ -4713,6 +4800,7 @@ mod tests {
                         title_bold: selected,
                         dim: false,
                         badge: None,
+                        alert: None,
                     };
                     for line in paint_task_row_lines(&row, &geo, 0) {
                         assert!(
@@ -4742,6 +4830,7 @@ mod tests {
                 title_bold: false,
                 dim: false,
                 badge: None,
+                alert: None,
             },
             &geo,
         );
@@ -4763,6 +4852,7 @@ mod tests {
                 title_bold: false,
                 dim: false,
                 badge: None,
+                alert: None,
             },
             &geo,
         );
@@ -4813,6 +4903,7 @@ mod tests {
                 title_bold: false,
                 dim: false,
                 badge: None,
+                alert: None,
             },
             TaskRowPaint {
                 glyph: "▲",
@@ -4823,6 +4914,7 @@ mod tests {
                 title_bold: true,
                 dim: false,
                 badge: None,
+                alert: None,
             },
             TaskRowPaint {
                 glyph: "◓",
@@ -4833,6 +4925,7 @@ mod tests {
                 title_bold: false,
                 dim: false,
                 badge: None,
+                alert: None,
             },
         ];
 

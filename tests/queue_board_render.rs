@@ -352,6 +352,7 @@ fn fixture_model_on_scope<'a>(
         selection_id: Some(Uuid::from_u128(1)),
         marked_ids: std::collections::BTreeSet::new(),
         nav: NavPaint {
+            questions_tab: " 2 questions ".to_string(),
             active: NavTab::Board,
             scope_label: if project { "tsk" } else { "desk" }.to_string(),
             sort_label: "number",
@@ -380,6 +381,8 @@ fn fixture_model_on_scope<'a>(
         inbox_collapsed: false,
         inbox_header_selected: false,
         rows_dim: false,
+        waiting: None,
+        task_marks: Default::default(),
     }
 }
 
@@ -450,8 +453,8 @@ fn inactive_selector_controls_are_dimmed() {
             let row = (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
             (y, row)
         })
-        .find(|(_, row)| row.contains("board") && row.contains("sort") && !row.contains("1 board"))
-        .expect("selector row without visible shortcut digits");
+        .find(|(_, row)| row.contains("1 board") && row.contains("sort"))
+        .expect("selector row with its tab digits");
     let label = "sort";
     let x = row[..row.find(label).expect("sort control")]
         .chars()
@@ -552,11 +555,11 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         "selector must not paint a view switcher: {selector:?}"
     );
     assert!(
-        selector.contains("board")
+        selector.contains("1 board")
+            && selector.contains("2 questions")
             && selector.contains("desk ▾")
-            && selector.contains("sort number ▾")
-            && !selector.contains("1 board"),
-        "selector must show the board tab, scope, and sort without shortcut digits: {selector:?}"
+            && selector.contains("sort number ▾"),
+        "selector must show both numbered tabs, scope, and sort: {selector:?}"
     );
 
     let list: String = rows
@@ -575,8 +578,8 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         "desk tab must include the desk ON DECK header:\n{list}"
     );
     assert!(
-        list.contains('●') && list.contains('○'),
-        "status glyphs must appear:\n{list}"
+        !list.contains('●') && !list.contains('○'),
+        "list rows carry no status glyphs:\n{list}"
     );
     assert!(
         list.contains("Smoke-test worktree dispatch"),
@@ -1066,10 +1069,6 @@ fn compact_77x24_and_48x19_and_40x10_paint_glyph_title_only_rows_and_leq_5_verb_
             .map(|r| trimmed(r))
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(
-            body.contains('○') || body.contains('●') || body.contains('■'),
-            "{w}x{h} must paint glyphs:\n{body}"
-        );
         assert!(
             body.contains("Prototype the queue-style board UI")
                 || body.contains("Smoke-test")
@@ -2904,26 +2903,26 @@ fn board_list_wraps_a_long_title_onto_a_continuation_row() {
     let model = BoardModel::from_domain(&domain, None);
 
     let rows = board_rows(&model, 80, 24);
-    // The head row keeps the classic shape (gutter + glyph + title head).
+    // The head row is the gutter then the title: the section already names the status.
     assert!(
-        rows.iter().any(|row| row.contains("○ alpha")),
-        "head row must keep the glyph + title shape:\n{}",
+        rows.iter().any(|row| row.contains("▸  alpha")),
+        "head row must keep the gutter + title shape:\n{}",
         rows.join("\n")
     );
-    // A continuation line indents exactly four cells into the title column.
+    // A continuation line indents exactly three cells into the title column (the gutter).
     let continuation = rows
         .iter()
         .find(|row| row.contains("hotel"))
         .unwrap_or_else(|| panic!("no wrapped continuation row:\n{}", rows.join("\n")));
     assert!(
-        continuation.starts_with("    ") && !continuation.starts_with("     "),
-        "continuation rows indent four cells under the title column: {continuation:?}"
+        continuation.starts_with("   ") && !continuation.starts_with("    "),
+        "continuation rows indent three cells under the title column: {continuation:?}"
     );
     // Neither of the task's own rows may carry an omission marker (the verb bar's
     // own tier budget is a different surface).
     let head = rows
         .iter()
-        .find(|row| row.contains("○ alpha"))
+        .find(|row| row.contains("▸  alpha"))
         .expect("head row");
     assert!(
         !head.contains('…') && !continuation.contains('…'),
@@ -3493,7 +3492,7 @@ fn archived_group_paints_below_done_with_its_count_and_no_header_when_empty() {
 }
 
 #[test]
-fn expanded_archived_rows_are_dim_keep_glyph_and_identifier_and_are_selectable_and_hit_testable() {
+fn expanded_archived_rows_are_dim_keep_identifier_and_are_selectable_and_hit_testable() {
     use tsk_tui::ui::board::board_hit_map;
     use tsk_tui::ui::render::QueueHitTarget;
 
@@ -3560,7 +3559,10 @@ fn expanded_archived_rows_are_dim_keep_glyph_and_identifier_and_are_selectable_a
         row_text.contains("T2"),
         "identifier prefix paints: {row_text}"
     );
-    assert!(row_text.contains('○'), "status glyph is kept: {row_text}");
+    assert!(
+        !row_text.contains('○'),
+        "list rows carry no status glyph: {row_text}"
+    );
     for x in 0..80 {
         let symbol = buffer[(x, row_y)].symbol();
         if symbol == " " {
@@ -4252,21 +4254,6 @@ fn real_quick_add_paints_its_destination() {
         text.contains("add to beta"),
         "quick-add destination missing:\n{text}"
     );
-}
-
-/// The list column of a painted frame: everything left of the wide split's rule, or the
-/// whole row below the wide threshold.
-fn list_column(rows: &[String]) -> Vec<String> {
-    let rule = rows
-        .iter()
-        .find_map(|row| row.chars().position(|c| c == '│'))
-        .filter(|_| rows.first().is_some_and(|row| row.chars().count() >= 110));
-    rows.iter()
-        .map(|row| match rule {
-            Some(col) => row.chars().take(col).collect(),
-            None => row.clone(),
-        })
-        .collect()
 }
 
 #[test]

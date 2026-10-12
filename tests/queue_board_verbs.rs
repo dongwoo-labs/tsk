@@ -1644,7 +1644,7 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
         .expect("clear scroll query");
     }
     let mut scrolled_help = rendered_board(&scroll_model, 40, 10);
-    for _ in 0..200 {
+    for _ in 0..400 {
         apply_intent(
             &mut domain,
             &mut scroll_model,

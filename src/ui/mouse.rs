@@ -20,6 +20,7 @@ use super::capture::{
     CAPTURE_SCOPE_CONTROLS,
 };
 use super::input::{BoardIntent, CaptureIntent, PrimaryCaptureAction, PRIMARY_CAPTURE_ACTIONS};
+use super::queue::NavTab;
 use super::render::{form_verb_items, QueueHitMap, QueueHitTarget, QUICK_ADD_VERBS};
 use super::tier::{FocusedSurface, ResponsivePresentation, WideStage};
 
@@ -377,7 +378,8 @@ pub fn press_on_focused_surface(
     area: Rect,
     pos: Position,
 ) -> bool {
-    if focused_mouse_area(model, area).contains(pos) {
+    // Tab 2 is one surface: every press on it is focused.
+    if model.questions().active || focused_mouse_area(model, area).contains(pos) {
         return true;
     }
     let responsive = model.responsive_geometry(area);
@@ -401,6 +403,7 @@ pub fn wide_mouse_focus_intent(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        || model.questions().active
         || model.wide_stage() != WideStage::Board
         || model.input_mode() != BoardInputMode::Normal
     {
@@ -425,7 +428,8 @@ pub fn map_responsive_board_mouse(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     let responsive = model.responsive_geometry(area);
-    if responsive.presentation != ResponsivePresentation::WideSplit {
+    // Tab 2 has no board focus columns: its own rows are the targets at every width.
+    if responsive.presentation != ResponsivePresentation::WideSplit || model.questions().active {
         return map_board_mouse(model, hits, mouse);
     }
     let pos = point(mouse.column, mouse.row);
@@ -622,6 +626,16 @@ pub fn map_scrollbar_mouse(
 }
 
 fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardIntent> {
+    if model.questions().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        return Some(BoardIntent::Question(
+            crate::ui::questions::QuestionIntent::Scroll(kind == MouseEventKind::ScrollDown),
+        ));
+    }
     match model.input_mode() {
         BoardInputMode::TaskPage
         | BoardInputMode::EditTitle
@@ -678,6 +692,21 @@ pub fn map_board_mouse(
         _ => return None,
     }
     let pos = point(mouse.column, mouse.row);
+    // Tab 2 paints its own frame: only its tabs and question rows are targets.
+    if model.questions().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        return match hit_at(hits, pos) {
+            Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
+            Some(QueueHitTarget::Question(id)) => Some(BoardIntent::Question(
+                crate::ui::questions::QuestionIntent::Row(id),
+            )),
+            _ => None,
+        };
+    }
     if model.expanded_capture_open()
         && matches!(
             model.input_mode(),
@@ -852,6 +881,7 @@ pub fn map_board_mouse(
         },
         BoardInputMode::Normal => match hit_at(hits, pos) {
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
+            Some(QueueHitTarget::Waiting) => Some(BoardIntent::SelectNavTab(NavTab::Questions)),
             Some(QueueHitTarget::ScopeChip) => Some(BoardIntent::OpenProjectSelector),
             Some(QueueHitTarget::SortChip) => Some(BoardIntent::ToggleSort),
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),

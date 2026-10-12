@@ -1,17 +1,17 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ board  ·  desk ▾  ·  sort number ▾                                             │
+│ 1 board  ·  2 questions  ·  desk ▾  ·  sort number ▾                           │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸ ● T1 Smoke-test worktree dispatch                                             │
-│  ● T2 Edit target binding pin                                                  │
-│  ● T5 Wire dispatch cleanup receipts                                           │
-│  ● T6 Docs refresh pass after F9 ships                                         │
+│▸  T1 Smoke-test worktree dispatch                                              │
+│   T2 Edit target binding pin                                                   │
+│   T5 Wire dispatch cleanup receipts                                            │
+│   T6 Docs refresh pass after F9 ships                                          │
 │                                                                                │
 │ TODO · desk ─────────────────────────────────────────────────────────────────1 │
 │                                                                                │
-│  ○ T7 Global backlog note                                                      │
+│   T7 Global backlog note                                                       │
 │                                                                                │
 │                                                                                │
 │                                                                                │

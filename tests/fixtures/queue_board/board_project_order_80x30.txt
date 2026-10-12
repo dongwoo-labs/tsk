@@ -1,23 +1,23 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ board  ·  all ▾  ·  sort project ▾                                             │
+│ 1 board  ·  2 questions  ·  all ▾  ·  sort project ▾                           │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
 │   herdr                                                                        │
-│  ● T2 Edit target binding pin                                                  │
-│  ● T5 Wire dispatch cleanup receipts                                           │
-│  ● T6 Docs refresh pass after F9 ships                                         │
+│   T2 Edit target binding pin                                                   │
+│   T5 Wire dispatch cleanup receipts                                            │
+│   T6 Docs refresh pass after F9 ships                                          │
 │   tsk                                                                          │
-│▸ ● T1 Smoke-test worktree dispatch                                             │
+│▸  T1 Smoke-test worktree dispatch                                              │
 │                                                                                │
 │ TODO ────────────────────────────────────────────────────────────────────────3 │
 │                                                                                │
 │   desk                                                                         │
-│  ○ T7 Global backlog note                                                      │
+│   T7 Global backlog note                                                       │
 │   tsk                                                                          │
-│  ○ T3 Prototype the queue-style board UI                                       │
-│  ○ T4 Cut rust-toolchain pin into CI docs                                      │
+│   T3 Prototype the queue-style board UI                                        │
+│   T4 Cut rust-toolchain pin into CI docs                                       │
 │                                                                                │
 │                                                                                │
 │                                                                                │

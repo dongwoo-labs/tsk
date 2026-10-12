@@ -105,6 +105,7 @@ fn load_board_inner(
     let mut model = BoardModel::from_domain_for_snapshot(&state, &snapshot);
     if full_board_open {
         model.offer_launch_card(&state, &snapshot);
+        model.set_question_feed(crate::question_actions::load_feed());
     }
     model.set_update_notice(crate::update::startup(
         &state_dir,
@@ -397,14 +398,18 @@ fn run_board_loop(
                     // longer varies by area, per fix 1's gate removal), so no held-open modal
                     // can end up invisible under a shrunk pane and leave q / Esc unreachable.
                     let mode = resolve_board_surface(area, &mut model);
-                    let Some(intent) = board_keyboard_intent_for_area(&model, area, mode, key)
-                    else {
-                        continue;
+                    let intent = if questions_own_keyboard(&model, mode) {
+                        crate::ui::questions::map_key(
+                            model.questions(),
+                            area.width >= crate::ui::tier::WIDE_SPLIT_MIN_WIDTH,
+                            key,
+                        )
+                    } else {
+                        board_keyboard_intent_for_area(&model, area, mode, key)
+                            .and_then(|intent| board_intent_for_area(area, intent))
+                            .and_then(|intent| resolve_board_command(&mut model, intent))
                     };
-                    let Some(intent) = board_intent_for_area(area, intent) else {
-                        continue;
-                    };
-                    let Some(intent) = resolve_board_command(&mut model, intent) else {
+                    let Some(intent) = intent else {
                         continue;
                     };
                     if handle_board_intent(
@@ -871,6 +876,8 @@ pub fn revalidate_board_from_store(
     };
     domain.merge_tasks_from_disk(&disk);
     model.sync_from_domain(domain);
+    // Question writes move the shared references in the same file: re-read the snapshot.
+    model.set_question_feed(crate::question_actions::load_feed());
     watch.record(signature);
     true
 }
@@ -1010,6 +1017,16 @@ fn board_keyboard_intent(
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
     {
         return Some(BoardIntent::SelectNavTab(NavTab::Board));
+    }
+    // `2` opens the questions tab from the list or a task page in view mode.
+    if matches!(mode, BoardInputMode::Normal | BoardInputMode::TaskPage)
+        && !model.task_editing()
+        && key.code == KeyCode::Char('2')
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return Some(BoardIntent::SelectNavTab(NavTab::Questions));
     }
 
     match model.form_focus().filter(|_| form_field_mode) {
@@ -1201,8 +1218,21 @@ fn board_intent_for_area(_area: Rect, intent: BoardIntent) -> Option<BoardIntent
 /// A paste arrives as `Event::Paste`, so it cannot go through `map_key`; it still passes the
 /// same surface resolution, area gate, and command resolution the key route applies, so a
 /// paste can never reach a route a key press could not.
+/// Tab 2 owns the keyboard unless help or the palette is open over it.
+fn questions_own_keyboard(model: &BoardModel, mode: BoardInputMode) -> bool {
+    model.questions().active && matches!(mode, BoardInputMode::Normal | BoardInputMode::TaskPage)
+}
+
 fn board_paste_intent(area: Rect, model: &mut BoardModel, text: &str) -> Option<BoardIntent> {
     let mode = resolve_board_surface(area, model);
+    if questions_own_keyboard(model, mode) {
+        // Only an open answer field takes pasted text; line breaks become spaces.
+        return model.questions().answer.as_ref().map(|_| {
+            BoardIntent::Question(crate::ui::questions::QuestionIntent::AnswerInsert(
+                text.replace(['\r', '\n'], " "),
+            ))
+        });
+    }
     let intent = map_edit_paste(mode, text)?;
     let intent = board_intent_for_area(area, intent)?;
     resolve_board_command(model, intent)
@@ -1516,6 +1546,23 @@ fn handle_board_intent(
 ) -> io::Result<bool> {
     if let BoardIntent::CopyTaskNumber(id) = intent {
         copy_task_number(domain, model, id);
+        return Ok(false);
+    }
+    // Question actions own their store writes and Herdr hints; the board save path never
+    // sees them.
+    if let BoardIntent::Question(question) = intent {
+        if !save_recovery.is_pending() {
+            crate::question_actions::handle(store, domain, model, question);
+        }
+        return Ok(false);
+    }
+    if intent == BoardIntent::SelectNavTab(NavTab::Questions) && !save_recovery.is_pending() {
+        model.set_question_feed(crate::question_actions::load_feed());
+    }
+    if intent == BoardIntent::CloseLayer
+        && !save_recovery.is_pending()
+        && crate::ui::board::return_to_question(model)
+    {
         return Ok(false);
     }
 
@@ -5086,13 +5133,15 @@ mod tests {
             board_keyboard_intent(&model, BoardInputMode::Normal, key(KeyCode::Char('1'))),
             Some(BoardIntent::SelectNavTab(NavTab::Board))
         );
-        for retired in ['2', '3'] {
-            assert_eq!(
-                board_keyboard_intent(&model, BoardInputMode::Normal, key(KeyCode::Char(retired))),
-                None,
-                "{retired} is no longer a tab key"
-            );
-        }
+        assert_eq!(
+            board_keyboard_intent(&model, BoardInputMode::Normal, key(KeyCode::Char('2'))),
+            Some(BoardIntent::SelectNavTab(NavTab::Questions))
+        );
+        assert_eq!(
+            board_keyboard_intent(&model, BoardInputMode::Normal, key(KeyCode::Char('3'))),
+            None,
+            "3 is no longer a tab key"
+        );
         apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("edit");
         assert!(matches!(
             board_keyboard_intent(&model, BoardInputMode::EditTitle, key(KeyCode::Char('1'))),

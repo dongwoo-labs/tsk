@@ -272,8 +272,8 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
     );
     let frame = capture(&model, 78, "selection-style");
     assert!(
-        frame.contains("▸ ● T12"),
-        "selection arrow must retain status and number: {frame}"
+        frame.contains("▸  T12"),
+        "selection arrow must retain the number: {frame}"
     );
     let tab_row = buffer
         .content
@@ -310,7 +310,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
             draw_board(f, &model);
         })
         .unwrap();
-    assert!(capture(&model, 78, "wrapped-selection").contains("▸ ○ T13"));
+    assert!(capture(&model, 78, "wrapped-selection").contains("▸  T13"));
     assert!(
         terminal
             .backend()

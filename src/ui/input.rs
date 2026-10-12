@@ -240,6 +240,8 @@ pub enum BoardIntent {
     SelectProjectOption(usize),
     /// Switch to a persistent navigation tab (`1` board).
     SelectNavTab(crate::ui::queue::NavTab),
+    /// A questions-tab action, or a question/reference line opened from a task page.
+    Question(crate::ui::questions::QuestionIntent),
     /// `S` — flip every section between number order and project order.
     ToggleSort,
     /// Focus the active board lens's search field (`/` or a click).
@@ -772,6 +774,78 @@ fn help_bindings() -> Vec<HelpBinding> {
             "1",
             "board tab, list focus",
             "switch view navigate board",
+        ),
+        help_binding(
+            HelpGroup::ViewsFind,
+            "2",
+            "questions tab (Agent board)",
+            "switch view approval finding waiting",
+        ),
+        help_binding(
+            HelpGroup::Navigation,
+            "J / K",
+            "next / previous question",
+            "move list order detail",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "j / k",
+            "choose an option or action (question)",
+            "select answer",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "enter",
+            "save · decide · confirm (question)",
+            "answer commit",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "space",
+            "check approval terms (question)",
+            "approval confirm",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "y / n",
+            "approve once checked / reject",
+            "approval decide",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "c",
+            "correct as a new revision (question)",
+            "answer correction",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "t",
+            "open the question's task",
+            "task navigate",
+        ),
+        help_binding(
+            HelpGroup::SurfaceControls,
+            "r",
+            "resend a finding's run request",
+            "lead request herdr",
+        ),
+        help_binding(
+            HelpGroup::CreateEdit,
+            "e",
+            "edit title and notes (task page)",
+            "rename editing",
+        ),
+        help_binding(
+            HelpGroup::CreateEdit,
+            "a",
+            "add a step (task page)",
+            "create checklist",
+        ),
+        help_binding(
+            HelpGroup::Navigation,
+            "enter (reference)",
+            "show URL · focus Thread (task page)",
+            "link thread herdr focus",
         ),
         help_binding(
             HelpGroup::Navigation,
@@ -1641,6 +1715,7 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::CancelProjectPicker
         | BoardIntent::SelectProjectOption(_)
         | BoardIntent::SelectNavTab(_)
+        | BoardIntent::Question(_)
         | BoardIntent::ToggleSort
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
@@ -1815,6 +1890,9 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char('u') if verb => Some(BoardIntent::Undo),
         KeyCode::Char('f') if verb => Some(BoardIntent::File),
         KeyCode::Char('e') if verb => Some(BoardIntent::BeginEditTitle),
+        // The task page's two bare editing keys: they open an editor, they never mutate.
+        KeyCode::Char('e') if !extra => Some(BoardIntent::BeginEditTitle),
+        KeyCode::Char('a') if !extra => Some(BoardIntent::BeginAddStep),
         KeyCode::Char('?') if !extra => Some(BoardIntent::OpenHelp),
         KeyCode::Char(':') if !extra => Some(BoardIntent::OpenCommandPalette),
         KeyCode::Char('J') if !extra => Some(BoardIntent::NextTask),

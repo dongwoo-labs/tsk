@@ -211,6 +211,10 @@ pub enum RelationTarget {
     Open(Uuid),
     /// A parent link whose task is missing or deleted: refuses and keeps the link.
     Missing(Uuid),
+    /// A question or finding of this task: opens it on the questions tab.
+    Question(Uuid),
+    /// A reference line in this task's notes (index into its links).
+    Link(Uuid, usize),
 }
 
 /// What confirming a parent-picker option applies.
@@ -840,6 +844,8 @@ pub struct BoardModel {
     pub(super) command_selected: usize,
     /// Whether the last app-boundary presentation was wide enough to paint list and detail.
     pub(super) frame_wide: Cell<bool>,
+    /// The questions tab: its session snapshot and its own cursor and page. Session-only.
+    pub(crate) questions: crate::ui::questions::QuestionsState,
 }
 
 /// How an unresolved failed save ended.
@@ -914,6 +920,7 @@ impl BoardModel {
             list_max_scroll: Cell::new(0),
             message_expires_at: None,
             message_restore: None,
+            questions: crate::ui::questions::QuestionsState::default(),
         };
         model.seed_selection();
         model
@@ -1219,14 +1226,50 @@ impl BoardModel {
 
     /// Which navigation tab is active right now.
     pub fn nav_tab(&self) -> NavTab {
-        NavTab::Board
+        if self.questions.active {
+            NavTab::Questions
+        } else {
+            NavTab::Board
+        }
     }
 
-    /// Switch to a navigation tab. The board is the only tab, so selecting it returns the
-    /// focus to the list. Returns whether anything moved.
+    /// Replace the questions snapshot (board open, store change, after a question action).
+    pub fn set_question_feed(&mut self, feed: crate::ui::questions::QuestionFeed) {
+        self.questions.set_feed(feed);
+    }
+
+    /// The questions tab's session state.
+    pub fn questions(&self) -> &crate::ui::questions::QuestionsState {
+        &self.questions
+    }
+
+    pub(crate) fn questions_mut(&mut self) -> &mut crate::ui::questions::QuestionsState {
+        &mut self.questions
+    }
+
+    /// Switch to a navigation tab. The board keeps a parked task page; the questions tab
+    /// refuses while a board edit is unsaved. Returns whether anything moved.
     pub(super) fn select_nav_tab(&mut self, tab: NavTab) -> bool {
         match tab {
-            NavTab::Board => false,
+            NavTab::Board => {
+                let moved = self.questions.active;
+                self.questions.active = false;
+                self.questions.return_question = None;
+                moved
+            }
+            NavTab::Questions => {
+                if self.questions.active {
+                    return false;
+                }
+                if self.has_unsaved_work() || self.task_editing() {
+                    self.set_message("save or cancel the edit before opening questions");
+                    return false;
+                }
+                self.questions.active = true;
+                self.questions.return_question = None;
+                self.questions.reanchor();
+                true
+            }
         }
     }
 
@@ -2080,7 +2123,34 @@ impl BoardModel {
                 .into_iter()
                 .map(|child| RelationTarget::Open(child.id)),
         );
+        targets.extend(
+            self.page_questions(task.id)
+                .into_iter()
+                .map(|record| RelationTarget::Question(record.reference.id)),
+        );
+        targets.extend(
+            (0..crate::ui::links::task_links(task.notes.as_deref()).len())
+                .map(|index| RelationTarget::Link(task.id, index)),
+        );
         targets
+    }
+
+    /// The task page's question lines in paint order: questions and approvals first, then
+    /// findings, each by Q number.
+    pub(crate) fn page_questions(&self, task: Uuid) -> Vec<&crate::domain::QuestionRecord> {
+        let mut records: Vec<&crate::domain::QuestionRecord> = self
+            .questions
+            .records()
+            .iter()
+            .filter(|record| record.reference.task_id == task)
+            .collect();
+        records.sort_by_key(|record| {
+            (
+                record.reference.kind == crate::domain::QuestionKind::Finding,
+                record.reference.number,
+            )
+        });
+        records
     }
 
     /// The archived project holding the focused page's task, when the list itself is not
@@ -2681,6 +2751,12 @@ impl BoardModel {
             RelationTarget::Open(id) | RelationTarget::Missing(id) => {
                 crate::ui::input::BoardIntent::OpenRelatedTask(id)
             }
+            RelationTarget::Question(id) => crate::ui::input::BoardIntent::Question(
+                crate::ui::questions::QuestionIntent::FromTask(id),
+            ),
+            RelationTarget::Link(task, index) => crate::ui::input::BoardIntent::Question(
+                crate::ui::questions::QuestionIntent::Link(task, index),
+            ),
         }
     }
 

@@ -457,6 +457,9 @@ fn apply_board_intent(
     }
 
     match intent {
+        // The app boundary owns question actions (store, durability, Herdr hints); the pure
+        // reducer has nothing to apply for them.
+        BoardIntent::Question(_) => return Ok(IntentOutcome::None),
         BoardIntent::OpenCommandPalette => {
             if model.project_picker.is_some() {
                 return Ok(IntentOutcome::None);
@@ -2661,6 +2664,69 @@ fn open_task_page_on(domain: &DomainState, model: &mut BoardModel, id: Uuid) {
     model.form = Some(form);
     model.input_mode = BoardInputMode::TaskPage;
     model.clear_message();
+}
+
+/// Leave the questions tab for one task's page (`t` on a question). A clean `Esc` on that
+/// page comes back to `question`. A dirty board edit refuses and keeps the questions tab.
+pub(crate) fn open_task_from_questions(
+    domain: &DomainState,
+    model: &mut BoardModel,
+    task: Uuid,
+    question: Option<Uuid>,
+) {
+    if model.task_session_dirty() {
+        model.set_message(DIRTY_TASK_SWITCH_REFUSAL);
+        return;
+    }
+    if domain.get(task).is_none_or(|found| found.soft_deleted) {
+        model.set_message(related_not_found(task));
+        return;
+    }
+    model.questions.active = false;
+    model.page_back.clear();
+    if model.visible_ids().contains(&task) {
+        model.selection_id = Some(task);
+        model.follow_list.set(true);
+    }
+    open_focused_task_page(domain, model, task);
+    model.questions.return_question = question;
+}
+
+/// A question line on a task page: open it on the questions tab. `Esc` on the question
+/// returns to this task page, which stays parked meanwhile.
+pub(crate) fn open_question_from_task(model: &mut BoardModel, question: Uuid) {
+    if model.questions.feed.get(question).is_none() {
+        model.set_message("that question is no longer readable");
+        return;
+    }
+    let task = model.focused_page_task();
+    model.questions.active = true;
+    model.questions.return_question = None;
+    model.questions.open(question);
+    model.questions.return_task = task;
+    model.clear_message();
+}
+
+/// A clean `Esc` on a task page opened from a question: back to that question. Returns
+/// whether it handled the `Esc`.
+pub(crate) fn return_to_question(model: &mut BoardModel) -> bool {
+    let Some(question) = model.questions.return_question else {
+        return false;
+    };
+    if model.input_mode() != BoardInputMode::TaskPage
+        || model.task_session_dirty()
+        || model.task_editing()
+        || !model.page_back.is_empty()
+    {
+        return false;
+    }
+    model.questions.return_question = None;
+    leave_task_page(model);
+    model.questions.active = true;
+    if model.questions.feed.get(question).is_some() {
+        model.questions.open(question);
+    }
+    true
 }
 
 /// The row double-click window: a second click on the same row within it opens the page.
