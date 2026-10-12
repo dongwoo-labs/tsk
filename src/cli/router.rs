@@ -14,6 +14,7 @@ pub enum Surface {
     Archive,
     Unarchive,
     Project,
+    Import,
     Setup,
     Update,
     Guide,
@@ -69,6 +70,7 @@ pub fn route<S: AsRef<str>>(
             "archive" => Surface::Archive,
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
+            "import" => Surface::Import,
             "setup" => Surface::Setup,
             "update" => Surface::Update,
             "guide" => Surface::Guide,
@@ -188,6 +190,11 @@ mod tests {
     #[test]
     fn no_args_selects_board() {
         assert_eq!(route(["tsk"], None), Surface::Board);
+    }
+
+    #[test]
+    fn import_selects_import_surface() {
+        assert_eq!(route(["tsk", "import", "linear"], None), Surface::Import);
     }
 
     #[test]

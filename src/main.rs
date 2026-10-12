@@ -30,7 +30,8 @@ fn main() -> ExitCode {
         | Surface::Trash
         | Surface::Archive
         | Surface::Unarchive
-        | Surface::Project => match tsk_tui::store::require_home_or_override(&args) {
+        | Surface::Project
+        | Surface::Import => match tsk_tui::store::require_home_or_override(&args) {
             Ok(()) => headless_main(args),
             Err(message) => {
                 eprintln!("tsk: {message}");
