@@ -117,6 +117,7 @@ tsk add -t "Draft release notes" -p atlas --json
 | `-n`, `--notes` | Optional notes |
 | `-p`, `--project` or `--desk` | Destination |
 | `--thread` | [Thread name](/docs/capture/#thread-names) |
+| `--parent <task>` | Optional direct parent, addressed by task number or UUID |
 | `--json` | One result object |
 | `--file <path>` or `--file -` | Read a JSON plan |
 | `--state-dir <dir>` | Alternate state directory |
@@ -154,6 +155,8 @@ cat plan.json | tsk add
 | `project` string | Project name or path |
 | `thread` omitted or `null` | No thread |
 | `thread` string | Normalized thread |
+| `parent` omitted or `null` | No parent |
+| `parent` string | Existing parent task number or UUID |
 
 Output contains `created`, `existing`, and `failed` arrays. Items carry their input index `i`; failures include `code` and `error`. Successful entries include task ID, number, and title. Notes are not echoed.
 
@@ -199,7 +202,9 @@ Human output groups by status in `STARTED`, `READY`, `OPEN`, `BLOCKED`, `REVIEW`
 
 Single-task output removes the thread from the title row and presents notes, steps, then `#thread` as separate blocks. A blank line separates adjacent blocks that exist. Human step rows show state and text without machine-oriented short IDs.
 
-JSON returns an array with `id`, `number`, `title`, `status`, `project`, and `thread`. Direct lookup returns the complete task, including `notes` (`null` when absent) and `steps` (an empty array when absent). Its fields are ordered `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `thread`; each JSON step retains its `short_id` for step commands. Archived listings include an `archived` mark: `archived` or `project archived`.
+JSON returns an array with `id`, `number`, `title`, `status`, `project`, and `thread`. Direct lookup returns the complete task, including `notes` (`null` when absent) and `steps` (an empty array when absent). Its fields are ordered `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `thread`, `parent_task_id`, `parent`, `children_done`, `children_total`, `children`; each JSON step retains its `short_id` for step commands. Archived listings include an `archived` mark: `archived` or `project archived`.
+
+Relationship fields add `parent_task_id` (`null` for no parent), `children_done`, and `children_total` to JSON rows. Direct lookup also returns `parent` (resolved task summary or unresolved UUID) and `children` (direct child summaries). Human direct lookup shows the same relationship blocks. Counts are calculated, not saved. Direct children include archived tasks and tasks in archived projects, across all statuses and scopes; deleted tasks and notices are excluded. A Done or archived parent remains resolved.
 
 ## status
 
@@ -223,7 +228,15 @@ tsk edit T12 --title "Fix timeout on slow connections"
 tsk edit T12 --notes "Reproduced with a delayed response"
 ```
 
-Requires `--title`, `--notes`, or both. Scope and thread stay unchanged.
+Requires at least one of `--title`, `--notes`, `--parent <task>`, or `--no-parent`. Scope and thread stay unchanged. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
+
+```sh
+tsk add -t "Implement parser" --desk --parent T10
+tsk edit T12 --parent T11
+tsk edit T12 --no-parent
+```
+
+Each task has at most one parent, stored by UUID, not its display number. Duplicate adds leave the existing task and its parent unchanged. Changing a parent's status, archiving it, or deleting it never changes its children. A deleted or missing parent is shown as unresolved while its UUID stays on the child. Parents are never reassigned automatically. Child completion never completes a parent.
 
 Blank notes clear the field. Notes preserve newlines and tabs. Use `--title=...` or `--notes=...` for values starting with `-`.
 
@@ -329,6 +342,8 @@ One-way import from [Linear](https://linear.app): reads issues through Linear's 
 | `started` | `started`, or `review` when the state name contains "review" (any case) |
 | `completed` | `done` |
 | `canceled` (including duplicates) | Skipped, counted in the report |
+
+**Direct parent.** When Linear has a parent, new task notes also contain `Parent: Linear <IDENTIFIER> <url>`. If that parent's imported copy already exists, or is created in the same import batch, the new child links to its tsk UUID. Otherwise only the external reference is kept. Import never fetches parents recursively or reconciles an existing child when a parent appears later. `--update` preserves both user notes and the stored parent relation. GitHub references use `Parent: GitHub <repo>#<num> <URL>` with the same meaning; GitHub issue intake is not provided by this command.
 
 **Existing copies.** A task whose notes contain a line starting with `Linear: <IDENTIFIER> ` is that issue's copy, in any scope and with any status, including done and archived; soft-deleted tasks do not count. An issue with a copy is never added again. By default the copy is left untouched, since the human status on the board is the source of truth. With `--update`, a copy whose title or status differs from Linear is refreshed (notes, scope, and thread stay as they are). A whole run, creates and updates together, is one store write.
 

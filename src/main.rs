@@ -20,6 +20,7 @@ fn main() -> ExitCode {
         }
         Surface::Usage => usage_exit(),
         Surface::Update => update_main(&args),
+        Surface::Threads => threads_main(&args[2..]),
         // Verbs that open the store need a home for it; setup, guide and help do not.
         Surface::Add
         | Surface::Steps
@@ -122,6 +123,91 @@ fn find_board_main(tab: bool) -> ExitCode {
             };
             eprintln!("tsk {flag}: {err}");
             ExitCode::from(1)
+        }
+    }
+}
+
+const THREADS_USAGE: &str =
+    "usage: tsk threads [--all] | --json [--all] | focus <name> | --find-pane | --help";
+
+/// `tsk threads`: the live lead and issue-thread sessions Herdr runs. Read-only.
+fn threads_main(args: &[String]) -> ExitCode {
+    use tsk_tui::threads::{self, herdr};
+
+    let mut all = false;
+    let mut json = false;
+    let mut rest = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--all" => all = true,
+            "--json" => json = true,
+            "--help" => {
+                println!("{THREADS_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            _ => rest.push(arg.as_str()),
+        }
+    }
+    match rest.as_slice() {
+        [] if json => match herdr::list_agents() {
+            Ok(rows) => {
+                println!("{}", threads::rows_json(&threads::visible_rows(&rows, all)));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("tsk threads: {error}");
+                ExitCode::from(3)
+            }
+        },
+        [] => {
+            if all {
+                eprintln!("tsk threads: --all applies to --json; press a in the pane instead");
+                return ExitCode::from(2);
+            }
+            match threads::ui::run() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("tsk threads: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        ["--find-pane"] if !all && !json => {
+            let mut buf = String::new();
+            if io::Read::read_to_string(&mut io::stdin(), &mut buf).is_err() {
+                return ExitCode::from(1);
+            }
+            match tsk_tui::board_pane::find_labeled_pane(&buf, threads::ui::THREADS_PANE_LABEL) {
+                Some((pane, tab)) => {
+                    println!("{pane}\t{tab}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::from(1),
+            }
+        }
+        ["focus", name] if !json => {
+            let rows = match herdr::list_agents() {
+                Ok(rows) => rows,
+                Err(error) => {
+                    eprintln!("tsk threads: {error}");
+                    return ExitCode::from(3);
+                }
+            };
+            let Some(row) = rows.iter().find(|row| row.display_name() == *name) else {
+                eprintln!("tsk threads: no live agent named {name}");
+                return ExitCode::from(1);
+            };
+            match herdr::focus(row) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("tsk threads: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        _ => {
+            eprintln!("{THREADS_USAGE}");
+            ExitCode::from(2)
         }
     }
 }

@@ -3,7 +3,7 @@ title: Storage
 description: Task data, backups, deleted tasks, and update checks.
 ---
 
-The board, CLI, and Herdr plugin share one store. The current store format is v5.
+The board, CLI, and Herdr plugin share one store. The current store format is v6. Each task can store one optional `parent_task_id` UUID. Missing fields in older tasks and trash entries mean no parent. Relationships use the same locked, revision-checked atomic save path as other task fields; child counts are calculated and are not stored.
 
 ## Location
 
@@ -25,7 +25,7 @@ Herdr's plugin-specific state/config directories do not override these locations
 | `tsk.json.v<N>` | Backup made when migrating an older store format, such as `tsk.json.v4` for the v4 → v5 migration |
 | `delivery.json` | Which starter tasks this install has received or dismissed, and the newest release note it has seen |
 
-An older binary refuses a newer or unversioned store instead of rewriting it. Use a compatible tsk version to open it. On first save, v4 stores migrate to v5 so one undo entry can cover a marked completion or deletion; the original document is saved as `tsk.json.v4`. Earlier stores still run through each migration in order, including the v3 to v4 move from ready to open.
+An older binary refuses a newer or unversioned store instead of rewriting it. Use a compatible tsk version to open it. On first save, v5 stores migrate to v6 with no parent by default, keeping task data, history, undo, and trash. The original document is saved as `tsk.json.v5`. Older stores keep their own original-version backup; the v4 to v5 step still enables batch undo. Earlier stores still run through each migration in order, including the v3 to v4 move from ready to open.
 
 Archived tasks stay in the task document with their existing status. [Archive and restore](/docs/board/#archive).
 

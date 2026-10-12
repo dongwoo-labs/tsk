@@ -100,6 +100,7 @@ export default defineConfig({
             { label: 'Board', slug: 'docs/board' },
             { label: 'Keys', slug: 'docs/keys' },
             { label: 'Capture', slug: 'docs/capture' },
+            { label: 'Threads', slug: 'docs/threads' },
             { label: 'Task page', slug: 'docs/task-page' },
             { label: 'Steps', slug: 'docs/steps' },
           ],

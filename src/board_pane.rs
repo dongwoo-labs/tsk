@@ -70,6 +70,22 @@ fn find_board_pane(json: &str) -> Option<Value> {
     None
 }
 
+/// The first pane labeled exactly `label` in `pane list` JSON, as `(pane_id, tab_id)`.
+/// Both ids must be flag-safe, or the pane is skipped.
+pub fn find_labeled_pane(json: &str, label: &str) -> Option<(String, String)> {
+    let data: Value = serde_json::from_str(json).ok()?;
+    let panes = data.get("result")?.get("panes")?.as_array()?;
+    panes.iter().find_map(|pane| {
+        if pane.get("label").and_then(Value::as_str) != Some(label) {
+            return None;
+        }
+        let pid = pane.get("pane_id")?.as_str()?;
+        let tab = pane.get("tab_id")?.as_str()?;
+        (is_flag_safe_pane_id(pid) && is_flag_safe_pane_id(tab))
+            .then(|| (pid.to_owned(), tab.to_owned()))
+    })
+}
+
 fn is_flag_safe_pane_id(pid: &str) -> bool {
     if pid.is_empty() || pid.starts_with('-') {
         return false;

@@ -350,6 +350,7 @@ fn parse_human_status(value: &str) -> Result<HumanStatus, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagEdit {
     pub task: Option<TaskAddress>,
+    pub parent: Option<Option<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
     pub state_dir: Option<PathBuf>,
@@ -364,6 +365,7 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
 
     let mut parsed = FlagEdit {
         task: None,
+        parent: None,
         title: None,
         notes: None,
         state_dir: None,
@@ -391,6 +393,24 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
             "-n" | "--notes" => {
                 parsed.notes = Some(value(flag)?);
                 index += 2;
+            }
+            "--parent" | "--no-parent" => {
+                if parsed.parent.is_some() {
+                    return Err("parent options cannot be combined or repeated".into());
+                }
+                parsed.parent = Some(if flag == "--no-parent" {
+                    None
+                } else {
+                    Some(parse_task_address(&value(flag)?)?)
+                });
+                index += if flag == "--no-parent" { 1 } else { 2 };
+            }
+            flag if flag.starts_with("--parent=") => {
+                if parsed.parent.is_some() {
+                    return Err("parent options cannot be combined or repeated".into());
+                }
+                parsed.parent = Some(Some(parse_task_address(&flag["--parent=".len()..])?));
+                index += 1;
             }
             "--help" => {
                 parsed.help = true;
@@ -530,6 +550,7 @@ mod tests {
         assert_eq!(
             parsed,
             FlagEdit {
+                parent: None,
                 task: Some(TaskAddress::Number(12)),
                 title: Some("-fix parser".into()),
                 notes: Some("-5 degrees".into()),
@@ -668,6 +689,7 @@ mod tests {
 /// Parsed add input. A plan source is selected by `file` or piped stdin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagAdd {
+    pub parent: Option<TaskAddress>,
     pub title: Option<String>,
     pub notes: Option<String>,
     pub project: Option<String>,
@@ -688,6 +710,7 @@ pub fn parse_flag_add(args: &[String]) -> Result<FlagAdd, String> {
     }
 
     let mut parsed = FlagAdd {
+        parent: None,
         title: None,
         notes: None,
         project: None,
@@ -753,6 +776,16 @@ pub fn parse_flag_add(args: &[String]) -> Result<FlagAdd, String> {
                 })?);
                 parsed.has_item_flags = true;
                 index += 2;
+            }
+            "--parent" => {
+                parsed.parent = Some(parse_task_address(&value(flag)?)?);
+                parsed.has_item_flags = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--parent=") => {
+                parsed.parent = Some(parse_task_address(&flag["--parent=".len()..])?);
+                parsed.has_item_flags = true;
+                index += 1;
             }
             "--desk" => {
                 parsed.global = true;

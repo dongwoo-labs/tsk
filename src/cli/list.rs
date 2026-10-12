@@ -57,6 +57,9 @@ pub(crate) struct ListRow {
     pub(crate) status: HumanStatus,
     pub(crate) project: Option<String>,
     pub(crate) thread: Option<String>,
+    pub(crate) parent_task_id: Option<Uuid>,
+    pub(crate) children_done: usize,
+    pub(crate) children_total: usize,
     /// `archived` / `project archived` mark, set only in the archived view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) archived: Option<&'static str>,
@@ -67,6 +70,16 @@ pub(crate) struct ListRow {
 pub(crate) struct DirectTaskDetails {
     pub(crate) notes: Option<String>,
     pub(crate) steps: Vec<crate::cli::steps::StepLine>,
+    pub(crate) parent: Option<ParentRow>,
+    pub(crate) children: Vec<ListRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ParentRow {
+    pub(crate) id: Uuid,
+    pub(crate) resolved: bool,
+    pub(crate) number: Option<u64>,
+    pub(crate) title: Option<String>,
 }
 
 /// Read-only result for the list command.
@@ -242,12 +255,31 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             ListView::Open
         };
         return Ok(ListResult {
-            rows: vec![row_for(task)],
+            rows: vec![row_for(task, &domain)],
             view,
             include_scope: false,
             direct: Some(DirectTaskDetails {
                 notes: task.notes.clone(),
                 steps: crate::cli::steps::step_lines(&task.steps),
+                parent: domain.parent(task.id).map(|parent| match parent {
+                    crate::domain::ParentRelation::Resolved(task) => ParentRow {
+                        id: task.id,
+                        resolved: true,
+                        number: task.number,
+                        title: Some(task.title.clone()),
+                    },
+                    crate::domain::ParentRelation::Unresolved(id) => ParentRow {
+                        id,
+                        resolved: false,
+                        number: None,
+                        title: None,
+                    },
+                }),
+                children: domain
+                    .direct_children(task.id)
+                    .into_iter()
+                    .map(|child| row_for(child, &domain))
+                    .collect(),
             }),
         });
     }
@@ -316,7 +348,7 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     let rows = tasks
         .into_iter()
         .map(|task| {
-            let mut row = row_for(task);
+            let mut row = row_for(task, &domain);
             if view == ListView::Archived {
                 // "archived" wins over "project archived".
                 row.archived = Some(if task.archived {
@@ -362,7 +394,7 @@ fn deleted_rows(
         .map(|task| {
             (
                 task.soft_deleted_at().unwrap_or(task.updated_at),
-                row_for(task),
+                row_for(task, domain),
             )
         })
         .collect();
@@ -373,7 +405,7 @@ fn deleted_rows(
         if live_ids.contains(&line.task.id) || !in_scope(&line.task) {
             continue;
         }
-        dated.push((line.deleted_at, row_for(&line.task)));
+        dated.push((line.deleted_at, row_for(&line.task, domain)));
     }
     dated.sort_by(|(left, _), (right, _)| right.cmp(left));
     Ok(ListResult {
@@ -384,8 +416,12 @@ fn deleted_rows(
     })
 }
 
-fn row_for(task: &crate::domain::Task) -> ListRow {
+fn row_for(task: &crate::domain::Task, domain: &crate::domain::DomainState) -> ListRow {
+    let (children_done, children_total) = domain.child_counts(task.id);
     ListRow {
+        parent_task_id: task.parent_task_id,
+        children_done,
+        children_total,
         id: task.id,
         number: task
             .number

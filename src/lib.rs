@@ -16,6 +16,7 @@ pub mod setup;
 pub mod setup_agent;
 pub mod store;
 pub(crate) mod text;
+pub mod threads;
 pub mod ui;
 pub mod update;
 

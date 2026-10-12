@@ -135,6 +135,7 @@ fn no_host_park_or_resume_action() {
         [
             "open-board".to_string(),
             "open-board-windows".to_string(),
+            "open-threads".to_string(),
             "quick-capture".to_string(),
             "quick-capture-windows".to_string(),
         ]

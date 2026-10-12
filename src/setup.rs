@@ -439,35 +439,54 @@ fn managed_assets(binary: &Path, version: &str) -> io::Result<Vec<(&'static str,
                     .any(|entry| entry.as_str() == Some(platform))
             })
         });
-    let mut command = Array::new();
-    command.push(path);
-    manifest["panes"]
+    // Every pane runs the installed binary; extra arguments (the threads pane's
+    // `threads`) stay after it.
+    for pane in manifest["panes"]
         .as_array_of_tables_mut()
         .unwrap()
-        .get_mut(0)
-        .unwrap()["command"] = value(command);
+        .iter_mut()
+    {
+        let mut command = Array::new();
+        command.push(path);
+        if let Some(args) = pane["command"].as_array() {
+            for arg in args.iter().skip(1) {
+                if let Some(arg) = arg.as_str() {
+                    command.push(arg);
+                }
+            }
+        }
+        pane["command"] = value(command);
+    }
     #[cfg(unix)]
     {
-        let board = include_str!("../scripts/open-board.sh");
         let quoted = format!("'{}'", path.replace('\'', "'\\''"));
-        let board = board
-            .lines()
-            .map(|line| {
-                if line.starts_with("plugin_bin=") {
-                    format!("plugin_bin={quoted}")
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
+        let pin_binary = |script: &str| {
+            script
+                .lines()
+                .map(|line| {
+                    if line.starts_with("plugin_bin=") {
+                        format!("plugin_bin={quoted}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n"
+        };
         Ok(vec![
             ("herdr-plugin.toml", manifest.to_string()),
-            ("scripts/open-board.sh", board),
+            (
+                "scripts/open-board.sh",
+                pin_binary(include_str!("../scripts/open-board.sh")),
+            ),
             (
                 "scripts/open-capture.sh",
                 include_str!("../scripts/open-capture.sh").to_string(),
+            ),
+            (
+                "scripts/open-threads.sh",
+                pin_binary(include_str!("../scripts/open-threads.sh")),
             ),
         ])
     }
@@ -961,7 +980,14 @@ fn run_at(
 
 #[cfg(unix)]
 fn cleanup_old(base: &Dir, current: &Dir, old: &Path) -> io::Result<()> {
-    cleanup_old_inner(base, current, old, &SHARED_ASSET_NAMES)
+    // A root registered before the threads pane existed has no open-threads.sh; verify and
+    // remove it by the asset set it was generated with.
+    let names: &[&str] = if old.join("scripts/open-threads.sh").exists() {
+        &SHARED_ASSET_NAMES
+    } else {
+        &SHARED_ASSET_NAMES[..3]
+    };
+    cleanup_old_inner(base, current, old, names)
 }
 
 #[cfg(windows)]
@@ -972,10 +998,11 @@ fn cleanup_old(base: &Dir, current: &Dir, old: &Path) -> io::Result<()> {
 /// The asset file names a platform writes, in the order `managed_assets` emits them.
 /// Used by `cleanup_old` to read and verify a stale registration before removing it.
 #[cfg(unix)]
-const SHARED_ASSET_NAMES: [&str; 3] = [
+const SHARED_ASSET_NAMES: [&str; 4] = [
     "herdr-plugin.toml",
     "scripts/open-board.sh",
     "scripts/open-capture.sh",
+    "scripts/open-threads.sh",
 ];
 
 #[cfg(windows)]
