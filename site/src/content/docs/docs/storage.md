@@ -70,7 +70,7 @@ The list includes both recently deleted tasks still in the main store and tasks 
 
 `tsk sync --init <url>` on a machine that already has its own board joins the remote board: the next `tsk sync` merges the two, and tasks from both keep unique numbers. Re-running `tsk sync --init` is safe; it repairs `.gitignore`, `.gitattributes`, and the merge-driver config without duplicating anything. It refuses a state directory that sits inside another git repository or already tracks other files, and it never changes an existing `origin`.
 
-There is no background sync: changes travel only when someone runs `tsk sync`. Git uses your usual credentials; sync never prompts for them.
+There is no background sync: changes travel only when someone runs `tsk sync`. Sync holds the board's exclusive lock through commit, fetch, merge, push, and the one allowed retry. Other local writers wait until sync finishes, including while it waits for the network. Git uses your usual credentials; sync never prompts for them.
 
 ### How boards merge
 

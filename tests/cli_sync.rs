@@ -130,6 +130,8 @@ fn two_clones_converge_with_unique_numbers_and_the_later_edit() {
 
     sandbox.tsk_ok(&a, &["add", "-t", "only on a", "--desk"]);
     sandbox.tsk_ok(&b, &["add", "-t", "only on b", "--desk"]);
+    let original_a = board(&a);
+    let original_b = board(&b);
     sandbox.tsk_ok(&a, &["status", "T1", "started"]);
     // Edited after A's edit, so B's status wins the both-sides change.
     sandbox.tsk_ok(&b, &["status", "T1", "blocked"]);
@@ -153,6 +155,24 @@ fn two_clones_converge_with_unique_numbers_and_the_later_edit() {
     let on_a = board(&a);
     assert_eq!(on_a, board(&b), "both boards converge");
     assert_eq!(on_a.len(), 3);
+    let a_id = *original_a
+        .iter()
+        .find(|(_, row)| row.1 == "only on a")
+        .unwrap()
+        .0;
+    let b_id = *original_b
+        .iter()
+        .find(|(_, row)| row.1 == "only on b")
+        .unwrap()
+        .0;
+    assert_eq!(original_a[&a_id].0, Some(2));
+    assert_eq!(original_b[&b_id].0, Some(2));
+    assert_eq!(
+        on_a[&a_id].0,
+        Some(3),
+        "incoming A task keeps its id but changes number"
+    );
+    assert_eq!(on_a[&b_id].0, Some(2), "B's local task retains its number");
     let numbers: BTreeSet<u64> = on_a.values().filter_map(|(number, ..)| *number).collect();
     assert_eq!(numbers, BTreeSet::from([1, 2, 3]), "numbers are unique");
     let shared = on_a
@@ -163,6 +183,278 @@ fn two_clones_converge_with_unique_numbers_and_the_later_edit() {
     assert_eq!(shared.2, HumanStatus::Blocked);
     let titles: BTreeSet<&str> = on_a.values().map(|(_, title, _)| title.as_str()).collect();
     assert!(titles.contains("only on a") && titles.contains("only on b"));
+}
+
+fn pair(sandbox: &Sandbox) -> (PathBuf, PathBuf) {
+    sandbox.git(&[
+        "init",
+        "--quiet",
+        "--bare",
+        "--initial-branch=main",
+        "remote.git",
+    ]);
+    let a = sandbox.path("a");
+    let b = sandbox.path("b");
+    sandbox.tsk_ok(&a, &["add", "-t", "shared", "--desk"]);
+    sandbox.tsk_ok(
+        &a,
+        &[
+            "sync",
+            "--init",
+            sandbox.path("remote.git").to_str().unwrap(),
+        ],
+    );
+    sandbox.tsk_ok(&a, &["sync"]);
+    sandbox.git(&[
+        "clone",
+        "--quiet",
+        sandbox.path("remote.git").to_str().unwrap(),
+        "b",
+    ]);
+    let read = sandbox.tsk_ok(&b, &["list", "--all", "--json"]);
+    assert!(
+        read.contains("shared"),
+        "a fresh independent clone can read without sync"
+    );
+    sandbox.tsk_ok(&b, &["sync", "--init"]);
+    (a, b)
+}
+
+fn timestamp(state: &Path, seconds: u64) {
+    let path = state.join("tsk.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    document["tasks"][0]["updated_at"] = serde_json::json!([seconds, 0]);
+    fs::write(path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+}
+
+fn settle(sandbox: &Sandbox, a: &Path, b: &Path) {
+    sandbox.tsk_ok(a, &["sync"]);
+    sandbox.tsk_ok(b, &["sync"]);
+    sandbox.tsk_ok(a, &["sync"]);
+    sandbox.tsk_ok(b, &["sync"]);
+    assert_eq!(board(a), board(b));
+}
+
+#[test]
+fn concurrent_edits_obey_skewed_clock_and_tie_keeps_the_merging_side() {
+    let Some(sandbox) = Sandbox::new("clock") else {
+        return;
+    };
+    let (a, b) = pair(&sandbox);
+    sandbox.tsk_ok(&a, &["edit", "T1", "--title", "future clock a"]);
+    timestamp(&a, 2_000_000_000);
+    sandbox.tsk_ok(&b, &["edit", "T1", "--title", "later real edit b"]);
+    timestamp(&b, 1_000_000_000);
+    settle(&sandbox, &a, &b);
+    assert_eq!(board(&a).values().next().unwrap().1, "future clock a");
+    sandbox.tsk_ok(&a, &["edit", "T1", "--title", "tie a"]);
+    timestamp(&a, 2_100_000_000);
+    sandbox.tsk_ok(&b, &["edit", "T1", "--title", "tie b"]);
+    timestamp(&b, 2_100_000_000);
+    settle(&sandbox, &a, &b);
+    assert_eq!(board(&a).values().next().unwrap().1, "tie b");
+}
+
+#[test]
+fn merge_conflict_aborts_without_changing_store_bytes_and_can_retry() {
+    let Some(sandbox) = Sandbox::new("rollback") else {
+        return;
+    };
+    let (a, b) = pair(&sandbox);
+    let attrs = fs::read_to_string(a.join(".gitattributes")).unwrap();
+    fs::write(
+        a.join(".gitattributes"),
+        attrs.replace("tsk.json merge=tsk", "tsk.json merge=tsk -text"),
+    )
+    .unwrap();
+    fs::write(
+        b.join(".gitattributes"),
+        attrs.replace("tsk.json merge=tsk", "tsk.json merge=tsk text"),
+    )
+    .unwrap();
+    sandbox.tsk_ok(&a, &["edit", "T1", "--title", "local rollback"]);
+    sandbox.tsk_ok(&b, &["edit", "T1", "--title", "remote rollback"]);
+    sandbox.tsk_ok(&b, &["sync"]);
+    let before = fs::read(a.join("tsk.json")).unwrap();
+    let refused = sandbox.tsk(&a, &["sync"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("board here is unchanged"));
+    assert_eq!(fs::read(a.join("tsk.json")).unwrap(), before);
+    assert!(!a.join(".git/MERGE_HEAD").exists());
+    assert!(sandbox
+        .git(&["-C", a.to_str().unwrap(), "ls-files", "-u"])
+        .stdout
+        .is_empty());
+    fs::write(
+        b.join(".gitattributes"),
+        fs::read(a.join(".gitattributes")).unwrap(),
+    )
+    .unwrap();
+    sandbox.tsk_ok(&b, &["sync"]);
+    settle(&sandbox, &a, &b);
+    // Fetch fails after local commit, but the user's exact file remains safe.
+    fs::rename(sandbox.path("remote.git"), sandbox.path("offline.git")).unwrap();
+    let before = fs::read(a.join("tsk.json")).unwrap();
+    let failed = sandbox.tsk(&a, &["sync"]);
+    assert_eq!(failed.status.code(), Some(3));
+    assert_eq!(fs::read(a.join("tsk.json")).unwrap(), before);
+    fs::rename(sandbox.path("offline.git"), sandbox.path("remote.git")).unwrap();
+    settle(&sandbox, &a, &b);
+}
+
+#[test]
+fn trash_union_and_delete_against_edit_keep_the_edited_task() {
+    let Some(sandbox) = Sandbox::new("trash") else {
+        return;
+    };
+    let (a, b) = pair(&sandbox);
+    sandbox.tsk_ok(&a, &["add", "-t", "remove a", "--desk"]);
+    sandbox.tsk_ok(&a, &["add", "-t", "remove b", "--desk"]);
+    sandbox.tsk_ok(&a, &["add", "-t", "anchor", "--desk"]);
+    settle(&sandbox, &a, &b);
+    let ids: Vec<_> = TaskStore::new(&a)
+        .load()
+        .unwrap()
+        .tasks()
+        .iter()
+        .map(|task| task.id)
+        .collect();
+    // The CLI has no delete verb. Seed real trash through the existing store boundary.
+    for (path, deleted) in [(&a, ids[0]), (&b, ids[2])] {
+        let store = TaskStore::new(path);
+        let mut state = store.load().unwrap();
+        state.soft_delete(deleted).unwrap();
+        state.soft_delete(ids[1]).unwrap();
+        state.complete(ids[3]).unwrap();
+        store.save(&state).unwrap();
+    }
+    sandbox.tsk_ok(&b, &["edit", "T1", "--title", "survives deletion"]);
+    settle(&sandbox, &a, &b);
+    let final_board = board(&a);
+    assert_eq!(final_board[&ids[0]].1, "survives deletion");
+    assert!(!final_board.contains_key(&ids[1]));
+    for path in [&a, &b] {
+        let deleted = sandbox.tsk_ok(path, &["list", "--deleted", "--all", "--json"]);
+        assert!(
+            deleted.contains("remove a") && deleted.contains("remove b"),
+            "{deleted}"
+        );
+        let text = fs::read_to_string(path.join("trash.jsonl")).unwrap();
+        for id in &ids[..3] {
+            assert!(text.contains(&id.to_string()), "missing trash id {id}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_holds_the_store_lock_until_push_finishes() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::thread;
+    use std::time::{Duration, Instant};
+    let Some(sandbox) = Sandbox::new("push-lock") else {
+        return;
+    };
+    let (a, _) = pair(&sandbox);
+    sandbox.tsk_ok(&a, &["edit", "T1", "--title", "pending push"]);
+    let ready = sandbox.path("push-ready");
+    let release = sandbox.path("push-release");
+    let hook = a.join(".git/hooks/pre-push");
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.02; done\n",
+            ready.display(),
+            release.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tsk"));
+    command
+        .args(["sync"])
+        .current_dir(&sandbox.root)
+        .env("TSK_STATE_DIR", &a)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    sandbox.isolate(&mut command);
+    let mut sync = command.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !ready.exists() {
+        sync.kill().unwrap();
+        sync.wait().unwrap();
+        panic!("push hook did not start");
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tsk"));
+    command
+        .args(["status", "T1", "started"])
+        .current_dir(&sandbox.root)
+        .env("TSK_STATE_DIR", &a)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    sandbox.isolate(&mut command);
+    let mut writer = command.spawn().unwrap();
+    thread::sleep(Duration::from_millis(200));
+    let wrote_before_push_finished = writer.try_wait().unwrap().is_some();
+    fs::write(&release, "release").unwrap();
+    assert!(sync.wait().unwrap().success());
+    assert!(writer.wait().unwrap().success());
+    assert!(
+        !wrote_before_push_finished,
+        "a second CLI writer changed the store while sync was pushing"
+    );
+    assert_eq!(board(&a).values().next().unwrap().2, HumanStatus::Started);
+}
+
+#[cfg(unix)]
+#[test]
+fn push_race_retries_once_and_a_second_remote_move_stops_safely() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(sandbox) = Sandbox::new("push-race") else {
+        return;
+    };
+    let (a, b) = pair(&sandbox);
+    let c = sandbox.path("c");
+    sandbox.git(&[
+        "clone",
+        "--quiet",
+        sandbox.path("remote.git").to_str().unwrap(),
+        "c",
+    ]);
+    sandbox.tsk_ok(&c, &["sync", "--init"]);
+    let hook = a.join(".git/hooks/pre-push");
+    let count = sandbox.path("push-count");
+    let quote = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+    let install_hook = |limit: u32| {
+        fs::write(&hook, format!(
+            "#!/bin/sh\nset -eu\ncount=0\n[ ! -f {counter} ] || count=$(cat {counter})\ncount=$((count+1))\nprintf '%s\\n' \"$count\" > {counter}\nif [ \"$count\" -le {limit} ]; then\n unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n export TSK_STATE_DIR={state}\n {binary} add -t \"race $count limit {limit}\" --desk\n {binary} sync\nfi\n",
+            counter=quote(&count), state=quote(&c), binary=quote(Path::new(env!("CARGO_BIN_EXE_tsk")))
+        )).unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    install_hook(1);
+    sandbox.tsk_ok(&a, &["add", "-t", "race local one", "--desk"]);
+    sandbox.tsk_ok(&a, &["sync"]);
+    assert_eq!(fs::read_to_string(&count).unwrap().trim(), "2");
+    settle(&sandbox, &a, &b);
+    fs::write(&count, "0").unwrap();
+    install_hook(2);
+    sandbox.tsk_ok(&a, &["add", "-t", "race local two", "--desk"]);
+    let failed = sandbox.tsk(&a, &["sync"]);
+    assert_eq!(failed.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("push was rejected twice"));
+    assert_eq!(fs::read_to_string(&count).unwrap().trim(), "2");
+    assert!(sandbox
+        .tsk_ok(&a, &["list", "--all", "--json"])
+        .contains("race local two"));
+    assert!(!a.join(".git/MERGE_HEAD").exists());
+    fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    settle(&sandbox, &a, &b);
+    assert!(board(&a).values().any(|row| row.1 == "race local two"));
 }
 
 #[test]

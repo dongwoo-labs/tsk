@@ -281,7 +281,7 @@ tsk sync --json
 | `--json` | One result object |
 | `--state-dir <dir>` | Alternate state directory |
 
-`tsk sync` commits local changes to `tsk.json` and `trash.jsonl`, then, when `origin` exists, fetches, merges, and pushes. If the push is rejected because another machine pushed first, it fetches, merges, and pushes once more. Nothing syncs in the background; run it when you want to share. Setup, merge rules, and sharing with agents: [Share through git](/docs/storage/#share-through-git).
+`tsk sync` commits local changes to `tsk.json` and `trash.jsonl`, then, when `origin` exists, fetches, merges, and pushes. It holds the board's exclusive lock for the whole operation, so other local writers wait even during network steps. If the push is rejected because another machine pushed first, it fetches, merges, and pushes once more under the same lock. Nothing syncs in the background; run it when you want to share. Setup, merge rules, and sharing with agents: [Share through git](/docs/storage/#share-through-git).
 
 Plain output is three lines: `committed local changes (<hash>)` or `no local changes`; `merged origin/main: 1 added, 2 updated, 0 removed` or `nothing new on origin/main`; `pushed to origin/main` or `nothing to push`. Without a remote the last two lines become `no remote: changes stay in this state directory`.
 

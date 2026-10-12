@@ -3,9 +3,9 @@
 //! The state directory becomes its own git repository holding `tsk.json` and
 //! `trash.jsonl`. `tsk.json` merges with `tsk merge-driver` (a three-way merge by task id,
 //! see [`crate::domain::merge_documents`]); `trash.jsonl` merges as a union, which its
-//! readers already dedupe by id. Commit and merge run under the store's exclusive lock, so
-//! no other tsk writer can change the live document between them; fetch and push run
-//! outside it.
+//! readers already dedupe by id. Commit, fetch, merge, push, and the one retry run under
+//! the store's exclusive lock. Local writers wait even during network I/O; this keeps
+//! concurrent syncs from changing the repository while an operation is in progress.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -210,68 +210,65 @@ pub fn sync(state_dir: &Path) -> Result<SyncReport, SyncError> {
             )))
         }
     }
-    // A fresh clone has no repo-local config, so the driver is (re)installed every run.
-    git.ensure_merge_driver()?;
     let store = TaskStore::new(state_dir);
-    let message = commit_message("sync");
-    let mut report = SyncReport {
-        commit: locked(&store, || git.commit_local(&message))?,
-        ..SyncReport::default()
-    };
-    if git.remote_url()?.is_none() {
-        return Ok(report);
-    }
-    let branch = git
-        .output(&["symbolic-ref", "--short", "-q", "HEAD"])?
-        .success()
-        .ok_or_else(|| {
-            SyncError::Refused(
+    locked(&store, || {
+        // A fresh clone has no repo-local config, so the driver is (re)installed every run.
+        git.ensure_merge_driver()?;
+        let message = commit_message("sync");
+        let mut report = SyncReport {
+            commit: git.commit_local(&message)?,
+            ..SyncReport::default()
+        };
+        if git.remote_url()?.is_none() {
+            return Ok(report);
+        }
+        let branch = git
+            .output(&["symbolic-ref", "--short", "-q", "HEAD"])?
+            .success()
+            .ok_or_else(|| {
+                SyncError::Refused(
                 "the sync repository is not on a branch (detached HEAD); check out a branch first"
                     .into(),
             )
-        })?;
-    let upstream = format!("{REMOTE}/{branch}");
-    report.upstream = Some(upstream.clone());
-    git.fetch()?;
-    for attempt in 0..2 {
-        let remote_exists = git.ref_exists(&format!("refs/remotes/{upstream}"))?;
-        if remote_exists && !git.is_ancestor(&upstream, "HEAD")? {
-            let counts = locked(&store, || {
-                if let Some(commit) = git.commit_local(&message)? {
-                    report.commit = Some(commit);
-                }
-                merge_upstream(&git, &store, &upstream, &message)
             })?;
-            report.merged = true;
-            report.added += counts.0;
-            report.updated += counts.1;
-            report.removed += counts.2;
-        }
-        if remote_exists && git.rev(&upstream)? == git.rev("HEAD")? {
-            return Ok(report);
-        }
-        let push = git.output(&["push", "--quiet", "-u", REMOTE, &branch])?;
-        if push.ok {
-            report.pushed = true;
-            return Ok(report);
-        }
-        if attempt == 1 {
-            return Err(SyncError::Failed(format!(
-                "{upstream} moved again while syncing, so the push was rejected twice: {}",
-                push.detail()
-            )));
-        }
+        let upstream = format!("{REMOTE}/{branch}");
+        report.upstream = Some(upstream.clone());
         git.fetch()?;
-        let moved = git.ref_exists(&format!("refs/remotes/{upstream}"))?
-            && !git.is_ancestor(&upstream, "HEAD")?;
-        if !moved {
-            return Err(SyncError::Failed(format!(
-                "git push to {upstream} failed: {}",
-                push.detail()
-            )));
+        for attempt in 0..2 {
+            let remote_exists = git.ref_exists(&format!("refs/remotes/{upstream}"))?;
+            if remote_exists && !git.is_ancestor(&upstream, "HEAD")? {
+                let counts = merge_upstream(&git, &store, &upstream, &message)?;
+                report.merged = true;
+                report.added += counts.0;
+                report.updated += counts.1;
+                report.removed += counts.2;
+            }
+            if remote_exists && git.rev(&upstream)? == git.rev("HEAD")? {
+                return Ok(report);
+            }
+            let push = git.output(&["push", "--quiet", "-u", REMOTE, &branch])?;
+            if push.ok {
+                report.pushed = true;
+                return Ok(report);
+            }
+            if attempt == 1 {
+                return Err(SyncError::Failed(format!(
+                    "{upstream} moved again while syncing, so the push was rejected twice: {}",
+                    push.detail()
+                )));
+            }
+            git.fetch()?;
+            let moved = git.ref_exists(&format!("refs/remotes/{upstream}"))?
+                && !git.is_ancestor(&upstream, "HEAD")?;
+            if !moved {
+                return Err(SyncError::Failed(format!(
+                    "git push to {upstream} failed: {}",
+                    push.detail()
+                )));
+            }
         }
-    }
-    unreachable!("the push loop returns on its second attempt")
+        unreachable!("the push loop returns on its second attempt")
+    })
 }
 
 /// Merge `upstream` into the checked-out board. Caller holds the store lock. Returns the
