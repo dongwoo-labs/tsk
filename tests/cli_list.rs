@@ -1429,6 +1429,9 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
             "status": "ready",
             "project": "-maintenance",
             "thread": null,
+            "parent_task_id": null,
+            "children_done": 0,
+            "children_total": 0,
         })]
     );
 
