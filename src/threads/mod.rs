@@ -1,4 +1,4 @@
-//! Threads view: the live coding-agent sessions Herdr runs, grouped by whose move is next.
+//! Threads view: the live coding-agent sessions Herdr runs, grouped by execution status.
 //!
 //! Read-only. The rows come from `herdr agent list`; nothing here reads or writes the task
 //! store. A row is one live agent: its Herdr name (an agent-home handle such as
@@ -48,11 +48,11 @@ impl AgentStatus {
     }
 }
 
-/// Whose move is next, in board order.
+/// Herdr execution-state groups, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
-    /// Blocked on an approval or question dialog, or stopped (sign-in, limit, API error).
-    NeedsYou,
+    /// Herdr reports blocked execution; this does not imply an open user question.
+    Blocked,
     /// Working on a turn.
     InMotion,
     /// Ready for input: idle, done, or unclassified.
@@ -60,11 +60,11 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 3] = [Group::NeedsYou, Group::InMotion, Group::OnDeck];
+    pub const ALL: [Group; 3] = [Group::Blocked, Group::InMotion, Group::OnDeck];
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::NeedsYou => "NEEDS YOU",
+            Self::Blocked => "BLOCKED",
             Self::InMotion => "IN MOTION",
             Self::OnDeck => "ON DECK",
         }
@@ -110,18 +110,10 @@ impl ThreadRow {
         ROLE_PREFIXES.iter().any(|p| self.name.starts_with(p))
     }
 
-    /// The inbox mod marks a stop (signed out, usage limit, API error) with a leading `!`.
-    pub fn is_stopped(&self) -> bool {
-        self.inbox
-            .as_deref()
-            .is_some_and(|line| line.starts_with('!'))
-    }
-
+    /// Classify only Herdr's execution status; inbox text is an optional annotation.
     pub fn group(&self) -> Group {
-        if self.status == AgentStatus::Blocked || self.is_stopped() {
-            return Group::NeedsYou;
-        }
         match self.status {
+            AgentStatus::Blocked => Group::Blocked,
             AgentStatus::Working => Group::InMotion,
             _ => Group::OnDeck,
         }
@@ -242,7 +234,7 @@ pub fn rows_json(rows: &[ThreadRow]) -> String {
                 "name": row.name,
                 "issue": row.issue_key(),
                 "group": match row.group() {
-                    Group::NeedsYou => "needs_you",
+                    Group::Blocked => "blocked",
                     Group::InMotion => "in_motion",
                     Group::OnDeck => "on_deck",
                 },
@@ -329,13 +321,29 @@ mod tests {
     }
 
     #[test]
-    fn groups_follow_whose_move_is_next() {
+    fn groups_follow_herdr_execution_status() {
         let rows = parse_agent_list(LIST).unwrap();
         assert_eq!(rows[0].group(), Group::InMotion);
         assert_eq!(rows[1].group(), Group::OnDeck);
-        assert_eq!(rows[2].group(), Group::NeedsYou);
-        // A stop reported by the inbox mod needs the user even while Herdr says idle.
-        assert_eq!(rows[3].group(), Group::NeedsYou);
+        assert_eq!(rows[2].group(), Group::Blocked);
+        // Inbox annotations never change the execution-state group.
+        assert_eq!(rows[3].group(), Group::OnDeck);
+        for (status, expected) in [
+            (AgentStatus::Working, Group::InMotion),
+            (AgentStatus::Idle, Group::OnDeck),
+            (AgentStatus::Done, Group::OnDeck),
+            (AgentStatus::Unknown, Group::OnDeck),
+            (AgentStatus::Blocked, Group::Blocked),
+        ] {
+            for inbox in [None, Some("! Signed out: /login"), Some("2 · question")] {
+                let row = ThreadRow {
+                    status,
+                    inbox: inbox.map(str::to_owned),
+                    ..rows[0].clone()
+                };
+                assert_eq!(row.group(), expected);
+            }
+        }
     }
 
     #[test]
@@ -349,9 +357,9 @@ mod tests {
             names,
             [
                 "thr-dongwoo-2650",
-                "thr-dongwoo-2651",
                 "thr-dongwoo-2648",
-                "lead-main"
+                "lead-main",
+                "thr-dongwoo-2651"
             ]
         );
         assert_eq!(visible_rows(&rows, true).len(), 5);
@@ -362,7 +370,9 @@ mod tests {
         let rows = visible_rows(&parse_agent_list(LIST).unwrap(), false);
         let report: Value = serde_json::from_str(&rows_json(&rows)).unwrap();
         assert_eq!(report[0]["issue"], "DONGWOO-2650");
-        assert_eq!(report[0]["group"], "needs_you");
-        assert_eq!(report[2]["inbox"], "2 · tsk fork 위치는?");
+        assert_eq!(report[0]["group"], "blocked");
+        assert_eq!(report[1]["inbox"], "2 · tsk fork 위치는?");
+        assert_eq!(report[3]["group"], "on_deck");
+        assert_eq!(report[3]["inbox"], "! Signed out: /login");
     }
 }

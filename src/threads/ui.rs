@@ -1,4 +1,4 @@
-//! The threads pane: live agent sessions grouped by whose move is next, with focus on Enter.
+//! The threads pane: live agent sessions grouped by execution status, with focus on Enter.
 
 use std::collections::HashMap;
 use std::io;
@@ -402,7 +402,7 @@ mod tests {
             [
                 "tsk threads · 3 · lead and threads",
                 "",
-                "NEEDS YOU 1",
+                "BLOCKED 1",
                 "▸ thr-dongwoo-2650  blocked 3m",
                 "    Allow push main to origin? 허용?",
                 "    DONGWOO-2650 · claude · w1:t3 w1:p4",
