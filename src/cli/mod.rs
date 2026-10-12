@@ -9,6 +9,7 @@ pub mod add;
 pub mod archive;
 pub mod edit;
 pub mod guide;
+pub mod import;
 pub mod list;
 pub mod parser;
 pub mod presenter;
@@ -70,6 +71,7 @@ where
         Some("edit") => run_edit(args),
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
+        Some("import") => run_import(args),
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -79,7 +81,7 @@ where
             run_archive(args, verb, archive)
         }
         _ => presenter::usage(
-            "expected add, steps, list, status, edit, trash, archive, unarchive, or project command",
+            "expected add, steps, list, status, edit, trash, archive, unarchive, project, or import command",
         ),
     }
 }
@@ -101,6 +103,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "archive" => presenter::archive_help("archive"),
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
+            "import" => presenter::import_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),
@@ -210,6 +213,21 @@ fn run_project(args: Vec<String>) -> CliOutput {
     match archive::run_project(name, archive, input.state_dir) {
         Ok(result) => presenter::project_archived(result, verb),
         Err(error) => presenter::archive_rejected(error, verb),
+    }
+}
+
+fn run_import(args: Vec<String>) -> CliOutput {
+    let input = match import::parse(&args) {
+        Ok(input) => input,
+        Err(reason) => return presenter::import_usage(&reason),
+    };
+    if input.help {
+        return presenter::import_help();
+    }
+    let json = input.json;
+    match import::run(input) {
+        Ok(report) => presenter::imported(report, json),
+        Err(error) => presenter::import_rejected(error),
     }
 }
 

@@ -11,6 +11,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- `tsk import linear` imports your Linear issues as tasks, one way. Set `LINEAR_API_KEY`, then filter with `--team`, `--linear-project`, `--assignee me|<email>|any` (default `me`), `--state` (Linear state types, default `backlog,unstarted,started`) and `--limit` (default 100), and choose the destination with `-p` or `--desk`. Each task is titled `<IDENTIFIER> <title>` and its notes start with a `Linear: <IDENTIFIER> <url>` line, which keeps a rerun from adding the same issue twice. Started states map to `started` (or `review` when the state name says review), completed to `done`, and canceled issues are skipped. Existing copies stay as you left them unless you pass `--update`; `--dry-run` shows what would change and `--json` prints a report. macOS and Linux only for now.
 - Reorder steps. On the task page, `alt+↑` / `alt+↓` moves the selected step (also **move step up** / **move step down** in the `:` palette, which now opens on the task page too), and `ctrl+a` with a step selected adds the new step directly below it. From the CLI, `tsk steps T12 move <short-id> --before|--after <short-id>` or `--first`/`--last`, and `tsk steps T12 add "…"` with the same place flags. A moved step keeps its short ID and checked state. Thanks @LukasGold (#159).
 
 ### Fixed
