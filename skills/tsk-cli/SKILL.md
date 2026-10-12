@@ -1,13 +1,13 @@
 ---
 name: tsk-cli
-description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always `tsk add|list|status|edit|steps|archive|trash|import`, never the TUI.
+description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|steps|archive|trash|import|ask|questions|answer`), never the TUI.
 version: 1.5.0
 ---
 
 # tsk: the user's task board
 
-tsk is the user's task board. Tasks have a human status (`open` · `ready` · `started` · `blocked` ·
-`review` · `done`), live on the **desk** (no project) or in a **project** (a Git repo root, named
+tsk is the user's task board. Tasks have a human status (`todo` · `doing` · `done`),
+live on the **desk** (no project) or in a **project** (a Git repo root, named
 by its basename), and may carry a **thread** label. The user sees the board in a TUI; you never
 open it. Every read and write goes through the CLI, and the user's board updates live.
 
@@ -24,22 +24,23 @@ and stop. Never run an installer, package manager, or source build unless they a
 
 | The user says | Statuses | Read |
 | --- | --- | --- |
-| what needs me | `blocked`, `review` | `tsk list --json`, filter `status` |
-| in motion | `started` | same |
-| on deck, what's next | `ready` | `tsk list --ready --json` |
-| inbox, untriaged | `open` | `tsk list --open --json` |
-| other projects, everything live | the five live statuses | `tsk list --all --json`, `--desk`, `-p <project>` |
+| what needs me | Questions, not Task status | `tsk questions --json` in the explicit Agent state directory |
+| in motion | `doing` | `tsk list --doing --json` |
+| on deck, what's next | `todo` | `tsk list --todo --json` |
+| other projects, everything live | `todo`, `doing` | `tsk list --all --json`, `--desk`, `-p <project>` |
 | done, archived, deleted | | `tsk list --done --json`, `--archived`, `--deleted` (each may combine with a scope flag) |
 | one task, in full | | `tsk list T12 --json` (notes, steps with `short_id`, thread) |
 
 `T12`, `t12`, `12`, and the UUID all address the same task. Prefer `T12`, it is what the user sees.
-New tasks start `open` in the inbox; `ready` means the user picked it.
+New tasks start `todo`. `doing` means work is in progress; `done` means it is finished.
+Questions and approval records are separate from Task status. Legacy status values and the `start`
+alias are usage errors, not alternate spellings.
 
 ## Rules
 
-1. **Human status is the user's.** When your work on a task is finished, set `review`. Set
-   `done` only when the user says the task is done or told you to close it. Never mark tasks
-   done from your own progress.
+1. **Human status is the user's.** When your work is finished, report the result and leave
+   the Task in `doing`. Set `done` only when the user says the task is done or told you to
+   close it. Never mark tasks done from your own progress.
 2. **Use a known project name or a full path.** A bare `-p name` must resolve to one existing
    project; unknown or ambiguous names refuse. An existing absolute directory is the only way to
    create a new project destination. `tsk edit` cannot move a task: re-add in the right scope and
@@ -50,7 +51,9 @@ New tasks start `open` in the inbox; `ready` means the user picked it.
 4. **Never blind-retry.** Read the exit code, then act (table below). `add`, `status`, `edit`,
    `archive` are idempotent; `steps toggle` and `steps remove` are not, so run
    `tsk list T12 --json` before retrying any `steps` command.
-5. **Never pass `--state-dir`** unless the user asked. It points at a different board.
+5. **Task commands use the selected board.** Never pass `--state-dir` unless the user asked.
+   Question commands are the exception: use the task's explicitly assigned non-personal Agent state
+   directory. If no Agent directory is assigned, stop rather than selecting one or using the personal board.
 6. **Ignore notice rows.** Rows the board paints as `N1`… are human-only (starter tasks and
    release notes). `tsk list --json` never shows them and no command addresses them.
 7. Values that begin with `-` need the `=` form: `--title="-fix parser"`, `--notes="-5 degrees"`.
@@ -58,7 +61,7 @@ New tasks start `open` in the inbox; `ready` means the user picked it.
    to 32 characters. `--thread` lowercases the value; anything else is a usage error (exit 2). In a
    JSON plan a bad `thread` is an item refusal (`invalid-thread`).
 
-## Exit contract (all commands)
+## Task-command exit contract
 
 | Exit | Meaning | Do |
 | --- | --- | --- |
@@ -75,13 +78,24 @@ New tasks start `open` in the inbox; `ready` means the user picked it.
 ## Workflows
 
 **What's on the board.** `tsk list --json` (this repo's project, or the desk outside Git). Group by
-`status` in board language, lead with what needs the user, then in motion, then on deck.
+`status` in board language: Doing, then Todo. Read unanswered questions separately.
 
-**Start work on a task.** `tsk list T12 --json` for notes and steps. `tsk status T12 start`.
+**Start work on a task.** `tsk list T12 --json` for notes and steps. `tsk status T12 doing`.
 Tick steps as you go: `tsk steps T12 toggle <short_id>`.
 
-**Hand back.** `tsk status T12 review`, and say in one line what you did and what to look at.
-Blocked on the user: `tsk status T12 blocked` and ask the question.
+**Hand back.** Leave the Task in Doing and state what you did and what the user must inspect.
+When an answer is needed, ask a Task-linked question rather than changing the Task to a waiting status.
+
+**Questions.** Run `tsk help ask`, `tsk help questions`, and `tsk help answer` first. These commands
+require an explicitly selected non-personal Agent state directory. They never fall back to the
+personal board. Read the current Q revision before answering; pass it as `expected_revision`.
+Corrections append and name the current answer revision. Question writes report saved durability and
+notification separately; an uncertain commit exits 1. After an uncertain write, read the record before
+retrying. Visible readback alone does not confirm durability. Notification failure does not undo a saved answer, and notification acceptance does
+not prove the recipient read it. Ordinary Agent or imported answers do not authorize execution.
+Approval must preserve confirmed UI evidence or verified original user-chat evidence and match the
+exact target, action, Git SHA or plan digest, scope, and rollback terms. Never fabricate that evidence.
+Private originals stay in Git-excluded `questions-private/`; put only shareable summaries in references.
 
 **Plan as steps.** When the user wants order of work tracked on the task: `tsk steps T12 add
 "…"` per step, in order. Do not add steps for your own bookkeeping. To fit a step into an existing

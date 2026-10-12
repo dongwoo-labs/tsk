@@ -138,37 +138,37 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
         &mut state,
         "review target",
         project.clone(),
-        HumanStatus::Review,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "ready target",
         project.clone(),
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "started target",
         project.clone(),
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "blocked target",
         project.clone(),
-        HumanStatus::Blocked,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "open target",
         project.clone(),
-        HumanStatus::Open,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "global hidden",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -176,7 +176,7 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
         TaskScope::Project {
             path: "/projects/other".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -206,7 +206,7 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
     assert!(human.stderr.is_empty());
     assert_eq!(
         human.stdout,
-        "STARTED\n - 3 started target\n\nREADY\n - 2 ready target\n\nOPEN\n - 5 open target\n\nBLOCKED\n - 4 blocked target\n\nREVIEW\n - 1 review target\n"
+        "DOING\n - 4 blocked target\n - 3 started target\n - 1 review target\n\nTODO\n - 2 ready target\n - 5 open target\n"
     );
 
     let json = list(&[
@@ -224,11 +224,11 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
             .map(|row| row["title"].as_str().expect("title"))
             .collect::<Vec<_>>(),
         vec![
-            "started target",
-            "ready target",
-            "open target",
             "blocked target",
-            "review target"
+            "started target",
+            "review target",
+            "ready target",
+            "open target"
         ]
     );
     for row in &rows {
@@ -253,13 +253,13 @@ fn list_resolves_named_and_global_scopes() {
         TaskScope::Project {
             path: "/projects/Widget".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "global task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -375,7 +375,7 @@ fn list_done_and_deleted_filters_are_status_and_soft_delete_specific() {
         vec!["deleted done", "deleted ready"]
     );
     assert_eq!(deleted_rows[0]["status"], "done");
-    assert_eq!(deleted_rows[1]["status"], "open");
+    assert_eq!(deleted_rows[1]["status"], "todo");
 
     let deleted_human = list(&[
         "tsk".into(),
@@ -408,13 +408,13 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
         &mut state,
         "global started",
         TaskScope::Global,
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "project started",
         project.clone(),
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
@@ -422,13 +422,13 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
         TaskScope::Project {
             path: "/projects/other".into(),
         },
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "project ready",
         project.clone(),
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -436,13 +436,13 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
         TaskScope::Project {
             path: "/projects/other".into(),
         },
-        HumanStatus::Blocked,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "global review",
         TaskScope::Global,
-        HumanStatus::Review,
+        HumanStatus::Doing,
     );
     create_task(&mut state, "project done", project, HumanStatus::Done);
     create_task(
@@ -494,7 +494,7 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
     assert_eq!(
         open.stdout,
         format!(
-            "STARTED\n  other\n    - 3 other started\n  {project_name}\n    - 2 project started\n  desk\n    - 1 global started\n\nREADY\n  {project_name}\n    - 4 project ready\n\nBLOCKED\n  other\n    - 5 other blocked\n\nREVIEW\n  desk\n    - 6 global review\n"
+            "DOING\n  desk\n    - 6 global review\n    - 1 global started\n  other\n    - 5 other blocked\n    - 3 other started\n  {project_name}\n    - 2 project started\n\nTODO\n  {project_name}\n    - 4 project ready\n"
         )
     );
 
@@ -515,12 +515,12 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
             .collect::<Vec<_>>(),
         // Newest status change first within STARTED, as on the board.
         vec![
+            "global review",
+            "other blocked",
             "other started",
             "project started",
             "global started",
             "project ready",
-            "other blocked",
-            "global review",
         ]
     );
 
@@ -621,7 +621,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         &mut state,
         "global task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -629,7 +629,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         TaskScope::Project {
             path: "global".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -637,7 +637,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         TaskScope::Project {
             path: "/work/global".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -645,7 +645,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         TaskScope::Project {
             path: "/work/api".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -653,7 +653,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         TaskScope::Project {
             path: "/personal/api".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -661,7 +661,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
         TaskScope::Project {
             path: " \t ".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -676,7 +676,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "READY\n  desk\n    - 1 global task\n  project: global\n    - 2 project global token\n  work/global\n    - 3 project global path\n  work/api\n    - 4 work api\n  personal/api\n    - 5 personal api\n  project: <empty project 1>\n    - 6 whitespace scope\n"
+        "TODO\n  desk\n    - 1 global task\n  project: global\n    - 2 project global token\n  work/global\n    - 3 project global path\n  work/api\n    - 4 work api\n  personal/api\n    - 5 personal api\n  project: <empty project 1>\n    - 6 whitespace scope\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -693,7 +693,7 @@ fn list_all_uses_shortest_unique_trailing_scope_labels_across_statuses() {
         TaskScope::Project {
             path: "global".into(),
         },
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
@@ -701,14 +701,14 @@ fn list_all_uses_shortest_unique_trailing_scope_labels_across_statuses() {
         TaskScope::Project {
             path: "/work/api".into(),
         },
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
-    create_task(&mut state, "global", TaskScope::Global, HumanStatus::Ready);
+    create_task(&mut state, "global", TaskScope::Global, HumanStatus::Todo);
     create_task(
         &mut state,
         "blank one",
         TaskScope::Project { path: " ".into() },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -716,13 +716,13 @@ fn list_all_uses_shortest_unique_trailing_scope_labels_across_statuses() {
         TaskScope::Project {
             path: "/personal/api".into(),
         },
-        HumanStatus::Blocked,
+        HumanStatus::Doing,
     );
     create_task(
         &mut state,
         "blank two",
         TaskScope::Project { path: "\t".into() },
-        HumanStatus::Review,
+        HumanStatus::Doing,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -737,7 +737,7 @@ fn list_all_uses_shortest_unique_trailing_scope_labels_across_statuses() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "STARTED\n  work/api\n    - 2 work api\n  global\n    - 1 project global\n\nREADY\n  desk\n    - 3 global\n  project: <empty project 1>\n    - 4 blank one\n\nBLOCKED\n  personal/api\n    - 5 personal api\n\nREVIEW\n  project: <empty project 2>\n    - 6 blank two\n"
+        "DOING\n  project: <empty project 1>\n    - 6 blank two\n  personal/api\n    - 5 personal api\n  work/api\n    - 2 work api\n  global\n    - 1 project global\n\nTODO\n  desk\n    - 3 global\n  project: <empty project 2>\n    - 4 blank one\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -758,7 +758,7 @@ fn list_all_preserves_raw_scope_syntax_after_trailing_segments_are_exhausted() {
             &mut state,
             title,
             TaskScope::Project { path: path.into() },
-            HumanStatus::Ready,
+            HumanStatus::Todo,
         );
     }
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -774,7 +774,7 @@ fn list_all_preserves_raw_scope_syntax_after_trailing_segments_are_exhausted() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "READY\n  project: \"/work/api\"\n    - 1 absolute api\n  project: \"work/api\"\n    - 2 relative api\n  project: \"/work/api/\"\n    - 3 trailing api\n  project: \"//work//api\"\n    - 4 repeated api\n"
+        "TODO\n  project: \"/work/api\"\n    - 1 absolute api\n  project: \"work/api\"\n    - 2 relative api\n  project: \"/work/api/\"\n    - 3 trailing api\n  project: \"//work//api\"\n    - 4 repeated api\n"
     );
     assert!(
         !output.stdout.contains("(scope "),
@@ -797,7 +797,7 @@ fn list_all_visibly_escapes_and_disambiguates_control_scope_labels() {
             &mut state,
             title,
             TaskScope::Project { path: path.into() },
-            HumanStatus::Ready,
+            HumanStatus::Todo,
         );
     }
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -830,7 +830,7 @@ fn human_list_escapes_terminal_control_titles_without_changing_json() {
     let title = "control\u{001b}]52;c;clipboard\u{0007}";
     let escaped = "control\\u{001b}]52;c;clipboard\\u{0007}";
     let mut state = DomainState::new();
-    create_task(&mut state, title, TaskScope::Global, HumanStatus::Ready);
+    create_task(&mut state, title, TaskScope::Global, HumanStatus::Todo);
     create_task(&mut state, title, TaskScope::Global, HumanStatus::Done);
     let deleted = state
         .create(
@@ -909,7 +909,7 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "OPEN\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n\n   #release-2026-long-thread\n"
+        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n\n   #release-2026-long-thread\n"
     );
     assert!(
         output.stdout.lines().all(|line| line.len() <= 50),
@@ -965,7 +965,7 @@ fn scoped_human_list_wraps_task_rows_and_scope_labels() {
         TaskScope::Project {
             path: "/projects/a-very-long-project-name-that-needs-wrapping-at-fifty-columns".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("release-2026-long"),
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1016,7 +1016,7 @@ fn unscoped_human_list_wraps_threaded_task_rows() {
         &mut state,
         "a default list task title that must wrap across the supported fifty column floor",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("release-2026-long"),
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1086,7 +1086,7 @@ fn binary_uses_stdout_terminal_width_and_leaves_redirects_unwrapped() {
         &mut state,
         title,
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         None,
     );
     TaskStore::new(root.join("state"))
@@ -1161,7 +1161,7 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
     assert_eq!(human.code, 0);
     assert_eq!(
         human.stdout,
-        "OPEN\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n\n   #release\n"
+        "TODO\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n\n   #release\n"
     );
     assert!(!human.stdout.contains('\t'));
     assert!(!human.stdout.contains('\u{001b}'));
@@ -1192,7 +1192,7 @@ fn human_list_escapes_terminal_control_thread_markers_without_changing_json() {
         &mut state,
         "threaded task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some(thread),
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1233,7 +1233,7 @@ fn list_equals_state_dir_form_accepts_dash_leading_value() {
         &mut state,
         "equals state task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&state_dir).save(&state).expect("seed state");
     let binary =
@@ -1264,7 +1264,7 @@ fn bare_list_outside_a_repo_stays_on_desk_while_the_directory_is_addressable() {
         &mut state,
         "global task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -1272,7 +1272,7 @@ fn bare_list_outside_a_repo_stays_on_desk_while_the_directory_is_addressable() {
         TaskScope::Project {
             path: outside.to_string_lossy().into_owned(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1406,7 +1406,7 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
         TaskScope::Project {
             path: "-maintenance".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1426,7 +1426,7 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
             "id": state.tasks()[0].id,
             "number": 1,
             "title": "maintenance task",
-            "status": "ready",
+            "status": "todo",
             "project": "-maintenance",
             "thread": null,
             "parent_task_id": null,
@@ -1470,7 +1470,7 @@ fn list_state_dir_flag_wins_over_environment() {
         &mut environment_state,
         "environment task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&environment_dir)
         .save(&environment_state)
@@ -1480,7 +1480,7 @@ fn list_state_dir_flag_wins_over_environment() {
         &mut argument_state,
         "argument task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&argument_dir)
         .save(&argument_state)
@@ -1514,7 +1514,7 @@ fn list_uses_environment_state_dir_by_default() {
         &mut state,
         "environment default task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir)
         .save(&state)
@@ -1590,7 +1590,7 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         output.stdout,
-        "OPEN\n - 1 steps target\n   First note\n   Second note\n\n   [x] First step\n   [ ] Second step\n\n   #release\n",
+        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   [x] First step\n   [ ] Second step\n\n   #release\n",
         "direct detail separates notes, steps, and the trailing thread"
     );
     assert!(
@@ -1608,7 +1608,7 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     ]);
     assert_eq!(json.code, 0);
     let expected_json = format!(
-        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"open\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"thread\":\"release\",\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[]}}]\n",
+        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"thread\":\"release\",\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[]}}]\n",
         task, first_step.id
     );
     assert_eq!(
@@ -1627,7 +1627,7 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
         &mut state,
         "plain target",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
     let task = state.tasks()[0].id;
@@ -1640,7 +1640,7 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
         state_dir_arg(&dir),
     ]);
     assert_eq!(plain.code, 0);
-    assert_eq!(plain.stdout, "READY\n - 1 plain target\n");
+    assert_eq!(plain.stdout, "TODO\n - 1 plain target\n");
 
     let plain_json = list(&[
         "tsk".into(),
@@ -1658,7 +1658,7 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
     assert_eq!(rows[0]["thread"], serde_json::Value::Null);
     let raw = plain_json.stdout.as_str();
     assert!(
-        raw.contains("\"status\":\"ready\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"thread\":null"),
+        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"thread\":null"),
         "direct JSON keeps empty detail fields and their contract order: {raw}"
     );
 
@@ -1713,7 +1713,7 @@ fn list_thread_filters_after_scope_selection() {
         TaskScope::Project {
             path: "/projects/selected".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("release"),
     );
     create_task_with_thread(
@@ -1722,7 +1722,7 @@ fn list_thread_filters_after_scope_selection() {
         TaskScope::Project {
             path: "/projects/selected".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("ops"),
     );
     create_task_with_thread(
@@ -1731,7 +1731,7 @@ fn list_thread_filters_after_scope_selection() {
         TaskScope::Project {
             path: "/projects/other".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("release"),
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1789,14 +1789,14 @@ fn json_rows_always_carry_thread_field() {
         &mut state,
         "threaded",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("release"),
     );
     create_task(
         &mut state,
         "unthreaded",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1826,7 +1826,7 @@ fn json_list_rows_include_number() {
         &mut state,
         "numbered task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1856,7 +1856,7 @@ fn human_list_rows_show_bare_digits() {
         &mut state,
         "numbered task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1869,7 +1869,7 @@ fn human_list_rows_show_bare_digits() {
     ]);
 
     assert_eq!(output.code, 0, "{}", output.stderr);
-    assert_eq!(output.stdout, "READY\n - 1 numbered task\n");
+    assert_eq!(output.stdout, "TODO\n - 1 numbered task\n");
     assert!(!output.stdout.contains("#1"));
     assert!(!output.stdout.contains("T1"));
 
@@ -1889,7 +1889,7 @@ fn list_displayed_or_bare_number_finds_the_task_from_another_cwd() {
         TaskScope::Project {
             path: "/projects/other".into(),
         },
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -2002,7 +2002,7 @@ fn list_uuid_still_finds_the_task() {
         &mut state,
         "uuid target",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -2031,7 +2031,7 @@ fn list_bare_digits_with_scope_or_status_flags_is_usage() {
         &mut state,
         "number target",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -2101,20 +2101,20 @@ fn human_output_appends_thread_marker_iff_row_threaded_snapshots() {
         &mut state,
         "scoped threaded",
         project.clone(),
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("alpha"),
     );
     create_task(
         &mut state,
         "scoped unthreaded",
         project.clone(),
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task_with_thread(
         &mut state,
         "global threaded",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         Some("ops"),
     );
     let step = create_task_with_thread(
@@ -2139,7 +2139,7 @@ fn human_output_appends_thread_marker_iff_row_threaded_snapshots() {
     ]);
     assert_eq!(
         scoped.stdout,
-        "READY\n - 1 scoped threaded #alpha\n - 2 scoped unthreaded\n"
+        "TODO\n - 1 scoped threaded #alpha\n - 2 scoped unthreaded\n"
     );
 
     let all = list(&[
@@ -2152,7 +2152,7 @@ fn human_output_appends_thread_marker_iff_row_threaded_snapshots() {
     assert_eq!(
         all.stdout,
         format!(
-            "READY\n  {project_name}\n    - 1 scoped threaded #alpha\n    - 2 scoped unthreaded\n  desk\n    - 3 global threaded #ops\n"
+            "TODO\n  {project_name}\n    - 1 scoped threaded #alpha\n    - 2 scoped unthreaded\n  desk\n    - 3 global threaded #ops\n"
         )
     );
 
@@ -2180,13 +2180,13 @@ fn default_list_views_exclude_archived_tasks_and_tasks_of_archived_projects() {
         &mut state,
         "archived open task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "visible open task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -2272,7 +2272,7 @@ fn every_list_view_omits_notices_and_a_notice_uuid_is_unknown() {
         &mut state,
         "ordinary task",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
@@ -2292,11 +2292,11 @@ fn every_list_view_omits_notices_and_a_notice_uuid_is_unknown() {
             )
             .expect("create notice")
     };
-    let open_notice = notice(&mut state, "welcome", "open notice", HumanStatus::Ready);
+    let open_notice = notice(&mut state, "welcome", "open notice", HumanStatus::Todo);
     notice(&mut state, "seen", "done notice", HumanStatus::Done);
-    let deleted_notice = notice(&mut state, "gone", "deleted notice", HumanStatus::Ready);
+    let deleted_notice = notice(&mut state, "gone", "deleted notice", HumanStatus::Todo);
     state.soft_delete(deleted_notice).expect("soft delete");
-    let archived_notice = notice(&mut state, "filed", "archived notice", HumanStatus::Ready);
+    let archived_notice = notice(&mut state, "filed", "archived notice", HumanStatus::Todo);
     state.archive_task(archived_notice).expect("archive");
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -2310,7 +2310,7 @@ fn every_list_view_omits_notices_and_a_notice_uuid_is_unknown() {
 
     let open = run(&[]);
     assert_eq!(open.code, 0);
-    assert_eq!(open.stdout, "READY\n - 1 ordinary task\n");
+    assert_eq!(open.stdout, "TODO\n - 1 ordinary task\n");
 
     let done = run(&["--done"]);
     assert_eq!(done.code, 0);
@@ -2352,7 +2352,7 @@ fn list_archived_marks_task_and_project_rows_once_per_id() {
         &mut state,
         "individually archived",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     let individually = state
         .tasks()
@@ -2367,7 +2367,7 @@ fn list_archived_marks_task_and_project_rows_once_per_id() {
         TaskScope::Project {
             path: "/repos/gone".into(),
         },
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     let _in_project = state
         .tasks()
@@ -2517,26 +2517,26 @@ fn list_open_and_ready_filters_and_json_status() {
         &mut state,
         "inbox row",
         TaskScope::Global,
-        HumanStatus::Open,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "picked row",
         TaskScope::Global,
-        HumanStatus::Ready,
+        HumanStatus::Todo,
     );
     create_task(
         &mut state,
         "started row",
         TaskScope::Global,
-        HumanStatus::Started,
+        HumanStatus::Doing,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
     let open = list(&[
         "tsk".into(),
         "list".into(),
-        "--open".into(),
+        "--todo".into(),
         "--json".into(),
         "--desk".into(),
         "--state-dir".into(),
@@ -2544,14 +2544,16 @@ fn list_open_and_ready_filters_and_json_status() {
     ]);
     assert_eq!(open.code, 0, "{}", open.stderr);
     let open_rows: Vec<serde_json::Value> = serde_json::from_str(&open.stdout).expect("open JSON");
-    assert_eq!(open_rows.len(), 1);
+    assert_eq!(open_rows.len(), 2);
+    assert_eq!(open_rows[1]["title"], "picked row");
+    assert_eq!(open_rows[1]["status"], "todo");
     assert_eq!(open_rows[0]["title"], "inbox row");
-    assert_eq!(open_rows[0]["status"], "open");
+    assert_eq!(open_rows[0]["status"], "todo");
 
     let ready = list(&[
         "tsk".into(),
         "list".into(),
-        "--ready".into(),
+        "--doing".into(),
         "--json".into(),
         "--desk".into(),
         "--state-dir".into(),
@@ -2561,8 +2563,8 @@ fn list_open_and_ready_filters_and_json_status() {
     let ready_rows: Vec<serde_json::Value> =
         serde_json::from_str(&ready.stdout).expect("ready JSON");
     assert_eq!(ready_rows.len(), 1);
-    assert_eq!(ready_rows[0]["title"], "picked row");
-    assert_eq!(ready_rows[0]["status"], "ready");
+    assert_eq!(ready_rows[0]["title"], "started row");
+    assert_eq!(ready_rows[0]["status"], "doing");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2571,7 +2573,7 @@ fn list_open_and_ready_filters_and_json_status() {
 fn list_open_and_ready_conflicts_are_usage_errors() {
     let dir = temp_state_dir("open-ready-conflicts");
     for extra in [
-        vec!["--ready".to_string()],
+        vec!["--doing".to_string()],
         vec!["--done".to_string()],
         vec!["--deleted".to_string()],
         vec!["--archived".to_string()],
@@ -2579,7 +2581,7 @@ fn list_open_and_ready_conflicts_are_usage_errors() {
         let mut args = vec![
             "tsk".to_string(),
             "list".to_string(),
-            "--open".to_string(),
+            "--todo".to_string(),
             "--state-dir".to_string(),
             state_dir_arg(&dir),
         ];
@@ -2594,7 +2596,7 @@ fn list_open_and_ready_conflicts_are_usage_errors() {
         "tsk".into(),
         "list".into(),
         "T1".into(),
-        "--ready".into(),
+        "--doing".into(),
         "--state-dir".into(),
         state_dir_arg(&dir),
     ]);
@@ -2647,10 +2649,10 @@ fn list_ready_puts_the_oldest_pick_first_like_the_board() {
     TaskStore::new(&dir).save(&state).expect("seed store");
 
     // GitHub #123: T2 picked before T1 lists first.
-    set_status(&dir, "T2", "ready");
-    set_status(&dir, "T1", "ready");
-    assert_eq!(listed_numbers(&dir, &["--desk", "--ready"]), vec![2, 1]);
-    assert_eq!(listed_numbers(&dir, &["--desk"]), vec![2, 1]);
+    set_status(&dir, "T2", "todo");
+    set_status(&dir, "T1", "todo");
+    assert_eq!(listed_numbers(&dir, &["--desk", "--todo"]), vec![1, 2]);
+    assert_eq!(listed_numbers(&dir, &["--desk"]), vec![1, 2]);
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2675,26 +2677,26 @@ fn list_orders_each_status_group_like_its_board_section() {
 
     // Within each pair the lower number changes status first.
     for (first, second, status) in [
-        ("T1", "T2", "started"),
-        ("T3", "T4", "ready"),
-        ("T7", "T8", "blocked"),
-        ("T9", "T10", "review"),
+        ("T1", "T2", "doing"),
+        ("T3", "T4", "todo"),
+        ("T7", "T8", "doing"),
+        ("T9", "T10", "doing"),
         ("T11", "T12", "done"),
     ] {
         set_status(&dir, first, status);
         set_status(&dir, second, status);
     }
     // Open stays capture order even when the later capture changed status first.
-    set_status(&dir, "T6", "ready");
-    set_status(&dir, "T6", "open");
-    set_status(&dir, "T5", "ready");
-    set_status(&dir, "T5", "open");
+    set_status(&dir, "T6", "todo");
+    set_status(&dir, "T6", "todo");
+    set_status(&dir, "T5", "todo");
+    set_status(&dir, "T5", "todo");
 
     // STARTED, BLOCKED, REVIEW (and done): newest status change first. READY: oldest
     // pick first. OPEN: oldest capture first.
     assert_eq!(
         listed_numbers(&dir, &["--desk"]),
-        vec![2, 1, 3, 4, 5, 6, 8, 7, 10, 9]
+        vec![10, 9, 8, 7, 2, 1, 3, 4, 5, 6]
     );
     assert_eq!(listed_numbers(&dir, &["--desk", "--done"]), vec![12, 11]);
 
@@ -2730,16 +2732,16 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
     // Started in capture order (newest change first lists 4, 3, 2, 1); picked in
     // reverse capture order (oldest pick first lists 8, 7, 6, 5).
     for task in ["T1", "T2", "T3", "T4"] {
-        set_status(&dir, task, "started");
+        set_status(&dir, task, "doing");
     }
     for task in ["T8", "T7", "T6", "T5"] {
-        set_status(&dir, task, "ready");
+        set_status(&dir, task, "todo");
     }
 
     // JSON is the flat board order, scopes interleaved.
     assert_eq!(
         listed_numbers(&dir, &["--all"]),
-        vec![4, 3, 2, 1, 8, 7, 6, 5]
+        vec![4, 3, 2, 1, 5, 6, 7, 8]
     );
     // Human output groups each status by scope: groups ordered by their first row,
     // rows inside a group in board order.
@@ -2747,7 +2749,7 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
     assert_eq!(human.code, 0, "{}", human.stderr);
     assert_eq!(
         human.stdout,
-        "STARTED\n  other\n    - 4 task 4\n    - 2 task 2\n  desk\n    - 3 task 3\n    - 1 task 1\n\nREADY\n  other\n    - 8 task 8\n    - 6 task 6\n  desk\n    - 7 task 7\n    - 5 task 5\n"
+        "DOING\n  other\n    - 4 task 4\n    - 2 task 2\n  desk\n    - 3 task 3\n    - 1 task 1\n\nTODO\n  desk\n    - 5 task 5\n    - 7 task 7\n  other\n    - 6 task 6\n    - 8 task 8\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);

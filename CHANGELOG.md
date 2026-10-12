@@ -9,10 +9,15 @@ the GitHub release notes verbatim.
 
 ## Unreleased
 
+### Breaking
+
+- Task progress is now Todo, Doing, or Done, with strict CLI values `todo`, `doing`, and `done`. Store v7 maps open/ready to todo and started/blocked/review to doing, preserving history, undo, steps, archive, parent links and thread. An older binary refuses v7; rollback requires the original `tsk.json.v<N>` plus `trash.jsonl.pre-v7` after trash rewrites. Question waiting is separate from human progress.
+
 ### Added
 
 - Threads pane. `tsk threads` (or the **Open tsk threads** Herdr action) lists the live `lead-` and `thr-` agent sessions grouped only by Herdr execution status as BLOCKED, IN MOTION and ON DECK, with each one's status, how long it has held, and optional inbox metadata as an annotation. Neither blocked execution nor inbox text indicates a wait for the user. `Enter` focuses the selected session's tab and pane; `tsk threads --json` and `tsk threads focus <name>` do the same headlessly. It only reads Herdr and never reads or writes the task or question store.
 - Lightweight task relationships from the CLI: `tsk add --parent T12`, `tsk edit T13 --parent T12`, and `tsk edit T13 --no-parent` set, replace, or clear one direct parent. `tsk list T12` shows direct children and their Done/total count; JSON includes stable parent UUIDs. Self-parenting and cycles are refused. Parent Done, archive, or deletion never changes children, and missing/deleted parent links stay unresolved rather than being reassigned. Linear imports keep a `Parent: Linear <identifier> <URL>` Notes reference and link an already imported parent or one created in the same batch, without recursive import or later reconciliation.
+- Task-linked questions on an explicit non-personal Agent board: `tsk ask --file`, `tsk questions`, and `tsk answer --file` record questions, approval requests, findings, replies, and append-only corrections. Full text and approval evidence stay in Git-excluded local private snapshots; the shared board holds only identifiers and a shareable summary. Replies require the current Q revision, and approval requires confirmed user evidence matching the exact terms. Identifier-only Herdr notifications are separate from saved replies: failed delivery keeps the answer, and an uncertain save requires readback before retrying.
 - `tsk import linear` imports your Linear issues as tasks, one way. Set `LINEAR_API_KEY`, then filter with `--team`, `--linear-project`, `--assignee me|<email>|any` (default `me`), `--state` (Linear state types, default `backlog,unstarted,started`) and `--limit` (default 100), and choose the destination with `-p` or `--desk`. Each task is titled `<IDENTIFIER> <title>` and its notes start with a `Linear: <IDENTIFIER> <url>` line, which keeps a rerun from adding the same issue twice. Started states map to `started` (or `review` when the state name says review), completed to `done`, and canceled issues are skipped. Existing copies stay as you left them unless you pass `--update`; `--dry-run` shows what would change and `--json` prints a report. macOS and Linux only for now.
 - Reorder steps. On the task page, `alt+↑` / `alt+↓` moves the selected step (also **move step up** / **move step down** in the `:` palette, which now opens on the task page too), and `ctrl+a` with a step selected adds the new step directly below it. From the CLI, `tsk steps T12 move <short-id> --before|--after <short-id>` or `--first`/`--last`, and `tsk steps T12 add "…"` with the same place flags. A moved step keeps its short ID and checked state. Thanks @LukasGold (#159).
 
@@ -28,6 +33,8 @@ the GitHub release notes verbatim.
 - `tsk add --file` and piped JSON plans accept a leading UTF-8 byte order mark, as Windows PowerShell 5.1 writes by default.
 - Windows: characters typed with AltGr, such as `[ ] { } @` on a German layout, insert in every text field (quick-add, task editors, search, the palette, Help, and pickers) instead of being dropped. Thanks @LukasGold (#178).
 - `tsk list` orders tasks within each status like the board: ready by oldest pick, open by oldest capture, everything else by most recent status change. `--json` is that flat board order. With `--all`, human output still groups each status by scope, ordering the groups by their first row and keeping the board order inside each group. Thanks @dangerousdan.
+
+- Question commands also refuse case variants of personal-board roots and their child paths before those roots exist. Existing question records and trash backups use non-truncating write-capable sync handles, as Windows requires.
 
 ## v0.11.6
 

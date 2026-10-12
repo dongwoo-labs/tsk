@@ -5,7 +5,7 @@ test("board illustration uses an arrow without a filled selection", async ({
 }) => {
   await page.goto("http://127.0.0.1:4180/");
   const row = page.locator(".screen .s-task.is-sel");
-  await expect(row).toContainText("▸ ▲ T31");
+  await expect(row).toContainText("▸ ● T31");
   await expect(row).toHaveCSS("background-image", "none");
   await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(row.locator(".sel-text")).toHaveCSS(

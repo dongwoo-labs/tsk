@@ -26,8 +26,8 @@ const BOARD_PINS = [
   },
   {
     n: 2,
-    title: 'NEEDS YOU.',
-    body: 'Blocked and review across all projects on Desk, or within the selected project on its board, above IN MOTION.',
+    title: 'DOING.',
+    body: 'Work in progress across all projects on Desk, or within the selected project on its board. Questions and agent execution status stay separate.',
   },
   {
     n: 3,
@@ -42,7 +42,7 @@ const BOARD_PINS = [
   {
     n: 5,
     title: 'Your loose backlog.',
-    body: "Desk's ON DECK contains only tasks without a project. Picked <code>ready</code> tasks lead, then the expandable <code>inbox</code> of <code>open</code> tasks. Project backlogs live on their own boards, with thread filters across every status.",
+    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards, with thread filters across every status.",
   },
 ];
 const pinLabel = (n) => {
@@ -206,7 +206,7 @@ const softwareApplication = {
             </h1>
             <p class="lede">
               One board where you both plan, pick up work, and move it through
-              <b>open</b>, <b>ready</b>, <b>started</b>, <b>blocked</b>, <b>review</b>, <b>done</b>.
+              <b>todo</b>, <b>doing</b>, <b>done</b>.
               You and your agents can create, edit, and complete tasks.
             </p>
             <div class="hero-install">
@@ -229,12 +229,12 @@ const softwareApplication = {
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
-                <span class="sec">NEEDS YOU</span><span class="rule"></span><span class="count">2</span>
+                <span class="sec">DOING</span><span class="rule"></span><span class="count">3</span>
                 <button type="button" class="pin" data-pin="2" aria-label={pinLabel(2)} aria-controls="pin-card" aria-expanded="false">2</button>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-task is-sel">
-                <span class="l">▸ <span class="glyph">▲</span> <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span>
+                <span class="l">▸ <span class="glyph">●</span> <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span>
                 <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
               </div>
               <div class="s-row s-peek"><span class="l dim">  │ Steps live on the task page. Notes wrap, never truncate.</span></div>
@@ -242,19 +242,14 @@ const softwareApplication = {
                 <button type="button" class="pin" data-pin="4" aria-label={pinLabel(4)} aria-controls="pin-card" aria-expanded="false">4</button>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">■</span> <span class="tid">T29</span> Waiting on the pane label</span>
+                <span class="l"><span class="glyph">●</span> <span class="tid">T29</span> Waiting on the pane label</span>
               </div>
-              <div class="s-gap"></div>
-              <div class="s-row s-sec">
-                <span class="sec">IN MOTION</span><span class="rule"></span><span class="count">1</span>
-              </div>
-              <div class="s-gap"></div>
               <div class="s-row s-task">
                 <span class="l"><span class="glyph">●</span> <span class="tid">T27</span> Proof the landing copy once more</span>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
-                <span class="sec">ON DECK · desk</span><span class="rule"></span><span class="count">4</span>
+                <span class="sec">TODO · desk</span><span class="rule"></span><span class="count">4</span>
                 <button type="button" class="pin" data-pin="5" aria-label={pinLabel(5)} aria-controls="pin-card" aria-expanded="false">5</button>
               </div>
               <div class="s-row s-task">
@@ -263,12 +258,11 @@ const softwareApplication = {
               <div class="s-row s-task">
                 <span class="l"><span class="glyph">○</span> <span class="tid">T18</span> Global backlog note</span>
               </div>
-              <div class="s-row s-sub"><span class="sec">inbox</span><span class="count">2</span></div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">◌</span> <span class="tid">T24</span> Capture the loose idea</span>
+                <span class="l"><span class="glyph">○</span> <span class="tid">T24</span> Capture the loose idea</span>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">◌</span> <span class="tid">T30</span> Triage the new report</span>
+                <span class="l"><span class="glyph">○</span> <span class="tid">T30</span> Triage the new report</span>
               </div>
               <div class="s-fill"></div>
               <div class="s-row s-footrule"><span class="rule"></span></div>
@@ -276,7 +270,7 @@ const softwareApplication = {
                 <span class="l meta">desk</span>
               </div>
               <div class="s-row s-foot">
-                <span class="l meta">enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ? help</span>
+                <span class="l meta">enter open · ctrl+o todo · ctrl+d done · ? help</span>
               </div>
             </div>
             {BOARD_PINS.map((pin) => (
@@ -326,7 +320,7 @@ const softwareApplication = {
                 keystroke in a focused board cannot finish or delete work. Undo is one chord
                 away.
               </p>
-              <pre class="mini" aria-label="Verb bar"><span class="dim">enter</span> open · <span class="dim">ctrl+d</span> done · <span class="dim">ctrl+n</span> ready · <span class="dim">ctrl+o</span> open · <span class="dim">:</span> palette
+              <pre class="mini" aria-label="Verb bar"><span class="dim">enter</span> open · <span class="dim">ctrl+d</span> done · <span class="dim">ctrl+s</span> doing · <span class="dim">ctrl+o</span> todo · <span class="dim">:</span> palette
 <span class="dim">ctrl+x</span> delete · <span class="dim">ctrl+u</span> undo · <span class="dim">?</span> help · <span class="dim">+</span> capture</pre>
             </article>
 
@@ -377,7 +371,7 @@ const softwareApplication = {
                   <p class="agent-line say">The handler applies side effects before recording the event ID. Concurrent retries can both get through.</p>
                   <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk add -t "Make webhook delivery idempotent" -p launchpad --thread api --json</span><span class="tool-out" data-cli-add-output>&#123;"outcome":"created","id":"00000000-0000-4000-8000-000000000013","number":13,"title":"Make webhook delivery idempotent","project":"/home/agent/work/launchpad"&#125;</span></div>
                   <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk steps T13 add "Reproduce duplicate delivery"</span><span class="tool-out" data-cli-step-output>added 3f Reproduce duplicate delivery</span></div>
-                  <p class="agent-line say">T13 is open with a checklist to reproduce duplicate delivery, persist processed event IDs, and test concurrent retries. Pick it when you are ready to work.</p>
+                  <p class="agent-line say">T13 is Todo with a checklist to reproduce duplicate delivery, persist processed event IDs, and test concurrent retries. Pick it when you are ready to work.</p>
                 </div>
                 <div class="agent-input"><span class="agent-prompt">›</span><span class="cursor" aria-hidden="true"></span><span class="agent-shortcut">? for shortcuts</span></div>
               </aside>
@@ -398,7 +392,7 @@ const softwareApplication = {
             columns, and the same board becomes the four-stage slider: <kbd>→</kbd> or <kbd>l</kbd> slides the
             task page in. On the Projects tab, moving to a project opens its preview at Split,
             and <kbd>→</kbd> or <kbd>l</kbd> makes that project board live at Rail. The demo takes bare
-            <kbd>s</kbd> <kbd>n</kbd> <kbd>o</kbd> <kbd>d</kbd> <kbd>b</kbd>
+            <kbd>s</kbd> <kbd>o</kbd> <kbd>d</kbd>
             because browsers keep the control chords. In the app, every mutating verb needs
             <kbd>Ctrl</kbd>. <kbd>Esc</kbd> closes either split after its editors and overlays.
             At the full-board root, <kbd>Esc</kbd> exits the terminal app;
@@ -467,64 +461,31 @@ const softwareApplication = {
             <span class="index">03 <span class="index-label">status</span></span>
             <h2 id="status-heading">One workflow for you and your agents.</h2>
             <p class="band-lede">
-              Six states shared by everyone on the board. You and your agents can create tasks,
-              edit titles and notes, manage steps, and move tasks through the board, from <b>open</b>
+              Three states shared by everyone on the board. You and your agents can create tasks,
+              edit titles and notes, manage steps, and move tasks through the board, from <b>todo</b>
               to <b>done</b>, using the CLI. Checking every step leaves the task status unchanged until it is explicitly updated.
             </p>
           </header>
 
           <ol class="rail" aria-label="Task statuses">
-            <li>
-              <span class="rail-glyph" aria-hidden="true">◌</span>
-              <span class="rail-name">open</span>
-              <span class="rail-how">inbox</span>
-              <kbd>ctrl+o</kbd>
-            </li>
-            <li>
-              <span class="rail-glyph" aria-hidden="true">○</span>
-              <span class="rail-name">ready</span>
-              <span class="rail-how">on deck</span>
-              <kbd>ctrl+n</kbd>
-            </li>
-            <li>
-              <span class="rail-glyph" aria-hidden="true">●</span>
-              <span class="rail-name">started</span>
-              <span class="rail-how">in motion</span>
-              <kbd>ctrl+s</kbd>
-            </li>
-            <li>
-              <span class="rail-glyph" aria-hidden="true">■</span>
-              <span class="rail-name">blocked</span>
-              <span class="rail-how">waiting</span>
-              <kbd>ctrl+b</kbd>
-            </li>
-            <li>
-              <span class="rail-glyph" aria-hidden="true">▲</span>
-              <span class="rail-name">review</span>
-              <span class="rail-how">check it</span>
-              <kbd>ctrl+r</kbd>
-            </li>
-            <li>
-              <span class="rail-glyph" aria-hidden="true">✓</span>
-              <span class="rail-name">done</span>
-              <span class="rail-how">in the drawer</span>
-              <kbd>ctrl+d</kbd>
-            </li>
+            <li><span class="rail-glyph" aria-hidden="true">○</span><span class="rail-name">todo</span><span class="rail-how">captured</span><kbd>ctrl+o</kbd></li>
+            <li><span class="rail-glyph" aria-hidden="true">●</span><span class="rail-name">doing</span><span class="rail-how">in progress</span><kbd>ctrl+s</kbd></li>
+            <li><span class="rail-glyph" aria-hidden="true">✓</span><span class="rail-name">done</span><span class="rail-how">in the drawer</span><kbd>ctrl+d</kbd></li>
           </ol>
 
           <div class="cycle" data-cycle aria-live="off">
             <div class="cycle-row">
-              <span class="cycle-sec" data-cycle-sec>inbox</span>
-              <span class="cycle-glyph" data-cycle-glyph aria-hidden="true">◌</span>
+              <span class="cycle-sec" data-cycle-sec>TODO</span>
+              <span class="cycle-glyph" data-cycle-glyph aria-hidden="true">○</span>
               <span class="tid">T14</span>
               <span class="cycle-title">Ship the landing page</span>
               <span class="cycle-meta">tsk</span>
             </div>
             <div class="cycle-foot">
               <span class="dim">you press</span>
-              <kbd data-cycle-key>ctrl+n</kbd>
+              <kbd data-cycle-key>ctrl+s</kbd>
               <span class="dim">→</span>
-              <span data-cycle-next>ready</span>
+              <span data-cycle-next>doing</span>
             </div>
           </div>
         </div>
@@ -538,7 +499,7 @@ const softwareApplication = {
             <h2 id="cli-heading">Built for agents from the first commit.</h2>
             <p class="band-lede">
               Headless <code>add</code>, <code>list</code>, <code>status</code>, <code>edit</code>, and <code>steps</code> against the
-              same store. An agent drops a plan in as JSON and it lands as <b>open</b> tasks in the inbox. It
+              same store. An agent drops a plan in as JSON and it lands as <b>todo</b> tasks. It
               can move status, rewrite notes, check off steps, and mark work done.
             </p>
           </header>
@@ -549,10 +510,10 @@ const softwareApplication = {
 <span class="dim">&#123;"outcome":"created","id":"5c1e…","number":32,"title":"Draft release notes","project":"tsk"&#125;</span>
 <span class="prompt">$</span> tsk steps T32 add "Write the failing test"
 <span class="dim">added 9f Write the failing test</span>
-<span class="prompt">$</span> tsk status T32 start
-<span class="dim">status T32 started Draft release notes</span>
+<span class="prompt">$</span> tsk status T32 doing
+<span class="dim">status T32 doing Draft release notes</span>
 <span class="prompt">$</span> tsk list T32
-<span class="dim">STARTED
+<span class="dim">DOING
  - 32 Draft release notes #release
    [ ] 9f Write the failing test</span>
 <span class="prompt">$</span> cat plan.json | tsk add

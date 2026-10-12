@@ -470,7 +470,7 @@ fn flag_add_creates_ready_task_and_prints_added_title() {
     assert_eq!(state.tasks().len(), 1);
     let task = &state.tasks()[0];
     assert_eq!(task.title, "hello  world");
-    assert_eq!(task.status, HumanStatus::Open);
+    assert_eq!(task.status, HumanStatus::Todo);
     assert!(task.notes.is_none());
     assert_eq!(task.provenance, ProvenanceOrigin::Capture);
 
@@ -1191,7 +1191,7 @@ fn plan_with_only_existing_tasks_is_a_successful_read_only_noop() {
         )
         .expect("seed task");
     seeded
-        .set_status(id, HumanStatus::Review)
+        .set_status(id, HumanStatus::Doing)
         .expect("set status");
     store.save(&seeded).expect("save seed");
     let state_file = dir.join("tsk.json");

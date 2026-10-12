@@ -3,7 +3,7 @@ test("project navigation, counted views and selection match the app", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(page.locator("[data-task]").first()).toContainText("▸ ■ T12");
+  await expect(page.locator("[data-task]").first()).toContainText("▸ ● T12");
   await expect(page.locator("[data-task]").first()).toHaveCSS(
     "background-color",
     "rgba(0, 0, 0, 0)",
@@ -43,7 +43,7 @@ test("project navigation, counted views and selection match the app", async ({
   await page.getByText("Without a thread 4", { exact: false }).click();
   await expect(page.locator("[data-task]")).toHaveCount(4);
   await page.locator('[data-tab="projects"]').click();
-  await expect(page.locator(".tsk-project-legend")).toContainText("NEEDS YOU");
+  await expect(page.locator(".tsk-project-legend")).toContainText("DOING");
   await expect(page.locator("[data-filter]")).toHaveText("Overview ▾");
   await page.locator("[data-project-row]").first().click();
   await expect(page.locator(".tsk-project-legend")).toBeVisible();
@@ -93,7 +93,7 @@ for (const scope of ["project", "projects"])
     ).toHaveCount(0);
   });
 
-test("landing seeds keep ready picks and inbox rows visible on desk and launchpad", async ({
+test("landing seeds keep Todo rows visible on desk and launchpad", async ({
   page,
 }) => {
   await page.goto("http://127.0.0.1:4180/");
@@ -126,10 +126,9 @@ test("project counts, thread labels and counted menu order match the app", async
   await expect(project.locator(":scope > span").nth(1)).toHaveText(
     "#api #auth #ops",
   );
-  await expect(project.locator(":scope > span").nth(2)).toHaveText("2");
-  await expect(project.locator(":scope > span").nth(3)).toHaveText("1");
-  await expect(project.locator(":scope > span").nth(4)).toHaveText("5");
-  await expect(project.locator(":scope > span").nth(5)).toHaveText("1");
+  await expect(project.locator(":scope > span").nth(2)).toHaveText("3");
+  await expect(project.locator(":scope > span").nth(3)).toHaveText("5");
+  await expect(project.locator(":scope > span").nth(4)).toHaveText("1");
   await page.locator('[data-tab="project"]').click();
   await page.locator("[data-filter]").click();
   await expect(page.locator("[data-filter-option]").nth(1)).toContainText(

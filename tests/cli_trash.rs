@@ -148,7 +148,7 @@ fn trash_restore_round_trip_refusals_and_events() {
     assert!(!task.soft_deleted, "restored is not soft-deleted");
     assert_eq!(
         task.status,
-        HumanStatus::Open,
+        HumanStatus::Todo,
         "restored with its prior status"
     );
     assert_eq!(task.number, Some(2), "the number survives the round trip");
@@ -319,7 +319,7 @@ fn restore_notice_by_uuid_prints_n_id_and_does_not_panic() {
             "announce.1",
             "What's new in tsk",
             Some("notes".into()),
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             Vec::new(),
         )

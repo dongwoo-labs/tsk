@@ -381,7 +381,7 @@ fn idle_merge_hides_a_task_archived_by_another_process_without_moving_selection(
         .expect("create Y");
     // Y is the only started task, so IN MOTION (above ON DECK) carries the seeded
     // selection regardless of the deck's FIFO order.
-    seed.set_status(y, HumanStatus::Started).expect("start Y");
+    seed.set_status(y, HumanStatus::Doing).expect("start Y");
     store.save(&seed).expect("seed two tasks");
 
     // Process A: the seeded selection rests on started Y.

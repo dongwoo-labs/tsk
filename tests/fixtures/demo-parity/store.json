@@ -1,5 +1,5 @@
 {
-  "format_version": 4,
+  "format_version": 7,
   "next_task_number": 23,
   "tasks": [
     {
@@ -9,7 +9,7 @@
       "title": "Check the release notes",
       "notes": "Confirm the wording before release.",
       "thread": "release",
-      "status": "blocked",
+      "status": "doing",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"
@@ -35,7 +35,7 @@
       "title": "Read every word of this long title before starting the task so the continuation must align beneath its title and retain the final boundary marker END",
       "notes": "A plain note for the first matched task-page flow.",
       "thread": null,
-      "status": "ready",
+      "status": "todo",
       "scope": "global",
       "provenance": "selection",
       "history": [],
@@ -68,7 +68,7 @@
       "title": "Check the project thread",
       "notes": "First line\nSecond line",
       "thread": "release",
-      "status": "ready",
+      "status": "todo",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"
@@ -94,7 +94,7 @@
       "title": "Check the unlabeled project task",
       "notes": "",
       "thread": null,
-      "status": "ready",
+      "status": "todo",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"
@@ -120,7 +120,7 @@
       "title": "Plan the support handoff",
       "notes": "",
       "thread": "triage",
-      "status": "ready",
+      "status": "todo",
       "scope": "global",
       "provenance": "selection",
       "history": [],
@@ -142,7 +142,7 @@
       "title": "Clean up stale local branches",
       "notes": "",
       "thread": null,
-      "status": "ready",
+      "status": "todo",
       "scope": "global",
       "provenance": "selection",
       "history": [],
@@ -164,7 +164,7 @@
       "title": "Sort feedback from the pilot",
       "notes": "",
       "thread": "triage",
-      "status": "open",
+      "status": "todo",
       "scope": "global",
       "provenance": "selection",
       "history": [],
@@ -186,7 +186,7 @@
       "title": "Record the retry runbook",
       "notes": "",
       "thread": null,
-      "status": "open",
+      "status": "todo",
       "scope": "global",
       "provenance": "selection",
       "history": [],
@@ -208,7 +208,7 @@
       "title": "Add audit events for admin changes",
       "notes": "",
       "thread": null,
-      "status": "ready",
+      "status": "todo",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"
@@ -234,7 +234,7 @@
       "title": "Trace worker queue saturation",
       "notes": "",
       "thread": null,
-      "status": "open",
+      "status": "todo",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"
@@ -260,7 +260,7 @@
       "title": "Document regional failover checks",
       "notes": "",
       "thread": null,
-      "status": "open",
+      "status": "todo",
       "scope": {
         "project": {
           "path": "/tmp/tsk-parity"

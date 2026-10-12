@@ -130,7 +130,7 @@ mod tests {
                 catalog_id,
                 catalog_id,
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new(),
             )

@@ -106,9 +106,9 @@ fn import_creates_once_and_reports_json() {
     assert_eq!(report["skipped"][0]["state"], "canceled");
     assert_eq!(report["created"][0]["identifier"], "ENG-2654");
     assert_eq!(report["created"][0]["number"], 1);
-    assert_eq!(report["created"][0]["status"], "started");
-    assert_eq!(report["created"][1]["status"], "review");
-    assert_eq!(report["created"][2]["status"], "open");
+    assert_eq!(report["created"][0]["status"], "doing");
+    assert_eq!(report["created"][1]["status"], "doing");
+    assert_eq!(report["created"][2]["status"], "todo");
 
     let tasks = TaskStore::new(&state).load().unwrap();
     let first = tasks
@@ -116,7 +116,7 @@ fn import_creates_once_and_reports_json() {
         .iter()
         .find(|task| task.title == "ENG-2654 tsk fork: import Linear issues")
         .expect("imported task");
-    assert_eq!(first.status, HumanStatus::Started);
+    assert_eq!(first.status, HumanStatus::Doing);
     assert_eq!(
         first.notes.as_deref(),
         Some("Linear: ENG-2654 https://linear.app/acme/issue/ENG-2654/import\n\nPull assigned issues onto the board.")

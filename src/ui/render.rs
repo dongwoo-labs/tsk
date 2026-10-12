@@ -801,11 +801,8 @@ fn local_rect(area: Rect, local: Rect) -> Rect {
 /// Status glyph for a human status (the: static; no agent spin).
 pub fn status_glyph(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Open => "◌",
-        HumanStatus::Ready => "○",
-        HumanStatus::Started => "●",
-        HumanStatus::Blocked => "■",
-        HumanStatus::Review => "▲",
+        HumanStatus::Todo => "○",
+        HumanStatus::Doing => "●",
         HumanStatus::Done => "✓",
     }
 }
@@ -4101,11 +4098,9 @@ pub(crate) fn index_columns(width: usize) -> IndexColumns {
     // heading. Hide DONE there behind an overflow marker; 50-column full boards are unchanged.
     let done_visible = width >= 34;
     let labels = if !done_visible {
-        ("NEED", "MOTION", "DECK", "…")
-    } else if compact {
-        ("NEED", "MOTION", "DECK", "DONE")
+        ("", "DOING", "TODO", "…")
     } else {
-        ("NEEDS YOU", "IN MOTION", "ON DECK", "DONE")
+        ("", "DOING", "TODO", "DONE")
     };
     // One-cell compact gaps preserve the old 24-cell name floor at 50 columns.
     let gap = if compact { 1 } else { INDEX_GAP };
@@ -4301,7 +4296,6 @@ fn paint_project_row(
         }
     }
     let mut counts = vec![
-        (columns.needs_end, index_count(row.needs_you, style_bold())),
         (
             columns.motion_end,
             index_count(row.in_motion, style_plain()),
@@ -4451,14 +4445,14 @@ fn paint_section_header(
 fn section_title(section: &QueueSection, surface: BoardSurface) -> String {
     match section.kind {
         SectionKind::NeedsYou => "NEEDS YOU".to_string(),
-        SectionKind::InMotion => "IN MOTION".to_string(),
+        SectionKind::InMotion => "DOING".to_string(),
         SectionKind::Done => "DONE".to_string(),
         SectionKind::Archived => "archived".to_string(),
         SectionKind::Inbox => "inbox".to_string(),
         SectionKind::OnDeck if surface == BoardSurface::Desk && section.project_label.is_none() => {
-            "ON DECK \u{b7} desk".to_string()
+            "TODO \u{b7} desk".to_string()
         }
-        SectionKind::OnDeck => "ON DECK".to_string(),
+        SectionKind::OnDeck => "TODO".to_string(),
     }
 }
 

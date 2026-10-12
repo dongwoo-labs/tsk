@@ -8,7 +8,7 @@ A terminal task board for you and your agents: one shared queue, a TUI for you, 
 
 Keep the next task, the work in progress, and the things waiting on you in view.
 Press `+` to capture a thought, add notes and steps when it needs a plan, and give
-your agent the task number when you're ready to work on it. New tasks start in the open inbox; pick the next one when you're ready.
+your agent the task number when you're ready to work on it. New tasks start in Todo; use Doing for work in progress and Done for finished work. Questions wait for answers separately from Task status.
 
 ### the flow
 
@@ -88,6 +88,17 @@ On a TTY that detects agents once and asks to install. Or name one agent
 user-level skills directory.
 [Other skill directories and setup options](https://gettsk.sh/docs/cli/#setup).
 
+### Agent questions
+
+On a separate Agent board selected explicitly with `TSK_STATE_DIR` or `--state-dir`,
+use `tsk ask --file question.json`, `tsk questions`, and `tsk answer Q1 --file answer.json`.
+Questions link to a Task UUID without changing its status. Shared task data contains only
+shareable summaries and references; full text and append-only answers stay in the
+Git-excluded `questions-private/` directory. Answers use expected-revision CAS and are
+saved before identifier-only Herdr notification. Agent replies do not grant deployment
+or irreversible-change approval. Same-OS-account UI impersonation is not prevented.
+[Question JSON and retry contract](https://gettsk.sh/docs/cli/#task-linked-questions).
+
 ### Open the board
 
 Run `tsk`, or press **prefix+t** in Herdr.
@@ -126,10 +137,8 @@ Prefer the keyboard? A few keys for everyday use:
 | `→` / `←` or `l` / `h` | Peek at a task and close the peek in narrow panes; move between board and task views in wide panes |
 | `+` | Add a task |
 | `Enter` | Open the selected task |
-| `ctrl+s` | Start an open or ready task |
-| `ctrl+n` | Pick a task, moving it to ready |
-| `ctrl+o` | Send a task to the open inbox |
-| `ctrl+r` | Send a task to review, or back to ready |
+| `ctrl+s` | Set a Todo task to Doing |
+| `ctrl+o` | Set Todo, including reopening Done |
 | `ctrl+d` | Mark the selected task done |
 | `p` | Switch projects |
 | `d` | Show or hide completed tasks |

@@ -115,8 +115,8 @@ test("docs and demo describe the wide stage slider and threshold", async () => {
 
 test("demo keeps project navigation, attribution, and search contracts", async () => {
   const demo = await read("../public/board-demo.js");
-  assert.match(demo, /need: open/);
-  assert.doesNotMatch(demo, /!t\.project && \(t\.status === "blocked" \|\| t\.status === "review"\)/);
+  assert.match(demo, /doing: open\s*\.filter\(\(task\) => task\.status === "doing"\)/);
+  assert.doesNotMatch(demo, /status === "(?:open|ready|started|blocked|review)"/);
   assert.match(demo, /state\.selectedProject = name;/);
   assert.match(demo, /const text = tab === "project" \? state\.selectedProject : label/);
   assert.match(demo, /state\.tasks\.filter\(\(t\) => t\.project && !t\.archived\)/);
@@ -274,10 +274,10 @@ test("hero board pins reveal callout copy", async () => {
   assert.match(page, /s-footrule[\s\S]*<span class="l meta">desk<\/span>/);
   assert.equal((page.match(/s-footrule/g) || []).length, 1);
   assert.doesNotMatch(page, /<span class="l meta">2 done<\/span>/);
-  // The fixture's verb bar minus ctrl+b, so it sits on one line beside the pin gutter.
+  // The selected Doing task uses the same verbs as the generated TUI fixture.
   const verbBar = await read("../../tests/fixtures/queue_board/board.txt");
-  assert.ok(verbBar.includes("enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ctrl+b block · ? help"));
-  assert.match(page, /enter open · ctrl\+d done · ctrl\+n next · ctrl\+o inbox · \? help/);
+  assert.ok(verbBar.includes("enter open · ctrl+o todo · ctrl+d done · ? help"));
+  assert.match(page, /enter open · ctrl\+o todo · ctrl\+d done · \? help/);
   const css = await read("../src/styles/landing.css");
   assert.match(css, /\.hero-side \.screen \{[^}]*white-space: pre-wrap/);
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);

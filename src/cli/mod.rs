@@ -13,6 +13,7 @@ pub mod import;
 pub mod list;
 pub mod parser;
 pub mod presenter;
+pub mod questions;
 pub mod router;
 pub mod status;
 pub mod steps;
@@ -72,6 +73,7 @@ where
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
         Some("import") => run_import(args),
+        Some("ask" | "answer" | "questions") => questions::run(args),
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -104,6 +106,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
             "import" => presenter::import_help(),
+            "ask" | "answer" | "questions" => questions::help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),

@@ -308,10 +308,6 @@ pub enum BoardIntent {
     CommandQueryBackspace,
     /// `ctrl+s` — state-mapped primary verb. Reducer lands in.
     PrimaryVerb,
-    /// `ctrl+b` — toggle blocked ↔ ready. Reducer lands in.
-    ToggleBlock,
-    /// `ctrl+r` — toggle review ↔ ready. Reducer lands in.
-    ToggleReview,
     /// Help card: edit its focused search query or scroll the filtered key list.
     HelpQueryInsert(char),
     HelpQueryInsertText(String),
@@ -372,7 +368,7 @@ pub enum BoardIntent {
 }
 
 /// Bottom chrome: compact key legend for primary board actions.
-pub const BOARD_HELP_LINE: &str = "↑↓/jk  ·  shift+M multi-select  ·  shift+↑↓/space mark  ·  ctrl+s start  ·  ctrl+n next  ·  enter open  ·  h/l close/peek  ·  ctrl+d done  ·  ctrl+o inbox  ·  ctrl+b block  ·  ctrl+r review  ·  + add  ·  ctrl+e title  ·  ctrl+x del  ·  ctrl+u undo  ·  ctrl+f archive  ·  d drawer  ·  g fold / unfold group  ·  p projects  ·  / search  ·  : palette  ·  ? help  ·  ctrl+q quit";
+pub const BOARD_HELP_LINE: &str = "↑↓/jk  ·  shift+M multi-select  ·  shift+↑↓/space mark  ·  ctrl+s doing  ·  enter open  ·  h/l close/peek  ·  ctrl+d done  ·  ctrl+o todo  ·  + add  ·  ctrl+e title  ·  ctrl+x del  ·  ctrl+u undo  ·  ctrl+f archive  ·  d drawer  ·  g fold / unfold archived  ·  p projects  ·  / search  ·  : palette  ·  ? help  ·  ctrl+q quit";
 /// Compact legend shown while the action sheet or command palette is open.
 pub const COMMAND_SURFACE_HELP_LINE: &str = "↑↓ select · type to filter · enter run · esc close";
 /// Compact legend shown while the help card is open.
@@ -503,7 +499,7 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char('s'),
         intent: BoardIntent::PrimaryVerb,
         help_chord: "s",
-        help_label: "start",
+        help_label: "doing",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
@@ -514,31 +510,10 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
-        code: KeyCode::Char('n'),
-        intent: BoardIntent::SetStatus(HumanStatus::Ready),
-        help_chord: "n",
-        help_label: "next",
-        modifier: NormalModifier::Ctrl,
-    },
-    NormalKeyEntry {
         code: KeyCode::Char('o'),
         intent: BoardIntent::Reopen,
         help_chord: "o",
-        help_label: "inbox",
-        modifier: NormalModifier::Ctrl,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Char('b'),
-        intent: BoardIntent::ToggleBlock,
-        help_chord: "b",
-        help_label: "block",
-        modifier: NormalModifier::Ctrl,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Char('r'),
-        intent: BoardIntent::ToggleReview,
-        help_chord: "r",
-        help_label: "review",
+        help_label: "todo",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
@@ -772,8 +747,6 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         | BoardIntent::SetStatus(_)
         | BoardIntent::Complete
         | BoardIntent::Reopen
-        | BoardIntent::ToggleBlock
-        | BoardIntent::ToggleReview
         | BoardIntent::SoftDelete
         | BoardIntent::Undo
         | BoardIntent::File => HelpGroup::TaskActions,
@@ -1790,8 +1763,6 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::CommandQueryInsertText(_)
         | BoardIntent::CommandQueryBackspace
         | BoardIntent::PrimaryVerb
-        | BoardIntent::ToggleBlock
-        | BoardIntent::ToggleReview
         | BoardIntent::HelpQueryInsert(_)
         | BoardIntent::HelpQueryInsertText(_)
         | BoardIntent::HelpQueryBackspace
@@ -1929,10 +1900,7 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char('s') if verb => Some(BoardIntent::PrimaryVerb),
         KeyCode::Char('a') if verb => Some(BoardIntent::BeginAddStep),
         KeyCode::Char('d') if verb => Some(BoardIntent::Complete),
-        KeyCode::Char('n') if verb => Some(BoardIntent::SetStatus(HumanStatus::Ready)),
         KeyCode::Char('o') if verb => Some(BoardIntent::Reopen),
-        KeyCode::Char('b') if verb => Some(BoardIntent::ToggleBlock),
-        KeyCode::Char('r') if verb => Some(BoardIntent::ToggleReview),
         KeyCode::Char('x') | KeyCode::Delete if verb => Some(BoardIntent::SoftDelete),
         KeyCode::Char('u') if verb => Some(BoardIntent::Undo),
         KeyCode::Char('f') if verb => Some(BoardIntent::File),

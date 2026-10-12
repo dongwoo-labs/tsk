@@ -10,6 +10,7 @@ test("agent transcript matches the current CLI output contract", async ({
   const scratch = mkdtempSync(join(tmpdir(), "tsk-cli-copy-"));
   const project = join(scratch, "launchpad");
   mkdirSync(project);
+  mkdirSync(join(project, ".git"));
   const binary = resolve("../target/release/tsk");
   const env = {
     ...process.env,

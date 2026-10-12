@@ -3719,17 +3719,12 @@ mod tests {
         create(&mut domain, "task-b", project(REPO_B));
 
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
-        // New tasks are open, so with the drawer closed g folds the inbox.
-        assert!(model.toggle_all_groups());
-        assert!(model.inbox_collapsed);
-        assert!(model.toggle_all_groups());
+        // Todo has no separate inbox group to fold.
+        assert!(!model.toggle_all_groups());
         assert!(!model.inbox_collapsed);
-
-        // An open drawer without archived rows still addresses the inbox.
         model.drawer_open = true;
-        assert!(model.toggle_all_groups());
-        assert!(model.inbox_collapsed);
-        model.inbox_collapsed = false;
+        assert!(!model.toggle_all_groups());
+        assert!(!model.inbox_collapsed);
 
         domain.archive_task(task_a).expect("archive");
         model.sync_from_domain(&domain);
@@ -3915,7 +3910,7 @@ mod tests {
         let visible = model.visible_ids();
         assert_eq!(
             visible,
-            vec![queue::INBOX_HEADER_ROW_ID, a],
+            vec![a],
             "the filter narrows the board across statuses"
         );
 
@@ -3924,7 +3919,7 @@ mod tests {
         model.move_list_picker(false);
         let applied = model.confirm_list_picker();
         assert_eq!(applied, Some(ListPickerValue::ThreadAll));
-        assert_eq!(model.visible_ids().len(), 3);
+        assert_eq!(model.visible_ids().len(), 2);
     }
 
     #[test]
@@ -4173,7 +4168,7 @@ mod tests {
         let mut domain = DomainState::new();
         let started = create(&mut domain, "first capture", TaskScope::Global);
         domain
-            .set_status(started, HumanStatus::Started)
+            .set_status(started, HumanStatus::Doing)
             .expect("start");
         model.sync_from_domain(&domain);
 

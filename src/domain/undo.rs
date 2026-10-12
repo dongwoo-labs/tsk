@@ -178,7 +178,7 @@ mod tests {
         );
         assert_eq!(
             loaded.get(ids[1]).expect("task 1").status,
-            HumanStatus::Open,
+            HumanStatus::Todo,
             "the oldest kept entry still undoes its task"
         );
     }
@@ -214,7 +214,7 @@ mod tests {
         loaded.undo().expect("undo the kept entry");
         assert_eq!(
             loaded.get(live_target).expect("live task").status,
-            HumanStatus::Open,
+            HumanStatus::Todo,
             "the live entry beneath the stale one is kept"
         );
         assert_eq!(
@@ -279,7 +279,7 @@ mod tests {
         }
         assert_eq!(
             loaded.get(ids[0]).expect("task 0").status,
-            HumanStatus::Open,
+            HumanStatus::Todo,
             "a cap-first prune would have evicted this live oldest entry"
         );
     }
@@ -348,8 +348,8 @@ mod tests {
         assert_eq!(entries[1]["complete"]["id"], first.to_string());
 
         state.undo().expect("undo whole batch");
-        assert_eq!(state.get(first).expect("first").status, HumanStatus::Open);
-        assert_eq!(state.get(second).expect("second").status, HumanStatus::Open);
+        assert_eq!(state.get(first).expect("first").status, HumanStatus::Todo);
+        assert_eq!(state.get(second).expect("second").status, HumanStatus::Todo);
         assert!(state.last_undo().is_none(), "one undo consumes the batch");
     }
 
@@ -380,7 +380,7 @@ mod tests {
         );
         assert_eq!(
             state.get(newly_done).expect("newly done").status,
-            HumanStatus::Open
+            HumanStatus::Todo
         );
     }
 
@@ -535,7 +535,7 @@ mod tests {
 
         let task = state.get(id).expect("task still in store");
         assert!(!task.soft_deleted);
-        assert_eq!(task.status, HumanStatus::Open);
+        assert_eq!(task.status, HumanStatus::Todo);
         assert_eq!(task.title, "Fix flake");
     }
 
@@ -553,7 +553,7 @@ mod tests {
 
         assert_eq!(
             state.get(id).expect("task exists").status,
-            HumanStatus::Open
+            HumanStatus::Todo
         );
     }
 
