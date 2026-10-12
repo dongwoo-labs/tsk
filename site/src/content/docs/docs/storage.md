@@ -53,7 +53,7 @@ On launch, tsk checks for a newer release if its cached check is older than 24 h
 | Setting or file | Purpose |
 | --- | --- |
 | `TSK_NO_UPDATE_CHECK` | Set to disable the check and notice |
-| `TSK_UPDATE_CURL=/absolute/path/to/curl` | macOS/Linux only: use a nonstandard, explicit curl path for the check and for `tsk update` (default `/usr/bin/curl`). Windows uses the binary's native HTTPS client |
+| `TSK_UPDATE_CURL=/absolute/path/to/curl` | macOS/Linux only: use a nonstandard, explicit curl path for the check, `tsk update`, and `tsk import linear` (default `/usr/bin/curl`). Windows uses the binary's native HTTPS client |
 | `update.json` | Cached release check in the state directory |
 
 The check requests the latest release tag from GitHub over HTTPS only. It does not upload task data. Failures are silent.
