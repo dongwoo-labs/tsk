@@ -30,8 +30,6 @@ test("agent transcript matches the current CLI output contract", async ({
           shown.title,
           "-p",
           "launchpad",
-          "--thread",
-          "api",
           "--json",
         ],
         { cwd: project, env, encoding: "utf8" },

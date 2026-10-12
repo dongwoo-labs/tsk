@@ -1,13 +1,13 @@
 ---
 title: Board
-description: Find tasks, switch projects, and keep work moving.
+description: Find tasks, switch projects, answer questions, and keep work moving.
 ---
 
 Click to navigate, or use the keyboard. The footer shows actions for the cursor or your marked task set; those actions are clickable.
 
 ## Navigate
 
-The top row holds the **board** tab, a scope control, and a sort control. Press `1` to return to the board tab and its list. Press `p` or click the scope to choose what the board shows:
+The top row holds the **1 board** and **2 questions** tabs, a scope control, and a sort control. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions). Press `p` or click the scope to choose what the board shows:
 
 | Scope | Contents |
 | --- | --- |
@@ -17,7 +17,7 @@ The top row holds the **board** tab, a scope control, and a sort control. Press 
 
 Launching inside a Git repository opens that project. Outside Git, tsk opens **all**.
 
-Rows show the status glyph, the `T`/`N` number, and the title. A task with direct children adds a dim `⊂done/total` count at the right edge, such as `⊂1/3`; it counts children in every scope and status, archived ones included ([related tasks](/docs/task-page/#related-tasks)). Rows follow task numbers by default. Press `S` or click the sort control to group rows by project instead (desk first, then project path); press `S` again to return to number order. In project order on **all** or **desk**, a dim project name heads each group. The sort is session-only and never changes a task. The [CLI](/docs/cli/#list) keeps its own order.
+Rows show the `T`/`N` number and the title; the section already names the status. A bold `!` follows when an approval on the task waits on you, and `?n` counts its other questions and findings waiting on you. A task with direct children adds a dim `⊂done/total` count at the right edge, such as `⊂1/3`; it counts children in every scope and status, archived ones included ([related tasks](/docs/task-page/#related-tasks)). Rows follow task numbers by default. Press `S` or click the sort control to group rows by project instead (desk first, then project path); press `S` again to return to number order. In project order on **all** or **desk**, a dim project name heads each group. The sort is session-only and never changes a task. The [CLI](/docs/cli/#list) keeps its own order.
 
 In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one is already open in another tab there, Herdr switches to that tab and focuses its pane, preserving its view and edits. Otherwise, it opens a board beside your work. Boards in other workspaces stay untouched; all boards share the same tasks.
 
@@ -36,19 +36,11 @@ Press `p` to choose a scope: **all**, **desk**, or a project.
 
 ## Search
 
-Press `/` to search the rows the board currently shows. It matches tasks by title, notes, step text, thread, or task number such as `T12`, case-insensitively. Every whitespace-separated word must match somewhere in the same task.
+Press `/` to search the rows the board currently shows. It matches tasks by title, notes, step text, or task number such as `T12`, case-insensitively. Every whitespace-separated word must match somewhere in the same task.
 
-Typing or pasting filters immediately. Empty sections disappear and section counts show only matches. Search combines with a project thread filter; the done drawer is searched only while it is open.
+Typing or pasting filters immediately. Empty sections disappear and section counts show only matches. The done drawer is searched only while it is open.
 
 Press `Enter` to pin the query and return to board keys. Navigation, task actions, the done drawer, and a second `Enter` then act on the filtered rows; the query remains in the footer. Press `Esc` while typing to clear and close search, or press it once on a pinned board to clear the query before normal `Esc` behavior resumes. Changing scope also clears it.
-
-## Threads
-
-A thread groups related tasks within a project, such as `release` or `login-fix`. On a project board, press `t` or click the filter to choose a thread. Rows never show a thread label; the task's detail does.
-
-Type to filter the choices. Use arrows or `Tab` to select, `Enter` to choose, and `Esc` to close. `j` and `k` are search text in these selectors.
-
-Assign threads when [capturing](/docs/capture/#title-tokens) or [editing a task](/docs/task-page/#scope-and-thread).
 
 ## Status
 
@@ -58,11 +50,11 @@ Assign threads when [capturing](/docs/capture/#title-tokens) or [editing a task]
 | **TODO** | `todo` |
 | Done drawer | `done` |
 
-Questions do not create a blocked Task status. Human progress is independent of Herdr execution status. On the desk, **DOING** includes live project tasks and **TODO** contains only desk tasks. A project board shows its own tasks. Notice tasks lead within each group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group. Use the thread filter to narrow the tasks.
+Questions do not create a blocked Task status. Human progress is independent of Herdr execution status. On the desk, **DOING** includes live project tasks and **TODO** contains only desk tasks. A project board shows its own tasks. Notice tasks lead within each group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group.
 
 Every section lists its rows in board order: `N` tasks first, then ascending `T` number, with tasks not yet numbered last. Editing a task, ticking a step, or setting a status never reorders a section; a status change only moves the task to its new section.
 
-Move the cursor with `↑`/`↓` or `j`/`k`. Press `Shift+M` to enter multi-select. While it is active, press `Space` to toggle the cursored task, hold `Shift` with `↑`/`↓` to mark the current task before moving, or click a task to toggle it. Marked rows show `▪`; the cursor remains `▸`. Removing the last mark leaves the mode active. `Shift+M` again while the board owns input, a task action, `Esc`, or a view change such as folding a group or switching scope, threads, or the done drawer exits the mode and clears the session-only set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
+Move the cursor with `↑`/`↓` or `j`/`k`. Press `Shift+M` to enter multi-select. While it is active, press `Space` to toggle the cursored task, hold `Shift` with `↑`/`↓` to mark the current task before moving, or click a task to toggle it. Marked rows show `▪`; the cursor remains `▸`. Removing the last mark leaves the mode active. `Shift+M` again while the board owns input, a task action, `Esc`, or a view change such as folding a group or switching scope or the done drawer exits the mode and clears the session-only set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
 On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act on the marked set when it is non-empty. With no marks they act on the cursor. `Enter`, `ctrl+e`, and task-page actions remain cursor-only.
 
@@ -75,6 +67,38 @@ On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act o
 Doing and Done tasks are skipped by `ctrl+s`; the status row reports skipped Done tasks. Repeating an absolute status does nothing. The old next, block and review status shortcuts are removed.
 
 Agents can set any status with [the CLI](/docs/cli/#status). Task status does not change automatically when steps are checked or an agent stops.
+
+## Questions
+
+The **2 questions** tab lists the questions, approvals, and findings agents filed on an explicit Agent board (`TSK_STATE_DIR` set). The personal board records none and says so. When something waits on you, the board shows `waiting on you  approval n · question n · finding n  → 2` above its sections, with a separate `target unknown n` when records name no target; click it or press `2`. The tab's number counts approvals, questions, and findings waiting on you, and scope, sort, `p`, `S`, and search do not apply on it.
+
+| Group | Contents |
+| --- | --- |
+| **NEEDS APPROVAL** | Open approvals addressed to you |
+| **FOR YOU** | Open questions addressed to you |
+| **FINDINGS** | Open findings addressed to you |
+| **WITH LEAD** | Open records addressed to the lead; shown, never counted |
+| **CLOSED** | Answered, approved, rejected, or closed records |
+
+A record from an older agent that names no audience shows apart as *target unknown · route with tsk route*. tsk never guesses its target, offers no answer on it, and leaves it out of the tab number and row marks; an agent sets the audience with [`tsk route`](/docs/cli/#route).
+
+Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page below 110 columns, the list and the record side by side at 110 and up (`→`/`l` opens, `←`/`h` goes back). On the page:
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, then `Enter` | Choose an option and save it as the answer |
+| `Enter` | On a question without options, type an answer; `Enter` saves, `Esc` cancels |
+| `Space` | Check the approval's exact target, scope, and revision |
+| `y` / `n` | Approve (only once checked) / reject an approval |
+| `c` | Correct a saved answer; it becomes a new revision |
+| `t` | Open the record's task; `Esc` returns to the record |
+| `r` | Resend the lead request of a create-and-run finding |
+| `J` / `K` | Next or previous record in list order |
+| `Esc` | Back to the list; at the list, quit |
+
+A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope, titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
+
+An approval saves only for the target, scope, and revision you checked; if the record changed, the check clears. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own.
 
 ## Notices
 

@@ -1,6 +1,6 @@
 ---
 title: Task page
-description: Read and edit a task's title, notes, project, and thread.
+description: Read and edit a task's title, notes, and project, and see its questions and links.
 ---
 
 Read notes and steps, then edit the task when you need to change it.
@@ -13,7 +13,7 @@ At 110 usable columns or wider, the selected task's details always show beside t
 
 Press `J` / `K` on the page to open the next or previous task in the list's order. A draft with unsaved changes refuses to switch, and a task the list does not show (opened from a [related task](#related-tasks)) refuses with `this task is not in the list · esc back`.
 
-Click the task's `T` number to copy it. The page shows its status, notes, parent, steps, direct children, project, thread, and dates. Its footer puts `#thread` before the project, then the created and updated dates. Long text wraps.
+Click the task's `T` number to copy it. The page shows its status, notes, parent, steps, direct children, questions, findings, links, project, and dates. Its footer shows the project, then the created and updated dates. Long text wraps.
 
 ## Edit
 
@@ -21,34 +21,28 @@ The page opens in view mode.
 
 | Action | Key |
 | --- | --- |
-| Edit title, or the selected step | `ctrl+e` |
+| Edit title, or the selected step | `ctrl+e` or `e` |
+| Add a step | `ctrl+a` or `a` |
 | Edit notes | `ctrl+e`, then `Tab` |
 | Move through editable fields | `Tab` / `Shift+Tab`, after starting an edit |
 | Save the task edit | `Shift+Enter` |
 | Cancel the current field | `Esc` or `ctrl+c` |
 
-Clicking Title, Notes, Scope, or Thread does not start an edit from view mode. Start editing first; then click the field you want.
+Clicking Title, Notes, or Scope does not start an edit from view mode. Start editing first; then click the field you want.
 
-In view mode, `Tab` moves the selection through the parent line, the steps, **+ step**, and the direct children, then back to the parent line; `Shift+Tab` reverses it. The first `Tab` selects the first step. `↑` from the first step reaches the parent line, and `↓` from the last step reaches the first child. View-mode `Tab` does not cycle task fields. Status shortcuts remain available on the task page; use `ctrl+e`, then `Tab` to reach Notes.
+In view mode, `Tab` moves the selection through the parent line, the steps, **+ step**, the direct children, the questions and findings, and the links, then back to the parent line; `Shift+Tab` reverses it. The first `Tab` selects the first step. `↑` from the first step reaches the parent line, and `↓` from the last step reaches the first child. View-mode `Tab` does not cycle task fields. Status shortcuts remain available on the task page; use `ctrl+e`, then `Tab` to reach Notes.
 
-During task editing, the forward order is Title → Notes → steps → **+ step** → Thread → Scope → Title. `Shift+Tab` reverses the ring. A field click moves the cursor and retains staged changes.
+During task editing, the forward order is Title → Notes → steps → **+ step** → Scope → Title. `Shift+Tab` reverses the ring. A field click moves the cursor and retains staged changes.
 
-## Scope and thread
+## Scope
 
-**Scope** is the task's project or desk. **Thread** groups related work within a project.
+**Scope** is the task's project or desk. Select it while editing, press `Enter`, choose a destination, then `Enter` again. Scope also supports cycling with `Space`, `←`, or `→`. Archived projects are not offered.
 
-| Field | Change it |
-| --- | --- |
-| Scope | Select it while editing, press `Enter`, choose a destination, then `Enter` again |
-| Thread | Select it, then press `Enter` or click again to edit its name |
-
-Scope also supports cycling with `Space`, `←`, or `→`. Archived projects are not offered.
-
-Thread is optional and follows the [thread name rules](/docs/capture/#thread-names).
+Tasks no longer carry a thread label. To name the Thread working on a task, add a `Thread:` line to its notes ([links](#questions-findings-and-links)).
 
 ## Save
 
-`Shift+Enter` saves the task's title, notes, scope, thread, and staged changes to existing steps.
+`Shift+Enter` saves the task's title, notes, scope, and staged changes to existing steps.
 
 | While editing | `Enter` does this |
 | --- | --- |
@@ -99,6 +93,21 @@ Opening a related task keeps the list as it is: its project, search, sort, and c
 Changing or clearing a parent never changes the status, scope, or children of either task. Archive and Done do not break a relationship. Deleting a parent never deletes, detaches, or completes its children; they keep its id and show it as not found. Saving other fields of a task keeps its parent as it is, found or not.
 
 From the CLI, `tsk add --parent T10` and `tsk edit T12 --parent T10` set a parent, `tsk edit T12 --no-parent` clears it, and `tsk list T10` shows direct children with their Done/total count. A Linear import keeps the external parent as a `Parent: Linear <identifier> <URL>` line in Notes.
+
+## Questions, findings, and links
+
+After the children, the page lists the task's agent records on an explicit Agent board: **questions n open** (questions and approvals), then **findings**, each with its Q number, state, and summary. Select one and press `Enter` to open it on the [questions tab](/docs/board/#questions); `Esc` comes back to this task.
+
+**links** lists the reference lines in the notes, each on its own line:
+
+| Notes line | Shows |
+| --- | --- |
+| `Linear: <ID> <URL>` | The issue |
+| `PR: <URL>` | The pull request |
+| `CI: <URL>` | The CI run |
+| `Thread: <agent-name> <workspace-id> <tab-id> <pane-id>` | The Thread working on the task |
+
+`Enter` on an issue, PR, or CI line shows its URL on the status row; tsk calls no forge. `Enter` on a Thread line focuses that Herdr pane only when it is the task's only Thread line, carries all four tokens, and exactly one live agent matches all four. A name-only, partial, or duplicated Thread line shows `cannot verify` and focuses nothing. With no live match, several matches, or outside Herdr, the status row says so and nothing is focused. tsk never falls back to a question's origin Thread.
 
 ## Notes markdown
 

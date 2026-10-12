@@ -171,6 +171,10 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 ### Store and state
 
 - Human status is source of truth. Never auto-complete tasks from agent status.
+- Tasks carry no thread label since store v8. A Thread is named only by a `Thread:` notes
+  line and focused only on an exact four-token single live match; never infer it from a
+  question's `origin_thread`. A question without `audience` is target unknown: never guess
+  it, count it, or offer an answer on it.
 - The projectless scope displays as `desk` but serializes as `global` and is
   `TaskScope::Global` internally. Do not rename either without a store migration.
 - Existing task scopes never move when scope resolution rules change.
@@ -202,11 +206,16 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   The exceptions are `alt+↑`/`alt+↓` (move the selected step on the task page), because
   macOS takes ctrl+arrows for Mission Control, and the task page's bare `P`/`U` (choose or
   clear the open task's parent), a user-confirmed key contract. `P`/`U` act on the open
-  task only, never a marked set, refuse a dirty draft, and stay text in every input. Do
-  not add another non-Ctrl mutating chord.
+  task only, never a marked set, refuse a dirty draft, and stay text in every input. Two
+  more user-confirmed exceptions: the task page's bare `e`/`a` only open the title editor
+  or a new step row (the same as `ctrl+e`/`ctrl+a`; nothing saves until the editor does),
+  and the questions tab (`2`) owns the keyboard, so its bare `Enter`, `Space`, `y`, `n`,
+  `c`, `t`, `r` answer, check, approve, reject, correct, open the task, and resend. `y`
+  refuses until `Space` checked the exact target, scope, and revision on screen. Do not
+  add another non-Ctrl mutating chord.
 - Mono modifiers only, no colour, at every width. There is no theme module.
 - Text wraps, never truncates. One wrap engine (`edit::wrap_text`) feeds every surface;
-  `escaped_draft_rows` remains only for single-line Title/Thread editors.
+  `escaped_draft_rows` remains only for the single-line Title editor.
 - `src/ui/capture.rs` is unreachable from the binary and stays that way; creation
   detail lives on the task page and the expanded quick-add draft owns the whole frame.
 - `Enter` on a stored step is `ToggleStep`, resolved at the keyboard boundary in

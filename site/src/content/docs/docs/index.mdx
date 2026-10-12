@@ -21,17 +21,19 @@ Agents read tasks with `tsk list` and update them with `tsk status`. [Install th
 
 **No project setup needed.** Open tsk in your project directory and add your first task—the project appears on your board automatically. To add a task to another project, include `!p /path/to/project` in quick add, or use `-p /path/to/project` with `tsk add`.
 
-| View | Use it for |
+| Scope | Use it for |
 | --- | --- |
-| **desk** | Personal tasks, plus work needing attention across projects |
+| **all** | Every live task |
+| **desk** | Personal tasks, plus Doing work across projects |
 | **selected project** | One project's tasks |
-| **projects** | Browse projects or follow a thread across them |
 
 | Section | Contains |
 | --- | --- |
-| **NEEDS YOU** | Blocked tasks and work ready for review |
-| **IN MOTION** | Started tasks |
-| **ON DECK** | Picked `ready` tasks, then the `open` inbox |
+| **DOING** | Work in progress |
+| **TODO** | Work not started |
+| Done drawer (`d`) | Finished work |
+
+On an Agent board, the **2 questions** tab collects the approvals, questions, and findings agents left for you.
 
 You or your agent set task status. Completing steps or ending an agent session does not mark a task done.
 
@@ -42,7 +44,8 @@ You or your agent set task status. Completing steps or ending an agent session d
 | Find, filter, or archive work | [Board](/docs/board/) |
 | Use keyboard shortcuts | [Keys](/docs/keys/) |
 | Add a task or capture an idea | [Capture](/docs/capture/) |
-| Edit notes, scope, or thread | [Task page](/docs/task-page/) |
+| Edit notes or scope; see a task's questions and links | [Task page](/docs/task-page/) |
+| Answer agent questions | [Questions](/docs/board/#questions) |
 | Break work into a checklist | [Steps](/docs/steps/) |
 | Work through an agent | [Agent guide](/docs/agents/) |
 | Script the board | [CLI](/docs/cli/) |

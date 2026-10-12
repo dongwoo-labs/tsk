@@ -1488,9 +1488,9 @@ fn apply_board_intent(
                 return Ok(IntentOutcome::None);
             };
             let parent = match option.value {
-                ListPickerValue::ParentNone => None,
-                ListPickerValue::ParentTask(id) => Some(id),
-                ListPickerValue::ParentCycle(id) => {
+                ListPickerValue::Clear => None,
+                ListPickerValue::Task(id) => Some(id),
+                ListPickerValue::Cycle(id) => {
                     // Listed so the user can see why it is missing from the choices; the
                     // chooser stays open for another pick.
                     let name = domain

@@ -32,17 +32,20 @@ tsk ask --file question.json --state-dir /local/agent-board
 tsk questions --task T12 --state-dir /local/agent-board --json
 tsk questions Q1 --state-dir /local/agent-board --json
 tsk answer Q1 --file answer.json --state-dir /local/agent-board
+tsk route Q1 --file route.json --state-dir /local/agent-board
 ```
 
-`ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, or `finding`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, and `source`. Nullable fields can be `null`; options defaults to an empty array. Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text.
+`ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, or `finding`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, and the optional `audience` (`user` or `lead`) and `lead_recipient`. Nullable fields can be `null`; options defaults to an empty array. Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
 
 `answer` takes `expected_revision`, `text`, `actor`, `origin`, `corrects_revision`, `approve`, `confirmed`, `approval`, `user_chat`, and `source`. Ordinary answers use `origin: "agent"`, `approve: false`, and null approval/evidence. A correction names the current answer's revision in `corrects_revision`; it appends instead of replacing history. A stale expected revision refuses without applying another answer. Use `questions` after every uncertain result and before a retry.
 
 Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. CLI refuses `origin: "user_ui"`; only the UI API can submit that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
 
-Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullable `path`. Optional private source metadata preserves original system, question UUID, comment ID, URL, answer ID, parent question ID, actor, time, revision and applied uncertainty. Historical source approvals never issue current authority.
+Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullable `path`. A finding's answer can carry an `action`: `create_and_run`, `create_only`, or `close`; the board sets it. Optional private source metadata preserves original system, question UUID, comment ID, URL, answer ID, parent question ID, actor, time, revision and applied uncertainty. Historical source approvals never issue current authority.
 
 Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means Herdr accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
+
+<span id="route"></span>`route` takes `expected_revision`, `audience` (`user` or `lead`), and an optional `lead_recipient` (a Herdr agent name; omitted or `null` keeps the current one). It writes a new revision under the same Q UUID and number and keeps the text, answers, and history; an answered question stays answered. A stale revision refuses and changes nothing. It sends no notification and returns `{ "saved": ... }`.
 
 `questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task. Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
 
@@ -56,6 +59,7 @@ Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncer
 | `tsk list` | Read tasks |
 | `tsk status` | Set task status |
 | `tsk edit` | Replace title or notes |
+| `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
 | `tsk steps` | Add, toggle, rename, move, or remove steps |
 | `tsk archive` / `tsk unarchive` | Hide or restore a task |
 | `tsk project archive` / `tsk project unarchive` | Hide or restore a project |
@@ -102,7 +106,7 @@ For adds, a bare project name must match exactly one project the board already k
 ## add
 
 ```sh
-tsk add -t "Fix login timeout" -n "Reproduce on a slow connection" --thread auth
+tsk add -t "Fix login timeout" -n "Reproduce on a slow connection"
 # new tasks start todo; use `tsk status T<n> doing` when work begins
 tsk add -t "Buy coffee" --desk
 tsk add -t "Draft release notes" -p atlas --json
@@ -113,13 +117,12 @@ tsk add -t "Draft release notes" -p atlas --json
 | `-t`, `--title` | Required task title |
 | `-n`, `--notes` | Optional notes |
 | `-p`, `--project` or `--desk` | Destination |
-| `--thread` | [Thread name](/docs/capture/#thread-names) |
 | `--parent <task>` | Optional direct parent, addressed by task number or UUID |
 | `--json` | One result object |
 | `--file <path>` or `--file -` | Read a JSON plan |
 | `--state-dir <dir>` | Alternate state directory |
 
-Duplicate detection compares the trimmed title, resolved project, and normalized thread. A matching non-deleted task succeeds without changing the task (`outcome: existing` in JSON), even if done or individually archived. Adding into an archived project refuses.
+Duplicate detection compares the trimmed title and resolved project. A matching non-deleted task succeeds without changing the task (`outcome: existing` in JSON), even if done or individually archived. Adding into an archived project refuses.
 
 Plain output: `added <title>` or `task already exists`.
 
@@ -133,7 +136,7 @@ Blank notes are omitted. C0 control characters in titles are rejected before tri
 
 ```json
 [
-  {"title": "Reproduce login timeout", "project": "atlas", "thread": "auth"},
+  {"title": "Reproduce login timeout", "project": "atlas"},
   {"title": "Draft release notes", "notes": "Include migration instructions"}
 ]
 ```
@@ -150,10 +153,10 @@ cat plan.json | tsk add
 | `project` omitted | Invocation default |
 | `project: null` | Desk |
 | `project` string | Project name or path |
-| `thread` omitted or `null` | No thread |
-| `thread` string | Normalized thread |
 | `parent` omitted or `null` | No parent |
 | `parent` string | Existing parent task number or UUID |
+
+Tasks no longer carry a thread: an item with a non-null `thread` is refused as `invalid-item`.
 
 Output contains `created`, `existing`, and `failed` arrays. Items carry their input index `i`; failures include `code` and `error`. Successful entries include task ID, number, and title. Notes are not echoed.
 
@@ -169,7 +172,7 @@ A leading UTF-8 byte order mark, which Windows PowerShell 5.1 writes by default,
 tsk list
 tsk list T12
 tsk list --all --json
-tsk list -p atlas --thread auth
+tsk list -p atlas
 tsk list --done --all
 tsk list --todo --all
 tsk list --doing --all
@@ -178,7 +181,7 @@ tsk list --deleted --all
 ```
 
 ```text
-tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]
+tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]
 ```
 
 | Filter | Result |
@@ -189,17 +192,16 @@ tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --
 | `--done` | Completed tasks |
 | `--archived` | Individually archived tasks and tasks in archived projects, across statuses |
 | `--deleted` | Live soft-deleted tasks and `trash.jsonl` entries, deduped by task with the live copy winning, newest deletion first. Trash is retained for 30 days, see [storage](/docs/storage/#deleted-tasks). |
-| `--thread` | Filter within the selected scope |
 
 Scope flags are mutually exclusive. So are `--todo`, `--doing`, `--done`, `--deleted`, and `--archived`.
 
-A direct task address searches the main store, including done, archived, and recently deleted tasks. It cannot be combined with scope, thread, or status filters. A missing task exits 2. A task already moved to `trash.jsonl` is not addressable; find it with `tsk list --deleted` (optionally `-p`), or restore it with `tsk trash restore`.
+A direct task address searches the main store, including done, archived, and recently deleted tasks. It cannot be combined with scope or status filters. A missing task exits 2. A task already moved to `trash.jsonl` is not addressable; find it with `tsk list --deleted` (optionally `-p`), or restore it with `tsk trash restore`.
 
-Human output groups by status in `DOING`, `TODO` order. Todo rows use oldest capture first; Doing and Done use most recent status change first. This order is separate from the board, which lists rows by task number or groups them by project. JSON is that flat order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number and thread, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, archived marks, and threads use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
+Human output groups by status in `DOING`, `TODO` order. Todo rows use oldest capture first; Doing and Done use most recent status change first. This order is separate from the board, which lists rows by task number or groups them by project. JSON is that flat order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, and archived marks use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
 
-Single-task output removes the thread from the title row and presents notes, steps, then `#thread` as separate blocks. A blank line separates adjacent blocks that exist. Human step rows show state and text without machine-oriented short IDs.
+Single-task output presents notes and steps as separate blocks. A blank line separates adjacent blocks that exist. Human step rows show state and text without machine-oriented short IDs.
 
-JSON returns an array with `id`, `number`, `title`, `status`, `project`, and `thread`. Direct lookup returns the complete task, including `notes` (`null` when absent) and `steps` (an empty array when absent). Its fields are ordered `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `thread`, `parent_task_id`, `parent`, `children_done`, `children_total`, `children`; each JSON step retains its `short_id` for step commands. Archived listings include an `archived` mark: `archived` or `project archived`.
+JSON returns an array with `id`, `number`, `title`, `status`, and `project`. Direct lookup returns the complete task, including `notes` (`null` when absent) and `steps` (an empty array when absent). Its fields are ordered `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `parent_task_id`, `parent`, `children_done`, `children_total`, `children`; each JSON step retains its `short_id` for step commands. Archived listings include an `archived` mark: `archived` or `project archived`.
 
 Relationship fields add `parent_task_id` (`null` for no parent), `children_done`, and `children_total` to JSON rows. Direct lookup also returns `parent` (resolved task summary or unresolved UUID) and `children` (direct child summaries). Human direct lookup shows the same relationship blocks. Counts are calculated, not saved. Direct children include archived tasks and tasks in archived projects, across all statuses and scopes; deleted tasks and notices are excluded. A Done or archived parent remains resolved.
 
@@ -224,7 +226,7 @@ tsk edit T12 --title "Fix timeout on slow connections"
 tsk edit T12 --notes "Reproduced with a delayed response"
 ```
 
-Requires at least one of `--title`, `--notes`, `--parent <task>`, or `--no-parent`. Scope and thread stay unchanged. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
+Requires at least one of `--title`, `--notes`, `--parent <task>`, or `--no-parent`. Scope stays unchanged. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
 
 ```sh
 tsk add -t "Implement parser" --desk --parent T10
@@ -341,7 +343,7 @@ One-way import from [Linear](https://linear.app): reads issues through Linear's 
 
 **Direct parent.** When Linear has a parent, new task notes also contain `Parent: Linear <IDENTIFIER> <url>`. If that parent's imported copy already exists, or is created in the same import batch, the new child links to its tsk UUID. Otherwise only the external reference is kept. Import never fetches parents recursively or reconciles an existing child when a parent appears later. `--update` preserves both user notes and the stored parent relation. GitHub references use `Parent: GitHub <repo>#<num> <URL>` with the same meaning; GitHub issue intake is not provided by this command.
 
-**Existing copies.** A task whose notes contain a line starting with `Linear: <IDENTIFIER> ` is that issue's copy, in any scope and with any status, including done and archived; soft-deleted tasks do not count. An issue with a copy is never added again. By default the copy is left untouched, since the human status on the board is the source of truth. With `--update`, a copy whose title or status differs from Linear is refreshed (notes, scope, and thread stay as they are). A whole run, creates and updates together, is one store write.
+**Existing copies.** A task whose notes contain a line starting with `Linear: <IDENTIFIER> ` is that issue's copy, in any scope and with any status, including done and archived; soft-deleted tasks do not count. An issue with a copy is never added again. By default the copy is left untouched, since the human status on the board is the source of truth. With `--update`, a copy whose title or status differs from Linear is refreshed (notes and scope stay as they are). A whole run, creates and updates together, is one store write.
 
 Plain output starts with `fetched <n> · created <n> · updated <n> · unchanged <n> · skipped <n>`, then one line per issue. With `--dry-run` it starts with `dry run, nothing written` and says `would create` / `would update`.
 
@@ -443,7 +445,7 @@ After an uncertain add, inspect `tsk list --all --json`. Also check `--done` and
 
 | Command | Refusal codes |
 | --- | --- |
-| Add | `empty-title`, `invalid-title`, `invalid-thread`, `invalid-item`, `unknown-project`, `project-archived` |
+| Add | `empty-title`, `invalid-title`, `invalid-item`, `unknown-project`, `project-archived` |
 | Steps | `empty-step-text`, `invalid-step-text`, `unknown-task`, `soft-deleted-task`, `unknown-step`, `ambiguous-step`, `same-step` |
 | Status | `unknown-task`, `soft-deleted-task` |
 | Edit | `unknown-task`, `soft-deleted-task`, `empty-title`, `invalid-title` |
@@ -452,7 +454,7 @@ After an uncertain add, inspect `tsk list --all --json`. Also check `--done` and
 
 A refusal prints as `tsk <command>: <code>: <message>` on stderr, for example `tsk status: unknown-task: T99 is not on the board`. Branch on the code; the message is for people and may change.
 
-Invalid thread flags fail argument parsing with exit 2; an invalid thread in a JSON plan is an item refusal with exit 1. Unknown or archived project refusals save nothing for that item; other valid plan items can still save.
+`--thread` is no longer an option and fails argument parsing with exit 2. Unknown or archived project refusals save nothing for that item; other valid plan items can still save.
 
 Human-readable output escapes stored terminal control characters. JSON retains the underlying text.
 

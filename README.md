@@ -100,6 +100,9 @@ shareable summaries and references; full text and append-only answers stay in th
 Git-excluded `questions-private/` directory. Answers use expected-revision CAS and are
 saved before identifier-only Herdr notification. Agent replies do not grant deployment
 or irreversible-change approval. Same-OS-account UI impersonation is not prevented.
+`tsk route Q1 --file route.json` sets who a question is for (`audience` `user` or
+`lead`). On that board, press `2` for the questions tab: approve, answer, correct, or turn
+a finding into a task, and see what waits on you above the board's sections.
 [Question JSON and retry contract](https://gettsk.sh/docs/cli/#task-linked-questions).
 
 ### Open the board

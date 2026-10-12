@@ -44,14 +44,13 @@ pub const CATALOG: [Guide; 4] = [
     Guide {
         catalog_id: "guide.tasks",
         title: "Make a task, open it, check off steps",
-        notes: "A task holds a title, notes (the description), and steps. You set its status yourself. Optionally put it on a thread to group related work inside a project, and file it under a project (or leave it on your desk).\n\
+        notes: "A task holds a title, notes (the description), and steps. You set its status yourself, and file it under a project (or leave it on your desk).\n\
                 \n\
                 **Make one**\n\
                 - Press `+`, type a title, press `Enter`. It lands in TODO as `todo`.\n\
                 - Press `ctrl+s` when work begins.\n\
-                - Press `Tab` instead of `Enter` to open the full page first, where you can add notes, steps, a thread, and a project before you save.\n\
+                - Press `Tab` instead of `Enter` to open the full page first, where you can add notes, steps, and a project before you save.\n\
                 - Type `!p name` in the title to file it under a project the board already knows, by its folder name. A full path to an existing folder, like `!p ~/code/widget`, adds a new one. Bare `!p` keeps it on your desk.\n\
-                - Type `!t release` in the title to tag it with the thread `release`. Threads group related work inside one project, and the project board can filter by them.\n\
                 \n\
                 **Read one**\n\
                 - `Enter` opens the full page. `Esc` comes back.\n\
@@ -59,7 +58,7 @@ pub const CATALOG: [Guide; 4] = [
                 - On the page, `J` and `K` open the next and previous task in the list.\n\
                 \n\
                 **Change one**\n\
-                - On the page, `ctrl+e` edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
+                - On the page, `e` (or `ctrl+e`) edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
                 - `Enter` on a step checks it. The `+ step` row at the bottom adds one.\n\
                 - Steps never finish a task. Check every step below and this task stays `doing` until you press `ctrl+d`. You decide when work is done.",
         status: HumanStatus::Doing,

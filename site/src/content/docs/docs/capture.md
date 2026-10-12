@@ -20,7 +20,7 @@ Clicking a task while the quick-add line is open discards the draft and selects 
 
 ## Details
 
-Press `Tab` from quick-add to add notes, steps, a thread, or a scope. The draft uses the full pane and opens in Notes. Its forward field ring is Title → Notes → steps → **+ step** → Thread → Scope → Title; `Shift+Tab` reverses it.
+Press `Tab` from quick-add to add notes, steps, or a scope. The draft uses the full pane and opens in Notes. Its forward field ring is Title → Notes → steps → **+ step** → Scope → Title; `Shift+Tab` reverses it.
 
 - `Shift+Enter` saves.
 - `Esc` returns to the quick-add line.
@@ -42,38 +42,26 @@ Keeping an archived launch project archived changes the session's default to des
 
 ## Title tokens
 
-Add a project or thread while typing the title:
+Add a project while typing the title:
 
 ```text
-Fix login timeout !p atlas !t auth
+Fix login timeout !p atlas
 Buy coffee !p
 ```
 
-| Token | Destination or thread |
+| Token | Destination |
 | --- | --- |
 | `!p` | Desk |
 | `!p name` | Existing project uniquely matching that basename, ignoring case |
 | `!p /path` | Existing absolute directory, creating a project there if needed |
-| `!t` | No thread |
-| `!t name` | Named thread |
 
-Each token takes one whitespace-separated argument. Put bare `!p` or `!t` at the end, or before another token. A following `#word` also leaves the token bare.
+Each token takes one whitespace-separated argument. Put bare `!p` at the end, or before another token. A following `#word` also leaves the token bare.
 
 Tokens are removed from the saved title. Remaining words are joined with single spaces. A title is required.
 
 A bare project name must match exactly one project the board already knows: a project with tasks, an archived project, or the repository you launched from. A missing or ambiguous name leaves the draft open and names the problem, for example `project atlss is not on the board`.
 
 Use an absolute existing directory (`/…` or `~/…`) to create a new project destination. Relative paths and paths that are not directories leave the draft open; the destination row keeps showing the last valid destination.
-
-## Thread names
-
-Thread names are lowercased and must:
-
-- Start with an ASCII letter or digit.
-- Contain only ASCII letters, digits, `-`, or `.`.
-- Be at most 32 characters.
-
-Invalid names leave the draft open with the rule that failed.
 
 ## Quick capture
 
@@ -82,7 +70,7 @@ In Herdr, press **prefix+a** after [setup](/docs/install/#add-to-herdr). A popup
 | Action | Result |
 | --- | --- |
 | Type or edit the title | Name the task |
-| Add notes, a thread, or steps | Include details before saving |
+| Add notes or steps | Include details before saving |
 | `Shift+Enter` | Save and close the popup |
 | `Esc` | Discard and close |
 
@@ -101,7 +89,7 @@ For the same capture flow in your terminal, run `tsk capture`. `TSK_MODE=capture
 ## From an agent or script
 
 ```sh
-tsk add -t "Fix login timeout" --thread auth
+tsk add -t "Fix login timeout"
 # the new task starts todo; use tsk status T<n> doing when work begins
 ```
 

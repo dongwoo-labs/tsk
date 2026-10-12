@@ -221,11 +221,11 @@ pub enum RelationTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListPickerValue {
     /// Clear the task's parent.
-    ParentNone,
+    Clear,
     /// Make this task the parent.
-    ParentTask(Uuid),
+    Task(Uuid),
     /// A task under this one: choosing it would form a cycle, so it is listed but refused.
-    ParentCycle(Uuid),
+    Cycle(Uuid),
 }
 
 /// An open searchable list picker (the parent chooser). Session-only.
@@ -1864,7 +1864,7 @@ impl BoardModel {
         let mut options = vec![ListPickerOption {
             label: "no parent".to_string(),
             count: None,
-            value: ListPickerValue::ParentNone,
+            value: ListPickerValue::Clear,
         }];
         for candidate in candidates {
             let mut label = match candidate.board_identifier() {
@@ -1885,17 +1885,17 @@ impl BoardModel {
                 label,
                 count: None,
                 value: if cycle {
-                    ListPickerValue::ParentCycle(candidate.id)
+                    ListPickerValue::Cycle(candidate.id)
                 } else {
-                    ListPickerValue::ParentTask(candidate.id)
+                    ListPickerValue::Task(candidate.id)
                 },
             });
         }
         let selected = options
             .iter()
             .position(|option| match option.value {
-                ListPickerValue::ParentNone => current.is_none(),
-                ListPickerValue::ParentTask(id) => Some(id) == current,
+                ListPickerValue::Clear => current.is_none(),
+                ListPickerValue::Task(id) => Some(id) == current,
                 _ => false,
             })
             .unwrap_or(0);

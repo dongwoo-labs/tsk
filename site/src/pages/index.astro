@@ -32,7 +32,7 @@ const BOARD_PINS = [
   {
     n: 3,
     title: 'A task.',
-    body: 'A selection arrow without a filled highlight, status glyph, a dim <code>T</code>-number you can click to copy, and the wrapped title. Nothing else: project and thread live in the task detail.',
+    body: 'A selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the wrapped title. A bold <code>!</code> or <code>?n</code> says an agent waits on you; the project lives in the task detail.',
   },
   {
     n: 4,
@@ -42,7 +42,7 @@ const BOARD_PINS = [
   {
     n: 5,
     title: 'Your loose backlog.',
-    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards, with thread filters across every status.",
+    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards.",
   },
 ];
 const pinLabel = (n) => {
@@ -304,9 +304,9 @@ const softwareApplication = {
               <p>
                 <kbd>+</kbd> opens one line on the status row. <kbd>Enter</kbd> saves,
                 <kbd>Shift+Enter</kbd> keeps the line open, <kbd>Tab</kbd> expands onto the task
-                page. Two tokens set project and thread from inside the title.
+                page. A <code>!p</code> token sets the project from inside the title.
               </p>
-              <pre class="mini" aria-label="Quick-add example"><span class="prompt">+</span> Fix the flaky bench <span class="tok">!p</span> tsk <span class="tok">!t</span> ci<span class="cursor" aria-hidden="true">█</span>
+              <pre class="mini" aria-label="Quick-add example"><span class="prompt">+</span> Fix the flaky bench <span class="tok">!p</span> tsk<span class="cursor" aria-hidden="true">█</span>
 <span class="dim">enter save · shift+enter stay · tab page · esc close</span></pre>
             </article>
 
@@ -366,7 +366,7 @@ const softwareApplication = {
                 <div class="agent-body">
                   <p class="agent-line you">webhook retries are applying the same event twice. investigate and add a task.</p>
                   <p class="agent-line say">The handler applies side effects before recording the event ID. Concurrent retries can both get through.</p>
-                  <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk add -t "Make webhook delivery idempotent" -p launchpad --thread api --json</span><span class="tool-out" data-cli-add-output>&#123;"outcome":"created","id":"00000000-0000-4000-8000-000000000013","number":13,"title":"Make webhook delivery idempotent","project":"/home/agent/work/launchpad"&#125;</span></div>
+                  <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk add -t "Make webhook delivery idempotent" -p launchpad --json</span><span class="tool-out" data-cli-add-output>&#123;"outcome":"created","id":"00000000-0000-4000-8000-000000000013","number":13,"title":"Make webhook delivery idempotent","project":"/home/agent/work/launchpad"&#125;</span></div>
                   <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk steps T13 add "Reproduce duplicate delivery"</span><span class="tool-out" data-cli-step-output>added 3f Reproduce duplicate delivery</span></div>
                   <p class="agent-line say">T13 is Todo with a checklist to reproduce duplicate delivery, persist processed event IDs, and test concurrent retries. Pick it when you are ready to work.</p>
                 </div>
@@ -408,7 +408,7 @@ const softwareApplication = {
               Inside Git, start on the repo’s project board. Outside Git, start on <b>all</b>. <kbd>p</kbd> picks the
               scope: <b>all</b> tasks, your <b>desk</b> (what needs you across projects, active work,
               and your loose backlog), or one project. Rows follow task numbers; <kbd>S</kbd> groups
-              them by project. Filter threads within a project with <kbd>t</kbd>.
+              them by project. Press <kbd>2</kbd> for the questions agents left for you.
               Give the board 110 columns and the selected task sits beside the list.
             </p>
           </header>
@@ -491,7 +491,7 @@ const softwareApplication = {
 
           <div class="cli-grid">
             <div class="cli-main">
-              <pre class="shell" aria-label="CLI session"><span class="prompt">$</span> tsk add -t "Draft release notes" -p tsk --thread release --json
+              <pre class="shell" aria-label="CLI session"><span class="prompt">$</span> tsk add -t "Draft release notes" -p tsk --json
 <span class="dim">&#123;"outcome":"created","id":"5c1e…","number":32,"title":"Draft release notes","project":"tsk"&#125;</span>
 <span class="prompt">$</span> tsk steps T32 add "Write the failing test"
 <span class="dim">added 9f Write the failing test</span>
@@ -499,7 +499,7 @@ const softwareApplication = {
 <span class="dim">status T32 doing Draft release notes</span>
 <span class="prompt">$</span> tsk list T32
 <span class="dim">DOING
- - 32 Draft release notes #release
+ - 32 Draft release notes
    [ ] 9f Write the failing test</span>
 <span class="prompt">$</span> cat plan.json | tsk add
 <span class="dim">&#123; "created": [...], "existing": [...], "failed": [] &#125;</span></pre>
@@ -542,7 +542,7 @@ const softwareApplication = {
                 </li>
               </ul>
               <p class="side-note">
-                Adds are idempotent on title, project, and thread. <code>--json</code> is flat
+                Adds are idempotent on title and project. <code>--json</code> is flat
                 and stable. <a href="/docs/cli/">CLI reference →</a>
               </p>
             </div>

@@ -5,7 +5,7 @@ description: Keyboard shortcuts by action and surface.
 
 Use the mouse, the keyboard, or both. Tabs, selectors, tasks, and footer actions are clickable. Press `Shift+M` to enter multi-select, then click tasks or their numbers to toggle marks. Outside multi-select, double-click a task to open it.
 
-Press `?` on the board, task page, or another non-text surface for a searchable list of all shortcuts. Status and delete shortcuts use **Ctrl**; navigation uses bare keys. The website demo uses bare status keys because browsers reserve control chords.
+Press `?` on the board, task page, or another non-text surface for a searchable list of all shortcuts. Status and delete shortcuts use **Ctrl**; navigation uses bare keys. The exceptions are listed below: bare `e` / `a` on the task page and the answer keys of the questions tab. The website demo uses bare status keys because browsers reserve control chords.
 
 ## Board
 
@@ -28,9 +28,9 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Open / close done drawer | `d` |
 | Fold or unfold archived in the done drawer | `g` |
 | Board tab, list focus | `1` |
+| Questions tab | `2` |
 | Scope picker: all, desk, or a project | `p` |
 | Sort by number / by project | `S` |
-| Project thread filter | `t` |
 | Search current board rows | `/` |
 | Command palette | `:` |
 | All shortcuts | `?` |
@@ -52,13 +52,15 @@ These keys apply in **view mode**:
 
 | Action | Key |
 | --- | --- |
-| Select the parent line, steps, **+ step**, and children | `Tab` / `Shift+Tab` |
+| Select the parent line, steps, **+ step**, children, questions, and links | `Tab` / `Shift+Tab` |
 | Activate first step, then move among the parent, steps, and children | `↓`, then `↑` / `↓` |
 | Toggle selected step | `Enter` |
 | Open the selected parent or child; on `parent  none`, choose a parent | `Enter` |
-| Add step (below the selected step, else at the end) | `ctrl+a` |
+| Add step (below the selected step, else at the end) | `ctrl+a` or `a` |
 | Move selected step up or down | `alt+↑` / `alt+↓` |
-| Edit title or selected step | `ctrl+e` |
+| Edit title or selected step | `ctrl+e` or `e` |
+| Open the selected question, show a link's URL, or focus a verified Thread | `Enter` |
+| Questions tab | `2` |
 | Change task status | Board status shortcuts above |
 | Next / previous task in list order | `J` / `K` |
 | Choose this task's parent | `P` |
@@ -71,7 +73,7 @@ These keys apply in **view mode**:
 
 Click a step to select it. Click **+ step** to add at the end. Click any row of a parent or child line to open that task. Field clicks become editable only after task editing starts.
 
-`alt+↑` / `alt+↓` and the parent keys `P` / `U` are the mutating shortcuts without `ctrl`. macOS reserves `ctrl+arrows` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
+`alt+↑` / `alt+↓`, the parent keys `P` / `U`, and `e` / `a` (which start an edit, as `ctrl+e` / `ctrl+a` do) are the task-page shortcuts without `ctrl`. macOS reserves `ctrl+arrows` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
 
 `P` and `U` act on the open task only, never on a marked set, and only while no text field is open; in a field they type capital letters. A draft with unsaved changes refuses both until you save or cancel it. `P` opens the parent picker; `U` clears the parent at once. Neither changes either task's status or scope. [Related tasks](/docs/task-page/#related-tasks).
 
@@ -90,7 +92,6 @@ Click a step to select it. Click **+ step** to add at the end. Click any row of 
 | Stage selected-step removal | `ctrl+x` in task edit |
 | Open Scope picker / confirm selection | `Enter` |
 | Cycle Scope | `Space` or `←` / `→` |
-| Open / close selected Thread editor | `Enter` |
 | Line start / end | `Home` / `End` |
 | Word left / right | `ctrl+←` / `ctrl+→` |
 | Delete backward / forward | `Backspace` / `Delete` |
@@ -103,6 +104,26 @@ Editing keys take precedence over view-mode status shortcuts. In the step editor
 ### If Shift+Enter does not save
 
 Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `keybind = shift+enter=text:\n`, for example). tsk reads that as `ctrl+j`, so the form does not save. In a form editor, `ctrl+j` shows `Shift+Enter sent Ctrl+J: check terminal keys` on the status row and changes nothing. Remove the binding, or map `Shift+Enter` to a sequence that keeps the Shift modifier, then try again.
+
+## Questions tab
+
+| Action | Key |
+| --- | --- |
+| Move in the list | `↑` / `↓` or `k` / `j` |
+| Open a record | `Enter` (also `→` / `l` at 110+ columns) |
+| Back to the list | `Esc` (also `←` / `h` at 110+ columns) |
+| Quit from the list | `Esc` |
+| Choose an option | `j` / `k` on the record |
+| Save the chosen option, or start / save a typed answer | `Enter` |
+| Check an approval | `Space` |
+| Approve / reject | `y` / `n` |
+| Correct an answer | `c` |
+| Open the task | `t` |
+| Resend a lead request | `r` |
+| Next / previous record | `J` / `K` |
+| Board tab | `1` |
+
+These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels.
 
 ## Quick-add
 
@@ -122,7 +143,6 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 | Scope picker | Arrows or `j`/`k` select **all**, **desk**, or a project; `Tab` or `←`/`→` switch tabs; `Enter` opens; `?` opens Help; `Esc` or `q` closes |
 | Project archive | `ctrl+f` archives; on archived tab, `ctrl+f` or `ctrl+u` restores |
 | Archived project view | `ctrl+u` restores; `Esc` or `p` leaves |
-| Thread filter | Type or paste to filter; arrows or `Tab` select; `Enter` chooses; `Esc` closes |
 | Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select, and on a long wrapped title `↑` / `↓` first show its other rows; the wheel scrolls rows; `Enter` saves the parent (or **no parent**); a click on any row of an option saves it; `Esc` closes without saving |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
 | Palette | Type to filter; arrows or `Tab` select; `Enter` runs; `Esc` closes |
@@ -130,7 +150,7 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 | Archived-project launch prompt | `y` restores; `n` or `Esc` keeps archived; `?` opens Help |
 | Failed save | `r` or `Enter` retries; `c` or `Esc` cancels |
 
-`j` and `k` are text in board search, the thread filter, the parent picker, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
+`j` and `k` are text in board search, the parent picker, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
 
 ## Wide layout
 
