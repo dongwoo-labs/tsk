@@ -165,9 +165,6 @@ pub enum BoardIntent {
     FocusFormField(CaptureField),
     /// Focus a text field at a painted wrapped row and display-cell column.
     FocusFormCursor(CaptureField, usize, usize),
-    /// Enter or a second click opens or closes the selected task-page Thread text editor.
-    /// It never commits or leaves the enclosing task edit session.
-    ToggleThreadEditing,
     /// Cycle the shared form's chosen task scope directly from its Scope field.
     FormCycleScope,
     /// Open the shared form's keyboard scope dropdown, move its pending selection, apply it,
@@ -243,8 +240,6 @@ pub enum BoardIntent {
     SelectProjectOption(usize),
     /// Switch to a persistent navigation tab (`1` board).
     SelectNavTab(crate::ui::queue::NavTab),
-    /// Open the project board's searchable thread filter picker (bare `t`).
-    OpenThreadFilterPicker,
     /// `S` — flip every section between number order and project order.
     ToggleSort,
     /// Focus the active board lens's search field (`/` or a click).
@@ -254,12 +249,8 @@ pub enum BoardIntent {
     /// Move the open list picker's selection.
     ListPickerNext,
     ListPickerPrev,
-    /// Apply the highlighted list-picker option.
-    ConfirmListPicker,
     /// Close the list picker without applying anything.
     CancelListPicker,
-    /// Choose a visible list-picker row by index and apply it in one step (mouse).
-    SelectListOption(usize),
     /// Type into the open list picker's search query.
     ListPickerQueryInsert(char),
     /// Paste into the open list picker's search query.
@@ -578,15 +569,6 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "sort: number / project",
         modifier: NormalModifier::Bare,
     },
-    // `t` opens the project board's thread filter. Navigation (bare, not a verb); the
-    // reducer gates it to a project scope, so it is inert everywhere else.
-    NormalKeyEntry {
-        code: KeyCode::Char('t'),
-        intent: BoardIntent::OpenThreadFilterPicker,
-        help_chord: "t",
-        help_label: "threads",
-        modifier: NormalModifier::Bare,
-    },
     NormalKeyEntry {
         code: KeyCode::Char('/'),
         intent: BoardIntent::FocusSearch,
@@ -737,7 +719,6 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleAllGroups
         | BoardIntent::OpenProjectSelector
-        | BoardIntent::OpenThreadFilterPicker
         | BoardIntent::FocusSearch
         | BoardIntent::ToggleSort
         | BoardIntent::OpenCommandPalette => HelpGroup::ViewsFind,
@@ -885,12 +866,6 @@ fn help_bindings() -> Vec<HelpBinding> {
         ),
         help_binding(
             HelpGroup::SurfaceControls,
-            "enter (thread)",
-            "edit / stop editing thread",
-            "footer group",
-        ),
-        help_binding(
-            HelpGroup::SurfaceControls,
             "shift+enter",
             "save edit",
             "editing form commit",
@@ -948,18 +923,6 @@ fn help_bindings() -> Vec<HelpBinding> {
             "!p",
             "choose desk (quick-add)",
             "capture scope",
-        ),
-        help_binding(
-            HelpGroup::CreateEdit,
-            "!t name",
-            "choose thread (quick-add)",
-            "capture group",
-        ),
-        help_binding(
-            HelpGroup::CreateEdit,
-            "!t",
-            "clear thread (quick-add)",
-            "capture group none",
         ),
         help_binding(
             HelpGroup::SurfaceControls,
@@ -1217,12 +1180,10 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
             BoardInputMode::Normal
                 | BoardInputMode::TaskPage
                 | BoardInputMode::CapturePage
-                | BoardInputMode::SelectThread
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
                 | BoardInputMode::LaunchCard
                 | BoardInputMode::ProjectPicker
-                | BoardInputMode::ListPicker
                 | BoardInputMode::ParentPicker
                 | BoardInputMode::Help
         )
@@ -1234,7 +1195,6 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
         BoardInputMode::TaskPage => map_task_page(key),
         BoardInputMode::CapturePage => map_capture_page(key),
         BoardInputMode::ProjectPicker => map_project_picker(key),
-        BoardInputMode::ListPicker => map_list_picker(key),
         BoardInputMode::ParentPicker => map_parent_picker(key),
         BoardInputMode::Search => map_search(key),
         BoardInputMode::SaveRecovery => map_save_recovery(key),
@@ -1244,8 +1204,6 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
         BoardInputMode::QuickAdd => map_quick_add_key(key),
         BoardInputMode::FormScopeDropdown => map_board_form_key(CaptureField::Scope, true, key),
         BoardInputMode::EditScope => map_board_form_key(CaptureField::Scope, false, key),
-        BoardInputMode::SelectThread => map_selected_thread_key(key),
-        BoardInputMode::EditThread => map_thread_edit_key(key),
         BoardInputMode::EditTitle | BoardInputMode::EditNotes => map_edit(mode, key),
         // A step edit belongs to the retained task form, not a modal editor. Enter saves one
         // independent add; Shift+Enter saves the session. Alt+Enter is not a save route on
@@ -1335,42 +1293,6 @@ pub fn route_responsive_key(
         }
         _ => ResponsiveKeyRoute::Surface,
     }
-}
-
-/// Map the selected task-page Thread footer. It is a navigation target until Enter or a
-/// second click deliberately opens the text cursor.
-fn map_selected_thread_key(key: KeyEvent) -> Option<BoardIntent> {
-    if key.code == KeyCode::Char('?')
-        && !key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-    {
-        return Some(BoardIntent::OpenHelp);
-    }
-    if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-        return Some(BoardIntent::ToggleThreadEditing);
-    }
-    // A selected footer is navigation, not an invisible editor. Retain only session controls
-    // from the shared field map, so printable input cannot mutate a draft without a cursor.
-    match map_form_edit_key(CaptureField::Thread, FormEditNavigation::Form, true, key) {
-        intent @ Some(
-            BoardIntent::BeginAddStep
-            | BoardIntent::ConfirmEdit
-            | BoardIntent::CancelEdit
-            | BoardIntent::FormFocusNext
-            | BoardIntent::FormFocusPrev,
-        ) => intent,
-        _ => None,
-    }
-}
-
-/// Map an active task-page Thread editor. Plain Enter returns to the selected footer, retaining
-/// its draft and the surrounding task session; Shift+Enter remains the sole save route.
-fn map_thread_edit_key(key: KeyEvent) -> Option<BoardIntent> {
-    if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-        return Some(BoardIntent::ToggleThreadEditing);
-    }
-    map_form_edit_key(CaptureField::Thread, FormEditNavigation::Form, true, key)
 }
 
 /// Focus-navigation intents layered over the shared field editor map.
@@ -1564,7 +1486,7 @@ fn map_form_edit_key(
             }
             _ => None,
         },
-        CaptureField::Title | CaptureField::Notes | CaptureField::Thread => match key.code {
+        CaptureField::Title | CaptureField::Notes => match key.code {
             KeyCode::Enter if focused == CaptureField::Notes => {
                 Some(BoardIntent::EditInsertLineBreak)
             }
@@ -1575,7 +1497,7 @@ fn map_form_edit_key(
             {
                 Some(BoardIntent::FormFocusNext)
             }
-            // A plain Enter must neither save a thread nor close an inline step editor.
+            // A plain Enter must not close an inline step editor.
             KeyCode::Enter => None,
             KeyCode::Esc => Some(BoardIntent::CancelEdit),
             KeyCode::Backspace => Some(BoardIntent::EditBackspace),
@@ -1583,7 +1505,7 @@ fn map_form_edit_key(
             KeyCode::Left => Some(BoardIntent::EditMoveLeft),
             KeyCode::Right => Some(BoardIntent::EditMoveRight),
             // Vertical arrows navigate WRAPPED rows in the multiline Notes draft;
-            // Title and Thread are one line, so they stay inert there.
+            // Title is one line, so they stay inert there.
             KeyCode::Up if focused == CaptureField::Notes => Some(BoardIntent::EditMoveUp),
             KeyCode::Down if focused == CaptureField::Notes => Some(BoardIntent::EditMoveDown),
             KeyCode::Home => Some(BoardIntent::EditMoveLineStart),
@@ -1624,17 +1546,15 @@ fn map_search(key: KeyEvent) -> Option<BoardIntent> {
 pub fn map_edit_paste(mode: BoardInputMode, text: &str) -> Option<BoardIntent> {
     match mode {
         BoardInputMode::QuickAdd => Some(BoardIntent::QuickAddInsertText(text.to_string())),
-        BoardInputMode::EditTitle
-        | BoardInputMode::EditNotes
-        | BoardInputMode::EditThread
-        | BoardInputMode::EditStep => Some(BoardIntent::EditInsertText(text.to_string())),
-        BoardInputMode::SelectThread
-        | BoardInputMode::EditScope
+        BoardInputMode::EditTitle | BoardInputMode::EditNotes | BoardInputMode::EditStep => {
+            Some(BoardIntent::EditInsertText(text.to_string()))
+        }
+        BoardInputMode::EditScope
         | BoardInputMode::FormScopeDropdown
         | BoardInputMode::LaunchCard
         | BoardInputMode::TaskPage
         | BoardInputMode::CapturePage => None,
-        BoardInputMode::ListPicker | BoardInputMode::ParentPicker => {
+        BoardInputMode::ParentPicker => {
             Some(BoardIntent::ListPickerQueryInsertText(text.to_string()))
         }
         BoardInputMode::Search => Some(BoardIntent::SearchQueryInsertText(text.to_string())),
@@ -1707,7 +1627,6 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::FormFocusPrev
         | BoardIntent::FocusFormField(_)
         | BoardIntent::FocusFormCursor(_, _, _)
-        | BoardIntent::ToggleThreadEditing
         | BoardIntent::FormCycleScope
         | BoardIntent::OpenFormScopeDropdown
         | BoardIntent::FormScopeNext
@@ -1722,13 +1641,10 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::CancelProjectPicker
         | BoardIntent::SelectProjectOption(_)
         | BoardIntent::SelectNavTab(_)
-        | BoardIntent::OpenThreadFilterPicker
         | BoardIntent::ToggleSort
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
-        | BoardIntent::ConfirmListPicker
         | BoardIntent::CancelListPicker
-        | BoardIntent::SelectListOption(_)
         | BoardIntent::ListPickerQueryInsert(_)
         | BoardIntent::ListPickerQueryInsertText(_)
         | BoardIntent::ListPickerQueryBackspace
@@ -1993,7 +1909,7 @@ fn map_project_picker(key: KeyEvent) -> Option<BoardIntent> {
     }
 }
 
-/// Searchable list picker (thread filter / projects View). Printable keys narrow the
+/// Searchable list picker (the parent chooser). Printable keys narrow the
 /// query, arrows move, Enter applies, Esc cancels — the palette's contract with counts.
 fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
     if let Some(character) = altgr_text_char(&key) {
@@ -2007,7 +1923,7 @@ fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
     }
     match key.code {
         KeyCode::Esc => Some(BoardIntent::CancelListPicker),
-        KeyCode::Enter => Some(BoardIntent::ConfirmListPicker),
+        KeyCode::Enter => Some(BoardIntent::ConfirmParentPicker),
         KeyCode::Down => Some(BoardIntent::ListPickerNext),
         KeyCode::Up => Some(BoardIntent::ListPickerPrev),
         KeyCode::Backspace => Some(BoardIntent::ListPickerQueryBackspace),
@@ -2023,10 +1939,7 @@ fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
 /// The parent chooser: the list picker's typing and movement, but Enter applies the chosen
 /// parent (a persisting verb) and Esc returns to the task page.
 fn map_parent_picker(key: KeyEvent) -> Option<BoardIntent> {
-    match map_list_picker(key)? {
-        BoardIntent::ConfirmListPicker => Some(BoardIntent::ConfirmParentPicker),
-        intent => Some(intent),
-    }
+    map_list_picker(key)
 }
 
 fn map_save_recovery(key: KeyEvent) -> Option<BoardIntent> {
@@ -2122,18 +2035,12 @@ pub fn map_capture_key_state(
     }
     // The two text fields carry the board's editing chords, so their table runs before the
     // modified-chord rejection below; the scope row is deliberately not part of it.
-    if matches!(
-        focused,
-        CaptureField::Title | CaptureField::Notes | CaptureField::Thread
-    ) {
+    if matches!(focused, CaptureField::Title | CaptureField::Notes) {
         if let Some(intent) = map_capture_edit_chord(key) {
             return Some(intent);
         }
     }
-    let text_field = matches!(
-        focused,
-        CaptureField::Title | CaptureField::Notes | CaptureField::Thread
-    ) || path_editing;
+    let text_field = matches!(focused, CaptureField::Title | CaptureField::Notes) || path_editing;
     if text_field {
         if let Some(character) = altgr_text_char(&key) {
             return Some(CaptureIntent::Insert(character));
@@ -2156,7 +2063,7 @@ pub fn map_capture_key_state(
     match focused {
         // Title is one line, so Enter saves the draft; Notes is multi-line, so Enter opens
         // a line and the chord pair above saves instead (ADR 0006).
-        CaptureField::Title | CaptureField::Notes | CaptureField::Thread => match key.code {
+        CaptureField::Title | CaptureField::Notes => match key.code {
             KeyCode::Enter => Some(match focused {
                 CaptureField::Notes => CaptureIntent::InsertLineBreak,
                 _ => CaptureIntent::Save,
@@ -2166,7 +2073,7 @@ pub fn map_capture_key_state(
             KeyCode::Left => Some(CaptureIntent::MoveLeft),
             KeyCode::Right => Some(CaptureIntent::MoveRight),
             // Vertical arrows navigate WRAPPED rows in the multiline Notes draft;
-            // Title and Thread are one line, so they stay inert there.
+            // Title is one line, so they stay inert there.
             KeyCode::Up if focused == CaptureField::Notes => Some(CaptureIntent::MoveUp),
             KeyCode::Down if focused == CaptureField::Notes => Some(CaptureIntent::MoveDown),
             KeyCode::Home => Some(CaptureIntent::MoveLineStart),
@@ -2233,7 +2140,7 @@ pub fn map_capture_paste_state(
     text: &str,
 ) -> Option<CaptureIntent> {
     match focused {
-        CaptureField::Title | CaptureField::Notes | CaptureField::Thread => {
+        CaptureField::Title | CaptureField::Notes => {
             Some(CaptureIntent::InsertText(text.to_string()))
         }
         CaptureField::Scope if path_editing => Some(CaptureIntent::InsertText(text.to_string())),
@@ -2263,9 +2170,9 @@ pub fn intent_primary_capture_action(intent: &CaptureIntent) -> Option<PrimaryCa
         | CaptureIntent::MoveWordRight
         | CaptureIntent::FocusNext
         | CaptureIntent::FocusPrev
-        | CaptureIntent::FocusField(
-            CaptureField::Title | CaptureField::Notes | CaptureField::Thread,
-        ) => Some(PrimaryCaptureAction::EditField),
+        | CaptureIntent::FocusField(CaptureField::Title | CaptureField::Notes) => {
+            Some(PrimaryCaptureAction::EditField)
+        }
         // Scope row click cycles; path edit and focusing scope are scope interaction.
         CaptureIntent::FocusField(CaptureField::Scope)
         | CaptureIntent::CycleScope

@@ -40,7 +40,6 @@ fn board() -> Board {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create parent");
     let child = domain
@@ -51,7 +50,6 @@ fn board() -> Board {
                 path: REPO.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create child");
     domain
@@ -63,7 +61,6 @@ fn board() -> Board {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create other");
     let domain = numbered(&domain, &[(parent, 10), (child, 11), (other, 12)]);
@@ -835,7 +832,6 @@ fn a_click_on_any_wrapped_relation_row_opens_that_task() {
             TaskScope::Project {
                 path: REPO.to_string(),
             },
-            None,
         )
         .expect("long child title");
     link(&mut board, child, parent);
@@ -992,7 +988,6 @@ fn long_board() -> (Board, Uuid) {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create long");
     board.domain = numbered(

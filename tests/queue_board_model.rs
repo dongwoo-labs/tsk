@@ -15,8 +15,7 @@ use tsk_tui::store::TaskStore;
 use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel, ProjectScopeOption};
 use tsk_tui::ui::input::BoardIntent;
 use tsk_tui::ui::queue::{
-    query_board, query_lens, BoardLens, BoardSort, QueueView, SectionKind, ThreadFilter,
-    INBOX_HEADER_ROW_ID,
+    query_board, query_lens, BoardLens, BoardSort, QueueView, SectionKind, INBOX_HEADER_ROW_ID,
 };
 use uuid::Uuid;
 
@@ -37,7 +36,6 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, updated_se
         merge_base_revision: None,
         title: title.into(),
         notes: None,
-        thread: None,
         status,
         scope,
         provenance: ProvenanceOrigin::Manual,
@@ -63,26 +61,6 @@ fn domain_with_tasks(tasks: Vec<Task>) -> DomainState {
     let mut document = serde_json::to_value(DomainState::new()).expect("serialize empty domain");
     document["tasks"] = serde_json::to_value(tasks).expect("serialize tasks");
     serde_json::from_value(document).expect("domain with fixture tasks")
-}
-
-fn threaded_task(
-    id: u128,
-    title: &str,
-    status: HumanStatus,
-    scope: TaskScope,
-    updated_secs: u64,
-    thread: &str,
-) -> Task {
-    let mut task = task(id, title, status, scope, updated_secs);
-    task.thread = Some(thread.to_string());
-    task
-}
-
-fn on_deck(view: &tsk_tui::ui::queue::QueueView) -> &tsk_tui::ui::queue::QueueSection {
-    view.sections
-        .iter()
-        .find(|section| section.kind == SectionKind::OnDeck)
-        .expect("ON DECK section")
 }
 
 fn section_ids(view: &QueueView, kind: SectionKind) -> Vec<Uuid> {
@@ -151,7 +129,6 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
         &BTreeSet::new(),
         BoardLens::All,
         false,
-        &ThreadFilter::All,
         BoardSort::Number,
     );
     let first_motion = view
@@ -174,7 +151,6 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     domain.set_status(id_new, HumanStatus::Doing).unwrap();
@@ -184,18 +160,11 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     domain.set_status(id_old, HumanStatus::Doing).unwrap();
     let _deck = domain
-        .create(
-            "deck",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("deck", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     // Domain create stamps wall-clock times; seed still lands on some IN MOTION id.
     let from_domain = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -221,13 +190,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
 
     let mut domain = DomainState::new();
     let deck_id = domain
-        .create(
-            "b",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("b", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     assert_eq!(model.active_project(), Some(Path::new(THIS_REPO)));
@@ -248,13 +211,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
 fn from_domain_opens_the_invocation_project_unless_archived() {
     let mut domain = DomainState::new();
     let live_id = domain
-        .create(
-            "live",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("live", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     domain
         .create(
@@ -262,7 +219,6 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
 
@@ -299,7 +255,6 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     domain.archive_project(THIS_REPO).expect("archive project");
@@ -311,13 +266,7 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
     // A non-Git invocation remembers its directory but opens every scope.
     let mut domain = DomainState::new();
     let desk_id = domain
-        .create(
-            "desk",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("desk", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .unwrap();
     let outside = PathBuf::from("/work/outside-git");
     let snapshot = InvocationSnapshot {
@@ -342,7 +291,6 @@ fn confirming_project_choice_changes_visible_queue_sections() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     let other_id = domain
@@ -351,7 +299,6 @@ fn confirming_project_choice_changes_visible_queue_sections() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -404,23 +351,11 @@ fn confirming_project_choice_changes_visible_queue_sections() {
 fn sync_from_domain_reanchors_by_id() {
     let mut domain = DomainState::new();
     let id_doing = domain
-        .create(
-            "doing",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("doing", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     domain.set_status(id_doing, HumanStatus::Doing).unwrap();
     let id_todo = domain
-        .create(
-            "todo",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("todo", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
 
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -466,7 +401,6 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     domain.set_status(first_ready, HumanStatus::Todo).unwrap();
@@ -476,7 +410,6 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     domain.set_status(last_ready, HumanStatus::Todo).unwrap();
@@ -486,7 +419,6 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
 
@@ -513,173 +445,6 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
     assert_ne!(model.selected_id(), None);
     assert!(model.visible_ids().contains(&open));
     assert!(!model.visible_ids().contains(&last_ready));
-}
-
-#[test]
-fn project_deck_lists_tasks_flat_with_thread_filter_across_statuses() {
-    let tasks = vec![
-        threaded_task(
-            1,
-            "todo",
-            HumanStatus::Todo,
-            project(THIS_REPO),
-            20,
-            "Release",
-        ),
-        threaded_task(
-            2,
-            "done",
-            HumanStatus::Done,
-            project(THIS_REPO),
-            30,
-            "release",
-        ),
-        threaded_task(
-            3,
-            "doing",
-            HumanStatus::Doing,
-            project(THIS_REPO),
-            40,
-            "release",
-        ),
-    ];
-
-    // The unfiltered project deck is flat: threads are row labels, never headers.
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        true,
-        &ThreadFilter::All,
-        BoardSort::Number,
-    );
-    let deck = on_deck(&view);
-    assert_eq!(
-        deck.task_ids,
-        vec![Uuid::from_u128(1)],
-        "only the ready task is on deck; threads do not group rows"
-    );
-
-    // The filter narrows every status section, drawer included.
-    let filtered = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        true,
-        &ThreadFilter::Named("release".to_string()),
-        BoardSort::Number,
-    );
-    assert_eq!(
-        section_ids(&filtered, SectionKind::InMotion),
-        vec![Uuid::from_u128(3)]
-    );
-    assert_eq!(
-        section_ids(&filtered, SectionKind::Done),
-        vec![Uuid::from_u128(2)],
-        "the done drawer respects the active thread filter"
-    );
-}
-
-#[test]
-fn project_deck_orders_ready_tasks_oldest_first_across_threads() {
-    let tasks = vec![
-        threaded_task(
-            1,
-            "alpha older",
-            HumanStatus::Todo,
-            project(THIS_REPO),
-            20,
-            "alpha",
-        ),
-        task(3, "loose", HumanStatus::Todo, project(THIS_REPO), 40),
-        threaded_task(
-            2,
-            "alpha newer",
-            HumanStatus::Todo,
-            project(THIS_REPO),
-            50,
-            "alpha",
-        ),
-    ];
-
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        false,
-        &ThreadFilter::All,
-        BoardSort::Number,
-    );
-    let deck = on_deck(&view);
-    assert_eq!(
-        deck.task_ids,
-        vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(2)],
-        "one flat oldest-first backlog order; no thread blocks, no loose lane"
-    );
-}
-
-#[test]
-fn without_a_thread_filter_keeps_only_unthreaded_tasks() {
-    let tasks = vec![
-        task(1, "loose newest", HumanStatus::Todo, project(THIS_REPO), 30),
-        threaded_task(
-            2,
-            "threaded",
-            HumanStatus::Todo,
-            project(THIS_REPO),
-            20,
-            "release",
-        ),
-    ];
-
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        false,
-        &ThreadFilter::Without,
-        BoardSort::Number,
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::OnDeck),
-        vec![Uuid::from_u128(1)]
-    );
-}
-
-#[test]
-fn the_local_thread_filter_never_reaches_another_scope() {
-    let tasks = vec![
-        threaded_task(
-            1,
-            "project",
-            HumanStatus::Todo,
-            project(THIS_REPO),
-            20,
-            "release",
-        ),
-        threaded_task(
-            2,
-            "global",
-            HumanStatus::Todo,
-            TaskScope::Global,
-            30,
-            "release",
-        ),
-    ];
-
-    // Local filter: only the project's own match.
-    let local = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        false,
-        &ThreadFilter::Named("release".to_string()),
-        BoardSort::Number,
-    );
-    assert_eq!(
-        section_ids(&local, SectionKind::OnDeck),
-        vec![Uuid::from_u128(1)]
-    );
 }
 
 #[test]
@@ -768,7 +533,6 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create review");
     domain
@@ -780,7 +544,6 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create ready");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -834,13 +597,7 @@ fn two_fresh_models_from_same_store_share_no_ui_state_and_no_ui_writes_under_sta
     let store = TaskStore::new(&state_dir);
     let mut domain = DomainState::new();
     let id = domain
-        .create(
-            "shared",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("shared", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     store.save(&domain).expect("save domain");
 

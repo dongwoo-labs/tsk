@@ -40,14 +40,17 @@ fn platform_nanos(nanos: u32) -> u32 {
 }
 
 fn platform_migrated_v5_fixture() -> Vec<u8> {
-    // Preserve the historical fixture. Only its version changes in v5 -> v6; the
+    // Preserve the historical fixture. Its version changes and v8 drops thread; the
     // persisted type retains canonical field order and platform timestamp precision.
-    let document = include_str!("fixtures/current_store_v5.json").replacen(
-        "\"format_version\": 5",
-        "\"format_version\": 7",
-        1,
-    );
-    let state: DomainState = serde_json::from_str(&document).expect("migrated v5 fixture");
+    let mut document: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/current_store_v5.json"))
+            .expect("v5 fixture json");
+    document["format_version"] = serde_json::json!(8);
+    // v7 -> v8 drops the removed Task.thread label; nothing else moves.
+    for task in document["tasks"].as_array_mut().expect("tasks") {
+        task.as_object_mut().expect("task").remove("thread");
+    }
+    let state: DomainState = serde_json::from_value(document).expect("migrated v5 fixture");
     serde_json::to_vec_pretty(&state).expect("encode platform fixture")
 }
 
@@ -83,7 +86,7 @@ fn literal_current_v1_fixture_pins_the_complete_store_wire_shape() {
     .expect("install current fixture");
 
     let mut state = TaskStore::new(&dir).load().expect("load current fixture");
-    assert_eq!(state.format_version(), 7, "the v1 fixture loads migrated");
+    assert_eq!(state.format_version(), 8, "the v1 fixture loads migrated");
     assert!(state.projects().is_empty());
     assert_eq!(state.next_task_number, 8);
     assert_eq!(state.next_notice_number, 1);
@@ -96,7 +99,7 @@ fn literal_current_v1_fixture_pins_the_complete_store_wire_shape() {
     );
     assert_eq!(task.title, "Pinned wire task");
     assert_eq!(task.notes.as_deref(), Some("Line one\nLine two"));
-    assert_eq!(task.thread.as_deref(), Some("release-2026"));
+    // v8 drops the v7 thread label on load; the fixture still carries one.
     assert_eq!(task.status, HumanStatus::Done);
     assert!(!task.archived);
     assert_eq!(
@@ -157,7 +160,7 @@ fn v1_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v1_beside_
     let store = TaskStore::new(&dir);
 
     let state = store.load().expect("v1 document loads through the chain");
-    assert_eq!(state.format_version(), 7);
+    assert_eq!(state.format_version(), 8);
     assert!(state.projects().is_empty(), "v1 has no archived projects");
     assert!(state.tasks().iter().all(|task| !task.archived));
 
@@ -170,7 +173,7 @@ fn v1_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v1_beside_
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 7);
+    assert_eq!(live["format_version"], 8);
     assert_eq!(live["projects"], serde_json::json!({}));
     assert_eq!(live["next_notice_number"], 1);
 }
@@ -188,7 +191,7 @@ fn v2_document_loads_with_notice_counter_one_and_first_save_leaves_tsk_json_v2_b
     let store = TaskStore::new(&dir);
 
     let state = store.load().expect("v2 document loads through the chain");
-    assert_eq!(state.format_version(), 7);
+    assert_eq!(state.format_version(), 8);
     assert_eq!(state.next_notice_number, 1);
     assert!(state.tasks().iter().all(|task| !task.is_notice()));
     assert_eq!(state.tasks()[0].board_identifier().as_deref(), Some("T7"));
@@ -221,7 +224,7 @@ fn v3_document_loads_ready_as_open_and_first_save_leaves_tsk_json_v3_beside_the_
     let state = store
         .load()
         .expect("v3 document with ready tasks loads through the chain");
-    assert_eq!(state.format_version(), 7);
+    assert_eq!(state.format_version(), 8);
     let task = state.tasks().first().expect("fixture task");
     assert_eq!(task.status, HumanStatus::Todo, "ready migrates to open");
     assert_eq!(
@@ -246,7 +249,7 @@ fn v3_document_loads_ready_as_open_and_first_save_leaves_tsk_json_v3_beside_the_
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 7);
+    assert_eq!(live["format_version"], 8);
     assert_eq!(live["tasks"][0]["status"], "todo");
 }
 
@@ -262,7 +265,7 @@ fn v3_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v3_beside_
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v3 fixture");
-    assert_eq!(loaded.format_version(), 7);
+    assert_eq!(loaded.format_version(), 8);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
     assert_eq!(
@@ -295,7 +298,7 @@ fn v4_document_migrates_to_v6_and_keeps_its_original_backup() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load v4 fixture");
-    assert_eq!(loaded.format_version(), 7);
+    assert_eq!(loaded.format_version(), 8);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
 
@@ -324,7 +327,7 @@ fn literal_current_v5_fixture_round_trips_with_platform_timestamp_precision() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v5 fixture");
-    assert_eq!(loaded.format_version(), 7);
+    assert_eq!(loaded.format_version(), 8);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
 
@@ -343,22 +346,10 @@ fn v5_batch_undo_round_trips_and_still_reverts_the_whole_completion() {
     let store = TaskStore::new(&dir);
     let mut state = DomainState::new();
     let first = state
-        .create(
-            "first",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("first", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create first");
     let second = state
-        .create(
-            "second",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create second");
     state
         .complete_batch(&[first, second])
@@ -368,7 +359,7 @@ fn v5_batch_undo_round_trips_and_still_reverts_the_whole_completion() {
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 7);
+    assert_eq!(live["format_version"], 8);
     assert!(live["undo_stack"][0].get("batch").is_some());
 
     let mut loaded = store.load().expect("load batch undo");
@@ -421,7 +412,7 @@ fn notice_round_trips_with_its_n_number_and_no_t_number() {
 fn every_removed_wire_token_is_refused_at_the_store_boundary() {
     for status in ["open", "ready", "started", "blocked", "review"] {
         let mut document = current_store_fixture();
-        document["format_version"] = serde_json::json!(7);
+        document["format_version"] = serde_json::json!(8);
         document["tasks"][0]["status"] = serde_json::json!(status);
         assert_store_document_refused_without_rewrite(document);
     }
@@ -454,137 +445,6 @@ fn every_removed_wire_token_is_refused_at_the_store_boundary() {
 }
 
 #[test]
-fn thread_round_trips_through_save_and_load() {
-    let dir = temp_state_dir();
-    let _guard = TempDirGuard(dir.clone());
-    let store = TaskStore::new(&dir);
-    let mut state = DomainState::new();
-    let id = state
-        .create(
-            "Threaded task",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create task");
-    state
-        .edit(
-            id,
-            "Threaded task",
-            None,
-            TaskScope::Global,
-            Some("release-2026".into()),
-        )
-        .expect("attach thread");
-
-    store.save(&state).expect("save threaded task");
-    let loaded = store.load().expect("reload threaded task");
-    assert_eq!(
-        loaded.get(id).and_then(|task| task.thread.as_deref()),
-        Some("release-2026")
-    );
-}
-
-#[test]
-fn edit_with_thread_persists_through_one_locked_merge() {
-    let dir = temp_state_dir();
-    let _guard = TempDirGuard(dir.clone());
-    let store = TaskStore::new(&dir);
-    let mut seed = DomainState::new();
-    let id = seed
-        .create(
-            "Merge thread",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create task");
-    store.save(&seed).expect("seed task");
-
-    let mut local = store.load().expect("load local task");
-    local
-        .edit(
-            id,
-            "Merge thread",
-            None,
-            TaskScope::Global,
-            Some("release-2026".into()),
-        )
-        .expect("edit thread");
-    store
-        .reload_merge_save(&mut local)
-        .expect("one locked merge persists thread edit");
-
-    assert_eq!(
-        local.get(id).and_then(|task| task.thread.as_deref()),
-        Some("release-2026")
-    );
-    assert_eq!(
-        store
-            .load()
-            .expect("reload merged state")
-            .get(id)
-            .and_then(|task| task.thread.as_deref()),
-        Some("release-2026")
-    );
-}
-
-#[test]
-fn conflicting_concurrent_thread_edits_reject_via_revision_guard() {
-    let dir = temp_state_dir();
-    let _guard = TempDirGuard(dir.clone());
-    let store = TaskStore::new(&dir);
-    let mut seed = DomainState::new();
-    let id = seed
-        .create(
-            "Conflicting threads",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create task");
-    store.save(&seed).expect("seed task");
-
-    let mut local = store.load().expect("load local writer");
-    let mut concurrent = store.load().expect("load concurrent writer");
-    local
-        .edit(
-            id,
-            "Conflicting threads",
-            None,
-            TaskScope::Global,
-            Some("local".into()),
-        )
-        .expect("stage local thread edit");
-    concurrent
-        .edit(
-            id,
-            "Conflicting threads",
-            None,
-            TaskScope::Global,
-            Some("concurrent".into()),
-        )
-        .expect("stage concurrent thread edit");
-    store.save(&concurrent).expect("save concurrent edit");
-
-    let error = store
-        .reload_merge_save(&mut local)
-        .expect_err("divergent thread edits must conflict");
-    assert!(error.to_string().contains("changed during save"));
-    assert_eq!(
-        store
-            .load()
-            .expect("reload durable concurrent edit")
-            .get(id)
-            .and_then(|task| task.thread.as_deref()),
-        Some("concurrent")
-    );
-}
-
-#[test]
 fn steps_round_trip_preserves_identity_flags_and_order() {
     let dir = temp_state_dir();
     let _guard = TempDirGuard(dir.clone());
@@ -597,7 +457,6 @@ fn steps_round_trip_preserves_identity_flags_and_order() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let first = state.add_step(id, "First").expect("add first");
@@ -645,7 +504,6 @@ fn save_then_load_preserves_task_id_title_status_and_events() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
 
@@ -677,25 +535,13 @@ fn two_writers_merge_save_do_not_lose_tasks() {
 
     let mut writer_a = DomainState::new();
     let id_a = writer_a
-        .create(
-            "Task A",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("Task A", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create A");
     store.save(&writer_a).expect("writer A save");
 
     let mut writer_b = DomainState::new();
     let id_b = writer_b
-        .create(
-            "Task B",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Capture,
-            None,
-        )
+        .create("Task B", None, TaskScope::Global, ProvenanceOrigin::Capture)
         .expect("create B");
     store
         .reload_merge_save(&mut writer_b)
@@ -723,7 +569,6 @@ fn stale_undo_refuses_newer_task_revision_without_popping_newer_state() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     stale_writer.complete(id).expect("complete task");
@@ -740,7 +585,6 @@ fn stale_undo_refuses_newer_task_revision_without_popping_newer_state() {
             "Changed concurrently",
             Some("newer notes".into()),
             TaskScope::Global,
-            None,
         )
         .expect("newer semantic mutation");
     store.save(&newer_writer).expect("save newer task revision");
@@ -768,13 +612,7 @@ fn reload_merge_save_keeps_numbers_and_counter_across_another_writer() {
     let store = TaskStore::new(&dir);
     let mut local = DomainState::new();
     let mine = local
-        .create(
-            "mine",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("mine", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create mine");
     store.reload_merge_save(&mut local).expect("persist mine");
     let mine_number = local
@@ -785,13 +623,7 @@ fn reload_merge_save_keeps_numbers_and_counter_across_another_writer() {
     store
         .locked_transition(|state| {
             state
-                .create(
-                    "theirs",
-                    None,
-                    TaskScope::Global,
-                    ProvenanceOrigin::Manual,
-                    None,
-                )
+                .create("theirs", None, TaskScope::Global, ProvenanceOrigin::Manual)
                 .map_err(|error| error.to_string())
         })
         .expect("another writer persists");
@@ -822,13 +654,7 @@ fn reload_merge_save_keeps_numbers_and_counter_across_another_writer() {
     );
 
     let later = local
-        .create(
-            "later",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("later", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create later");
     store.reload_merge_save(&mut local).expect("persist later");
     assert_eq!(local.get(later).and_then(|task| task.number), Some(10));
@@ -855,7 +681,6 @@ fn overlapping_creates_under_lock_receive_distinct_numbers() {
                                 None,
                                 TaskScope::Global,
                                 ProvenanceOrigin::Manual,
-                                None,
                             )
                             .map_err(|error| error.to_string())
                     })
@@ -888,7 +713,6 @@ fn archive_flag_survives_save_and_load() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create kept task");
     let filed = state
@@ -897,7 +721,6 @@ fn archive_flag_survives_save_and_load() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create filed task");
     state.archive_task(filed).expect("archive one task");
@@ -941,7 +764,6 @@ fn reload_merge_save_keeps_a_sibling_writers_project_record_and_applies_the_loca
                 path: path.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create seed task");
     }
@@ -982,13 +804,13 @@ fn reload_merge_save_keeps_a_sibling_writers_project_record_and_applies_the_loca
 fn noncurrent_store_is_refused_without_rewriting_the_file() {
     let dir = temp_state_dir();
     let _guard = TempDirGuard(dir.clone());
-    let document = serde_json::json!({ "format_version": 8, "next_task_number": 2, "tasks": [], "undo_stack": [] });
+    let document = serde_json::json!({ "format_version": 9, "next_task_number": 2, "tasks": [], "undo_stack": [] });
     let bytes = serde_json::to_vec_pretty(&document).expect("json");
     fs::write(dir.join("tsk.json"), &bytes).expect("write noncurrent store");
     let error = TaskStore::new(&dir)
         .save(&DomainState::new())
         .expect_err("current writer refuses noncurrent store");
-    assert!(error.to_string().contains("expected 7"));
+    assert!(error.to_string().contains("expected 8"));
     assert_eq!(fs::read(dir.join("tsk.json")).expect("read"), bytes);
 }
 
@@ -1013,7 +835,7 @@ fn v1_migration_strips_defensive_archived_keys() {
     let state = TaskStore::new(&dir)
         .load()
         .expect("load v1 through the chain");
-    assert_eq!(state.format_version(), 7);
+    assert_eq!(state.format_version(), 8);
     let task = state.tasks().first().expect("fixture task");
     assert!(
         !task.archived,

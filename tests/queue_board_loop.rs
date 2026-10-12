@@ -271,7 +271,6 @@ fn repeated_threshold_resizes_keep_board_loop_live() {
             Some("notes".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -306,7 +305,6 @@ fn threshold_crossings_without_task_verbs_leave_domain_unchanged() {
             Some("domain must not move".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let before = domain.get(id).expect("task").clone();
@@ -357,7 +355,6 @@ fn idle_merge_hides_a_task_archived_by_another_process_without_moving_selection(
         None,
         TaskScope::Global,
         ProvenanceOrigin::Manual,
-        None,
     )
     .expect("create X");
     let y = seed
@@ -366,7 +363,6 @@ fn idle_merge_hides_a_task_archived_by_another_process_without_moving_selection(
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create Y");
     // Y is the only started task, so IN MOTION (above ON DECK) carries the seeded
@@ -439,7 +435,6 @@ fn idle_merge_leaves_a_project_focus_archived_by_another_process() {
             path: focus_path.to_string(),
         },
         ProvenanceOrigin::Manual,
-        None,
     )
     .expect("create focus task");
     seed.create(
@@ -447,7 +442,6 @@ fn idle_merge_leaves_a_project_focus_archived_by_another_process() {
         None,
         TaskScope::Global,
         ProvenanceOrigin::Manual,
-        None,
     )
     .expect("create desk task");
     store.save(&seed).expect("seed");
@@ -559,7 +553,6 @@ fn idle_merge_converts_a_read_only_focus_whose_project_was_unarchived() {
                 path: focus_path.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     seed.archive_project(focus_path).expect("archive");

@@ -928,11 +928,9 @@ fn board_keyboard_intent(
             mode,
             BoardInputMode::EditTitle
                 | BoardInputMode::EditNotes
-                | BoardInputMode::EditThread
                 | BoardInputMode::EditStep
                 | BoardInputMode::Palette
                 | BoardInputMode::Help
-                | BoardInputMode::ListPicker
                 | BoardInputMode::ParentPicker
                 | BoardInputMode::Search
                 | BoardInputMode::QuickAdd
@@ -972,7 +970,6 @@ fn board_keyboard_intent(
         mode,
         BoardInputMode::EditTitle
             | BoardInputMode::EditNotes
-            | BoardInputMode::EditThread
             | BoardInputMode::EditScope
             | BoardInputMode::FormScopeDropdown
     );
@@ -1000,15 +997,6 @@ fn board_keyboard_intent(
         if let Some(target) = model.selected_relation() {
             return Some(crate::ui::board::BoardModel::relation_intent(target));
         }
-    }
-    // Task-page Thread has a selected state before its text cursor opens. It owns Enter and
-    // Tab itself, while capture's direct Thread editor keeps the shared form mapper.
-    if matches!(
-        mode,
-        BoardInputMode::SelectThread | BoardInputMode::EditThread
-    ) && model.task_editing()
-    {
-        return map_key(mode, key);
     }
     // `form_focus()` is Some whenever a form is open, so this reads as an invariant. It is still
     // not worth an `expect` here: this runs on every keypress inside the raw-mode event loop, so
@@ -1685,7 +1673,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         writer_store.save(&writer_domain).unwrap();
@@ -1725,13 +1712,7 @@ mod idle_store_revalidation_tests {
         let store = TaskStore::new(&dir);
         let mut domain = DomainState::new();
         let id = domain
-            .create(
-                "seed",
-                None,
-                project_scope(),
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("seed", None, project_scope(), ProvenanceOrigin::Manual)
             .unwrap();
         store.save(&domain).unwrap();
 
@@ -1834,7 +1815,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         writer_store.save(&writer_domain).unwrap();
@@ -1908,7 +1888,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         store.save(&repaired).unwrap();
@@ -1940,13 +1919,7 @@ mod idle_store_revalidation_tests {
 
         let mut domain = DomainState::new();
         let alpha = domain
-            .create(
-                "Alpha",
-                None,
-                project_scope(),
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("Alpha", None, project_scope(), ProvenanceOrigin::Manual)
             .unwrap();
         store.save(&domain).unwrap();
 
@@ -1969,7 +1942,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         writer_store.save(&writer_domain).unwrap();
@@ -2047,7 +2019,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         writer_store.save(&writer_domain).unwrap();
@@ -2113,7 +2084,6 @@ mod idle_store_revalidation_tests {
                 None,
                 project_scope(),
                 ProvenanceOrigin::Capture,
-                None,
             )
             .unwrap();
         writer_store.save(&writer_domain).unwrap();
@@ -2169,13 +2139,7 @@ mod tests {
     fn board_fixture(title: &str, notes: Option<String>) -> (DomainState, BoardModel) {
         let mut domain = DomainState::new();
         domain
-            .create(
-                title,
-                notes,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create(title, notes, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("create board fixture");
         let model = BoardModel::from_domain(&domain, None);
         (domain, model)
@@ -2613,7 +2577,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Capture,
-                    None,
                 )
                 .expect("create task");
             let mut model = BoardModel::from_domain(&domain, None);
@@ -2632,7 +2595,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Capture,
-                    None,
                 )
                 .expect("create task");
             let mut model = BoardModel::from_domain(&domain, None);
@@ -2651,7 +2613,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Capture,
-                    None,
                 )
                 .expect("create task");
             let mut model = BoardModel::from_domain(&domain, None);
@@ -2670,7 +2631,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Capture,
-                    None,
                 )
                 .expect("create task");
             let mut model = BoardModel::from_domain(&domain, None);
@@ -2712,7 +2672,6 @@ mod tests {
                     path: "/repos/app".into(),
                 },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/app")));
@@ -2824,7 +2783,6 @@ mod tests {
                     path: "/repos/app".into(),
                 },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/app")));
@@ -2950,13 +2908,7 @@ mod tests {
         let temp = TempStore::new("t64-dirty-quit");
         let mut domain = DomainState::new();
         domain
-            .create(
-                "park me",
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("park me", None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("task");
         temp.store.save(&domain).expect("seed store");
         let mut recovery = SaveRecovery::new();
@@ -3505,13 +3457,7 @@ mod tests {
         let temp = TempStore::new("copy-task-number-payload");
         let mut domain = DomainState::new();
         let id = domain
-            .create(
-                "Copy me",
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("Copy me", None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("seed task");
         temp.store.save(&domain).expect("persist numbered task");
         let domain = temp.store.load().expect("reload numbered task");
@@ -3532,13 +3478,7 @@ mod tests {
         let temp = TempStore::new("copy-task-number");
         let mut domain = DomainState::new();
         let id = domain
-            .create(
-                "Copy me",
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("Copy me", None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("seed task");
         temp.store.save(&domain).expect("persist numbered task");
         let mut domain = temp.store.load().expect("reload numbered task");
@@ -3665,7 +3605,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("seed task");
         temp.store.save(&domain).expect("seed store");
@@ -3715,13 +3654,7 @@ mod tests {
         let temp = TempStore::new(label);
         let mut domain = DomainState::new();
         let id = domain
-            .create(
-                "Order",
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("Order", None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("seed task");
         for text in steps {
             domain.add_step(id, text).expect("seed step");
@@ -4765,7 +4698,6 @@ mod tests {
                     path: "/repos/app".into(),
                 },
                 ProvenanceOrigin::Capture,
-                None,
             )
             .expect("create task");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/app")));
@@ -4842,11 +4774,11 @@ mod tests {
         assert_eq!(
             intent,
             Some(BoardIntent::FormFocusNext),
-            "Tab on expanded capture's + step must reach Thread"
+            "Tab on expanded capture's + step must reach Scope"
         );
         apply_intent(&mut domain, &mut model, intent.expect("Tab intent"), None)
             .expect("advance past + step");
-        assert_eq!(model.input_mode(), BoardInputMode::EditThread);
+        assert_eq!(model.input_mode(), BoardInputMode::EditScope);
     }
 
     #[test]
@@ -4858,7 +4790,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create hidden board task");
         let mut model = BoardModel::from_domain(&domain, None);
@@ -5177,12 +5108,11 @@ mod tests {
         let login = domain
             .create(
                 "Ship login flow",
-                Some("wire the form".into()),
+                Some("wire the auth form".into()),
                 TaskScope::Project {
                     path: "/repos/app".into(),
                 },
                 ProvenanceOrigin::Manual,
-                Some("auth".into()),
             )
             .expect("login task");
         domain
@@ -5195,7 +5125,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("other task");
         domain
@@ -5241,7 +5170,6 @@ mod tests {
                 Some("auth redirect".into()),
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("arriving matching task");
         domain
@@ -5291,7 +5219,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Capture,
-                None,
             )
             .expect("create matching task");
         domain
@@ -5330,7 +5257,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Capture,
-                None,
             )
             .expect("create matching task");
         domain
@@ -5373,7 +5299,6 @@ mod tests {
                     path: "/repos/app".into(),
                 },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/app")));
@@ -5418,7 +5343,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
 

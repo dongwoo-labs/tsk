@@ -28,7 +28,6 @@ fn task_persists_and_reloads_without_board_session_state() {
             Some("notes survive".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     store.save(&domain).expect("save state");

@@ -20,10 +20,7 @@ use tsk_tui::ui::board::{
     BoardInputMode, BoardModel,
 };
 use tsk_tui::ui::capture::CaptureField;
-use tsk_tui::ui::input::{
-    map_board_form_key, map_capture_key_state, map_capture_paste_state, map_key, BoardIntent,
-    CaptureIntent, PRIMARY_CAPTURE_ACTIONS,
-};
+use tsk_tui::ui::input::{map_board_form_key, map_key, BoardIntent, PRIMARY_CAPTURE_ACTIONS};
 use tsk_tui::ui::mouse::{
     capture_layout, capture_mouse_paths_complete, left_click, map_board_mouse, map_capture_mouse,
     map_scrollbar_mouse, primary_capture_action_sample_mouse, scrollbar_intent_at, ScrollbarMouse,
@@ -104,13 +101,7 @@ fn left_up(column: u16, row: u16) -> MouseEvent {
 fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel, uuid::Uuid) {
     let mut domain = DomainState::new();
     let id = domain
-        .create(
-            title,
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create task");
     if status != HumanStatus::Todo {
         domain.set_status(id, status).expect("set status");
@@ -124,13 +115,7 @@ fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel
 fn scoped_board() -> (DomainState, BoardModel, uuid::Uuid) {
     let mut domain = DomainState::new();
     let id = domain
-        .create(
-            "here",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("here", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create here");
     domain
         .create(
@@ -138,7 +123,6 @@ fn scoped_board() -> (DomainState, BoardModel, uuid::Uuid) {
             None,
             project(OTHER_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create elsewhere");
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -157,7 +141,6 @@ fn deck_of(n: usize) -> (DomainState, BoardModel) {
                 None,
                 project(THIS_REPO),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
     }
@@ -290,7 +273,6 @@ fn scoped_project_named_all_projects_has_no_group_header_hit_target() {
             None,
             project(COLLIDING_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(COLLIDING_REPO)));
@@ -318,7 +300,6 @@ fn task_form_scope_dropdown_paints_in_list_order_so_down_moves_down() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create target");
     for repo in [OTHER_REPO, "/repos/third"] {
@@ -328,7 +309,6 @@ fn task_form_scope_dropdown_paints_in_list_order_so_down_moves_down() {
                 None,
                 project(repo),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create scope option");
     }
@@ -412,7 +392,6 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
             Some("first\nsecond".to_string()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create selected task");
     domain
@@ -421,7 +400,6 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
             None,
             project(OTHER_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create scope option");
     for index in 0..30 {
@@ -431,7 +409,6 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
                 None,
                 project(THIS_REPO),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create padding task");
     }
@@ -504,7 +481,6 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
         (QueueHitTarget::FormTitle, CaptureField::Title),
         (QueueHitTarget::FormNotes(0), CaptureField::Notes),
         (QueueHitTarget::FormNotes(1), CaptureField::Notes),
-        (QueueHitTarget::FormThread, CaptureField::Thread),
     ] {
         let hit = hits
             .regions
@@ -831,67 +807,6 @@ fn click_and_wheel_match_keyboard_effects_for_each_control() {
     assert_eq!(model_mouse.visible_ids().len(), 1);
 }
 
-/// non-regression: the standalone quick-capture popup's mouse paths are untouched by
-/// this rewrite (its `CaptureLayout`/`map_capture_mouse` route is separate from the board's
-/// hit-map, per the task's implementation boundary).
-#[test]
-fn footer_thread_precedes_scope_and_each_control_focuses_its_field() {
-    let scope_path = "/repos/foo · thread";
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(scope_path),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(scope_path)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("open task form");
-
-    let hits = board_hit_map(STANDARD, &model);
-    let scope_hit = hits
-        .regions
-        .iter()
-        .find(|hit| hit.target == QueueHitTarget::FormScope)
-        .expect("scope hit");
-    let thread_hit = hits
-        .regions
-        .iter()
-        .find(|hit| hit.target == QueueHitTarget::FormThread)
-        .expect("empty thread target");
-    let expected_scope_width = "foo · thread".chars().count() as u16;
-    assert_eq!(
-        scope_hit.area.width, expected_scope_width,
-        "the entire project basename remains the scope target, excluding number chrome"
-    );
-    assert_eq!(
-        thread_hit.area.x, 2,
-        "the leading thread target starts at the footer inset"
-    );
-    assert_eq!(
-        scope_hit.area.x,
-        2 + thread_hit.area.width + 3,
-        "scope follows the thread and its separator"
-    );
-    assert_eq!(
-        scope_hit.area.width, expected_scope_width,
-        "the entire project basename remains the scope target"
-    );
-
-    let thread = click(thread_hit, &model, &hits).expect("thread click intent");
-    assert_eq!(thread, BoardIntent::FocusFormField(CaptureField::Thread));
-    apply_intent(&mut domain, &mut model, thread, None).expect("focus thread");
-    assert_eq!(model.form_focus(), Some(CaptureField::Thread));
-
-    let scope = click(scope_hit, &model, &hits).expect("scope click intent");
-    assert_eq!(scope, BoardIntent::OpenFormScopeDropdown);
-    apply_intent(&mut domain, &mut model, scope, None).expect("focus scope");
-    assert_eq!(model.form_focus(), Some(CaptureField::Scope));
-}
-
 #[test]
 fn capture_popup_mouse_paths_unchanged() {
     let layout = capture_layout(Rect::new(0, 0, 80, 16));
@@ -910,34 +825,6 @@ fn capture_popup_mouse_paths_unchanged() {
     // The narrow capture width still keeps every control clickable.
     let narrow = capture_layout(Rect::new(0, 0, 40, 16));
     assert!(capture_mouse_paths_complete(&narrow));
-}
-
-#[test]
-fn capture_thread_row_click_and_input_paths_focus_and_edit_the_thread_field() {
-    let layout = capture_layout(Rect::new(0, 0, 80, 16));
-    assert_eq!(
-        map_capture_mouse(
-            &layout,
-            left_click(layout.thread_area.x.saturating_add(1), layout.thread_area.y),
-        ),
-        Some(CaptureIntent::FocusField(CaptureField::Thread)),
-        "the visible capture Thread row must take mouse focus"
-    );
-    assert_eq!(
-        map_capture_key_state(
-            CaptureField::Thread,
-            false,
-            false,
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
-        ),
-        Some(CaptureIntent::Insert('r')),
-        "a focused Thread field accepts keyboard input"
-    );
-    assert_eq!(
-        map_capture_paste_state(CaptureField::Thread, false, "release"),
-        Some(CaptureIntent::InsertText("release".into())),
-        "a focused Thread field accepts paste"
-    );
 }
 
 /// C1: on a deck long enough for the palette's command panel to actually
@@ -1002,7 +889,6 @@ fn a_dropdown_option_over_a_task_row_still_selects_that_option_not_the_task_unde
             None,
             project("/repos/third"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create third project for a longer selector");
     // The project board lists only its own rows; fill it deep enough that the picker's
@@ -1014,7 +900,6 @@ fn a_dropdown_option_over_a_task_row_still_selects_that_option_not_the_task_unde
                 None,
                 project(THIS_REPO),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create filler rows");
     }
@@ -1610,7 +1495,6 @@ fn section_headers_have_no_hits_and_collapsed_task_titles_are_selectable() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            Some("release".to_string()),
         )
         .expect("create threaded task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -1857,30 +1741,6 @@ fn page_field_clicks_activate_after_task_editing_starts() {
         Some(BoardIntent::OpenFormScopeDropdown),
         "an active task session lets Scope clicks edit"
     );
-    let thread_hit = hits
-        .regions
-        .iter()
-        .find(|hit| hit.target == QueueHitTarget::FormThread)
-        .expect("the active page paints the empty Thread target");
-    assert_eq!(
-        click(thread_hit, &model, &hits),
-        Some(BoardIntent::FocusFormField(CaptureField::Thread)),
-        "the first Thread click selects it"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("select Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    let hits = board_hit_map(STANDARD, &model);
-    assert_eq!(
-        click(thread_hit, &model, &hits),
-        Some(BoardIntent::ToggleThreadEditing),
-        "the second Thread click opens its text editor"
-    );
 }
 
 #[test]
@@ -2123,7 +1983,7 @@ fn page_step_add_footer_chip_routes_to_begin_add_step() {
 }
 
 /// The painted trailing add control is a direct pointer route from task view and every
-/// task-edit state, including the selected and active Thread states plus an inline editor.
+/// task-edit state, including an inline editor.
 #[test]
 fn clicking_trailing_step_add_works_from_every_task_page_edit_mode() {
     let (mut domain, mut model, id) = board_with_task("step add click", HumanStatus::Todo);
@@ -2152,11 +2012,7 @@ fn clicking_trailing_step_add_works_from_every_task_page_edit_mode() {
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("title");
     assert_add_click(&model);
 
-    for field in [
-        CaptureField::Notes,
-        CaptureField::Scope,
-        CaptureField::Thread,
-    ] {
+    for field in [CaptureField::Notes, CaptureField::Scope] {
         apply_intent(
             &mut domain,
             &mut model,
@@ -2166,16 +2022,6 @@ fn clicking_trailing_step_add_works_from_every_task_page_edit_mode() {
         .expect("focus task-edit field");
         assert_add_click(&model);
     }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("open thread editor");
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-    assert_add_click(&model);
-
     apply_intent(&mut domain, &mut model, BoardIntent::BeginAddStep, None).expect("inline add");
     assert_eq!(model.input_mode(), BoardInputMode::EditStep);
     assert_add_click(&model);
@@ -2773,7 +2619,6 @@ fn task_page_scrollbar_click_jumps_notes_without_changing_selection() {
             Some(notes),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2903,7 +2748,6 @@ fn wide_task_drag_uses_task_column_content_edges_for_autoscroll() {
             Some("drag notes ".repeat(80)),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2940,7 +2784,6 @@ fn task_page_autoscroll_tick_moves_notes() {
             Some(notes),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2991,7 +2834,6 @@ fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived).expect("archive it");

@@ -13,10 +13,10 @@ use tsk_tui::domain::{
     DomainState, HumanStatus, Notice, ProvenanceOrigin, Task, TaskEvent, TaskEventKind, TaskScope,
 };
 use tsk_tui::ui::input::map_key;
-use tsk_tui::ui::queue::{self, BoardLens, BoardSort, NavTab, QueueView, ThreadFilter};
+use tsk_tui::ui::queue::{self, BoardLens, BoardSort, NavTab, QueueView};
 use tsk_tui::ui::render::{
-    assert_buffer_mono, assert_no_color_sgr, draw_queue_frame, BottomInputSlot, NavChipPaint,
-    NavPaint, PaletteCommandRow, QueueFrameModel, QueueOverlay, VerbEntry,
+    assert_buffer_mono, assert_no_color_sgr, draw_queue_frame, BottomInputSlot, NavPaint,
+    PaletteCommandRow, QueueFrameModel, QueueOverlay, VerbEntry,
 };
 use tsk_tui::ui::tier::{self, Tier, TierGeometry};
 use tsk_tui::ui::{
@@ -48,7 +48,6 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, secs_ago: 
         merge_base_revision: None,
         title: title.to_string(),
         notes: None,
-        thread: None,
         status,
         scope,
         provenance: ProvenanceOrigin::Manual,
@@ -319,7 +318,6 @@ fn fixture_view(tasks: &[Task], drawer_open: bool) -> QueueView {
         &std::collections::BTreeSet::new(),
         BoardLens::Desk,
         drawer_open,
-        &ThreadFilter::All,
         BoardSort::Number,
     )
 }
@@ -330,7 +328,6 @@ fn fixture_view_projects(tasks: &[Task], drawer_open: bool) -> QueueView {
         &std::collections::BTreeSet::new(),
         BoardLens::Project(Path::new("/repos/tsk")),
         drawer_open,
-        &ThreadFilter::All,
         BoardSort::Number,
     )
 }
@@ -358,10 +355,6 @@ fn fixture_model_on_scope<'a>(
             active: NavTab::Board,
             scope_label: if project { "tsk" } else { "desk" }.to_string(),
             sort_label: "number",
-            chip: project.then(|| NavChipPaint {
-                label: "all".to_string(),
-                kind: tsk_tui::ui::render::NavChipKind::ThreadFilter,
-            }),
         },
         surface: if project {
             tsk_tui::ui::render::BoardSurface::Project
@@ -470,128 +463,6 @@ fn inactive_selector_controls_are_dimmed() {
             .contains(Modifier::DIM),
         "inactive {label} control must be dimmed"
     );
-}
-
-#[test]
-fn wide_detail_shows_full_thread_metadata_and_rows_show_the_title_only() {
-    let mut tasks = fixture_tasks();
-    tasks[0].thread = Some("a".repeat(32));
-    let mut model = BoardModel::from_tasks(tasks, Some(PathBuf::from("/repos/tsk")));
-    let mut domain = DomainState::new();
-    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
-    let index = model
-        .visible_ids()
-        .iter()
-        .position(|id| *id == Uuid::from_u128(1))
-        .unwrap();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectIndex(index),
-        None,
-    )
-    .unwrap();
-    let wide = board_rows(&model, 162, 24).join("\n");
-    assert!(
-        wide.contains("#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        "full thread attribution missing from the wide detail: {wide}"
-    );
-    let rows = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        !rows.contains("#aaaa") && !rows.contains("ago"),
-        "list rows paint the title only: {rows}"
-    );
-}
-
-#[test]
-fn full_thread_selector_and_dropdown_values_are_not_capped_to_the_old_prefix_budget() {
-    let tasks = fixture_tasks();
-    let view = fixture_view_projects(&tasks, false);
-    let thread = "a".repeat(32);
-    for (width, height) in [(40, 10), (40, 24), (78, 24), (110, 24), (162, 24)] {
-        let mut model = fixture_model_on_project(&tasks, &view);
-        model.nav.chip = Some(NavChipPaint {
-            label: format!("#{thread}"),
-            kind: tsk_tui::ui::render::NavChipKind::ThreadFilter,
-        });
-        let body_rows = paint(width, height, &model).0;
-        if width == 40 {
-            let tabs_y = body_rows
-                .iter()
-                .position(|row| row.contains("board"))
-                .expect("tabs");
-            let thread_y = body_rows
-                .iter()
-                .position(|row| row.contains(&format!("#{thread}")))
-                .expect("thread selector");
-            assert_eq!(
-                thread_y,
-                tabs_y + 2,
-                "wrapped selector needs one blank row above it"
-            );
-            assert!(body_rows[tabs_y + 1].trim().is_empty());
-        }
-        let body = body_rows.join("\n");
-        assert!(
-            body.contains(&format!("#{thread}")),
-            "active selector clipped at {width} columns:\n{body}"
-        );
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
-        let mut hits = None;
-        terminal
-            .draw(|frame| {
-                hits = Some(
-                    draw_queue_frame(
-                        frame,
-                        &model,
-                        &tier::resolve(width, height),
-                        Rect::new(0, 0, width, height),
-                    )
-                    .0,
-                );
-            })
-            .expect("draw selector hit map");
-        let chip_hit = hits
-            .expect("hit map")
-            .regions
-            .into_iter()
-            .find(|hit| hit.target == tsk_tui::ui::render::QueueHitTarget::NavChip)
-            .expect("active selector hit");
-        assert!(
-            chip_hit.area.width >= 33,
-            "active selector hit must cover the full valid thread at {width}: {:?}",
-            chip_hit.area
-        );
-        if width == 40 {
-            assert_eq!(
-                chip_hit.area.y,
-                tier::resolve(width, height).selector_row.expect("tabs") + 2,
-                "mouse target must follow the spaced selector"
-            );
-        }
-
-        let options = vec![
-            "All tasks".to_string(),
-            format!("#{thread}  1"),
-            "Without a thread".to_string(),
-        ];
-        // Do not let the already-tested selector behind the popup satisfy this
-        // assertion: the option inside the popup must paint the whole name itself.
-        model.nav.chip = None;
-        model.overlay = QueueOverlay::ScopeDropdown {
-            options: &options,
-            selected: 1,
-            tabs: None,
-            title: Some("thread"),
-            query: None,
-            wrap: None,
-        };
-        let dropdown = paint(width, height, &model).0.join("\n");
-        assert!(
-            dropdown.contains(&format!("#{thread}")),
-            "dropdown clipped the full thread at {width} columns:\n{dropdown}"
-        );
-    }
 }
 
 fn trimmed(row: &str) -> String {
@@ -802,7 +673,6 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("doing");
     domain
@@ -814,7 +684,6 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("doing");
     domain
@@ -826,7 +695,6 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("doing");
     domain
@@ -849,7 +717,6 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("doing");
     domain
@@ -861,7 +728,6 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("doing");
     domain
@@ -1419,7 +1285,6 @@ fn task_page_header_shows_identifier_not_footer() {
         meta: "desk · created 1m ago · updated 1m ago".to_string(),
         meta_scope_x: 0,
         meta_scope_width: 4,
-        thread_slot_width: None,
         focus: None,
         scope_dropdown: None,
     };
@@ -1528,7 +1393,6 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
         meta: "tsk \u{b7} created 1h ago \u{b7} updated 1h ago".to_string(),
         meta_scope_x: 0,
         meta_scope_width: 11,
-        thread_slot_width: None,
         focus: None,
         scope_dropdown: None,
     };
@@ -1584,7 +1448,6 @@ fn task_page_paints_steps_section_between_notes_and_footer() {
             Some("the notes body".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let first = domain.add_step(id, "first step").expect("step 1");
@@ -1710,7 +1573,6 @@ fn task_page_without_steps_reaches_its_trailing_add_target() {
                 Some(notes.clone()),
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
         let mut model = BoardModel::from_domain(&domain, None);
@@ -1761,7 +1623,6 @@ fn task_page_notes_edit_keeps_a_visible_row_and_spacing_at_the_compact_floor() {
             Some("draft line under edit".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let first = domain.add_step(id, "first step").expect("step 1");
@@ -1841,7 +1702,6 @@ fn notes_edit_shows_raw_markdown_markers_that_view_mode_strips() {
             Some("see *em* and **strong** here".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -1876,7 +1736,6 @@ fn task_page_view_leaves_fence_body_unparsed() {
             Some("```\n**not bold**\n```".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -1903,7 +1762,6 @@ fn task_page_fence_stays_closed_after_the_opener_scrolls_off() {
             Some(notes),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -1933,7 +1791,6 @@ fn notes_edit_caret_accounts_for_shared_stream_scroll() {
             Some("first\nsecond\nthird".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for index in 0..30 {
@@ -1981,7 +1838,6 @@ fn notes_edit_after_deep_stream_scroll_keeps_draft_and_caret_aligned() {
             Some(notes),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for index in 0..30 {
@@ -2035,7 +1891,6 @@ fn shift_tab_from_scope_resets_notes_stream_origin_and_aligns_caret() {
             Some(notes),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -2062,10 +1917,7 @@ fn shift_tab_from_scope_resets_notes_stream_origin_and_aligns_caret() {
         shift_tab.clone().expect("Shift+Tab intent"),
         None,
     )
-    .expect("Shift+Tab reaches Thread from Scope");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
-        .expect("Shift+Tab selects the trailing add target");
+    .expect("Shift+Tab selects the trailing add target from Scope");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
         .expect("Shift+Tab from the add target enters Notes");
@@ -2102,7 +1954,6 @@ fn notes_edit_wraps_a_long_line_instead_of_scrolling_horizontally() {
             Some(note),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -2147,7 +1998,6 @@ fn task_page_view_wraps_long_notes_instead_of_truncating() {
             Some(note),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -2182,7 +2032,6 @@ fn task_page_scrolls_notes_and_steps_as_one_content_region() {
             Some(notes),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     domain.add_step(id, "only step").expect("add step");
@@ -2260,7 +2109,6 @@ fn positioned_add_row_paints_below_its_anchor() {
             Some("the notes body".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for text in ["first step", "second step", "third step"] {
@@ -2308,7 +2156,6 @@ fn moving_a_tall_step_keeps_its_selector_on_screen() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let tall = (0..40)
@@ -2347,7 +2194,6 @@ fn positioned_add_rows_scroll_into_view() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for index in 0..20 {
@@ -2406,7 +2252,6 @@ fn steps_stack_from_the_top_below_the_divider() {
             Some("the notes body".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for text in ["first step", "second step", "third step"] {
@@ -2985,7 +2830,6 @@ fn footer_lists_the_step_add_verb() {
                 Some("the notes body".into()),
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
         for text in steps {
@@ -3024,187 +2868,6 @@ fn footer_lists_the_step_add_verb() {
     );
 }
 
-/// Thread labels are row meta on the project board: they paint beside their own task
-/// row, never as a decorative header block, and rows stay flush left.
-#[test]
-fn collapsed_threaded_rows_have_no_labels_or_extra_indent() {
-    let mut tasks = fixture_tasks();
-    tasks[2].thread = Some("release".to_string());
-    tasks[3].thread = Some("release".to_string());
-    tasks.push(task(
-        12,
-        "Loose project task",
-        HumanStatus::Todo,
-        project("/repos/tsk"),
-        30,
-    ));
-    let mut model = BoardModel::from_tasks(tasks, Some(PathBuf::from("/repos/tsk")));
-    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
-
-    let rows = board_rows(&model, 80, 24);
-    let threaded = rows
-        .iter()
-        .find(|row| row.contains("Prototype the queue-style board UI"))
-        .expect("threaded task paints");
-    let loose = rows
-        .iter()
-        .find(|row| row.contains("Loose project task"))
-        .expect("unthreaded task paints");
-
-    assert!(
-        !rows.iter().any(|row| row.contains("#release")),
-        "collapsed task hides the thread label:\n{threaded:?}"
-    );
-    assert!(
-        rows.iter()
-            .all(|row| !row.trim_start().starts_with("#release")),
-        "no decorative thread header row paints:\n{}",
-        rows.join("\n")
-    );
-    let leading_spaces = |row: &str| {
-        row.chars()
-            .take_while(|character| *character == ' ')
-            .count()
-    };
-    assert_eq!(
-        leading_spaces(threaded),
-        leading_spaces(loose),
-        "threaded and unthreaded rows stay flush left:\n{}",
-        rows.join("\n")
-    );
-}
-
-/// Selecting a thread filter removes the labels (every row would carry the same word)
-/// and narrows the rows to that thread across statuses.
-#[test]
-fn a_selected_thread_filter_hides_redundant_labels_and_narrows_the_board() {
-    let mut tasks = fixture_tasks();
-    tasks[2].thread = Some("release".to_string());
-    tasks[3].thread = Some("release".to_string());
-    let mut model = BoardModel::from_tasks(tasks, Some(PathBuf::from("/repos/tsk")));
-    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
-    let mut domain = DomainState::new();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenThreadFilterPicker,
-        None,
-    )
-    .expect("open the thread filter");
-    apply_intent(&mut domain, &mut model, BoardIntent::ListPickerNext, None)
-        .expect("select the release thread");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmListPicker,
-        None,
-    )
-    .expect("apply the filter");
-
-    let rows = board_rows(&model, 80, 24);
-    let joined = rows.join("\n");
-    assert_eq!(
-        rows[22].trim(),
-        "tsk · #release",
-        "idle status row carries the active thread filter"
-    );
-    assert!(
-        joined.contains("Prototype the queue-style board UI"),
-        "matching rows stay visible:\n{joined}"
-    );
-    // The chip names the active filter; the task rows drop the redundant labels.
-    assert!(
-        joined.contains("#release ▾"),
-        "the selector chip names the active filter:\n{joined}"
-    );
-    assert!(
-        rows.iter()
-            .filter(|row| row.contains("Prototype") || row.contains("rust-toolchain"))
-            .all(|row| !row.contains("#release")),
-        "a selected thread filter drops the now-redundant labels:\n{joined}"
-    );
-    assert!(
-        !joined.contains("Loose project task"),
-        "the fixture's unthreaded rows are hidden by the filter"
-    );
-}
-
-#[test]
-fn board_with_thread_labels_paints_within_40x10_and_all_tasks_reachable() {
-    let mut tasks = vec![
-        task(
-            100,
-            "alpha first",
-            HumanStatus::Todo,
-            project("/repos/tsk"),
-            40,
-        ),
-        task(
-            101,
-            "alpha second",
-            HumanStatus::Todo,
-            project("/repos/tsk"),
-            30,
-        ),
-        task(
-            102,
-            "beta first",
-            HumanStatus::Todo,
-            project("/repos/tsk"),
-            20,
-        ),
-        task(
-            103,
-            "beta second",
-            HumanStatus::Todo,
-            project("/repos/tsk"),
-            10,
-        ),
-    ];
-    tasks[0].thread = Some("alpha".to_string());
-    tasks[1].thread = Some("alpha".to_string());
-    tasks[2].thread = Some("beta".to_string());
-    tasks[3].thread = Some("beta".to_string());
-    let mut model = BoardModel::from_tasks(tasks, Some(PathBuf::from("/repos/tsk")));
-    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
-    let mut domain = DomainState::new();
-    let ids = model.visible_ids();
-    assert_eq!(ids.len(), 4, "fixture must expose every open task");
-    assert_eq!(
-        model.selected_id(),
-        Some(ids[0]),
-        "the first visible task must seed arrow traversal"
-    );
-
-    for (index, id) in ids.into_iter().enumerate() {
-        if index > 0 {
-            apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None)
-                .expect("arrow to next task");
-        }
-        assert_eq!(
-            model.selected_id(),
-            Some(id),
-            "arrow traversal must land on every open task"
-        );
-        let rows = board_rows(&model, 40, 10);
-        let task = model
-            .visible_tasks()
-            .into_iter()
-            .find(|task| task.id == id)
-            .expect("selected task stays visible");
-        assert!(
-            rows.iter()
-                .any(|row| row.contains(task.title.split(' ').next().expect("title word"))),
-            "selected task must be reachable at 40x10:\n{}",
-            rows.join("\n")
-        );
-        assert!(
-            rows.iter().all(|row| row_display_width(row) == 40),
-            "thread-labelled rows must stay within 40 columns"
-        );
-    }
-}
-
 #[test]
 fn all_golden_frames_pass_no_color_sgr_scan() {
     let dir = golden_fixtures_dir();
@@ -3236,13 +2899,7 @@ fn board_list_wraps_a_long_title_onto_a_continuation_row() {
     let title =
         "alpha bravo charlie delta echo foxtrot golf india juliet kilo lima mike hotel".to_string();
     domain
-        .create(
-            &title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(&title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create task");
     let model = BoardModel::from_domain(&domain, None);
 
@@ -3337,7 +2994,6 @@ fn notes_edit_arrows_move_across_logical_and_wrapped_rows() {
             Some("one\n\ntwo".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -3374,7 +3030,6 @@ fn notes_edit_arrows_move_across_logical_and_wrapped_rows() {
             Some("aaaaa bbbbb ccccc ddddd eeeee fffff ggggg".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -3399,13 +3054,7 @@ fn task_page_caps_a_wrapped_header_inside_the_page_body() {
     let mut domain = DomainState::new();
     let title = "word ".repeat(120);
     let id = domain
-        .create(
-            &title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(&title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create task");
     // Doing retains the five-column status geometry this boundary test needs.
     domain
@@ -3451,7 +3100,6 @@ fn step_cursor_moves_do_not_rescroll_the_page_when_steps_fit() {
             Some("n".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     for index in 0..20 {
@@ -3486,13 +3134,7 @@ fn edit_title_caret_parks_at_the_capped_headers_end() {
     let mut domain = DomainState::new();
     let title = "word ".repeat(120);
     let id = domain
-        .create(
-            &title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(&title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create task");
     // Doing retains the five-column status geometry this boundary test needs.
     domain
@@ -3704,7 +3346,6 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
                 None,
                 project.clone(),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create live task");
         let archived_title = format!("archived-{status:?} row");
@@ -3714,7 +3355,6 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
                 None,
                 project,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create archived task");
         domain.archive_task(archived_id).expect("archive it");
@@ -3799,7 +3439,6 @@ fn archived_group_paints_below_done_with_its_count_and_no_header_when_empty() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create done task");
     let done_id = domain.tasks()[0].id;
@@ -3810,17 +3449,10 @@ fn archived_group_paints_below_done_with_its_count_and_no_header_when_empty() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create a");
     let b = domain
-        .create(
-            "archived beta",
-            None,
-            project,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("archived beta", None, project, ProvenanceOrigin::Manual)
         .expect("create b");
     domain.archive_task(a).expect("archive a");
     domain.archive_task(b).expect("archive b");
@@ -3872,7 +3504,6 @@ fn expanded_archived_rows_are_dim_keep_glyph_and_identifier_and_are_selectable_a
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live task");
     let archived_id = domain
@@ -3881,7 +3512,6 @@ fn expanded_archived_rows_are_dim_keep_glyph_and_identifier_and_are_selectable_a
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived task");
     domain.archive_task(archived_id).expect("archive it");
@@ -3972,7 +3602,6 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live");
     let archived_id = domain
@@ -3981,7 +3610,6 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived_id).expect("archive it");
@@ -4064,7 +3692,6 @@ fn archived_tab_lists_exactly_the_archived_projects_and_paints_an_empty_state_li
                 path: "/repos/zebra".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/zebra")));
@@ -4140,7 +3767,6 @@ fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
                 path: "/repos/gone".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain
@@ -4154,7 +3780,6 @@ fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
                 path: "/repos/here".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.archive_project("/repos/gone").expect("archive gone");
@@ -4222,7 +3847,6 @@ fn archived_header_selection_follows_the_viewport() {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create done filler");
         domain.complete(id).expect("complete filler");
@@ -4233,7 +3857,6 @@ fn archived_header_selection_follows_the_viewport() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived_id).expect("archive it");
@@ -4298,7 +3921,6 @@ fn archived_header_reads_chevron_word_dot_count_and_selection_is_bold_not_revers
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived_id).expect("archive it");
@@ -4407,7 +4029,6 @@ fn picker_paints_a_dim_rule_under_its_tabs() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -4469,7 +4090,6 @@ fn archived_tab_verb_bar_advertises_ctrl_u_enter_esc() {
                 path: "/repos/filed".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.archive_project("/repos/filed").expect("archive");
@@ -4509,7 +4129,7 @@ fn archived_tab_verb_bar_advertises_ctrl_u_enter_esc() {
 }
 
 #[test]
-fn project_picker_main_tab_advertises_archive_without_leaking_to_thread_picker() {
+fn project_picker_main_tab_advertises_archive() {
     let mut domain = DomainState::new();
     domain
         .create(
@@ -4517,7 +4137,6 @@ fn project_picker_main_tab_advertises_archive_without_leaking_to_thread_picker()
             None,
             project("/repos/picker"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/picker")));
@@ -4549,24 +4168,6 @@ fn project_picker_main_tab_advertises_archive_without_leaking_to_thread_picker()
         !legend_row.contains("…"),
         "no mid-word clipping in the compact legend: {legend_row}"
     );
-
-    apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("close picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenThreadFilterPicker,
-        None,
-    )
-    .expect("thread picker");
-    let threads = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        threads.contains("↑↓ move \u{b7} enter choose \u{b7} esc close"),
-        "thread picker must keep its ordinary footer:\n{threads}"
-    );
-    assert!(
-        !threads.contains("ctrl+f archive"),
-        "thread picker must not advertise project archive:\n{threads}"
-    );
 }
 
 #[test]
@@ -4581,7 +4182,6 @@ fn picker_list_capacity_counts_the_rule_row_on_a_short_frame() {
                     path: format!("/repos/p{index}"),
                 },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create");
     }
@@ -4643,7 +4243,6 @@ fn real_quick_add_paints_its_destination() {
                 path: "/repos/beta".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/beta")));
@@ -4652,68 +4251,6 @@ fn real_quick_add_paints_its_destination() {
     assert!(
         text.contains("add to beta"),
         "quick-add destination missing:\n{text}"
-    );
-}
-
-#[test]
-fn project_thread_filter_omits_count_summaries() {
-    let mut domain = DomainState::new();
-    for (title, path, thread) in [
-        ("desk release", None, Some("release")),
-        ("alpha release", Some("/repos/alpha"), Some("release")),
-        ("alpha other", Some("/repos/alpha"), Some("other")),
-    ] {
-        domain
-            .create(
-                title,
-                None,
-                path.map(|path| TaskScope::Project { path: path.into() })
-                    .unwrap_or(TaskScope::Global),
-                ProvenanceOrigin::Manual,
-                thread.map(str::to_string),
-            )
-            .expect("task");
-    }
-    let done = domain
-        .create(
-            "done desk release",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .expect("done task");
-    domain
-        .set_status(done, HumanStatus::Done)
-        .expect("complete task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenThreadFilterPicker,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(&mut domain, &mut model, BoardIntent::ListPickerNext, None).expect("thread");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmListPicker,
-        None,
-    )
-    .expect("filter");
-    let local = board_rows(&model, 162, 43).join("\n");
-    assert!(
-        !local.contains("of 2 open tasks"),
-        "project filter must not paint a task-count summary:\n{local}"
-    );
-    assert!(
-        local.contains("alpha other"),
-        "matching task missing:\n{local}"
-    );
-    assert!(
-        !local.contains("alpha release"),
-        "filter stopped narrowing tasks:\n{local}"
     );
 }
 
@@ -4730,194 +4267,6 @@ fn list_column(rows: &[String]) -> Vec<String> {
             None => row.clone(),
         })
         .collect()
-}
-
-#[test]
-fn collapsed_short_panes_hide_project_and_thread_labels() {
-    let mut item = task(
-        991,
-        "Scope row",
-        HumanStatus::Doing,
-        TaskScope::Project {
-            path: "/repos/alpha".into(),
-        },
-        0,
-    );
-    item.thread = Some("ship".into());
-    for width in [78, 80, 162] {
-        let mut model = BoardModel::from_tasks(vec![item.clone()], None);
-        let desk = board_rows(&model, width, 20);
-        let row = desk
-            .iter()
-            .find(|row| row.contains("Scope row"))
-            .expect("desk task row");
-        assert!(
-            !desk.iter().any(|row| row.contains("└─ alpha")),
-            "collapsed project attribution should be hidden at {width}: {row}"
-        );
-        model.set_selected_project(Some(PathBuf::from("/repos/alpha")));
-        let project = list_column(&board_rows(&model, width, 20));
-        let row = project
-            .iter()
-            .find(|row| row.contains("Scope row"))
-            .expect("project task row");
-        assert!(
-            !project.iter().any(|row| row.contains("#ship")),
-            "list rows never paint a thread label at {width}: {row}"
-        );
-    }
-}
-
-#[test]
-fn collapsed_wide_compact_rows_hide_thread_labels() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "desk item",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .expect("desk task");
-    domain
-        .create(
-            "project item",
-            None,
-            TaskScope::Project {
-                path: "/repos/alpha".into(),
-            },
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .expect("project task");
-    let mut model = BoardModel::from_domain(&domain, None);
-    let desk = board_rows(&model, 162, 20).join("\n");
-    assert!(desk.contains("desk"), "desk attribution missing:\n{desk}");
-    model.set_selected_project(Some(PathBuf::from("/repos/alpha")));
-    let project = list_column(&board_rows(&model, 162, 20)).join("\n");
-    assert!(
-        !project.contains("#release"),
-        "wide list rows never paint a thread label:\n{project}"
-    );
-}
-
-fn searchable_thread_picker() -> (DomainState, BoardModel) {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Thread lookup task",
-            None,
-            TaskScope::Project {
-                path: "/repos/alpha".into(),
-            },
-            ProvenanceOrigin::Manual,
-            Some("abcdefghijklmnopqrstuvwxyz123456".into()),
-        )
-        .expect("task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenThreadFilterPicker,
-        None,
-    )
-    .expect("picker");
-    (domain, model)
-}
-
-#[test]
-fn thread_picker_search_accepts_every_letter_and_digit() {
-    {
-        let (mut domain, mut model) = searchable_thread_picker();
-        let name = "abcdefghijklmnopqrstuvwxyz123456";
-        for character in name.chars() {
-            let intent = map_key(
-                model.input_mode(),
-                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-            )
-            .expect("search key");
-            apply_intent(&mut domain, &mut model, intent, None).expect("type query");
-        }
-        assert_eq!(model.list_picker_query(), Some(name));
-        assert_eq!(model.visible_list_picker_options().len(), 1);
-        assert_eq!(
-            model.visible_list_picker_options()[0].1.label,
-            format!("#{name}")
-        );
-    }
-}
-
-#[test]
-fn thread_picker_search_accepts_bracketed_paste() {
-    {
-        let (mut domain, mut model) = searchable_thread_picker();
-        let name = "abcdefghijklmnopqrstuvwxyz123456";
-        let intent =
-            tsk_tui::ui::input::map_edit_paste(model.input_mode(), name).expect("paste accepted");
-        apply_intent(&mut domain, &mut model, intent, None).expect("paste query");
-        assert_eq!(model.list_picker_query(), Some(name));
-        assert_eq!(model.visible_list_picker_options().len(), 1);
-    }
-}
-
-#[test]
-fn empty_thread_search_keeps_its_query_and_menu_visible() {
-    {
-        let (mut domain, mut model) = searchable_thread_picker();
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ListPickerQueryInsertText("nomatches".into()),
-            None,
-        )
-        .expect("query");
-        for width in [40, 80, 162] {
-            let text = board_rows(&model, width, 20).join("\n");
-            assert!(
-                text.contains("nomatches"),
-                "query disappeared at {width}:\n{text}"
-            );
-            assert!(
-                text.contains("no matching options"),
-                "empty-state missing at {width}:\n{text}"
-            );
-        }
-    }
-}
-
-#[test]
-fn real_thread_picker_paints_query_and_options() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "release task",
-            None,
-            TaskScope::Project {
-                path: "/repos/alpha".into(),
-            },
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .expect("task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenThreadFilterPicker,
-        None,
-    )
-    .expect("open picker");
-    let rows = board_rows(&model, 162, 43).join("\n");
-    assert!(
-        rows.contains("thread filter"),
-        "picker title missing:\n{rows}"
-    );
-    assert!(
-        rows.contains("All tasks"),
-        "picker options missing:\n{rows}"
-    );
-    assert!(rows.contains("#release"), "thread option missing:\n{rows}");
 }
 
 #[test]

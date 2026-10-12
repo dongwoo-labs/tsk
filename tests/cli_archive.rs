@@ -258,7 +258,6 @@ fn project_archive_basename_ignores_an_outside_git_invocation_candidate() {
                 path: "/projects/api".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create stored project fixture");
     TaskStore::new(&dir).save(&state).expect("save fixture");
@@ -301,7 +300,6 @@ fn project_verbs_keep_addressing_removed_and_legacy_relative_project_paths() {
                 None,
                 TaskScope::Project { path: path.into() },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create project fixture");
     }

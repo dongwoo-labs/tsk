@@ -35,7 +35,6 @@ fn title_edit_e_obeys_editbuffer_char_index_word_chords_paste_and_bound_task_ref
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -95,7 +94,6 @@ fn palette_notes_edit_obeys_notes_save_chord_pair_and_bound_task_refusal() {
             Some("orig notes".into()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -125,22 +123,10 @@ fn palette_notes_edit_obeys_notes_save_chord_pair_and_bound_task_refusal() {
 fn open_edit_session_not_redirected_by_sync_from_domain_reorder() {
     let mut domain = DomainState::new();
     let a = domain
-        .create(
-            "A",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("A", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("a");
     let b = domain
-        .create(
-            "B",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("B", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("b");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
 
@@ -192,13 +178,7 @@ fn title_edit_cursor_and_window_track_the_actual_paint_width_not_a_hardcoded_one
 
     let mut domain = DomainState::new();
     domain
-        .create(
-            &title,
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(&title, None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("begin title");
@@ -278,7 +258,6 @@ fn task_form_unifies_palette_field_routes_scope_dropdown_and_atomic_save() {
             Some("old".into()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create target");
     domain
@@ -287,7 +266,6 @@ fn task_form_unifies_palette_field_routes_scope_dropdown_and_atomic_save() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create scope source");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -381,14 +359,6 @@ fn task_form_unifies_palette_field_routes_scope_dropdown_and_atomic_save() {
         model
             .form_focus()
             .expect("Notes stays focused at add target"),
-        false,
-        KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-    )
-    .expect("Tab moves to Thread");
-    apply_intent(&mut domain, &mut model, tab, None).expect("focus Thread");
-    assert_eq!(model.form_focus(), Some(CaptureField::Thread));
-    let tab = map_board_form_key(
-        CaptureField::Thread,
         false,
         KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
     )
@@ -550,7 +520,6 @@ fn task_page_scope_dropdown_sits_above_the_footer_with_short_names() {
                 path: "/repos/tsk".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     domain
@@ -561,7 +530,6 @@ fn task_page_scope_dropdown_sits_above_the_footer_with_short_names() {
                 path: "/repos/other-project".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create second project");
     let mut model = BoardModel::from_domain(&domain, Some(std::path::PathBuf::from("/repos/tsk")));
@@ -619,41 +587,6 @@ fn task_page_scope_dropdown_sits_above_the_footer_with_short_names() {
 }
 
 #[test]
-fn page_view_shows_thread_beside_scope() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Threaded page",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            Some("release-2026".into()),
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
-
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        painted.contains("#release-2026"),
-        "thread missing: {painted}"
-    );
-}
-
-#[test]
 fn task_page_form_tab_cycle_wraps_through_title() {
     let mut domain = DomainState::new();
     let id = domain
@@ -662,7 +595,6 @@ fn task_page_form_tab_cycle_wraps_through_title() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.add_step(id, "first").expect("first step");
@@ -682,10 +614,7 @@ fn task_page_form_tab_cycle_wraps_through_title() {
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("second step to add");
     assert!(rendered_board(&model, 80, 24).contains("▸ + step"));
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("add to Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-        .expect("Thread to Scope");
+    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("add to Scope");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("Scope to Title");
@@ -694,11 +623,8 @@ fn task_page_form_tab_cycle_wraps_through_title() {
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
         .expect("Title reverses to Scope");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
-        .expect("Scope reverses to Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
     for (expected, label) in [
-        ("▸ + step", "Thread reverses to add"),
+        ("▸ + step", "Scope reverses to add"),
         ("second", "add reverses to second"),
         ("first", "second reverses to first"),
     ] {
@@ -714,23 +640,15 @@ fn task_page_form_tab_cycle_wraps_through_title() {
 }
 
 #[test]
-fn scope_and_thread_are_selected_controls_with_enter_activation() {
+fn scope_is_a_selected_control_with_enter_activation() {
     let mut domain = DomainState::new();
     domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("Task", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open form");
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("Notes");
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("add target");
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("Scope");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
 
@@ -784,464 +702,6 @@ fn scope_and_thread_are_selected_controls_with_enter_activation() {
     )
     .expect("choose Scope option");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
-
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None).expect("select Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    let thread_hit = board_hit_map(Rect::new(0, 0, 80, 24), &model)
-        .regions
-        .into_iter()
-        .find(|hit| hit.target == QueueHitTarget::FormThread)
-        .expect("thread hit");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw selected Thread");
-    let thread_style =
-        terminal.backend().buffer()[(thread_hit.area.x + 3, thread_hit.area.y)].style();
-    assert!(
-        thread_style.add_modifier.contains(Modifier::REVERSED)
-            && !thread_style.add_modifier.contains(Modifier::DIM),
-        "selected Thread must reverse without retaining dim"
-    );
-    assert!(
-        terminal.backend().buffer()[(scope_hit.area.right() + 3, scope_hit.area.y)]
-            .style()
-            .add_modifier
-            .contains(Modifier::DIM),
-        "the unselected created footer text stays dim"
-    );
-    assert_eq!(
-        map_key(BoardInputMode::SelectThread, enter),
-        Some(BoardIntent::ToggleThreadEditing)
-    );
-    assert_eq!(
-        map_key(
-            BoardInputMode::SelectThread,
-            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)
-        ),
-        None,
-        "selected Thread must not accept hidden text input"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate Thread editor");
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-    assert!(
-        model.board_form_open(),
-        "Thread stays inside the task session"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::EditInsertText("release".into()),
-        None,
-    )
-    .expect("type Thread draft");
-    assert_eq!(
-        map_key(BoardInputMode::EditThread, enter),
-        Some(BoardIntent::ToggleThreadEditing)
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("close Thread editor");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    assert!(
-        model.board_form_open(),
-        "closing Thread keeps the task session open"
-    );
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw staged Thread selection");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        painted.contains("#release"),
-        "selected Thread must keep its staged draft visible: {painted}"
-    );
-}
-
-#[test]
-fn page_edit_sets_thread_and_clearing_unthreads() {
-    let mut domain = DomainState::new();
-    let id = domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open form");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-            .expect("focus next");
-    }
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    for character in "Release-2026".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        )
-        .expect("type thread");
-    }
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("save thread"),
-        IntentOutcome::Persist
-    );
-    assert_eq!(
-        domain.get(id).expect("task").thread.as_deref(),
-        Some("release-2026")
-    );
-
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("reopen form");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-            .expect("focus thread");
-    }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    for _ in 0.."release-2026".len() {
-        apply_intent(&mut domain, &mut model, BoardIntent::EditBackspace, None)
-            .expect("clear thread");
-    }
-    apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("unthread");
-    assert_eq!(domain.get(id).expect("task").thread, None);
-}
-
-#[test]
-fn page_thread_field_refuses_invalid_name_without_persisting() {
-    let mut domain = DomainState::new();
-    let id = domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("focus");
-    }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    for character in "bad_name".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        )
-        .expect("type");
-    }
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("refusal"),
-        IntentOutcome::None
-    );
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-    assert_eq!(domain.get(id).expect("task").thread, None);
-}
-
-#[test]
-fn page_thread_field_accepts_version_dots() {
-    let mut domain = DomainState::new();
-    let id = domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("focus");
-    }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    for character in "V0.0.6".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        )
-        .expect("type");
-    }
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("save"),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-    assert_eq!(
-        domain.get(id).expect("task").thread.as_deref(),
-        Some("v0.0.6")
-    );
-}
-
-#[test]
-fn canceling_thread_edit_keeps_the_task_page_and_resets_the_thread_draft() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("open task form");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("select thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::EditInsertText("release".into()),
-        None,
-    )
-    .expect("type thread");
-
-    apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None)
-        .expect("cancel thread field");
-    assert!(
-        model.board_form_open(),
-        "field cancel retains the task page"
-    );
-    assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("reselect thread field");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("reopen thread editor");
-    assert_eq!(
-        model.edit_buffer(),
-        "",
-        "field cancel restores saved thread"
-    );
-}
-
-#[test]
-fn editing_an_unthreaded_task_paints_a_labeled_thread_footer_slot() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("open task form");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("focus thread");
-
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw thread field");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        painted.contains("thread · app · created"),
-        "the unthreaded edit footer must label the leading Thread target: {painted}"
-    );
-    assert!(
-        !painted.contains("app · # · created"),
-        "an empty thread must not render as a dangling hash: {painted}"
-    );
-}
-
-#[test]
-fn thread_field_is_reachable_while_the_inline_step_editor_keeps_its_draft() {
-    let mut domain = DomainState::new();
-    let task_id = domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .expect("create");
-    domain.add_step(task_id, "first").expect("step");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("page");
-    assert!(
-        board_hit_map(Rect::new(0, 0, 80, 24), &model)
-            .regions
-            .iter()
-            .any(|hit| hit.target == QueueHitTarget::FormThread),
-        "the threaded page exposes its footer hit before a step editor opens"
-    );
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("enter task edit mode");
-    apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None)
-        .expect("return to task page");
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectStep(0), None)
-        .expect("existing item editor");
-    apply_intent(&mut domain, &mut model, BoardIntent::EditInsert('!'), None).expect("draft step");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("select Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw Thread with inline draft");
-    let buffer = terminal.backend().buffer();
-    let painted = (0..24)
-        .flat_map(|y| (0..80).map(move |x| buffer[(x, y)].symbol()))
-        .collect::<String>();
-    assert!(
-        painted.contains("first!"),
-        "moving to Thread keeps the inline step draft visible: {painted}"
-    );
-}
-
-#[test]
-fn thread_refusal_paints_inline_and_clears_without_status_leak() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("focus");
-    }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    apply_intent(&mut domain, &mut model, BoardIntent::EditInsert('_'), None).expect("type");
-    apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("refuse");
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw refusal");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        painted.contains("start with a letter"),
-        "missing inline refusal: {painted}"
-    );
-    assert_eq!(
-        model.message(),
-        None,
-        "thread refusal must not use status message"
-    );
-    apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None).expect("close");
-    assert_eq!(model.message(), None);
 }
 
 #[test]
@@ -1253,7 +713,6 @@ fn task_page_footer_hits_use_display_columns_and_stay_within_the_painted_row() {
             None,
             project("/repos/プロジェクト"),
             ProvenanceOrigin::Manual,
-            Some("a2345678901234567890123456789012".into()),
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -1269,22 +728,13 @@ fn task_page_footer_hits_use_display_columns_and_stay_within_the_painted_row() {
         .iter()
         .find(|hit| hit.target == QueueHitTarget::FormScope)
         .expect("scope hit");
-    let thread = hits
-        .regions
-        .iter()
-        .find(|hit| hit.target == QueueHitTarget::FormThread)
-        .expect("thread hit");
     assert_eq!(
-        scope.area.width, 2,
-        "the scope target is clipped after the leading thread at this narrow width"
-    );
-    assert_eq!(
-        thread.area.x, 2,
-        "thread leads the footer, with no number in the footer"
+        scope.area.x, 2,
+        "scope leads the footer, with no number in the footer"
     );
     assert!(
-        thread.area.right() <= width,
-        "thread hit must not extend beyond the clipped footer: {thread:?}"
+        scope.area.right() <= width,
+        "scope hit must not extend beyond the clipped footer: {scope:?}"
     );
 }
 
@@ -1299,7 +749,6 @@ fn task_page_header_identifier_precedes_the_title_and_footer_scope() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut persisted = domain.get(id).expect("task").clone();
@@ -1348,154 +797,6 @@ fn task_page_header_identifier_precedes_the_title_and_footer_scope() {
 }
 
 #[test]
-fn long_invalid_thread_refusal_remains_visible_at_40x10() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-        None,
-    )
-    .expect("select thread");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::EditInsertText("invalid_thread_name_here".into()),
-        None,
-    )
-    .expect("type invalid thread");
-    apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None).expect("refuse");
-
-    let backend = TestBackend::new(40, 10);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw compact refusal");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        painted.contains("hyphens") || painted.contains("dots"),
-        "thread refusal vanished at 40x10: {painted}"
-    );
-}
-
-#[test]
-fn page_footer_thread_edit_operable_at_40x10() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("focus");
-    }
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate thread editor");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::EditInsertText("tiny".into()),
-        None,
-    )
-    .expect("type");
-    let backend = TestBackend::new(40, 10);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw compact");
-    let painted: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(painted.contains("tiny"), "thread input vanished: {painted}");
-}
-
-/// A paste into the task-page Thread editor flattens line breaks like Title: a thread name
-/// is one line by definition, so a multi-line clipboard must never land as a multi-line draft.
-#[test]
-fn thread_paste_flattens_line_breaks_like_title() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "Thread Paste",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("open form");
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("Notes");
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("add target");
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("select Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ToggleThreadEditing,
-        None,
-    )
-    .expect("activate Thread editor");
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::EditInsertText("release\n2026\r\nnotes".into()),
-        None,
-    )
-    .expect("paste into Thread");
-    assert_eq!(
-        model.edit_buffer(),
-        "release 2026 notes",
-        "Thread must flatten pasted line breaks like Title"
-    );
-}
-
-#[test]
 fn title_edit_on_an_archived_task_persists_and_keeps_the_flag() {
     let mut domain = DomainState::new();
     let id = domain
@@ -1504,7 +805,6 @@ fn title_edit_on_an_archived_task_persists_and_keeps_the_flag() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.archive_task(id).expect("archive it");
@@ -1571,7 +871,6 @@ fn task_page_scope_dropdown_omits_archived_projects_but_keeps_the_current_scope(
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live");
     let stranded = domain
@@ -1580,7 +879,6 @@ fn task_page_scope_dropdown_omits_archived_projects_but_keeps_the_current_scope(
             None,
             project("/repos/filed"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create stranded");
     domain.archive_project("/repos/filed").expect("archive it");
@@ -1655,7 +953,6 @@ fn task_page_in_read_only_focus_refuses_edit_mode() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.archive_project(THIS_REPO).expect("archive project");
@@ -1733,7 +1030,6 @@ fn tab_and_field_focus_on_a_read_only_task_page_stay_in_view_mode() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.archive_project(THIS_REPO).expect("archive project");
@@ -1831,7 +1127,6 @@ fn ctrl_j_in_a_form_editor_maps_to_the_shift_enter_hint_not_a_save() {
         BoardInputMode::EditTitle,
         BoardInputMode::EditNotes,
         BoardInputMode::EditStep,
-        BoardInputMode::EditThread,
     ] {
         assert_eq!(
             map_key(mode, ctrl_j()),
@@ -1842,7 +1137,6 @@ fn ctrl_j_in_a_form_editor_maps_to_the_shift_enter_hint_not_a_save() {
     for field in [
         CaptureField::Title,
         CaptureField::Notes,
-        CaptureField::Thread,
         CaptureField::Scope,
     ] {
         assert_eq!(
@@ -1863,7 +1157,6 @@ fn ctrl_j_in_notes_paints_the_shift_enter_hint_and_keeps_the_draft() {
             Some("draft".into()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));

@@ -56,7 +56,6 @@ fn setup(archive: bool) -> (TaskStore, DomainState, BoardModel, PathBuf) {
                 path: PROJ.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create seed task");
     if archive {
@@ -128,7 +127,6 @@ fn archived_non_git_directory_opens_desk_with_the_existing_archive_card() {
                 path: PROJ.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     state.archive_project(PROJ).expect("archive project");

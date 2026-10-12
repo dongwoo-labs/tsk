@@ -9,7 +9,7 @@ use ratatui::layout::Position;
 use uuid::Uuid;
 
 use crate::context::InvocationSnapshot;
-use crate::domain::{DomainState, HumanStatus, Task, TaskScope};
+use crate::domain::{DomainState, Task, TaskScope};
 use crate::scope::{archived_path_contains, paths_equivalent};
 use crate::ui::capture::CaptureField;
 use crate::ui::edit::{seeded_draft, EditBuffer};
@@ -19,7 +19,7 @@ use crate::ui::input::{
 };
 use crate::ui::mouse::BoardPopup;
 use crate::ui::queue::{
-    self, visible_task_ids, BoardLens, BoardSort, NavTab, QueueView, SectionKind, ThreadFilter,
+    self, visible_task_ids, BoardLens, BoardSort, NavTab, QueueView, SectionKind,
 };
 use crate::ui::selection;
 use crate::ui::terminal_text;
@@ -76,11 +76,6 @@ pub enum BoardInputMode {
     Normal,
     EditTitle,
     EditNotes,
-    /// The task page footer's optional thread name is selected, ready for Enter or a second
-    /// click to enter its text editor without ending the enclosing task edit session.
-    SelectThread,
-    /// The task page footer's optional thread name owns its text cursor.
-    EditThread,
     /// The scope row of an open task form owns focus. The renderer adaptation remains
     /// deliberately thin until, but its keyboard state is a first-class form field.
     EditScope,
@@ -112,9 +107,6 @@ pub enum BoardInputMode {
     Palette,
     /// The help card is open.
     Help,
-    /// A searchable list picker owns input (project-board thread filter, projects
-    /// index View selector). Query typing, movement, Enter applies, Esc cancels.
-    ListPicker,
     /// The task page's parent chooser (`P`): the searchable list picker over candidate
     /// parents. Enter applies and saves; Esc returns to the task page.
     ParentPicker,
@@ -198,8 +190,6 @@ impl BoardLocation {
 /// Which searchable list picker is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListPickerKind {
-    /// The project board's thread filter (bare `t`).
-    ThreadFilter,
     /// The task page's parent chooser (`P`) for this task.
     Parent { task: Uuid },
 }
@@ -223,12 +213,9 @@ pub enum RelationTarget {
     Missing(Uuid),
 }
 
-/// What confirming a list-picker option applies: a thread-filter choice or a parent choice.
+/// What confirming a parent-picker option applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListPickerValue {
-    ThreadAll,
-    ThreadNamed(String),
-    ThreadWithout,
     /// Clear the task's parent.
     ParentNone,
     /// Make this task the parent.
@@ -237,7 +224,7 @@ pub enum ListPickerValue {
     ParentCycle(Uuid),
 }
 
-/// An open searchable list picker (thread filter). Session-only.
+/// An open searchable list picker (the parent chooser). Session-only.
 #[derive(Debug, Clone)]
 pub(super) struct ListPickerState {
     pub kind: ListPickerKind,
@@ -306,7 +293,6 @@ pub(super) struct TaskEditSave {
     pub(super) title: String,
     pub(super) notes: Option<String>,
     pub(super) scope: TaskScope,
-    pub(super) thread: Option<String>,
     /// Existing-step names staged alongside the ordinary task fields. They reach the
     /// domain only when the task session is confirmed with Shift+Enter.
     pub(super) step_renames: BTreeMap<Uuid, String>,
@@ -322,10 +308,6 @@ pub(super) struct BoardForm {
     pub(super) title: EditBuffer,
     pub(super) notes: EditBuffer,
     pub(super) scope: TaskScope,
-    /// Optional thread draft shared by task-page and expanded-capture forms.
-    pub(super) thread: EditBuffer,
-    /// Field-local validation feedback, painted by the footer input rather than status chrome.
-    pub(super) thread_refusal: Option<String>,
     /// A task page starts view-only. Entering any field makes its steps selectable and editable
     /// for the rest of that page session; closing the page drops the state with the form.
     pub(super) editing: bool,
@@ -378,7 +360,6 @@ impl BoardForm {
             tasks,
             archived,
         );
-        form.thread = seeded_draft(task.thread.as_deref().unwrap_or_default());
         form.task_snapshot = Some(Box::new(task.clone()));
         form
     }
@@ -430,8 +411,6 @@ impl BoardForm {
             title: seeded_draft(title),
             notes: seeded_draft(notes),
             scope,
-            thread: seeded_draft(""),
-            thread_refusal: None,
             editing: false,
             focus,
             scope_options,
@@ -469,10 +448,6 @@ impl BoardForm {
         match self.focus {
             CaptureField::Title => BoardInputMode::EditTitle,
             CaptureField::Notes => BoardInputMode::EditNotes,
-            // Task-page Thread is first a selected footer control. Capture has no separate
-            // selected state, so it continues directly into its text input.
-            CaptureField::Thread if self.is_task() => BoardInputMode::SelectThread,
-            CaptureField::Thread => BoardInputMode::EditThread,
             CaptureField::Scope => BoardInputMode::EditScope,
         }
     }
@@ -484,10 +459,6 @@ impl BoardForm {
             CaptureField::Notes => {
                 self.notes = seeded_draft(task.notes.as_deref().unwrap_or_default());
             }
-            CaptureField::Thread => {
-                self.thread = seeded_draft(task.thread.as_deref().unwrap_or_default());
-                self.thread_refusal = None;
-            }
             CaptureField::Scope => {
                 self.scope = task.scope.clone();
                 self.select_current_scope();
@@ -497,7 +468,6 @@ impl BoardForm {
             match field {
                 CaptureField::Title => snapshot.title = task.title.clone(),
                 CaptureField::Notes => snapshot.notes = task.notes.clone(),
-                CaptureField::Thread => snapshot.thread = task.thread.clone(),
                 CaptureField::Scope => snapshot.scope = task.scope.clone(),
             }
         }
@@ -506,8 +476,7 @@ impl BoardForm {
     pub(super) fn focus_next(&mut self) {
         self.focus = match self.focus {
             CaptureField::Title => CaptureField::Notes,
-            CaptureField::Notes => CaptureField::Thread,
-            CaptureField::Thread => CaptureField::Scope,
+            CaptureField::Notes => CaptureField::Scope,
             CaptureField::Scope => CaptureField::Title,
         };
     }
@@ -516,8 +485,7 @@ impl BoardForm {
         self.focus = match self.focus {
             CaptureField::Title => CaptureField::Scope,
             CaptureField::Notes => CaptureField::Title,
-            CaptureField::Thread => CaptureField::Notes,
-            CaptureField::Scope => CaptureField::Thread,
+            CaptureField::Scope => CaptureField::Notes,
         };
     }
 
@@ -758,14 +726,11 @@ pub struct BoardModel {
     pub(super) wide_stage: WideStage,
     /// Session-only row order of every section (`S`).
     pub(super) sort: BoardSort,
-    /// The project board's session thread filter. It narrows every status section and
-    /// is cleared whenever the selected project changes.
-    pub(super) thread_filter: ThreadFilter,
     /// The active lens's content-search query. Session-only.
     pub(super) search_query: String,
     /// Whether Enter pinned the query and returned input to the board. Session-only.
     pub(super) search_pinned: bool,
-    /// Open searchable list picker (thread filter). Session-only.
+    /// Open searchable list picker (the parent chooser). Session-only.
     pub(super) list_picker: Option<ListPickerState>,
     /// Whether the done drawer lists completed tasks. Session-only.
     pub(super) drawer_open: bool,
@@ -901,7 +866,6 @@ impl BoardModel {
             selected_project: this_repo,
             wide_stage: WideStage::Board,
             sort: BoardSort::Number,
-            thread_filter: ThreadFilter::All,
             search_query: String::new(),
             search_pinned: false,
             list_picker: None,
@@ -1051,8 +1015,6 @@ impl BoardModel {
                 if let (Some(form), Some(task)) = (self.form.as_mut(), task) {
                     form.title = seeded_draft(&task.title);
                     form.notes = seeded_draft(task.notes.as_deref().unwrap_or_default());
-                    form.thread = seeded_draft(task.thread.as_deref().unwrap_or_default());
-                    form.thread_refusal = None;
                     form.scope = task.scope.clone();
                     form.select_current_scope();
                     form.editing = false;
@@ -1148,17 +1110,6 @@ impl BoardModel {
         self.launch_card = Some(path.to_path_buf());
         self.popup = BoardPopup::LaunchCard;
         true
-    }
-
-    /// The one hidden predicate every working-lens surface filters on.
-    fn is_hidden(&self, task: &Task) -> bool {
-        if task.archived {
-            return true;
-        }
-        match &task.scope {
-            TaskScope::Global => false,
-            TaskScope::Project { path } => archived_path_contains(&self.archived_projects, path),
-        }
     }
 
     /// Navigation is never yanked by saves or background merges: a save reanchors the
@@ -1303,8 +1254,7 @@ impl BoardModel {
     }
 
     /// Move to `target` through the one shared guarded transition: reanchor by the
-    /// previous visible order, clear a project-scoped thread filter when the project
-    /// changes, and never touch open forms or save-recovery state.
+    /// previous visible order, and never touch open forms or save-recovery state.
     pub(super) fn switch_location(&mut self, target: BoardLocation) {
         if self.board_location == target {
             return;
@@ -1323,12 +1273,9 @@ impl BoardModel {
         );
         if same_project {
             // Equivalent spellings are the same stored project identity. Do not rewrite the
-            // selected path merely because a host supplied an alias. The transition still
-            // clears its local thread filter.
-            self.thread_filter = ThreadFilter::All;
+            // selected path merely because a host supplied an alias.
             return;
         }
-        self.thread_filter = ThreadFilter::All;
         self.board_location = target;
         self.reanchor_selection(previous, &previous_visible);
     }
@@ -1477,13 +1424,7 @@ impl BoardModel {
         }
     }
 
-    /// The active destination's right-side control kind, when one is painted.
-    pub fn nav_chip_kind(&self) -> Option<crate::ui::render::NavChipKind> {
-        matches!(self.board_location, BoardLocation::Project(_))
-            .then_some(crate::ui::render::NavChipKind::ThreadFilter)
-    }
-
-    /// The searchable list picker is open (thread filter).
+    /// The searchable list picker is open (the parent chooser).
     pub fn list_picker_open(&self) -> bool {
         self.list_picker.is_some()
     }
@@ -1691,7 +1632,6 @@ impl BoardModel {
             &self.archived_projects,
             self.effective_lens(),
             self.drawer_open,
-            &self.thread_filter,
             self.sort,
             &self.search_query,
         )
@@ -1700,11 +1640,6 @@ impl BoardModel {
     /// The lens the current scope resolves to.
     pub(super) fn effective_lens(&self) -> BoardLens<'_> {
         self.board_location.lens()
-    }
-
-    /// The thread filter active on slot 2's board.
-    pub fn thread_filter(&self) -> &ThreadFilter {
-        &self.thread_filter
     }
 
     /// The help card's focused search query.
@@ -1725,73 +1660,6 @@ impl BoardModel {
     /// Whether the current query is pinned while normal board keys own input.
     pub fn search_pinned(&self) -> bool {
         self.search_pinned
-    }
-
-    /// Open the project board's searchable thread filter picker (bare `t`).
-    pub(super) fn open_thread_filter_picker(&mut self) {
-        if !matches!(self.board_location, BoardLocation::Project(_)) {
-            return;
-        }
-        let scope: Option<String> = match &self.board_location {
-            BoardLocation::Project(path) => Some(path.to_string_lossy().into_owned()),
-            _ => None,
-        };
-        let in_project = |task: &Task| matches!(&task.scope, TaskScope::Project { path } if scope.as_deref().is_some_and(|scope| paths_equivalent(path, scope)));
-        let mut threads: BTreeMap<String, usize> = BTreeMap::new();
-        let mut unthreaded = 0usize;
-        let mut open = 0usize;
-        for task in &self.tasks {
-            if task.soft_deleted
-                || task.archived
-                || task.status == HumanStatus::Done
-                || self.is_hidden(task)
-                || !in_project(task)
-            {
-                continue;
-            }
-            open += 1;
-            match task.thread.as_deref() {
-                Some(name) => *threads.entry(name.to_ascii_lowercase()).or_default() += 1,
-                None => unthreaded += 1,
-            }
-        }
-        let mut options = vec![ListPickerOption {
-            label: "All tasks".to_string(),
-            count: Some(open),
-            value: ListPickerValue::ThreadAll,
-        }];
-        let mut named: Vec<(String, usize)> = threads.into_iter().collect();
-        named.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        options.extend(named.into_iter().map(|(name, count)| ListPickerOption {
-            label: format!("#{name}"),
-            count: Some(count),
-            value: ListPickerValue::ThreadNamed(name),
-        }));
-        options.push(ListPickerOption {
-            label: "Without a thread".to_string(),
-            count: Some(unthreaded),
-            value: ListPickerValue::ThreadWithout,
-        });
-        let selected = options
-            .iter()
-            .position(|option| match &option.value {
-                ListPickerValue::ThreadAll => self.thread_filter == ThreadFilter::All,
-                ListPickerValue::ThreadNamed(name) => {
-                    self.thread_filter == ThreadFilter::Named(name.clone())
-                }
-                ListPickerValue::ThreadWithout => self.thread_filter == ThreadFilter::Without,
-                ListPickerValue::ParentNone
-                | ListPickerValue::ParentTask(_)
-                | ListPickerValue::ParentCycle(_) => false,
-            })
-            .unwrap_or(0);
-        self.list_picker = Some(ListPickerState {
-            kind: ListPickerKind::ThreadFilter,
-            options,
-            selected,
-            query: String::new(),
-            rows: crate::ui::render::PickerRowState::following(),
-        });
     }
 
     /// Options the open picker shows after its search query, as (source index, option).
@@ -1911,37 +1779,6 @@ impl BoardModel {
         }
     }
 
-    /// Confirm the highlighted picker option: apply its value, close the picker, and
-    /// report what was applied so the reducer can reanchor. `None` leaves the picker
-    /// untouched (no visible option, or a kind/value mismatch).
-    pub(super) fn confirm_list_picker(&mut self) -> Option<ListPickerValue> {
-        let (_, option) = self.selected_list_picker_option()?;
-        let value = option.value.clone();
-        let kind = self.list_picker.as_ref()?.kind;
-        let applied = match (kind, &value) {
-            (ListPickerKind::ThreadFilter, ListPickerValue::ThreadAll) => {
-                self.thread_filter = ThreadFilter::All;
-                true
-            }
-            (ListPickerKind::ThreadFilter, ListPickerValue::ThreadNamed(name)) => {
-                self.thread_filter = ThreadFilter::Named(name.clone());
-                true
-            }
-            (ListPickerKind::ThreadFilter, ListPickerValue::ThreadWithout) => {
-                self.thread_filter = ThreadFilter::Without;
-                true
-            }
-            // The parent chooser saves through its own persisting intent.
-            _ => false,
-        };
-        if applied {
-            self.list_picker = None;
-            Some(value)
-        } else {
-            None
-        }
-    }
-
     pub(super) fn cancel_list_picker(&mut self) {
         self.list_picker = None;
     }
@@ -2033,7 +1870,6 @@ impl BoardModel {
     pub fn parent_picker_task(&self) -> Option<Uuid> {
         match self.list_picker.as_ref()?.kind {
             ListPickerKind::Parent { task } => Some(task),
-            ListPickerKind::ThreadFilter => None,
         }
     }
 
@@ -2377,7 +2213,6 @@ impl BoardModel {
         match form.focus {
             CaptureField::Title | CaptureField::Scope => form.title.value(),
             CaptureField::Notes => form.notes.value(),
-            CaptureField::Thread => form.thread.value(),
         }
     }
 
@@ -2389,7 +2224,6 @@ impl BoardModel {
         match form.focus {
             CaptureField::Title | CaptureField::Scope => form.title.cursor(),
             CaptureField::Notes => form.notes.cursor(),
-            CaptureField::Thread => form.thread.cursor(),
         }
     }
 
@@ -2493,7 +2327,6 @@ impl BoardModel {
                 && task.title == pending.title
                 && task.notes == pending.notes
                 && task.scope == pending.scope
-                && task.thread == pending.thread
                 && pending.step_renames.iter().all(|(step_id, text)| {
                     task.steps
                         .iter()
@@ -2529,8 +2362,6 @@ impl BoardModel {
                 .iter()
                 .position(|option| option == &form.scope)
                 .unwrap_or(0);
-            form.thread = seeded_draft(pending.thread.as_deref().unwrap_or_default());
-            form.thread_refusal = None;
             form.editing = false;
             form.steps.editor = None;
             form.steps.drafts.clear();
@@ -2799,22 +2630,6 @@ impl BoardModel {
         self.input_mode = form.parent_mode();
     }
 
-    /// Toggle the selected task-page Thread control into or out of its text editor without
-    /// closing the encompassing task edit session or discarding its draft.
-    pub(super) fn toggle_thread_editing(&mut self) {
-        let Some(form) = self.form.as_ref().filter(|form| form.is_task()) else {
-            return;
-        };
-        if form.focus != CaptureField::Thread {
-            return;
-        }
-        self.input_mode = match self.input_mode {
-            BoardInputMode::SelectThread => BoardInputMode::EditThread,
-            BoardInputMode::EditThread => BoardInputMode::SelectThread,
-            _ => return,
-        };
-    }
-
     /// Whether the task page's cursor rests on a stored (not removed, not the `+ step`
     /// row) step. Enter toggles that step instead of acting on the page.
     pub fn stored_step_selected(&self) -> bool {
@@ -2902,7 +2717,6 @@ impl BoardModel {
         };
         if form.title.value() != snapshot.title
             || form.notes.value() != snapshot.notes.as_deref().unwrap_or_default()
-            || form.thread.value() != snapshot.thread.as_deref().unwrap_or_default()
             || form.scope != snapshot.scope
             || !form.steps.removals.is_empty()
         {
@@ -3124,8 +2938,6 @@ impl BoardModel {
         match self.input_mode {
             mode @ (BoardInputMode::EditTitle
             | BoardInputMode::EditNotes
-            | BoardInputMode::SelectThread
-            | BoardInputMode::EditThread
             | BoardInputMode::EditScope
             | BoardInputMode::EditStep) => Some(mode),
             _ => None,
@@ -3391,7 +3203,7 @@ pub(super) fn project_scope_option_label(option: &ProjectScopeOption) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ProvenanceOrigin;
+    use crate::domain::{HumanStatus, ProvenanceOrigin};
 
     const REPO_A: &str = "/repos/a";
     const REPO_B: &str = "/repos/b";
@@ -3404,7 +3216,7 @@ mod tests {
 
     fn create(domain: &mut DomainState, title: &str, scope: TaskScope) -> Uuid {
         domain
-            .create(title, None, scope, ProvenanceOrigin::Manual, None)
+            .create(title, None, scope, ProvenanceOrigin::Manual)
             .expect("create")
     }
 
@@ -3527,27 +3339,6 @@ mod tests {
     }
 
     #[test]
-    fn switching_projects_clears_the_local_thread_filter() {
-        let mut domain = DomainState::new();
-        create(&mut domain, "task-a", project(REPO_A));
-        create(&mut domain, "task-b", project(REPO_B));
-
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
-        model.thread_filter = ThreadFilter::Named("release".to_string());
-        model.set_selected_project(Some(PathBuf::from(REPO_B)));
-        assert_eq!(
-            model.thread_filter(),
-            &ThreadFilter::All,
-            "the thread filter belongs to one project board; switching clears it"
-        );
-
-        // Same project again: the filter survives.
-        model.thread_filter = ThreadFilter::Without;
-        model.set_selected_project(Some(PathBuf::from(REPO_B)));
-        assert_eq!(model.thread_filter(), &ThreadFilter::Without);
-    }
-
-    #[test]
     fn picker_desk_choice_lands_on_the_desk_scope() {
         let mut domain = DomainState::new();
         create(&mut domain, "task-a", project(REPO_A));
@@ -3556,100 +3347,6 @@ mod tests {
         model.set_selected_project(Some(PathBuf::from(REPO_B)));
         model.set_selected_project(None);
         assert_eq!(model.board_location, BoardLocation::Desk);
-    }
-
-    #[test]
-    fn thread_filter_picker_options_come_from_this_project_only() {
-        let mut domain = DomainState::new();
-        let a = create(&mut domain, "a1", project(REPO_A));
-        domain
-            .edit(a, "a1", None, project(REPO_A), Some("nav".to_string()))
-            .expect("thread");
-        let b = create(&mut domain, "b1", project(REPO_B));
-        domain
-            .edit(b, "b1", None, project(REPO_B), Some("other".to_string()))
-            .expect("thread");
-
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
-        model.open_thread_filter_picker();
-        let options = model.visible_list_picker_options();
-        let labels: Vec<&str> = options
-            .iter()
-            .map(|(_, option)| option.label.as_str())
-            .collect();
-        assert_eq!(
-            labels,
-            vec!["All tasks", "#nav", "Without a thread"],
-            "another project's thread must not offer itself here"
-        );
-        assert_eq!(model.list_picker_kind(), Some(ListPickerKind::ThreadFilter));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn thread_filter_picker_matches_equivalent_project_aliases() {
-        use std::fs;
-        use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("tsk-thread-alias-{}", std::process::id()));
-        let real = root.join("real");
-        let alias = root.join("alias");
-        fs::create_dir_all(&real).expect("real");
-        symlink(&real, &alias).expect("alias");
-        let mut domain = DomainState::new();
-        let id = create(
-            &mut domain,
-            "aliased",
-            project(alias.to_string_lossy().as_ref()),
-        );
-        domain
-            .edit(
-                id,
-                "aliased",
-                None,
-                project(alias.to_string_lossy().as_ref()),
-                Some("nav".into()),
-            )
-            .expect("thread");
-        let mut model = BoardModel::from_domain(&domain, Some(real));
-        model.open_thread_filter_picker();
-        assert!(model
-            .visible_list_picker_options()
-            .iter()
-            .any(|(_, option)| option.label == "#nav"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn confirming_thread_filter_narrows_and_clearing_restores() {
-        let mut domain = DomainState::new();
-        let a = create(&mut domain, "a1", project(REPO_A));
-        domain
-            .edit(a, "a1", None, project(REPO_A), Some("nav".to_string()))
-            .expect("thread");
-        create(&mut domain, "a2", project(REPO_A));
-
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
-        model.open_thread_filter_picker();
-        model.move_list_picker(true); // #nav
-        let applied = model.confirm_list_picker();
-        assert_eq!(
-            applied,
-            Some(ListPickerValue::ThreadNamed("nav".to_string()))
-        );
-        assert!(!model.list_picker_open());
-        let visible = model.visible_ids();
-        assert_eq!(
-            visible,
-            vec![a],
-            "the filter narrows the board across statuses"
-        );
-
-        // Re-opening highlights the active filter; step back to All tasks and confirm.
-        model.open_thread_filter_picker();
-        model.move_list_picker(false);
-        let applied = model.confirm_list_picker();
-        assert_eq!(applied, Some(ListPickerValue::ThreadAll));
-        assert_eq!(model.visible_ids().len(), 2);
     }
 
     #[test]

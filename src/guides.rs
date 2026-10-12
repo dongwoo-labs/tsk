@@ -226,7 +226,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("task");
         store.save(&forgetting).expect("save");
@@ -271,13 +270,7 @@ mod tests {
         let mut state = DomainState::new();
         for title in ["first", "second"] {
             state
-                .create(
-                    title,
-                    None,
-                    TaskScope::Global,
-                    ProvenanceOrigin::Manual,
-                    None,
-                )
+                .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
                 .expect("task");
         }
         store.save(&state).expect("save");

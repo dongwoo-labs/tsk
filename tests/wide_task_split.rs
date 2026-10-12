@@ -48,7 +48,6 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
                 path: REPO.to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create T12");
     domain
@@ -60,7 +59,6 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
             Some("renewal notes".to_string()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create T15");
     domain
@@ -785,7 +783,6 @@ fn shrinking_and_growing_keeps_the_focus_and_its_session() {
                 Some(long.clone()),
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create survivor");
         domain
@@ -794,7 +791,6 @@ fn shrinking_and_growing_keeps_the_focus_and_its_session() {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create other");
         let mut model = BoardModel::from_domain(&domain, None);
@@ -926,13 +922,7 @@ fn stepping_fixture() -> (DomainState, BoardModel, [uuid::Uuid; 3]) {
         ("third open", HumanStatus::Todo),
     ]) {
         let id = domain
-            .create(
-                title,
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("create");
         domain.set_status(id, status).expect("status");
         *slot = id;
@@ -986,7 +976,7 @@ fn j_and_k_follow_the_project_sort_order() {
     let mut domain = DomainState::new();
     let make = |domain: &mut DomainState, title: &str, scope: TaskScope| {
         let id = domain
-            .create(title, None, scope, ProvenanceOrigin::Manual, None)
+            .create(title, None, scope, ProvenanceOrigin::Manual)
             .expect("create");
         domain.set_status(id, HumanStatus::Doing).expect("start");
         id
@@ -1407,7 +1397,6 @@ fn hit_signature(hits: &QueueHitMap, column: Rect) -> Vec<String> {
             QueueHitTarget::Step(index) => Some(format!("Step({index})")),
             QueueHitTarget::StepAdd => Some("StepAdd".to_string()),
             QueueHitTarget::FormNotes(_) => Some("FormNotes".to_string()),
-            QueueHitTarget::FormThread => Some("FormThread".to_string()),
             QueueHitTarget::FormScopeOption(index) => Some(format!("FormScopeOption({index})")),
             QueueHitTarget::Verb(index) => Some(format!("Verb({index})")),
             _ => None,
@@ -1427,7 +1416,6 @@ fn first_hit(hits: &QueueHitMap, column: Rect, name: &str) -> Rect {
                     QueueHitTarget::Step(index) => format!("Step({index})") == name,
                     QueueHitTarget::StepAdd => name == "StepAdd",
                     QueueHitTarget::FormNotes(_) => name == "FormNotes",
-                    QueueHitTarget::FormThread => name == "FormThread",
                     QueueHitTarget::FormScopeOption(index) => {
                         format!("FormScopeOption({index})") == name
                     }
@@ -1500,13 +1488,6 @@ fn focused_detail_controls_match_the_single_pane_page() {
         ("task view", vec![]),
         ("title edit", vec![BoardIntent::BeginEditTitle]),
         ("notes edit", vec![BoardIntent::BeginEditNotes]),
-        (
-            "thread selection",
-            vec![
-                BoardIntent::BeginEditTitle,
-                BoardIntent::FocusFormField(CaptureField::Thread),
-            ],
-        ),
         (
             "step edit",
             vec![BoardIntent::BeginEditTitle, BoardIntent::SelectStep(0)],
@@ -1764,71 +1745,6 @@ fn clean_editor_list_row_click_retargets_and_moves_focus_to_the_list() {
 }
 
 #[test]
-fn changed_thread_and_scope_drafts_refuse_retarget_and_paint_unsaved() {
-    let (mut domain, mut model) = fixture();
-    focus(&mut domain, &mut model, WideStage::Task);
-    go(&mut domain, &mut model, BoardIntent::BeginEditTitle);
-    go(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Thread),
-    );
-    go(&mut domain, &mut model, BoardIntent::ToggleThreadEditing);
-    go(&mut domain, &mut model, BoardIntent::EditInsert('x'));
-    assert!(header_title_row(&model).ends_with("editing thread"));
-    let bound = model.edit_target().expect("bound");
-    let other = model
-        .visible_ids()
-        .iter()
-        .position(|&id| id != bound)
-        .expect("other");
-    go(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusBoardAndSelectIndex(other),
-    );
-    assert_eq!(model.edit_target(), Some(bound));
-    assert_eq!(model.selected_id(), Some(bound));
-    assert!(model
-        .message()
-        .is_some_and(|message| message.contains("save or cancel")));
-
-    let (mut domain, mut model) = fixture();
-    focus(&mut domain, &mut model, WideStage::Task);
-    go(&mut domain, &mut model, BoardIntent::BeginEditTitle);
-    go(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusFormField(CaptureField::Scope),
-    );
-    let original = model.form_scope().cloned();
-    go(&mut domain, &mut model, BoardIntent::FormCycleScope);
-    assert_ne!(model.form_scope(), original.as_ref());
-    assert!(header_title_row(&model).ends_with("editing scope"));
-    let bound = model.edit_target().expect("bound");
-    let other = model
-        .visible_ids()
-        .iter()
-        .position(|&id| id != bound)
-        .expect("other");
-    go(
-        &mut domain,
-        &mut model,
-        BoardIntent::FocusBoardAndSelectIndex(other),
-    );
-    assert_eq!(model.edit_target(), Some(bound));
-    assert!(model.message().is_some());
-    for _ in 0..8 {
-        if model.input_mode() == BoardInputMode::TaskPage {
-            break;
-        }
-        go(&mut domain, &mut model, BoardIntent::FormFocusNext);
-    }
-    assert!(model.task_session_dirty());
-    assert!(header_title_row(&model).ends_with("unsaved"));
-}
-
-#[test]
 fn dirty_scope_dropdown_same_bound_row_click_keeps_the_visible_editor() {
     let (mut domain, mut model) = dirty_editor_on_detail();
     let draft = model.edit_buffer().to_string();
@@ -2048,17 +1964,17 @@ fn list_keeps_the_done_drawer_and_selects_the_open_done_task() {
         path: REPO.to_string(),
     };
     let started = domain
-        .create("Open work", None, scope(), ProvenanceOrigin::Manual, None)
+        .create("Open work", None, scope(), ProvenanceOrigin::Manual)
         .expect("create started");
     domain
         .set_status(started, HumanStatus::Doing)
         .expect("doing");
     let done = domain
-        .create("Shipped fix", None, scope(), ProvenanceOrigin::Manual, None)
+        .create("Shipped fix", None, scope(), ProvenanceOrigin::Manual)
         .expect("create done");
     domain.set_status(done, HumanStatus::Done).expect("finish");
     let archived = domain
-        .create("Old shelf", None, scope(), ProvenanceOrigin::Manual, None)
+        .create("Old shelf", None, scope(), ProvenanceOrigin::Manual)
         .expect("create archived");
     domain
         .set_status(archived, HumanStatus::Done)
@@ -2115,4 +2031,41 @@ fn list_keeps_the_done_drawer_and_selects_the_open_done_task() {
         list_text(&model).contains("Old shelf"),
         "unfolded archived group"
     );
+}
+
+#[test]
+fn changed_scope_draft_refuses_retarget_and_paints_unsaved() {
+    let (mut domain, mut model) = fixture();
+    focus(&mut domain, &mut model, WideStage::Task);
+    go(&mut domain, &mut model, BoardIntent::BeginEditTitle);
+    go(
+        &mut domain,
+        &mut model,
+        BoardIntent::FocusFormField(CaptureField::Scope),
+    );
+    let original = model.form_scope().cloned();
+    go(&mut domain, &mut model, BoardIntent::FormCycleScope);
+    assert_ne!(model.form_scope(), original.as_ref());
+    assert!(header_title_row(&model).ends_with("editing scope"));
+    let bound = model.edit_target().expect("bound");
+    let other = model
+        .visible_ids()
+        .iter()
+        .position(|&id| id != bound)
+        .expect("other");
+    go(
+        &mut domain,
+        &mut model,
+        BoardIntent::FocusBoardAndSelectIndex(other),
+    );
+    assert_eq!(model.edit_target(), Some(bound));
+    assert!(model.message().is_some());
+    for _ in 0..8 {
+        if model.input_mode() == BoardInputMode::TaskPage {
+            break;
+        }
+        go(&mut domain, &mut model, BoardIntent::FormFocusNext);
+    }
+    assert!(model.task_session_dirty());
+    assert!(header_title_row(&model).ends_with("unsaved"));
 }

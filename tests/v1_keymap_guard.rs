@@ -48,11 +48,6 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('g'), BoardIntent::ToggleAllGroups, false),
         (KeyCode::Char('p'), BoardIntent::OpenProjectSelector, false),
         (KeyCode::Char('S'), BoardIntent::ToggleSort, false),
-        (
-            KeyCode::Char('t'),
-            BoardIntent::OpenThreadFilterPicker,
-            false,
-        ),
         (KeyCode::Char('/'), BoardIntent::FocusSearch, false),
         (KeyCode::Char(':'), BoardIntent::OpenCommandPalette, false),
         (KeyCode::Char('?'), BoardIntent::OpenHelp, false),
@@ -160,7 +155,6 @@ fn bare_page_keys_never_mutate_steps() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.add_step(id, "alpha step").expect("step 1");
@@ -238,7 +232,6 @@ fn vim_horizontal_keys_are_navigation_only_outside_text_entry() {
         for mode in [
             BoardInputMode::EditTitle,
             BoardInputMode::EditNotes,
-            BoardInputMode::EditThread,
             BoardInputMode::EditStep,
         ] {
             assert_eq!(
@@ -256,7 +249,7 @@ fn vim_horizontal_keys_are_navigation_only_outside_text_entry() {
                 BoardIntent::QuickAddInsert(character),
             ),
             (
-                BoardInputMode::ListPicker,
+                BoardInputMode::ParentPicker,
                 BoardIntent::ListPickerQueryInsert(character),
             ),
             (

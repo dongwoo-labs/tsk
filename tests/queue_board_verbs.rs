@@ -53,13 +53,7 @@ fn ctrl_alt(code: KeyCode) -> KeyEvent {
 fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel, uuid::Uuid) {
     let mut domain = DomainState::new();
     let id = domain
-        .create(
-            title,
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create");
     if status != HumanStatus::Todo {
         domain.set_status(id, status).expect("status");
@@ -97,13 +91,7 @@ fn mark_tasks(domain: &mut DomainState, model: &mut BoardModel, ids: &[uuid::Uui
 fn shift_arrows_and_space_build_a_session_only_marked_set() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     model.sync_from_domain(&domain);
     let first_index = model
@@ -172,13 +160,7 @@ fn shift_arrows_and_space_build_a_session_only_marked_set() {
 fn status_verbs_target_all_marks_once_then_clear_them() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     model.sync_from_domain(&domain);
 
@@ -204,13 +186,7 @@ fn status_verbs_target_all_marks_once_then_clear_them() {
 fn bulk_start_preserves_per_task_eligibility_and_toggle_verbs_are_all_or_nothing() {
     let (mut domain, mut model, open) = board_with_task("todo", HumanStatus::Todo);
     let blocked = domain
-        .create(
-            "doing",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("doing", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create blocked");
     domain
         .set_status(blocked, HumanStatus::Doing)
@@ -296,13 +272,7 @@ fn bulk_start_names_skipped_done_marks_on_the_status_row() {
     let mut done = Vec::new();
     for title in ["done one", "done two"] {
         let id = domain
-            .create(
-                title,
-                None,
-                project(THIS_REPO),
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create(title, None, project(THIS_REPO), ProvenanceOrigin::Manual)
             .expect("create done");
         domain.complete(id).expect("complete");
         done.push(id);
@@ -361,13 +331,7 @@ fn help_names_where_archived_tasks_live_and_g_folds_a_group() {
 fn bulk_verbs_reach_marked_done_drawer_rows_and_archive_each_mark() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Done);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     domain.complete(second).expect("complete second");
     model.sync_from_domain(&domain);
@@ -396,13 +360,7 @@ fn bulk_verbs_reach_marked_done_drawer_rows_and_archive_each_mark() {
 fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     let already_done = domain
         .create(
@@ -410,7 +368,6 @@ fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create done task");
     domain
@@ -480,13 +437,7 @@ fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
 fn bulk_delete_confirms_count_once_and_one_undo_restores_the_set() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     model.sync_from_domain(&domain);
     mark_tasks(&mut domain, &mut model, &[first, second]);
@@ -530,13 +481,7 @@ fn bulk_delete_confirms_count_once_and_one_undo_restores_the_set() {
 fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     model.sync_from_domain(&domain);
     mark_tasks(&mut domain, &mut model, &[second]);
@@ -624,13 +569,7 @@ fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
 fn parked_task_page_still_allows_marking_and_bulk_verbs_on_the_board() {
     let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
-        .create(
-            "second",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("second", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create second");
     model.sync_from_domain(&domain);
     mark_tasks(&mut domain, &mut model, &[first, second]);
@@ -662,13 +601,7 @@ fn parked_task_page_still_allows_marking_and_bulk_verbs_on_the_board() {
 fn task_page_status_verbs_stay_cursor_only_and_clear_board_marks() {
     let (mut domain, mut model, cursor) = board_with_task("cursor", HumanStatus::Todo);
     let marked = domain
-        .create(
-            "marked",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("marked", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create marked task");
     model.sync_from_domain(&domain);
     mark_tasks(&mut domain, &mut model, &[marked]);
@@ -968,7 +901,6 @@ fn z_toggles_done_drawer_membership_on_list() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("open task");
     model.sync_from_domain(&domain);
@@ -1086,12 +1018,11 @@ fn t64_ctrl_q_quits_every_non_editor_mode_and_stays_inert_in_editors_and_recover
         BoardInputMode::Normal,
         BoardInputMode::TaskPage,
         BoardInputMode::CapturePage,
-        BoardInputMode::SelectThread,
         BoardInputMode::EditScope,
         BoardInputMode::FormScopeDropdown,
         BoardInputMode::LaunchCard,
         BoardInputMode::ProjectPicker,
-        BoardInputMode::ListPicker,
+        BoardInputMode::ParentPicker,
         BoardInputMode::Help,
     ] {
         assert_eq!(
@@ -1105,7 +1036,6 @@ fn t64_ctrl_q_quits_every_non_editor_mode_and_stays_inert_in_editors_and_recover
         BoardInputMode::EditTitle,
         BoardInputMode::EditNotes,
         BoardInputMode::EditStep,
-        BoardInputMode::EditThread,
         BoardInputMode::Search,
         BoardInputMode::QuickAdd,
         BoardInputMode::Palette,
@@ -1159,7 +1089,6 @@ fn t64_root_esc_quits_on_each_board_scope_without_resetting_it() {
                 None,
                 project(THIS_REPO),
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("project task");
         domain
@@ -1208,13 +1137,7 @@ fn t64_esc_returns_detail_focus_to_the_list_without_quitting_and_keeps_header_ex
 
     let mut domain = DomainState::new();
     let archived = domain
-        .create(
-            "header",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("header", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("archived task");
     domain.archive_task(archived).expect("archive task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -1769,22 +1692,14 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
         map_key(BoardInputMode::LaunchCard, press(KeyCode::Char('?'))),
         Some(BoardIntent::OpenHelp)
     );
-    for mode in [
-        BoardInputMode::SelectThread,
-        BoardInputMode::EditScope,
-        BoardInputMode::FormScopeDropdown,
-    ] {
+    for mode in [BoardInputMode::EditScope, BoardInputMode::FormScopeDropdown] {
         assert_eq!(
             map_key(mode, press(KeyCode::Char('?'))),
             Some(BoardIntent::OpenHelp),
             "question mark opens Help from non-text control {mode:?}"
         );
     }
-    for mode in [
-        BoardInputMode::EditTitle,
-        BoardInputMode::EditNotes,
-        BoardInputMode::EditThread,
-    ] {
+    for mode in [BoardInputMode::EditTitle, BoardInputMode::EditNotes] {
         assert_eq!(
             map_key(mode, press(KeyCode::Char('?'))),
             Some(BoardIntent::EditInsert('?')),
@@ -1798,7 +1713,7 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
             BoardIntent::CommandQueryInsert('?'),
         ),
         (
-            BoardInputMode::ListPicker,
+            BoardInputMode::ParentPicker,
             BoardIntent::ListPickerQueryInsert('?'),
         ),
         (BoardInputMode::Search, BoardIntent::SearchQueryInsert('?')),
@@ -1849,7 +1764,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("motion app");
     domain
@@ -1861,7 +1775,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("motion other");
     domain
@@ -1873,7 +1786,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("motion global");
     domain
@@ -1885,7 +1797,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("deck app");
     let deck_other = domain
@@ -1894,7 +1805,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("deck other");
     let deck_global = domain
@@ -1903,7 +1813,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("deck global");
     let done_app = domain
@@ -1912,7 +1821,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("done app");
     domain
@@ -1924,7 +1832,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project("/repos/other"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("done other");
     domain
@@ -1936,7 +1843,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("done global");
     domain
@@ -1949,7 +1855,6 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
             None,
             project("/repos/empty"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("empty project done");
     domain
@@ -2159,7 +2064,6 @@ fn x_soft_deletes_and_status_line_names_task_with_undo_hint() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain
@@ -2168,7 +2072,6 @@ fn x_soft_deletes_and_status_line_names_task_with_undo_hint() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("keep");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2212,7 +2115,6 @@ fn delete_notice_prefixes_the_board_verb_bar_with_undo_until_undone() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("neighbour");
     let _ = other;
@@ -2280,7 +2182,6 @@ fn u_undoes_with_domain_coverage_and_stale_undo_refused_visibly() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2337,7 +2238,6 @@ fn board_with_noted_task() -> (DomainState, BoardModel, uuid::Uuid) {
             Some("line one\nline two".into()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2524,7 +2424,6 @@ fn page_scroll_reaches_the_bottom_of_a_wrapping_note() {
             Some(long),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2589,7 +2488,6 @@ fn closing_the_page_after_completing_its_task_reanchors_to_a_visible_row() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create target");
     let other = domain
@@ -2598,7 +2496,6 @@ fn closing_the_page_after_completing_its_task_reanchors_to_a_visible_row() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create other");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -2784,7 +2681,6 @@ fn board_with_steps(
             notes.map(str::to_string),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     for step in steps {
@@ -2826,7 +2722,6 @@ fn view_mode_add_starts_the_normal_inline_step_flow() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.add_step(id, "first step").expect("step");
@@ -2898,7 +2793,6 @@ fn view_tab_selection_wraps_without_starting_task_edit_and_ctrl_e_opens_inline_s
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     domain.add_step(id, "first step").expect("first");
@@ -2971,10 +2865,7 @@ fn view_tab_selection_wraps_without_starting_task_edit_and_ctrl_e_opens_inline_s
         .expect("Tab reaches the trailing add target after the final step");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-        .expect("Tab leaves the add target for Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-        .expect("Tab leaves Thread for Scope");
+        .expect("Tab leaves the add target for Scope");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
 }
 
@@ -2998,7 +2889,7 @@ fn plain_enter_parks_an_existing_step_rename_without_saving_the_task_session() {
 }
 
 #[test]
-fn task_edit_tab_cycles_every_step_between_notes_and_thread_then_scope() {
+fn task_edit_tab_cycles_every_step_between_notes_and_scope() {
     let (mut domain, mut model, _) = board_with_steps("Tab fields", None, &["first", "second"]);
     assert!(rendered_board(&model, 80, 24).contains("▸ ▪ first"));
 
@@ -3010,10 +2901,7 @@ fn task_edit_tab_cycles_every_step_between_notes_and_thread_then_scope() {
         .expect("Tab reaches the add target after the final step");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-        .expect("Tab leaves the add target for Thread");
-    assert_eq!(model.input_mode(), BoardInputMode::SelectThread);
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
-        .expect("Tab reaches Scope");
+        .expect("Tab leaves the add target for Scope");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("Tab wraps Scope to Title");
@@ -3417,7 +3305,7 @@ fn task_edit_delete_stages_until_save_and_esc_restores() {
 }
 
 /// Ctrl+A reaches the independent step editor from task view and every task-edit focus,
-/// including Scope, Thread, and an already-open inline rename.
+/// including Scope and an already-open inline rename.
 #[test]
 fn ctrl_a_opens_step_add_from_task_view_and_every_task_edit_state() {
     let (mut domain, mut model, id) = board_with_steps("Ctrl+A routes", None, &["first", "second"]);
@@ -3448,7 +3336,6 @@ fn ctrl_a_opens_step_add_from_task_view_and_every_task_edit_state() {
         CaptureField::Title,
         CaptureField::Notes,
         CaptureField::Scope,
-        CaptureField::Thread,
     ] {
         apply_intent(
             &mut domain,
@@ -3854,7 +3741,6 @@ fn down_activates_the_cursor_when_content_overflows() {
             Some(wrapping_notes()),
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("task");
     domain.add_step(id, "alpha step").expect("first");
@@ -4356,76 +4242,6 @@ fn delete_mark_shows_press_again_footer_message() {
 }
 
 #[test]
-fn t_token_capture_threads_while_item_text_stays_literal() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    let snapshot = InvocationSnapshot {
-        default_scope: project(THIS_REPO),
-        this_repo: Some(PathBuf::from(THIS_REPO)),
-        title_prefill: None,
-        provenance: ProvenanceOrigin::Capture,
-    };
-
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenCapture,
-        Some(&snapshot),
-    )
-    .expect("open quick add");
-    for character in "capture !t Release-2026".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::QuickAddInsert(character),
-            None,
-        )
-        .expect("type capture");
-    }
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::QuickAddSave, None,)
-            .expect("save quick add"),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-    let task_id = domain.tasks()[0].id;
-    assert_eq!(
-        domain.get(task_id).expect("capture").thread.as_deref(),
-        Some("release-2026")
-    );
-
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open task page");
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("enter task edit mode");
-    apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None)
-        .expect("return to task page");
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginAddStep, None)
-        .expect("open item editor");
-    for character in "literal !t release-2026 #word".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        )
-        .expect("type item");
-    }
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None,).expect("save item"),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-    assert_eq!(
-        domain.get(task_id).expect("capture").steps[0].text,
-        "literal !t release-2026 #word"
-    );
-    assert_eq!(
-        domain.get(task_id).expect("capture").thread.as_deref(),
-        Some("release-2026")
-    );
-}
-
-#[test]
 fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header_toggles_it() {
     let mut domain = DomainState::new();
     let live = domain
@@ -4434,7 +4250,6 @@ fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live");
     let archived = domain
@@ -4443,7 +4258,6 @@ fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived).expect("archive it");
@@ -4509,7 +4323,6 @@ fn ctrl_f_archives_the_selected_task_keeping_status_and_pushing_no_undo() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create b");
     let a = domain
@@ -4518,7 +4331,6 @@ fn ctrl_f_archives_the_selected_task_keeping_status_and_pushing_no_undo() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create a");
     domain.set_status(a, HumanStatus::Doing).expect("doing");
@@ -4603,7 +4415,6 @@ fn ctrl_u_on_an_archived_selection_unarchives_without_popping_the_undo_stack() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create a");
     let k = domain
@@ -4612,7 +4423,6 @@ fn ctrl_u_on_an_archived_selection_unarchives_without_popping_the_undo_stack() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create k");
     domain.complete(k).expect("complete seeds one undo entry");
@@ -4698,7 +4508,6 @@ fn help_card_lists_ctrl_f_and_the_verb_bar_keeps_archive_out_of_its_seats() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create archived");
     domain.archive_task(archived).expect("archive it");
@@ -4743,23 +4552,11 @@ fn help_card_lists_ctrl_f_and_the_verb_bar_keeps_archive_out_of_its_seats() {
 fn ctrl_f_in_the_picker_archives_the_selected_project_and_keeps_the_picker_open() {
     let mut domain = DomainState::new();
     domain
-        .create(
-            "in app",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("in app", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create");
     let other = "/repos/other";
     domain
-        .create(
-            "in other",
-            None,
-            project(other),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("in other", None, project(other), ProvenanceOrigin::Manual)
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     apply_intent(
@@ -4825,7 +4622,6 @@ fn ctrl_f_and_ctrl_u_on_the_archived_tab_unarchive_and_every_task_keeps_its_stat
             None,
             project("/repos/a"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create a");
     let b = domain
@@ -4834,7 +4630,6 @@ fn ctrl_f_and_ctrl_u_on_the_archived_tab_unarchive_and_every_task_keeps_its_stat
             None,
             project("/repos/b"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create b");
     domain.set_status(b, HumanStatus::Doing).expect("doing");
@@ -4924,7 +4719,6 @@ fn file_on_a_taskless_invocation_repo_refuses_on_the_status_line() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create desk task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -4978,23 +4772,11 @@ fn picker_archive_of_the_focused_project_sends_quick_add_to_the_desk() {
     // project is not a session-wide "everything goes to the desk".
     let mut domain = DomainState::new();
     domain
-        .create(
-            "in app",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("in app", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .expect("create");
     let other = "/repos/other";
     domain
-        .create(
-            "in other",
-            None,
-            project(other),
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("in other", None, project(other), ProvenanceOrigin::Manual)
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     let target = tsk_tui::ui::board::ProjectScopeOption::Project(PathBuf::from(other));
@@ -5076,7 +4858,6 @@ fn read_only_focus() -> (DomainState, BoardModel, uuid::Uuid) {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create inside");
     domain
@@ -5085,7 +4866,6 @@ fn read_only_focus() -> (DomainState, BoardModel, uuid::Uuid) {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create desk");
     domain.archive_project(THIS_REPO).expect("archive project");
@@ -5123,7 +4903,6 @@ fn enter_on_the_archived_tab_opens_a_read_only_focus_that_persists_nothing() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create inside");
     domain
@@ -5132,7 +4911,6 @@ fn enter_on_the_archived_tab_opens_a_read_only_focus_that_persists_nothing() {
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create second");
     domain.archive_project(THIS_REPO).expect("archive project");
@@ -5540,7 +5318,6 @@ fn toggle_all_groups_folds_and_unfolds_the_archived_group_with_the_others_when_t
             None,
             project("/repos/app"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live");
     let filed = domain
@@ -5549,7 +5326,6 @@ fn toggle_all_groups_folds_and_unfolds_the_archived_group_with_the_others_when_t
             None,
             project("/repos/app"),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create filed");
     domain.archive_task(filed).expect("archive");
@@ -5717,10 +5493,6 @@ fn altgr_characters_insert_in_every_text_field() {
                     BoardInputMode::EditNotes,
                     BoardIntent::EditInsert(character),
                 ),
-                (
-                    BoardInputMode::EditThread,
-                    BoardIntent::EditInsert(character),
-                ),
                 (BoardInputMode::EditStep, BoardIntent::EditInsert(character)),
                 (
                     BoardInputMode::Search,
@@ -5735,7 +5507,7 @@ fn altgr_characters_insert_in_every_text_field() {
                     BoardIntent::HelpQueryInsert(character),
                 ),
                 (
-                    BoardInputMode::ListPicker,
+                    BoardInputMode::ParentPicker,
                     BoardIntent::ListPickerQueryInsert(character),
                 ),
             ] {
@@ -5746,11 +5518,7 @@ fn altgr_characters_insert_in_every_text_field() {
                     key.modifiers
                 );
             }
-            for field in [
-                CaptureField::Title,
-                CaptureField::Notes,
-                CaptureField::Thread,
-            ] {
+            for field in [CaptureField::Title, CaptureField::Notes] {
                 assert_eq!(
                     map_task_form_key(field, false, key),
                     Some(BoardIntent::EditInsert(character)),
@@ -5782,12 +5550,11 @@ fn altgr_insertion_leaves_ctrl_alt_and_super_chords_alone() {
         BoardInputMode::QuickAdd,
         BoardInputMode::EditTitle,
         BoardInputMode::EditNotes,
-        BoardInputMode::EditThread,
         BoardInputMode::EditStep,
         BoardInputMode::Search,
         BoardInputMode::Palette,
         BoardInputMode::Help,
-        BoardInputMode::ListPicker,
+        BoardInputMode::ParentPicker,
     ] {
         for key in [ctrl(bracket), alt(bracket), ctrl_alt_super] {
             assert_eq!(
@@ -5813,7 +5580,6 @@ fn altgr_insertion_leaves_ctrl_alt_and_super_chords_alone() {
         BoardInputMode::Normal,
         BoardInputMode::TaskPage,
         BoardInputMode::CapturePage,
-        BoardInputMode::SelectThread,
     ] {
         assert_eq!(map_key(mode, ctrl_alt(bracket)), None, "{mode:?}");
     }

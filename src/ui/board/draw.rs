@@ -13,10 +13,9 @@ use crate::ui::edit::{
 };
 use crate::ui::input::help_card_lines_for_query;
 use crate::ui::mouse::BoardPopup;
-use crate::ui::queue::ThreadFilter;
 use crate::ui::render::{
-    self, BoardSurface, FormScopeDropdown, NavChipKind, NavChipPaint, NavPaint, PaletteCommandRow,
-    QueueFrameModel, QueueOverlay, RelationRow, VerbEntry,
+    self, BoardSurface, FormScopeDropdown, NavPaint, PaletteCommandRow, QueueFrameModel,
+    QueueOverlay, RelationRow, VerbEntry,
 };
 use crate::ui::tier;
 use crate::ui::{present_line, terminal_text};
@@ -289,7 +288,7 @@ fn build_task_page_overlay<'a>(
     let stored_step_count = step_views.len();
     // Existing-step edits are task-session drafts. Paint every parked draft first, then the
     // active row over it. Only the active EditStep mode receives cursor metadata, so moving to
-    // Title, Notes, Thread, or Scope leaves the changed step visible without a second cursor.
+    // Title, Notes, or Scope leaves the changed step visible without a second cursor.
     if let Some(task) = bound_task {
         for (visible, step) in task
             .steps
@@ -382,27 +381,9 @@ fn build_task_page_overlay<'a>(
             })
             .unwrap_or_default(),
     );
-    let bottom_input = (model.input_mode() == BoardInputMode::EditThread).then(|| {
-        let avail = (geo.row_width as usize).saturating_sub(2);
-        let (text, cursor_col) = escaped_line_window(&form.thread, avail);
-        crate::ui::render::BottomInputSlot {
-            text,
-            cursor_col,
-            placeholder: "thread…",
-            refusal: None,
-            above_rows: Vec::new(),
-            cursor_row_offset: 0,
-            message: form.thread_refusal.as_deref(),
-        }
-    });
     // A notes edit always keeps one row: the layout reserves it (the section caps
     // around it), so an active edit can never be scrolled/clamped out of the frame.
-    // A wide column's height already reflects the shared footer's input slot.
-    let page_geo = if column {
-        *geo
-    } else {
-        render::bottom_input_geometry(*geo, bottom_input.is_some())
-    };
+    let page_geo = *geo;
     let status = bound_task
         .map(|task| task.status)
         .unwrap_or(HumanStatus::Todo);
@@ -597,7 +578,7 @@ fn build_task_page_overlay<'a>(
     }
     form.notes_width.set(notes_width);
 
-    // Meta footer: thread · scope · created · updated (ages only while the bound task is
+    // Meta footer: scope · created · updated (ages only while the bound task is
     // present). The identifier belongs in the header, so it never competes with footer hits.
     // A wide column moves the project up into its header slot: the scope footer paints only
     // while the edit session can change it, so its control stays reachable by mouse.
@@ -613,38 +594,6 @@ fn build_task_page_overlay<'a>(
     };
     let meta_scope_width = u16::try_from(render::display_width(&meta_scope)).unwrap_or(u16::MAX);
     let mut meta = String::new();
-    let mut thread_slot = None;
-    let capture_form = !form.is_task();
-    let shown_thread = if capture_form || (form.is_task() && form.editing) {
-        Some(form.thread.value())
-    } else {
-        bound_task.and_then(|task| task.thread.as_deref())
-    };
-    if bound_task.is_some() || capture_form {
-        // Thread leads the footer, so its slot has no separator even when the scope is hidden
-        // in a wide read-only column. The editing placeholder keeps the same hit target.
-        thread_slot = if let Some(thread) = shown_thread.filter(|thread| !thread.is_empty()) {
-            Some(format!("#{}", terminal_text(thread)))
-        } else if capture_form
-            || (form.is_task() && form.editing)
-            || matches!(
-                model.input_mode(),
-                BoardInputMode::EditTitle
-                    | BoardInputMode::EditNotes
-                    | BoardInputMode::SelectThread
-                    | BoardInputMode::EditThread
-                    | BoardInputMode::EditScope
-                    | BoardInputMode::FormScopeDropdown
-            )
-        {
-            Some("thread".to_string())
-        } else {
-            None
-        };
-        if let Some(slot) = &thread_slot {
-            meta.push_str(slot);
-        }
-    }
     let meta_scope_x = u16::try_from(render::display_width(&meta)).unwrap_or(u16::MAX);
     if !meta_scope.is_empty() {
         if !meta.is_empty() {
@@ -666,15 +615,9 @@ fn build_task_page_overlay<'a>(
             meta.push_str(&ages);
         }
     }
-    let thread_slot_width = thread_slot
-        .as_deref()
-        .map(render::display_width)
-        .map(|width| u16::try_from(width).unwrap_or(u16::MAX));
-
     let focus = match model.input_mode() {
         BoardInputMode::EditTitle => Some(CaptureField::Title),
         BoardInputMode::EditNotes => Some(CaptureField::Notes),
-        BoardInputMode::SelectThread | BoardInputMode::EditThread => Some(CaptureField::Thread),
         BoardInputMode::EditScope | BoardInputMode::FormScopeDropdown => Some(CaptureField::Scope),
         _ => None,
     };
@@ -696,11 +639,10 @@ fn build_task_page_overlay<'a>(
         step_scroll: notes_scroll,
         step_marked: form.steps.delete_mark.and_then(visible_step_index),
         inline_step_editor,
-        bottom_input,
+        bottom_input: None,
         meta,
         meta_scope_x,
         meta_scope_width,
-        thread_slot_width,
         focus,
         scope_dropdown,
     }
@@ -864,7 +806,7 @@ fn relation_rows(
     rows
 }
 
-/// Idle status-row context for the active lens. Stored paths and thread names reach the
+/// Idle status-row context for the active lens. Stored paths reach the
 /// renderer only through its `present_line` path before they are painted.
 fn status_idle(model: &BoardModel, surface: BoardSurface, has_message: bool) -> String {
     if !has_message {
@@ -887,8 +829,6 @@ fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
             let mut context = format!(" {name}");
             if model.focus_is_archived() {
                 context.push_str(" · archived");
-            } else if model.thread_filter() != &ThreadFilter::All {
-                context.push_str(&format!(" · {}", model.thread_filter().label()));
             }
             context
         }
@@ -896,7 +836,7 @@ fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
 }
 
 /// The persistent navigation row's paint for this model: the board tab, the scope and sort
-/// controls, and the project scope's thread filter.
+/// controls.
 fn nav_paint(model: &BoardModel) -> NavPaint {
     let scope_label = match &model.board_location {
         // AC-41: the read-only focus says so in its control.
@@ -907,18 +847,10 @@ fn nav_paint(model: &BoardModel) -> NavPaint {
         BoardLocation::All => "all".to_string(),
         BoardLocation::Desk => "desk".to_string(),
     };
-    let chip = match &model.board_location {
-        BoardLocation::Project(_) => Some(NavChipPaint {
-            label: model.thread_filter().label(),
-            kind: NavChipKind::ThreadFilter,
-        }),
-        _ => None,
-    };
     NavPaint {
         active: model.nav_tab(),
         scope_label,
         sort_label: model.sort().label(),
-        chip,
     }
 }
 
@@ -1137,7 +1069,7 @@ impl<'a> OverlayPayloads<'a> {
                 input: crate::ui::render::BottomInputSlot {
                     text: title,
                     cursor_col: u16::try_from(cursor_column).unwrap_or(u16::MAX),
-                    placeholder: "title…   !p = desk · !p name = project · !t name = thread",
+                    placeholder: "title…   !p = desk · !p name = project",
                     refusal: None,
                     // Save recovery owns the verb row; ordinary quick-add refusals
                     // use the shared slot's reserved row above the cursor. A wrapped
@@ -1172,15 +1104,8 @@ impl<'a> OverlayPayloads<'a> {
         if let Some(name) = self.launch_card_name.as_deref() {
             return Some(QueueOverlay::LaunchCard { name });
         }
-        if matches!(
-            model.input_mode(),
-            BoardInputMode::ListPicker | BoardInputMode::ParentPicker
-        ) {
-            let title = if model.input_mode() == BoardInputMode::ParentPicker {
-                "parent"
-            } else {
-                "thread filter"
-            };
+        if matches!(model.input_mode(), BoardInputMode::ParentPicker) {
+            let title = "parent";
             return Some(QueueOverlay::ScopeDropdown {
                 options: &self.list_picker_options,
                 selected: self
@@ -1189,10 +1114,7 @@ impl<'a> OverlayPayloads<'a> {
                 tabs: None,
                 title: Some(title),
                 query: self.list_picker_query.as_deref(),
-                // Only the parent chooser wraps; the thread filter keeps one row per option.
-                wrap: (model.input_mode() == BoardInputMode::ParentPicker)
-                    .then(|| model.list_picker_rows())
-                    .flatten(),
+                wrap: model.list_picker_rows(),
             });
         }
         if model.popup() == BoardPopup::ProjectPicker {
@@ -1270,7 +1192,6 @@ fn editing_field(model: &BoardModel) -> Option<&'static str> {
     match model.input_mode() {
         BoardInputMode::EditTitle => Some("title"),
         BoardInputMode::EditNotes => Some("notes"),
-        BoardInputMode::SelectThread | BoardInputMode::EditThread => Some("thread"),
         BoardInputMode::EditScope | BoardInputMode::FormScopeDropdown => Some("scope"),
         BoardInputMode::EditStep => Some("step"),
         _ => None,
@@ -1449,8 +1370,7 @@ fn draw_wide_board(
 
     // The footer's owner decides its rows: a bottom input, the palette query, or the verbs
     // of the focused surface. Column heights follow the footer's (possibly shifted) rule.
-    let footer_needs_input = modal.as_ref().is_some_and(render::has_bottom_input)
-        || (task_focus && model.input_mode() == BoardInputMode::EditThread);
+    let footer_needs_input = modal.as_ref().is_some_and(render::has_bottom_input);
     let footer_geo = render::bottom_input_geometry(frame_geo, footer_needs_input);
     let column_height = footer_geo.rule_row.unwrap_or(area.height);
     let column_geo = |width: u16| tier::resolve_column(width, column_height, area.height, density);

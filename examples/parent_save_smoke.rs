@@ -30,10 +30,10 @@ fn main() {
     let store = TaskStore::new(&root);
     let mut initial = DomainState::new();
     let a = initial
-        .create("A", None, TaskScope::Global, ProvenanceOrigin::Manual, None)
+        .create("A", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create A");
     let b = initial
-        .create("B", None, TaskScope::Global, ProvenanceOrigin::Manual, None)
+        .create("B", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create B");
     store.save(&initial).expect("seed state");
     let mut first = store.load().expect("first snapshot");

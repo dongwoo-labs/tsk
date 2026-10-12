@@ -549,17 +549,15 @@ pub enum QueueOverlay<'a> {
         step_marked: Option<usize>,
         /// The page's in-place add/rename step draft, if one is active.
         inline_step_editor: Option<InlineStepEditor<'a>>,
-        /// The thread field still uses the shared bottom input slot.
+        /// The shared bottom input slot, when a footer field owns one.
         bottom_input: Option<BottomInputSlot<'a>>,
-        /// Footer: thread · scope · created · updated (the task number remains in the header).
+        /// Footer: scope · created · updated (the task number remains in the header).
         meta: String,
         /// Display width before the scope inside `meta`. The number is chrome, not a scope hit.
         meta_scope_x: u16,
         /// Display width of scope inside `meta`, carried separately so mouse geometry never
         /// parses user-controlled project names from rendered text.
         meta_scope_width: u16,
-        /// Display width of the rendered Thread segment, including its separator.
-        thread_slot_width: Option<u16>,
         /// Which field owns the cursor, if any (view mode: none).
         focus: Option<CaptureField>,
         scope_dropdown: Option<FormScopeDropdown<'a>>,
@@ -585,8 +583,7 @@ pub struct QueueFrameModel<'a> {
     pub selection_id: Option<Uuid>,
     /// Session-only bulk selection, independent from the cursor.
     pub marked_ids: BTreeSet<Uuid>,
-    /// Persistent navigation paint: the board tab, the scope and sort controls, and the
-    /// project board's thread filter.
+    /// Persistent navigation paint: the tabs, then the scope and sort controls.
     pub nav: NavPaint,
     /// Which board surface the list paints (section titles).
     pub surface: BoardSurface,
@@ -636,8 +633,7 @@ pub struct QueueFrameModel<'a> {
     pub rows_dim: bool,
 }
 
-/// Persistent navigation row paint: the board tab, the scope and sort controls, and the
-/// project board's thread filter on the right.
+/// Persistent navigation row paint: the tabs, then the scope and sort controls.
 #[derive(Debug, Clone)]
 pub struct NavPaint {
     /// Which tab is active (underlined).
@@ -647,20 +643,6 @@ pub struct NavPaint {
     pub scope_label: String,
     /// The sort control's label: `number` or `project`.
     pub sort_label: &'static str,
-    /// Right-side control of the active scope.
-    pub chip: Option<NavChipPaint>,
-}
-
-/// The right-side scope control: the project board's thread filter.
-#[derive(Debug, Clone)]
-pub struct NavChipPaint {
-    pub label: String,
-    pub kind: NavChipKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NavChipKind {
-    ThreadFilter,
 }
 
 /// Which board surface owns the list (drives section titles).
@@ -688,8 +670,6 @@ pub enum QueueHitTarget {
     ScopeChip,
     /// The sort control (`S`).
     SortChip,
-    /// The active scope's right-side control (thread filter).
-    NavChip,
     /// The visible board search field.
     Search,
     /// The quick-add input row. Clicking it keeps the already-focused line focused.
@@ -717,7 +697,7 @@ pub enum QueueHitTarget {
     /// One painted row of the open project-scope dropdown, indexed exactly as
     /// `BoardModel::project_options()` orders them.
     ProjectOption(usize),
-    /// One painted row of an open searchable list picker (thread filter),
+    /// One painted row of an open searchable list picker (the parent chooser),
     /// indexed in the visible (filtered) order.
     ListPickerOption(usize),
     /// One painted tab of the project picker's tab row.
@@ -734,8 +714,6 @@ pub enum QueueHitTarget {
     FormNotes(usize),
     /// Shared-form scope row. A click opens the pending scope dropdown, never cycles scope.
     FormScope,
-    /// Shared-form thread portion of the task-page footer.
-    FormThread,
     /// One painted steps step row on the open task page, indexed by the step's
     /// absolute position in the task's steps (storage order), whatever window
     /// scroll painted it — the same absolute-index discipline [`Command`] follows.
@@ -1086,7 +1064,6 @@ pub fn draw_task_column(
         ref meta,
         meta_scope_x,
         meta_scope_width,
-        thread_slot_width,
         focus,
         scope_dropdown,
     } = model.overlay
@@ -1114,7 +1091,6 @@ pub fn draw_task_column(
             meta,
             meta_scope_x,
             meta_scope_width,
-            thread_slot_width,
             focus,
             bottom_input_slot(&model.overlay).is_some(),
             true,
@@ -1153,13 +1129,7 @@ fn draw_queue_frame_impl(
 ) -> (QueueHitMap, Option<(usize, usize)>) {
     let surface = clipped_area(surface, frame.area());
     let input_slot_geo = bottom_input_slot_geometry(*geo, &model.overlay);
-    let mut selector_geo = input_slot_geo;
-    if selector_chip_wraps(model, selector_geo.row_width) && selector_geo.viewport_height > 0 {
-        // A wrapped control gets one blank row between it and the tabs.
-        selector_geo.viewport_top = selector_geo.viewport_top.saturating_add(2);
-        selector_geo.viewport_height = selector_geo.viewport_height.saturating_sub(2);
-    }
-    let geo = &selector_geo;
+    let geo = &input_slot_geo;
     let mut hits = QueueHitMap::default();
     let mut painted_list_scroll = None;
     let width = geo.row_width;
@@ -1181,17 +1151,6 @@ fn draw_queue_frame_impl(
             put_line(frame, surface, row, width, line);
             for (target, x, w) in regions {
                 hits.push(target, Rect::new(x, row, w, 1));
-            }
-            if selector_chip_wraps(model, width) {
-                let chip_row = row.saturating_add(2);
-                if chip_row < geo.rule_row.unwrap_or(geo.height) {
-                    let (chip, x, chip_width) = paint_selector_chip(model, width);
-                    put_line(frame, surface, chip_row, width, chip);
-                    hits.push(
-                        QueueHitTarget::NavChip,
-                        Rect::new(x, chip_row, chip_width, 1),
-                    );
-                }
             }
         }
     }
@@ -1537,20 +1496,6 @@ const FORM_NOTES_VERBS: &[VerbEntry<'static>] = &[
         label: "cancel",
     },
 ];
-const FORM_THREAD_VERBS: &[VerbEntry<'static>] = &[
-    VerbEntry {
-        key: "shift+enter",
-        label: "save",
-    },
-    VerbEntry {
-        key: "tab",
-        label: "next",
-    },
-    VerbEntry {
-        key: "esc",
-        label: "cancel",
-    },
-];
 const FORM_SCOPE_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "enter",
@@ -1590,7 +1535,6 @@ pub(crate) fn form_verb_items(
     match focus {
         CaptureField::Title => FORM_TITLE_VERBS,
         CaptureField::Notes => FORM_NOTES_VERBS,
-        CaptureField::Thread => FORM_THREAD_VERBS,
         CaptureField::Scope => FORM_SCOPE_VERBS,
     }
 }
@@ -1699,7 +1643,6 @@ fn paint_overlay(
             ref meta,
             meta_scope_x,
             meta_scope_width,
-            thread_slot_width,
             focus,
             scope_dropdown,
         } => {
@@ -1726,7 +1669,6 @@ fn paint_overlay(
                 meta,
                 *meta_scope_x,
                 *meta_scope_width,
-                *thread_slot_width,
                 *focus,
                 bottom_input_slot(overlay).is_some(),
                 false,
@@ -2801,7 +2743,6 @@ fn paint_task_page(
     meta: &str,
     meta_scope_x: u16,
     meta_scope_width: u16,
-    thread_slot_width: Option<u16>,
     focus: Option<CaptureField>,
     footer_input_open: bool,
     column: bool,
@@ -3218,7 +3159,7 @@ fn paint_task_page(
         );
     }
 
-    // Meta footer: thread · scope · created · updated. Inline step drafts leave this footer
+    // Meta footer: scope · created · updated. Inline step drafts leave this footer
     // visible and do not claim its input slot.
     if let Some(y) = lay.meta_y {
         put_line(
@@ -3229,10 +3170,8 @@ fn paint_task_page(
             paint_bounded_line(&format!("  {meta}"), width, style_dim()),
         );
 
-        let thread_x = 2u16;
         let scope_slot: String = meta.chars().skip(usize::from(meta_scope_x)).collect();
-        // The separator stays footer chrome. Scope begins after it, while a leading Thread
-        // slot starts at the footer inset and has no separator to exclude.
+        // The separator stays footer chrome. Scope begins after it.
         let scope_prefix = u16::from(scope_slot.starts_with(" · ")) * 3;
         let scope_x = 2u16
             .saturating_add(meta_scope_x)
@@ -3240,9 +3179,6 @@ fn paint_task_page(
             .min(width);
         let selected = match focus {
             Some(CaptureField::Scope) => Some((scope_x, meta_scope_width)),
-            Some(CaptureField::Thread) => {
-                thread_slot_width.map(|slot_width| (thread_x, slot_width))
-            }
             _ => None,
         };
         if let Some((selected_x, selected_width)) = selected {
@@ -3268,13 +3204,6 @@ fn paint_task_page(
                 1,
             ),
         );
-        if let Some(thread_slot_width) = thread_slot_width.filter(|_| thread_x < width) {
-            let thread_width = thread_slot_width.min(width.saturating_sub(thread_x));
-            hits.push(
-                QueueHitTarget::FormThread,
-                Rect::new(thread_x, y, thread_width, 1),
-            );
-        }
     }
 }
 
@@ -4053,9 +3982,6 @@ fn build_list_rows(
     (out, selected_idx)
 }
 
-/// Paint one scoped ON DECK thread block label. Headers are presentation-only: their
-/// associated ids stay in the task-only queue stream, so neither keyboard selection nor
-/// mouse hit testing can land on this row.
 /// A collapsible group header: `{chevron} {word} · {n}` with no rule. Selected,
 /// the word is bold and the rest dim; unselected, everything is dim. Never reverse.
 fn paint_group_header(
@@ -4350,22 +4276,6 @@ fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTa
     ]
 }
 
-/// Whether the destination control needs a dedicated row to keep tabs and its selected
-/// value readable without overlap, especially at the 40-column operating floor.
-fn selector_chip_wraps(model: &QueueFrameModel<'_>, width: u16) -> bool {
-    let Some(chip) = model.nav.chip.as_ref() else {
-        return false;
-    };
-    let tabs = selector_tab_texts(model, width as usize);
-    let tabs_width = tabs
-        .iter()
-        .map(|(_, tab)| display_width(tab))
-        .sum::<usize>()
-        + 6;
-    let chip_width = display_width(&format!(" {} ▾ ", chip.label));
-    tabs_width.saturating_add(chip_width) > width as usize
-}
-
 /// Active tab labels keep a cell of padding for hit targets; underline only the word,
 /// never the padding or the slot-2 chevron.
 fn push_selector_tab_spans(spans: &mut Vec<Span<'static>>, text: &str, active: bool) {
@@ -4433,35 +4343,7 @@ fn paint_selector_row(
         left_width += w;
     }
 
-    // The active scope's control rides the row's right side when it fits. Narrow
-    // frames paint it on the dedicated row added by `draw_queue_frame_impl`.
-    if !selector_chip_wraps(model, geo.row_width) {
-        if let Some(chip) = model.nav.chip.as_ref() {
-            let chip_text = present_line(&format!(" {} \u{25be} ", chip.label), width);
-            let chip_w = display_width(&chip_text);
-            let spacer_w = width.saturating_sub(left_width).saturating_sub(chip_w);
-            let chip_x = (left_width + spacer_w) as u16;
-            spans.push(Span::styled(" ".repeat(spacer_w), style_plain()));
-            spans.push(Span::styled(chip_text, style_dim()));
-            hits.push((QueueHitTarget::NavChip, chip_x, chip_w.max(1) as u16));
-        }
-    }
-
     (bound_line(Line::from(spans), width), hits)
-}
-
-fn paint_selector_chip(model: &QueueFrameModel<'_>, width: u16) -> (Line<'static>, u16, u16) {
-    let Some(chip) = model.nav.chip.as_ref() else {
-        return (Line::from(""), 0, 0);
-    };
-    let chip_text = present_line(&format!(" {} \u{25be} ", chip.label), width as usize);
-    let chip_width = display_width(&chip_text).min(width as usize);
-    let x = (width as usize).saturating_sub(chip_width) as u16;
-    let line = Line::from(vec![
-        Span::styled(" ".repeat(x as usize), style_plain()),
-        Span::styled(chip_text, style_dim()),
-    ]);
-    (line, x, chip_width.max(1) as u16)
 }
 
 /// Verb bar: ` key label · key label …`, trimmed to `budget` entries.
@@ -4669,7 +4551,6 @@ mod tests {
                 active: NavTab::Board,
                 scope_label: scope.to_string(),
                 sort_label: "number",
-                chip: None,
             },
             surface: BoardSurface::All,
             project_groups: false,

@@ -117,11 +117,12 @@ pub fn questions_help() -> CliOutput {
         usage: vec![
             "tsk ask --file <question.json> --state-dir <Agent-dir>".into(),
             "tsk answer <Q-number|UUID> --file <answer.json> --state-dir <Agent-dir>".into(),
+            "tsk route <Q-number|UUID> --file <route.json> --state-dir <Agent-dir>".into(),
             "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
         ],
         purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval.".into(),
         groups: vec![group("Options", &[
-            ("--file <path>", "Full JSON question or answer input; no text truncation"),
+            ("--file <path>", "Full JSON question, answer, or route input; no text truncation"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
             ("--task <T-number|UUID>", "Filter question readback by Task"),
             ("--json", "Full JSON readback (also the default for questions)"),
@@ -148,6 +149,7 @@ pub fn top_level_help() -> String {
         "Agent questions (explicit non-personal state directory)\n",
         "  ask        save a full-text question from JSON\n",
         "  answer     append an answer or correction with expected revision\n",
+        "  route      set who acts on a question (user or lead) with expected revision\n",
         "  questions  read full questions and answer history as JSON\n\n",
         "Board\n",
         "  archive    keep a task off the working views\n",
@@ -182,21 +184,20 @@ pub fn help_usage(reason: &str) -> CliOutput {
 pub fn add_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--parent <task>] [--json] [--state-dir <dir>]".into(),
+            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--json] [--state-dir <dir>]".into(),
             "tsk add [--file <path|->] [--state-dir <dir>]".into(),
         ],
         purpose: "Create one task or apply a JSON plan.".into(),
         groups: vec![
             group("Scope", &[("-p, --project <project>", "create in a project"), ("--desk", "create on your desk")]),
             group("Output", &[("--json", "print one result object for a flag add")]),
-            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--thread <name>", "optional normalized thread"), ("--parent <task>", "optional direct parent task number or UUID"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
+            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--parent <task>", "optional direct parent task number or UUID"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
         ],
-        examples: vec!["tsk add -t \"Draft release notes\"".into(), "tsk add -t \"Buy milk\" --desk".into(), "tsk add -t \"Fix widget\" --project widget --thread release-2026".into(), "tsk add --file plan.json".into(), "cat plan.json | tsk add".into()],
+        examples: vec!["tsk add -t \"Draft release notes\"".into(), "tsk add -t \"Buy milk\" --desk".into(), "tsk add -t \"Fix widget\" --project widget".into(), "tsk add --file plan.json".into(), "cat plan.json | tsk add".into()],
         refusals: vec![
             "empty-title".into(),
             "invalid-title".into(),
             "invalid-parent".into(),
-            "invalid-thread (JSON plan)".into(),
             "invalid-item (JSON plan)".into(),
             "unknown-project".into(),
             "project-archived".into(),
@@ -207,11 +208,11 @@ pub fn add_help() -> CliOutput {
 
 pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]".into()],
+        usage: vec!["tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]".into()],
         purpose: "Inspect tasks in the selected scope, or one task anywhere in the live store.".into(),
         groups: vec![
             group("Scope", &[("-p, --project <project>", "select a project"), ("--desk", "select your desk"), ("--all", "select every scope")]),
-            group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--thread <name>", "filter within the selected scope"), ("--todo, --doing", "show todo or doing tasks"), ("--done, --archived", "show done or archived tasks"), ("--deleted", "show soft-deleted and trashed tasks")]),
+            group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--todo, --doing", "show todo or doing tasks"), ("--done, --archived", "show done or archived tasks"), ("--deleted", "show soft-deleted and trashed tasks")]),
             group("Output", &[("--json", "print machine-readable task rows")]),
             group("Values", &[("--state-dir <dir>", "use another board store"), ("--project=<scope>", "use equals syntax for a dash-leading project or state-dir value")]),
         ],
@@ -279,7 +280,7 @@ pub fn usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--parent <task>] [--json] [--state-dir <dir>]\n",
+            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--json] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,
@@ -316,7 +317,6 @@ fn list_json(result: &ListResult) -> String {
             title: &'a str,
             notes: &'a Option<String>,
             steps: &'a [StepLine],
-            thread: &'a Option<String>,
             parent_task_id: Option<uuid::Uuid>,
             parent: &'a Option<crate::cli::list::ParentRow>,
             children_done: usize,
@@ -331,7 +331,6 @@ fn list_json(result: &ListResult) -> String {
             title: &row.title,
             notes: &direct.notes,
             steps: &direct.steps,
-            thread: &row.thread,
             parent_task_id: row.parent_task_id,
             parent: &direct.parent,
             children_done: row.children_done,
@@ -382,19 +381,12 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
                 output_width,
             );
         } else {
-            append_rows(
-                &mut output,
-                &rows,
-                " ",
-                output_width,
-                result.direct.is_none(),
-            );
+            append_rows(&mut output, &rows, " ", output_width);
             if let Some(direct) = result.direct.as_ref() {
                 append_direct_details(
                     &mut output,
                     direct.notes.as_deref(),
                     &direct.steps,
-                    rows[0].thread.as_deref(),
                     " ",
                     output_width,
                 );
@@ -468,25 +460,13 @@ fn append_scope_groups(
                 .expect("label for displayed scope"),
         );
         append_wrapped(output, "  ", "  ", &label, output_width);
-        append_rows(output, &rows, "    ", output_width, true);
+        append_rows(output, &rows, "    ", output_width);
     }
 }
 
-fn append_rows(
-    output: &mut String,
-    rows: &[&ListRow],
-    indent: &str,
-    output_width: usize,
-    include_thread: bool,
-) {
+fn append_rows(output: &mut String, rows: &[&ListRow], indent: &str, output_width: usize) {
     for row in rows {
         let mut content = terminal_text(&row.title);
-        if include_thread {
-            if let Some(thread) = row.thread.as_deref() {
-                content.push_str(" #");
-                content.push_str(&terminal_text(thread));
-            }
-        }
         if let Some(mark) = row.archived {
             content.push_str(" · ");
             content.push_str(mark);
@@ -504,12 +484,11 @@ fn append_rows(
 }
 
 /// Direct detail is an ordered set of present blocks. Blank rows separate only
-/// adjacent blocks that exist: notes, steps, then thread.
+/// adjacent blocks that exist: notes, then steps.
 fn append_direct_details(
     output: &mut String,
     notes: Option<&str>,
     steps: &[StepLine],
-    thread: Option<&str>,
     indent: &str,
     output_width: usize,
 ) {
@@ -524,20 +503,6 @@ fn append_direct_details(
             output.push('\n');
         }
         append_step_lines(output, steps, indent, output_width);
-        has_prior = true;
-    }
-    if let Some(thread) = thread {
-        if has_prior {
-            output.push('\n');
-        }
-        let thread = terminal_text(&format!("#{thread}"));
-        append_wrapped(
-            output,
-            &detail_prefix,
-            &detail_prefix,
-            &thread,
-            output_width,
-        );
     }
 }
 
@@ -1053,7 +1018,7 @@ pub fn edit_help() -> CliOutput {
         usage: vec![
             "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--state-dir <dir>]".into(),
         ],
-        purpose: "Update a task's title, notes, or direct parent without changing its scope or thread.".into(),
+        purpose: "Update a task's title, notes, or direct parent without changing its scope.".into(),
         groups: vec![group(
             "Values",
             &[
@@ -1323,7 +1288,7 @@ pub fn archive_rejected(error: ArchiveCliError, verb: &str) -> CliOutput {
 
 pub fn list_usage(reason: &str, terminal_width: Option<usize>) -> CliOutput {
     let stderr = format!(
-        "tsk list: {}\nusage: tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]\n",
+        "tsk list: {}\nusage: tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]\n",
         human_reason(reason)
     );
     CliOutput {

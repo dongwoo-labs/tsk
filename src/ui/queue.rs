@@ -68,41 +68,6 @@ pub const ARCHIVED_HEADER_ROW_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_0
 /// Chrome, not a task: `BoardModel::selected_id()` hides it from verbs.
 pub const INBOX_HEADER_ROW_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0002);
 
-/// Session thread filter for the project board. It narrows every status section,
-/// done drawer included; `All` is the unfiltered board.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum ThreadFilter {
-    #[default]
-    All,
-    /// Only tasks whose normalized thread matches this name (ASCII-case-insensitive).
-    Named(String),
-    /// Only tasks with no thread at all.
-    Without,
-}
-
-impl ThreadFilter {
-    /// Whether `task` passes this filter.
-    fn admits(&self, task: &Task) -> bool {
-        match self {
-            ThreadFilter::All => true,
-            ThreadFilter::Named(name) => task
-                .thread
-                .as_deref()
-                .is_some_and(|thread| thread.eq_ignore_ascii_case(name)),
-            ThreadFilter::Without => task.thread.is_none(),
-        }
-    }
-
-    /// The label the board's thread control paints for this filter.
-    pub fn label(&self) -> String {
-        match self {
-            ThreadFilter::All => "all".to_string(),
-            ThreadFilter::Named(name) => format!("#{name}"),
-            ThreadFilter::Without => "without a thread".to_string(),
-        }
-    }
-}
-
 /// Normalized content-search terms. Every term must match, but each may match a
 /// different task field.
 pub fn search_words(query: &str) -> Vec<String> {
@@ -110,7 +75,7 @@ pub fn search_words(query: &str) -> Vec<String> {
 }
 
 /// Whether a task matches every content-search term in its title, notes, steps,
-/// thread, or painted task number. Search is Unicode-case-insensitive substring.
+/// or painted task number. Search is Unicode-case-insensitive substring.
 pub fn task_matches(task: &Task, words: &[String]) -> bool {
     if words.is_empty() {
         return true;
@@ -123,10 +88,6 @@ pub fn task_matches(task: &Task, words: &[String]) -> bool {
     for step in &task.steps {
         searchable.push('\n');
         searchable.push_str(&step.text.to_lowercase());
-    }
-    if let Some(thread) = task.thread.as_deref() {
-        searchable.push('\n');
-        searchable.push_str(&thread.to_lowercase());
     }
     if let Some(identifier) = task.board_identifier() {
         searchable.push('\n');
@@ -183,31 +144,20 @@ pub fn query_lens(tasks: &[Task], lens: BoardLens<'_>, drawer_open: bool) -> Que
         &BTreeSet::new(),
         lens,
         drawer_open,
-        &ThreadFilter::All,
         BoardSort::Number,
     )
 }
 
 /// Derive queue sections with an archived-project set. A task is hidden when it is
 /// soft-deleted, archived, or belongs to an archived project: no working lens paints it.
-/// `thread_filter` narrows the project board across every status, drawer included.
 pub fn query_board(
     tasks: &[Task],
     archived_projects: &BTreeSet<String>,
     lens: BoardLens<'_>,
     drawer_open: bool,
-    thread_filter: &ThreadFilter,
     sort: BoardSort,
 ) -> QueueView {
-    query_board_search(
-        tasks,
-        archived_projects,
-        lens,
-        drawer_open,
-        thread_filter,
-        sort,
-        "",
-    )
+    query_board_search(tasks, archived_projects, lens, drawer_open, sort, "")
 }
 
 /// Derive queue sections with the same lens rules as [`query_board`], then narrow
@@ -217,7 +167,6 @@ pub fn query_board_search(
     archived_projects: &BTreeSet<String>,
     lens: BoardLens<'_>,
     drawer_open: bool,
-    thread_filter: &ThreadFilter,
     sort: BoardSort,
     query: &str,
 ) -> QueueView {
@@ -231,7 +180,6 @@ pub fn query_board_search(
             archived_projects,
             path,
             drawer_open,
-            thread_filter,
             &identities,
             &words,
         ),
@@ -242,7 +190,6 @@ pub fn query_board_search(
             &BTreeSet::new(),
             path,
             drawer_open,
-            &ThreadFilter::All,
             &identities,
             &words,
         ),
@@ -475,7 +422,6 @@ fn query_project_focus(
     archived_projects: &BTreeSet<String>,
     path: &Path,
     drawer_open: bool,
-    thread_filter: &ThreadFilter,
     identities: &PathIdentityCache,
     search: &[String],
 ) -> QueueView {
@@ -488,12 +434,11 @@ fn query_project_focus(
                     || (!drawer_open && task.status == HumanStatus::Done))
         })
         .collect();
-    let admits = |task: &Task| thread_filter.admits(task);
 
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Doing && admits(t))
+        .filter(|t| t.status == HumanStatus::Doing)
         .collect();
     sort_by_status_change_desc(&mut motion);
 
@@ -503,7 +448,7 @@ fn query_project_focus(
     let pending: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| !matches!(t.status, HumanStatus::Doing | HumanStatus::Done) && admits(t))
+        .filter(|t| !matches!(t.status, HumanStatus::Doing | HumanStatus::Done))
         .collect();
     let (mut need, ready) = split_needs_you(&pending);
     sort_by_status_change_desc(&mut need);
@@ -527,21 +472,19 @@ fn query_project_focus(
     }
     push_deck(&mut sections, Some(label.clone()), &ready, &need);
 
-    let done_pool: Vec<&Task> = live.iter().copied().filter(|t| admits(t)).collect();
-    append_done(&mut sections, &done_pool, drawer_open);
+    append_done(&mut sections, &live, drawer_open);
     let in_scope: Vec<&Task> = tasks
         .iter()
         .filter(|task| task_matches_scope(task, path, identities))
         .filter(|task| !task_owned_by_archived_project(task, archived_projects, identities))
         .filter(|task| {
             let belongs_to_closed_drawer = task.status == HumanStatus::Done || task.archived;
-            admits(task)
-                && (task_matches(task, search) || (!drawer_open && belongs_to_closed_drawer))
+            task_matches(task, search) || (!drawer_open && belongs_to_closed_drawer)
         })
         .collect();
     append_archived(&mut sections, &in_scope, drawer_open);
 
-    // An empty board (or a filter that hides everything) keeps one hinted section, so
+    // An empty board (or a search that hides everything) keeps one hinted section, so
     // the project board always answers with an add affordance instead of a bare pane.
     if !sections.iter().any(|section| {
         !matches!(
@@ -558,12 +501,9 @@ fn query_project_focus(
         });
     }
 
-    // Status counts come from the filtered set, so the chrome never advertises work
-    // the active thread filter is hiding.
-    let counted: Vec<&Task> = live.iter().copied().filter(|t| admits(t)).collect();
     QueueView {
         sections,
-        counts: status_counts(&counted),
+        counts: status_counts(&live),
     }
 }
 
@@ -767,17 +707,6 @@ mod tests {
         soft_deleted: bool,
         updated_secs: u64,
     ) -> Task {
-        task_with_thread(id, status, scope, soft_deleted, updated_secs, None)
-    }
-
-    fn task_with_thread(
-        id: u128,
-        status: HumanStatus,
-        scope: TaskScope,
-        soft_deleted: bool,
-        updated_secs: u64,
-        thread: Option<&str>,
-    ) -> Task {
         let at = SystemTime::UNIX_EPOCH + Duration::from_secs(updated_secs);
         Task {
             id: Uuid::from_u128(id),
@@ -788,7 +717,6 @@ mod tests {
             merge_base_revision: None,
             title: format!("task-{id}"),
             notes: None,
-            thread: thread.map(str::to_string),
             status,
             scope,
             provenance: ProvenanceOrigin::Manual,
@@ -854,14 +782,7 @@ mod tests {
 
     #[test]
     fn task_search_requires_every_word_across_content_fields_and_number() {
-        let mut candidate = task_with_thread(
-            52,
-            HumanStatus::Doing,
-            project("/repos/app"),
-            false,
-            10,
-            Some("auth"),
-        );
+        let mut candidate = task(52, HumanStatus::Doing, project("/repos/app"), false, 10);
         candidate.title = "Ship Login flow".into();
         candidate.notes = Some("Handle OAuth callback".into());
         candidate.steps = vec![Step {
@@ -871,52 +792,9 @@ mod tests {
         }];
         candidate.number = Some(52);
 
-        let words = search_words("LOGIN callback token AUTH t52");
+        let words = search_words("LOGIN callback token t52");
         assert!(task_matches(&candidate, &words));
         assert!(!task_matches(&candidate, &search_words("login billing")));
-    }
-
-    #[test]
-    fn task_search_combines_with_project_and_thread_lenses() {
-        let mut project_auth = task_with_thread(
-            1,
-            HumanStatus::Doing,
-            project("/repos/app"),
-            false,
-            30,
-            Some("auth"),
-        );
-        project_auth.title = "login callback".into();
-        let mut project_api = task_with_thread(
-            2,
-            HumanStatus::Doing,
-            project("/repos/app"),
-            false,
-            20,
-            Some("api"),
-        );
-        project_api.title = "login endpoint".into();
-        let mut other_auth = task_with_thread(
-            3,
-            HumanStatus::Doing,
-            project("/repos/other"),
-            false,
-            10,
-            Some("auth"),
-        );
-        other_auth.title = "login session".into();
-        let tasks = vec![project_auth, project_api, other_auth];
-
-        let project_view = query_board_search(
-            &tasks,
-            &BTreeSet::new(),
-            BoardLens::Project(Path::new("/repos/app")),
-            false,
-            &ThreadFilter::Named("auth".into()),
-            BoardSort::Number,
-            "login",
-        );
-        assert_eq!(project_view.sections[0].task_ids, vec![Uuid::from_u128(1)]);
     }
 
     #[test]
@@ -937,7 +815,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Desk,
             false,
-            &ThreadFilter::All,
             BoardSort::Number,
             "login",
         );
@@ -957,7 +834,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Desk,
             true,
-            &ThreadFilter::All,
             BoardSort::Number,
             "login",
         );
@@ -997,14 +873,7 @@ mod tests {
 
         // Desk drawer: every scope's archived tasks, newest status change first. A task whose
         // project is archived stays hidden (task 3).
-        let home = query_board(
-            &tasks,
-            &gone,
-            BoardLens::Desk,
-            true,
-            &ThreadFilter::All,
-            BoardSort::Number,
-        );
+        let home = query_board(&tasks, &gone, BoardLens::Desk, true, BoardSort::Number);
         let group = home
             .sections
             .iter()
@@ -1023,7 +892,6 @@ mod tests {
             &gone,
             BoardLens::Project(Path::new("/repos/a")),
             true,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         let group = focus
@@ -1035,79 +903,25 @@ mod tests {
     }
 
     #[test]
-    fn an_archived_only_thread_paints_no_filter_match_anywhere() {
-        let mut tasks = vec![task_with_thread(
-            1,
-            HumanStatus::Todo,
-            project("/repos/a"),
-            false,
-            30,
-            Some("release"),
-        )];
-        tasks[0].archived = true;
-
-        // Project board: the thread's only open task is archived, so the filter
-        // offers no match and the deck shows the empty hint instead.
-        let deck = query_board(
-            &tasks,
-            &BTreeSet::new(),
-            BoardLens::Project(Path::new("/repos/a")),
-            false,
-            &ThreadFilter::Named("release".to_string()),
-            BoardSort::Number,
-        );
-        let on_deck = deck
-            .sections
-            .iter()
-            .find(|s| s.kind == SectionKind::OnDeck)
-            .expect("project board on deck");
-        assert!(
-            on_deck.empty_hint,
-            "an archived-only thread paints the hint"
-        );
-    }
-
-    #[test]
     fn archived_project_hides_its_tasks_from_every_working_lens() {
         let mut archived = BTreeSet::new();
         archived.insert("/repos/gone".to_string());
         let tasks = vec![
             task(1, HumanStatus::Doing, project("/repos/gone"), false, 50),
             task(2, HumanStatus::Todo, project("/repos/gone"), false, 40),
-            task_with_thread(
-                3,
-                HumanStatus::Todo,
-                project("/repos/gone"),
-                false,
-                30,
-                Some("release"),
-            ),
+            task(3, HumanStatus::Todo, project("/repos/gone"), false, 30),
             task(4, HumanStatus::Doing, TaskScope::Global, false, 20),
             task(5, HumanStatus::Todo, project("/repos/here"), false, 10),
         ];
 
         // Desk IN MOTION: the archived project's started task is gone, the global one stays.
-        let desk = query_board(
-            &tasks,
-            &archived,
-            BoardLens::Desk,
-            false,
-            &ThreadFilter::All,
-            BoardSort::Number,
-        );
+        let desk = query_board(&tasks, &archived, BoardLens::Desk, false, BoardSort::Number);
         let motion = section_ids(&desk, SectionKind::InMotion);
         assert!(!motion.contains(&Uuid::from_u128(1)));
         assert!(motion.contains(&Uuid::from_u128(4)));
 
         // Every scope: the archived project contributes nothing, the live project stays.
-        let all = query_board(
-            &tasks,
-            &archived,
-            BoardLens::All,
-            false,
-            &ThreadFilter::All,
-            BoardSort::Number,
-        );
+        let all = query_board(&tasks, &archived, BoardLens::All, false, BoardSort::Number);
         let listed = all_listed_ids(&all);
         assert!(!listed.contains(&Uuid::from_u128(1)));
         assert!(!listed.contains(&Uuid::from_u128(3)));
@@ -1209,14 +1023,7 @@ mod tests {
         ];
         let order = |sort| {
             section_ids(
-                &query_board(
-                    &tasks,
-                    &BTreeSet::new(),
-                    BoardLens::All,
-                    false,
-                    &ThreadFilter::All,
-                    sort,
-                ),
+                &query_board(&tasks, &BTreeSet::new(), BoardLens::All, false, sort),
                 SectionKind::InMotion,
             )
         };
@@ -1291,14 +1098,7 @@ mod tests {
         let mut gone = BTreeSet::new();
         gone.insert("/repos/gone".to_string());
 
-        let view = query_board(
-            &tasks,
-            &gone,
-            BoardLens::Desk,
-            false,
-            &ThreadFilter::All,
-            BoardSort::Number,
-        );
+        let view = query_board(&tasks, &gone, BoardLens::Desk, false, BoardSort::Number);
         assert_eq!(
             section_ids(&view, SectionKind::InMotion),
             vec![
@@ -1332,7 +1132,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             false,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         // Board order is the task number, falling back to creation order for these
@@ -1362,7 +1161,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             false,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         assert!(project
@@ -1380,7 +1178,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             false,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         let deck = view
@@ -1390,63 +1187,6 @@ mod tests {
             .expect("empty project keeps the deck section");
         assert!(deck.empty_hint);
         assert!(deck.task_ids.is_empty());
-    }
-
-    #[test]
-    fn thread_filter_narrows_every_project_status_and_the_drawer() {
-        let tasks = vec![
-            task_with_thread(1, HumanStatus::Doing, project("/a"), false, 50, Some("nav")),
-            task_with_thread(2, HumanStatus::Doing, project("/a"), false, 40, Some("nav")),
-            task_with_thread(3, HumanStatus::Todo, project("/a"), false, 30, Some("nav")),
-            task_with_thread(4, HumanStatus::Done, project("/a"), false, 20, Some("nav")),
-            task_with_thread(
-                5,
-                HumanStatus::Doing,
-                project("/a"),
-                false,
-                60,
-                Some("docs"),
-            ),
-            task_with_thread(6, HumanStatus::Todo, project("/a"), false, 70, None),
-        ];
-        let lens = BoardLens::Project(Path::new("/a"));
-
-        let nav = query_board(
-            &tasks,
-            &BTreeSet::new(),
-            lens,
-            true,
-            &ThreadFilter::Named("nav".to_string()),
-            BoardSort::Number,
-        );
-        assert_eq!(
-            section_ids(&nav, SectionKind::InMotion),
-            vec![Uuid::from_u128(2), Uuid::from_u128(1)]
-        );
-        assert_eq!(
-            section_ids(&nav, SectionKind::OnDeck),
-            vec![Uuid::from_u128(3)]
-        );
-        assert_eq!(
-            section_ids(&nav, SectionKind::Done),
-            vec![Uuid::from_u128(4)]
-        );
-        assert_eq!(nav.counts.need, 0, "status counts reflect the filtered set");
-
-        let without = query_board(
-            &tasks,
-            &BTreeSet::new(),
-            lens,
-            false,
-            &ThreadFilter::Without,
-            BoardSort::Number,
-        );
-        assert_eq!(
-            section_ids(&without, SectionKind::OnDeck),
-            vec![Uuid::from_u128(6)],
-            "unthreaded tasks are the Without-a-thread filter's matches"
-        );
-        assert!(section_ids(&without, SectionKind::InMotion).is_empty());
     }
 
     #[cfg(unix)]
@@ -1486,7 +1226,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new(&invoked)),
             false,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         let matched = section_ids(&view, SectionKind::OnDeck) == vec![Uuid::from_u128(1)];
@@ -1534,7 +1273,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             true,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
 
@@ -1560,7 +1298,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             true,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         assert_eq!(
@@ -1579,8 +1316,7 @@ mod tests {
         // With an archived task present, the header row is always selectable so Enter
         // can toggle the group; the collapsed group paints only its header.
         let mut tasks = tasks.clone();
-        let mut archived =
-            task_with_thread(3, HumanStatus::Todo, project("/repos/a"), false, 50, None);
+        let mut archived = task(3, HumanStatus::Todo, project("/repos/a"), false, 50);
         archived.archived = true;
         tasks.push(archived);
         let view = query_board(
@@ -1588,7 +1324,6 @@ mod tests {
             &BTreeSet::new(),
             BoardLens::Project(Path::new("/repos/a")),
             true,
-            &ThreadFilter::All,
             BoardSort::Number,
         );
         let expanded = visible_task_ids(&view, false, false);

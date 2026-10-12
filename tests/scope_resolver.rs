@@ -24,7 +24,6 @@ fn create_project(domain: &mut DomainState, path: &str) {
             None,
             TaskScope::Project { path: path.into() },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create fixture project");
 }

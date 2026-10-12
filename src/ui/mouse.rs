@@ -53,7 +53,6 @@ pub struct CaptureLayout {
     pub subtitle_area: Rect,
     pub title_area: Rect,
     pub notes_area: Rect,
-    pub thread_area: Rect,
     pub scope_area: Rect,
     pub scope_chips: Vec<Chip<CaptureScopeChoice>>,
     pub this_project_available: bool,
@@ -188,13 +187,12 @@ pub fn capture_layout_state(
         1,
         notes_height,
         1,
-        1,
         u16::from(show_path),
         1,
         1,
         inner
             .height
-            .saturating_sub(7 + notes_height + u16::from(show_path)),
+            .saturating_sub(6 + notes_height + u16::from(show_path)),
         1,
     ];
     let mut y = inner.y;
@@ -204,10 +202,10 @@ pub fn capture_layout_state(
         areas.push(Rect::new(inner.x, y, inner.width, height));
         y = y.saturating_add(height);
     }
-    let scope_row = areas[4];
+    let scope_row = areas[3];
     let scope_chips = place_scope_chips(scope_row);
-    let scope_path_area = if show_path { areas[5] } else { Rect::default() };
-    let buttons = areas[7];
+    let scope_path_area = if show_path { areas[4] } else { Rect::default() };
+    let buttons = areas[6];
     let save_label = if save_recovery { " Retry " } else { " Save " };
     let cancel_label = " Cancel ";
     let save_width = save_label.chars().count() as u16;
@@ -236,12 +234,11 @@ pub fn capture_layout_state(
         subtitle_area: areas[0],
         title_area: areas[1],
         notes_area: areas[2],
-        thread_area: areas[3],
         scope_area: scope_row,
         scope_chips,
         this_project_available,
         scope_path_area,
-        message_area: areas[6],
+        message_area: areas[5],
         save_chip: Chip {
             rect: save_rect,
             label: save_label,
@@ -252,12 +249,12 @@ pub fn capture_layout_state(
             label: cancel_label,
             value: (),
         },
-        help_area: areas[9],
+        help_area: areas[8],
     }
 }
 
 pub const CAPTURE_NOTES_MAX_ROWS: u16 = 3;
-const CAPTURE_FIXED_ROWS: u16 = 7;
+const CAPTURE_FIXED_ROWS: u16 = 6;
 
 fn capture_notes_rows(inner_height: u16, show_path: bool) -> u16 {
     inner_height
@@ -460,7 +457,6 @@ pub fn map_responsive_board_mouse(
             model.input_mode(),
             BoardInputMode::EditTitle
                 | BoardInputMode::EditNotes
-                | BoardInputMode::EditThread
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
         );
@@ -594,8 +590,6 @@ pub fn map_scrollbar_mouse(
             | BoardInputMode::EditTitle
             | BoardInputMode::EditNotes
             | BoardInputMode::EditScope
-            | BoardInputMode::EditThread
-            | BoardInputMode::SelectThread
     ) {
         *dragging = false;
         return ScrollbarMouse::Miss;
@@ -633,8 +627,6 @@ fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardI
         | BoardInputMode::EditTitle
         | BoardInputMode::EditNotes
         | BoardInputMode::EditScope
-        | BoardInputMode::EditThread
-        | BoardInputMode::SelectThread
         | BoardInputMode::EditStep => match kind {
             MouseEventKind::ScrollUp => Some(BoardIntent::PageWheelScrollUp),
             MouseEventKind::ScrollDown => Some(BoardIntent::PageWheelScrollDown),
@@ -692,8 +684,6 @@ pub fn map_board_mouse(
             BoardInputMode::EditTitle
                 | BoardInputMode::EditNotes
                 | BoardInputMode::EditScope
-                | BoardInputMode::EditThread
-                | BoardInputMode::SelectThread
                 | BoardInputMode::EditStep
         )
     {
@@ -773,9 +763,6 @@ pub fn map_board_mouse(
                     Some(BoardIntent::FocusFormField(CaptureField::Notes))
                 }
                 Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
-                Some(QueueHitTarget::FormThread) => {
-                    Some(BoardIntent::FocusFormField(CaptureField::Thread))
-                }
                 Some(QueueHitTarget::Step(index)) if model.task_editing() => {
                     Some(BoardIntent::SelectStep(index))
                 }
@@ -784,22 +771,6 @@ pub fn map_board_mouse(
                 _ => None,
             }
         }
-        BoardInputMode::SelectThread | BoardInputMode::EditThread => match hit_at(hits, pos) {
-            Some(QueueHitTarget::FormThread) => Some(BoardIntent::ToggleThreadEditing),
-            Some(QueueHitTarget::FormTitle) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Title))
-            }
-            Some(QueueHitTarget::FormNotes(_)) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Notes))
-            }
-            Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
-            Some(QueueHitTarget::Step(index)) if model.task_editing() => {
-                Some(BoardIntent::SelectStep(index))
-            }
-            Some(QueueHitTarget::StepAdd) => Some(BoardIntent::BeginAppendStep),
-            Some(QueueHitTarget::Verb(index)) => form_verb_intent(model, index),
-            _ => None,
-        },
         BoardInputMode::TaskPage | BoardInputMode::CapturePage => match hit_at(hits, pos) {
             Some(QueueHitTarget::TaskNumber(id)) => Some(BoardIntent::CopyTaskNumber(id)),
             Some(QueueHitTarget::FormTitle) if model.task_editing() => {
@@ -807,9 +778,6 @@ pub fn map_board_mouse(
             }
             Some(QueueHitTarget::FormNotes(_)) if model.task_editing() => {
                 Some(BoardIntent::FocusFormField(CaptureField::Notes))
-            }
-            Some(QueueHitTarget::FormThread) if model.task_editing() => {
-                Some(BoardIntent::FocusFormField(CaptureField::Thread))
             }
             Some(QueueHitTarget::FormScope) if model.task_editing() => {
                 Some(BoardIntent::OpenFormScopeDropdown)
@@ -839,9 +807,6 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::FormNotes(_)) => {
                 Some(BoardIntent::FocusFormField(CaptureField::Notes))
             }
-            Some(QueueHitTarget::FormThread) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Thread))
-            }
             Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
             Some(QueueHitTarget::Step(index)) => Some(BoardIntent::SelectStep(index)),
             Some(QueueHitTarget::StepAdd) => Some(BoardIntent::BeginAppendStep),
@@ -864,14 +829,6 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::LaunchOption(0)) => Some(BoardIntent::LaunchUnarchive),
             Some(QueueHitTarget::LaunchOption(1)) => Some(BoardIntent::LaunchKeepArchived),
             _ => None,
-        },
-        BoardInputMode::ListPicker => match hit_at(hits, pos) {
-            Some(QueueHitTarget::ListPickerOption(index)) => {
-                Some(BoardIntent::SelectListOption(index))
-            }
-            Some(QueueHitTarget::ModalChrome) => None,
-            Some(QueueHitTarget::ModalClose) => Some(BoardIntent::CancelListPicker),
-            _ => Some(BoardIntent::CancelListPicker),
         },
         // The parent chooser paints the same card; a row click saves that parent.
         BoardInputMode::ParentPicker => match hit_at(hits, pos) {
@@ -897,13 +854,6 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
             Some(QueueHitTarget::ScopeChip) => Some(BoardIntent::OpenProjectSelector),
             Some(QueueHitTarget::SortChip) => Some(BoardIntent::ToggleSort),
-            Some(QueueHitTarget::NavChip) => {
-                model
-                    .nav_chip_kind()
-                    .map(|crate::ui::render::NavChipKind::ThreadFilter| {
-                        BoardIntent::OpenThreadFilterPicker
-                    })
-            }
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
             Some(QueueHitTarget::Drawer) => Some(BoardIntent::ToggleDoneDrawer),
             Some(QueueHitTarget::ArchivedHeader) => Some(BoardIntent::ToggleArchivedGroup),
@@ -968,9 +918,6 @@ pub fn map_capture_mouse(layout: &CaptureLayout, mouse: MouseEvent) -> Option<Ca
     }
     if layout.notes_area.contains(pos) {
         return Some(CaptureIntent::FocusField(CaptureField::Notes));
-    }
-    if layout.thread_area.contains(pos) {
-        return Some(CaptureIntent::FocusField(CaptureField::Thread));
     }
     for chip in &layout.scope_chips {
         if chip.rect.contains(pos) {

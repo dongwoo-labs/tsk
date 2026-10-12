@@ -72,9 +72,6 @@ pub struct Task {
     /// One direct parent by stable UUID; missing/deleted parents remain referenced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<Uuid>,
-    /// Optional normalized thread name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thread: Option<String>,
     pub status: HumanStatus,
     pub scope: TaskScope,
     pub provenance: ProvenanceOrigin,
@@ -151,7 +148,7 @@ fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 7;
+pub const STORE_FORMAT_VERSION: u32 = 8;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]
@@ -527,7 +524,7 @@ impl DomainState {
         Ok(())
     }
 
-    /// Create a task with human status `todo`, provenance, and an optional normalized thread.
+    /// Create a task with human status `todo` and provenance.
     ///
     /// Rejects empty/whitespace-only titles. On success, stores exactly one task with the
     /// trimmed title and optional notes, and appends a `Created` event.
@@ -537,9 +534,8 @@ impl DomainState {
         notes: Option<String>,
         scope: TaskScope,
         provenance: ProvenanceOrigin,
-        thread: Option<String>,
     ) -> Result<Uuid, DomainError> {
-        self.create_with_parent(title, notes, scope, provenance, thread, None)
+        self.create_with_parent(title, notes, scope, provenance, None)
     }
 
     pub fn create_with_parent(
@@ -548,7 +544,6 @@ impl DomainState {
         notes: Option<String>,
         scope: TaskScope,
         provenance: ProvenanceOrigin,
-        thread: Option<String>,
         parent_task_id: Option<Uuid>,
     ) -> Result<Uuid, DomainError> {
         let title = title.as_ref().trim();
@@ -568,7 +563,6 @@ impl DomainState {
             title: title.to_string(),
             notes,
             parent_task_id,
-            thread,
             status: HumanStatus::Todo,
             scope,
             provenance,
@@ -599,7 +593,7 @@ impl DomainState {
         scope: TaskScope,
         steps: Vec<(String, bool)>,
     ) -> Result<Uuid, DomainError> {
-        let id = self.create(title, notes, scope, ProvenanceOrigin::Manual, None)?;
+        let id = self.create(title, notes, scope, ProvenanceOrigin::Manual)?;
         let task = self.task_mut(id).expect("the notice was just pushed");
         task.notice = Some(Notice {
             catalog_id: catalog_id.into(),
@@ -747,14 +741,13 @@ impl DomainState {
         Ok(true)
     }
 
-    /// Edit title, notes, scope, and thread together. Title uses the same non-empty trim rule as create.
+    /// Edit title, notes, and scope together. Title uses the same non-empty trim rule as create.
     pub fn edit(
         &mut self,
         id: Uuid,
         title: impl AsRef<str>,
         notes: Option<String>,
         scope: TaskScope,
-        thread: Option<String>,
     ) -> Result<(), DomainError> {
         let title = title.as_ref().trim();
         if title.is_empty() {
@@ -764,7 +757,6 @@ impl DomainState {
         task.title = title.to_string();
         task.notes = notes;
         task.scope = scope;
-        task.thread = thread;
         record_mutation(task, TaskEventKind::Edited);
         Ok(())
     }
@@ -777,11 +769,10 @@ impl DomainState {
         title: impl AsRef<str>,
         notes: Option<String>,
         scope: TaskScope,
-        thread: Option<String>,
         parent_task_id: Option<Uuid>,
     ) -> Result<(), DomainError> {
         self.validate_parent(id, parent_task_id)?;
-        self.edit(id, title, notes, scope, thread)?;
+        self.edit(id, title, notes, scope)?;
         self.task_mut(id)?.parent_task_id = parent_task_id;
         Ok(())
     }
@@ -800,7 +791,6 @@ impl DomainState {
         title: impl AsRef<str>,
         notes: Option<String>,
         scope: TaskScope,
-        thread: Option<String>,
         step_renames: &[(Uuid, String)],
         step_removals: &[Uuid],
         step_adds: &[String],
@@ -846,7 +836,6 @@ impl DomainState {
         task.title = title.to_string();
         task.notes = notes;
         task.scope = scope;
-        task.thread = thread;
         task.steps.retain(|step| !removals.contains(&step.id));
         for (step_id, text) in &actual_renames {
             if let Some(step) = task.steps.iter_mut().find(|step| step.id == *step_id) {
@@ -1332,7 +1321,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("valid title creates a task")
     }
@@ -1346,7 +1334,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect_err("whitespace-only title must fail");
         assert_eq!(err, DomainError::EmptyTitle);
@@ -1376,7 +1363,6 @@ mod tests {
                 Some("flaky under load".into()),
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("valid title creates a task");
         assert_eq!(state.tasks()[0].notes.as_deref(), Some("flaky under load"));
@@ -1391,7 +1377,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Capture,
-                None,
             )
             .expect("valid title creates a task");
         assert_eq!(
@@ -1409,7 +1394,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Selection,
-                None,
             )
             .expect("valid title creates a task");
         assert_eq!(
@@ -1438,7 +1422,7 @@ mod tests {
         assert!(after_status >= created, "a status change is recorded");
 
         state
-            .edit(id, "Edited title", None, TaskScope::Global, None)
+            .edit(id, "Edited title", None, TaskScope::Global)
             .expect("edit");
         assert_eq!(
             state.get(id).expect("task").status_changed_at(),
@@ -1480,7 +1464,7 @@ mod tests {
         assert_eq!(kinds(&state), vec![TaskEventKind::Created]);
 
         state
-            .edit(id, "Edited title", None, TaskScope::Global, None)
+            .edit(id, "Edited title", None, TaskScope::Global)
             .expect("edit");
         assert!(kinds(&state).contains(&TaskEventKind::Edited));
 
@@ -1529,7 +1513,7 @@ mod tests {
         };
 
         state
-            .edit(id, "Edited", None, TaskScope::Global, None)
+            .edit(id, "Edited", None, TaskScope::Global)
             .expect("edit");
         assert_refreshed(&state);
         state.set_status(id, HumanStatus::Doing).expect("status");
@@ -1606,13 +1590,7 @@ mod tests {
 
         // Soft-deleted tasks are refused by both verbs.
         let gone = state
-            .create(
-                "gone",
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create("gone", None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("create");
         state.soft_delete(gone).expect("soft delete");
         assert_eq!(
@@ -1636,7 +1614,6 @@ mod tests {
                     path: "/repos/a".into(),
                 },
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create");
         assert!(state.projects().is_empty());
@@ -1684,10 +1661,10 @@ mod tests {
             path: "/repos/p".into(),
         };
         let t = state
-            .create("T", None, scope.clone(), ProvenanceOrigin::Manual, None)
+            .create("T", None, scope.clone(), ProvenanceOrigin::Manual)
             .expect("create");
         let other = state
-            .create("Other", None, scope, ProvenanceOrigin::Manual, None)
+            .create("Other", None, scope, ProvenanceOrigin::Manual)
             .expect("create");
 
         state.archive_task(t).expect("archive task T");
@@ -1775,7 +1752,6 @@ mod tests {
                 "  New title  ",
                 Some("updated notes".into()),
                 project.clone(),
-                None,
             )
             .expect("edit known id");
         let task = state.get(id).expect("task exists");
@@ -1798,7 +1774,6 @@ mod tests {
                 "Edited title",
                 Some("edited notes".into()),
                 TaskScope::Global,
-                None,
                 &[
                     (first, "first revised".into()),
                     (second, "second revised".into()),
@@ -1844,7 +1819,6 @@ mod tests {
                 "Sample task",
                 None,
                 TaskScope::Global,
-                None,
                 &[
                     (unchanged, " unchanged ".into()),
                     (removed, "renamed but removed".into()),
@@ -1868,42 +1842,6 @@ mod tests {
     }
 
     #[test]
-    fn edit_carrying_thread_journals_one_event_and_bumps_revision_once() {
-        let mut state = DomainState::new();
-        let id = create_sample(&mut state);
-        let before = state.get(id).expect("task").clone();
-
-        state
-            .edit(
-                id,
-                "Edited title",
-                Some("edited notes".into()),
-                TaskScope::Project {
-                    path: "/repos/threads".into(),
-                },
-                Some("release-2026".into()),
-            )
-            .expect("edit carrying thread");
-
-        let task = state.get(id).expect("task");
-        assert_eq!(task.title, "Edited title");
-        assert_eq!(task.notes.as_deref(), Some("edited notes"));
-        assert_eq!(task.thread.as_deref(), Some("release-2026"));
-        assert_eq!(
-            task.scope,
-            TaskScope::Project {
-                path: "/repos/threads".into(),
-            }
-        );
-        assert_eq!(task.history.len(), before.history.len() + 1);
-        assert_eq!(
-            task.history.last().map(|event| event.kind),
-            Some(TaskEventKind::Edited)
-        );
-        assert_ne!(task.revision, before.revision);
-    }
-
-    #[test]
     fn commands_reject_unknown_id() {
         let mut state = DomainState::new();
         let missing = Uuid::new_v4();
@@ -1922,7 +1860,7 @@ mod tests {
         );
         assert_eq!(state.restore(missing), Err(DomainError::UnknownId(missing)));
         assert_eq!(
-            state.edit(missing, "x", None, TaskScope::Global, None),
+            state.edit(missing, "x", None, TaskScope::Global,),
             Err(DomainError::UnknownId(missing))
         );
     }
@@ -2044,7 +1982,6 @@ mod tests {
                 "Sample task",
                 None,
                 TaskScope::Global,
-                None,
                 &[],
                 &[],
                 &["between".into()],
@@ -2068,7 +2005,6 @@ mod tests {
                 "Sample task",
                 None,
                 TaskScope::Global,
-                None,
                 &[],
                 &[first],
                 &["last".into()],
@@ -2165,26 +2101,14 @@ mod tests {
         let first = store
             .locked_transition(|state| {
                 state
-                    .create(
-                        "first",
-                        None,
-                        TaskScope::Global,
-                        ProvenanceOrigin::Manual,
-                        None,
-                    )
+                    .create("first", None, TaskScope::Global, ProvenanceOrigin::Manual)
                     .map_err(|error| error.to_string())
             })
             .expect("persist first");
         let second = store
             .locked_transition(|state| {
                 state
-                    .create(
-                        "second",
-                        None,
-                        TaskScope::Global,
-                        ProvenanceOrigin::Manual,
-                        None,
-                    )
+                    .create("second", None, TaskScope::Global, ProvenanceOrigin::Manual)
                     .map_err(|error| error.to_string())
             })
             .expect("persist second");
@@ -2405,7 +2329,6 @@ mod tests {
                         None,
                         TaskScope::Global,
                         ProvenanceOrigin::Manual,
-                        None,
                     )
                     .map_err(|error| error.to_string())
             })
@@ -2438,7 +2361,6 @@ mod tests {
                 TaskScope::Project {
                     path: "/project".into(),
                 },
-                Some("thread".into()),
             )
             .expect("edit");
         state.set_status(id, HumanStatus::Doing).expect("status");

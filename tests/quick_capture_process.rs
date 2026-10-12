@@ -44,7 +44,6 @@ fn capture_entrypoint_skips_launch_card_and_exits_on_escape() {
                 path: repo.display().to_string(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .unwrap();
     state.archive_project(repo.to_str().unwrap()).unwrap();

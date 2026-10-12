@@ -32,13 +32,7 @@ impl Drop for TempDirGuard {
 
 fn create(state: &mut DomainState, title: &str) -> uuid::Uuid {
     state
-        .create(
-            title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create task")
 }
 

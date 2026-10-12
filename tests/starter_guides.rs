@@ -100,7 +100,6 @@ fn full_board_open_seeds_the_guides_once_beside_existing_tasks() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("task");
     store.save(&seeded).expect("save");
@@ -236,13 +235,7 @@ fn seed_pty_task(root: &std::path::Path, cwd: &std::path::Path, title: &str) {
     let store = TaskStore::new(root.join("state"));
     let mut state = DomainState::new();
     state
-        .create(
-            title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("seed PTY desk task");
     let project_id = state
         .create(
@@ -252,7 +245,6 @@ fn seed_pty_task(root: &std::path::Path, cwd: &std::path::Path, title: &str) {
                 path: cwd.to_string_lossy().into_owned(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed PTY project task");
     state

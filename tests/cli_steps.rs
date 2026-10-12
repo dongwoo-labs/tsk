@@ -32,13 +32,7 @@ fn steps(args: &[String]) -> tsk_tui::cli::CliOutput {
 fn seed_task(dir: &std::path::Path, title: &str) -> Uuid {
     let mut state = DomainState::new();
     let id = state
-        .create(
-            title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("seed task");
     TaskStore::new(dir).save(&state).expect("seed store");
     id
@@ -172,7 +166,6 @@ fn state_with_shared_prefix_steps() -> (DomainState, Uuid) {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     state.add_step(task, "shared one").expect("seed first step");
@@ -243,7 +236,6 @@ fn steps_toggle_empty_operand_refuses_without_mutation() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     state.add_step(task, "only step").expect("seed one step");
@@ -325,7 +317,6 @@ fn steps_on_soft_deleted_task_refuses_without_mutation() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     state.soft_delete(task).expect("soft delete seed");
@@ -588,7 +579,6 @@ fn seed_three_steps(dir: &std::path::Path) -> (Uuid, Vec<Uuid>) {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     let ids: Vec<Uuid> = ["a", "b", "c"]

@@ -5,10 +5,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::context::InvocationSnapshot;
-use crate::domain::{
-    normalize_thread, thread_refusal_message, DomainError, DomainState, HumanStatus, TaskScope,
-    ThreadError,
-};
+use crate::domain::{DomainError, DomainState, HumanStatus, TaskScope};
 use crate::ui::capture::{CaptureField, TITLE_REQUIRED_MESSAGE};
 use crate::ui::edit::{flatten_line_breaks, EditBuffer};
 use crate::ui::input::{BoardIntent, MarkDirection};
@@ -256,7 +253,6 @@ fn read_only_focus_refuses(model: &BoardModel, intent: &BoardIntent) -> bool {
             | BoardIntent::BeginEditScope
             | BoardIntent::BeginAddStep
             | BoardIntent::BeginAppendStep
-            | BoardIntent::ToggleThreadEditing
             | BoardIntent::FormCycleScope
             // AC-44: Tab, shift+Tab, a field click, and the step cursor are edit
             // entries on the task page, so the read-only page refuses them too.
@@ -647,8 +643,6 @@ fn apply_board_intent(
             );
             form.title = crate::ui::edit::seeded_draft(&lifted.title);
             form.scope = scope;
-            form.thread =
-                crate::ui::edit::seeded_draft(lifted.thread.as_deref().unwrap_or_default());
             form.focus = CaptureField::Notes;
             form.select_current_scope();
             model.form = Some(form);
@@ -690,7 +684,7 @@ fn apply_board_intent(
                         .as_ref()
                         .is_some_and(|form| form.steps.add_selected)
                     {
-                        model.focus_form_field(CaptureField::Thread);
+                        model.focus_form_field(CaptureField::Scope);
                     } else if !move_capture_step_with_tab(model, true) {
                         select_add_step(model);
                     }
@@ -700,7 +694,7 @@ fn apply_board_intent(
                         .as_ref()
                         .is_some_and(|form| form.steps.add_selected)
                     {
-                        model.focus_form_field(CaptureField::Thread);
+                        model.focus_form_field(CaptureField::Scope);
                     } else if !move_step_within_edit_group(model, true) {
                         select_add_step(model);
                     }
@@ -720,12 +714,6 @@ fn apply_board_intent(
                 && model.form.as_ref().is_some_and(|form| form.is_task())
             {
                 model.focus_form_field(CaptureField::Title);
-            } else if matches!(
-                model.input_mode,
-                BoardInputMode::SelectThread | BoardInputMode::EditThread
-            ) && model.form.as_ref().is_some_and(|form| form.is_task())
-            {
-                model.focus_form_field(CaptureField::Scope);
             } else if model.form.is_some() && model.input_mode != BoardInputMode::FormScopeDropdown
             {
                 model.move_form_focus(true);
@@ -782,16 +770,8 @@ fn apply_board_intent(
                 && model.form.as_ref().is_some_and(|form| form.is_task())
             {
                 model.focus_form_field(CaptureField::Scope);
-            } else if matches!(
-                model.input_mode,
-                BoardInputMode::SelectThread | BoardInputMode::EditThread
-            ) && model.form.is_some()
-            {
+            } else if model.input_mode == BoardInputMode::EditScope && model.form.is_some() {
                 select_add_step(model);
-            } else if model.input_mode == BoardInputMode::EditScope
-                && model.form.as_ref().is_some_and(|form| form.is_task())
-            {
-                model.focus_form_field(CaptureField::Thread);
             } else if model.form.is_some() && model.input_mode != BoardInputMode::FormScopeDropdown
             {
                 model.move_form_focus(false);
@@ -822,10 +802,6 @@ fn apply_board_intent(
         }
         BoardIntent::FocusFormField(field) => {
             model.focus_form_field(field);
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::ToggleThreadEditing => {
-            model.toggle_thread_editing();
             return Ok(IntentOutcome::None);
         }
         BoardIntent::FormCycleScope => {
@@ -1080,12 +1056,13 @@ fn apply_board_intent(
             return Ok(IntentOutcome::None);
         }
         BoardIntent::EditInsertText(text) => {
-            // Title and Thread stay one line in either form; Notes preserves pasted line
+            // Title stays one line in either form; Notes preserves pasted line
             // breaks. The step editor is one line by construction, so it flattens like Title.
             let single_line = model.input_mode == BoardInputMode::EditStep
-                || model.form.as_ref().is_some_and(|form| {
-                    matches!(form.focus, CaptureField::Title | CaptureField::Thread)
-                });
+                || model
+                    .form
+                    .as_ref()
+                    .is_some_and(|form| matches!(form.focus, CaptureField::Title));
             edit_draft(model, |draft| {
                 if single_line {
                     draft.insert_text(&flatten_line_breaks(&text));
@@ -1192,10 +1169,7 @@ fn apply_board_intent(
             // fields survive; the second Esc closes the page.
             if matches!(
                 model.input_mode,
-                BoardInputMode::EditTitle
-                    | BoardInputMode::EditNotes
-                    | BoardInputMode::EditThread
-                    | BoardInputMode::EditScope
+                BoardInputMode::EditTitle | BoardInputMode::EditNotes | BoardInputMode::EditScope
             ) && model.form.as_ref().is_some_and(BoardForm::is_task)
             {
                 let field = model
@@ -1272,15 +1246,6 @@ fn apply_board_intent(
                 let notes =
                     (!form.notes.value().trim().is_empty()).then(|| form.notes.value().to_string());
                 let scope_override = Some(form.scope.clone());
-                let thread = match normalize_optional_thread(form.thread.value()) {
-                    Ok(thread) => thread,
-                    Err(error) => {
-                        if let Some(form) = model.form.as_mut() {
-                            form.thread_refusal = Some(thread_refusal_message(error));
-                        }
-                        return Ok(IntentOutcome::None);
-                    }
-                };
                 let pending_adds = form.steps.pending_adds.clone();
                 return match crate::capture::capture_save(
                     domain,
@@ -1289,7 +1254,6 @@ fn apply_board_intent(
                     title,
                     notes,
                     scope_override,
-                    thread,
                 ) {
                     Ok(id) => {
                         for text in &pending_adds {
@@ -1441,19 +1405,6 @@ fn apply_board_intent(
             model.clear_message();
             return Ok(IntentOutcome::None);
         }
-        BoardIntent::OpenThreadFilterPicker => {
-            if model.project_picker.is_some() || model.popup == BoardPopup::SaveRecovery {
-                return Ok(IntentOutcome::None);
-            }
-            model.close_command_surface();
-            model.close_popup();
-            model.close_help();
-            model.open_thread_filter_picker();
-            if model.list_picker.is_some() {
-                model.input_mode = BoardInputMode::ListPicker;
-            }
-            return Ok(IntentOutcome::None);
-        }
         BoardIntent::ListPickerNext => {
             model.move_list_picker(true);
             return Ok(IntentOutcome::None);
@@ -1472,24 +1423,6 @@ fn apply_board_intent(
         }
         BoardIntent::ListPickerQueryBackspace => {
             model.list_picker_query_backspace();
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::SelectListOption(index) => {
-            // Mouse-only jump onto a visible picker row, same discipline as
-            // `SelectCommand`/`SelectProjectOption`: name the row directly.
-            if let Some(picker) = model.list_picker.as_mut() {
-                picker.selected = index;
-            }
-            return apply_board_intent(domain, model, BoardIntent::ConfirmListPicker, snapshot);
-        }
-        BoardIntent::ConfirmListPicker => {
-            if model.confirm_list_picker().is_some() {
-                model.clear_marks();
-                let previous = model.selection_id;
-                let previous_visible = model.visible_ids();
-                model.reanchor_selection(previous, &previous_visible);
-                model.input_mode = BoardInputMode::Normal;
-            }
             return Ok(IntentOutcome::None);
         }
         BoardIntent::CancelListPicker => {
@@ -1566,7 +1499,6 @@ fn apply_board_intent(
                     ));
                     return Ok(IntentOutcome::None);
                 }
-                _ => return Ok(IntentOutcome::None),
             };
             model.cancel_list_picker();
             model.input_mode = BoardInputMode::TaskPage;
@@ -1856,8 +1788,6 @@ fn apply_board_intent(
                         | BoardInputMode::EditTitle
                         | BoardInputMode::EditNotes
                         | BoardInputMode::EditScope
-                        | BoardInputMode::EditThread
-                        | BoardInputMode::SelectThread
                 ) {
                     form.manual_page_scroll = true;
                     let horizon = form.notes_max_scroll.get();
@@ -1878,8 +1808,6 @@ fn apply_board_intent(
                         | BoardInputMode::EditTitle
                         | BoardInputMode::EditNotes
                         | BoardInputMode::EditScope
-                        | BoardInputMode::EditThread
-                        | BoardInputMode::SelectThread
                 ) {
                     form.manual_page_scroll = true;
                     let horizon = form.notes_max_scroll.get();
@@ -2529,10 +2457,6 @@ fn edit_draft(model: &mut BoardModel, operation: impl FnOnce(&mut EditBuffer)) {
     match form.focus {
         CaptureField::Title => operation(&mut form.title),
         CaptureField::Notes => operation(&mut form.notes),
-        CaptureField::Thread => {
-            form.thread_refusal = None;
-            operation(&mut form.thread);
-        }
         CaptureField::Scope => {}
     }
 }
@@ -2799,7 +2723,6 @@ fn quick_add_save(
         lifted.title,
         None,
         Some(scope.clone()),
-        lifted.thread,
     ) {
         Ok(id) => {
             // Do not discard the draft until the app save boundary confirms persistence. A
@@ -2822,17 +2745,15 @@ fn quick_add_save(
 /// Directives lifted from a quick-add title before capture.
 ///
 /// This parser is deliberately private to quick-add. Title, notes, and checklist editors retain
-/// their literal text, while the status-row capture can apply scope and thread together.
+/// their literal text, while the status-row capture can apply a scope.
 struct QuickAddTokens {
     title: String,
     scope: Option<TaskScope>,
-    thread: Option<String>,
 }
 
-/// Lift whitespace-delimited `!p` and `!t` directives in either order.
+/// Lift whitespace-delimited `!p` directives.
 ///
-/// A directive consumes only its immediate non-directive argument. Parsing completes before any
-/// value is returned, so a malformed thread cannot partially apply a preceding scope override.
+/// A directive consumes only its immediate non-directive argument.
 fn lift_quick_add_tokens(
     value: &str,
     domain: &DomainState,
@@ -2841,7 +2762,6 @@ fn lift_quick_add_tokens(
     let words: Vec<&str> = value.split_whitespace().collect();
     let mut title = Vec::new();
     let mut scope = None;
-    let mut thread = None;
     let mut index = 0;
 
     while let Some(word) = words.get(index) {
@@ -2864,14 +2784,6 @@ fn lift_quick_add_tokens(
                 });
                 index += usize::from(argument.is_some()) + 1;
             }
-            "!t" => {
-                let argument = quick_add_token_argument(&words, index);
-                thread = match argument {
-                    Some(name) => Some(normalize_thread(name).map_err(thread_refusal_message)?),
-                    None => None,
-                };
-                index += usize::from(argument.is_some()) + 1;
-            }
             _ => {
                 title.push(*word);
                 index += 1;
@@ -2882,7 +2794,6 @@ fn lift_quick_add_tokens(
     Ok(QuickAddTokens {
         title: title.join(" "),
         scope,
-        thread,
     })
 }
 
@@ -2892,16 +2803,7 @@ fn quick_add_token_argument<'a>(words: &'a [&str], index: usize) -> Option<&'a s
     words
         .get(index + 1)
         .copied()
-        .filter(|word| *word != "!p" && *word != "!t" && !word.starts_with('#'))
-}
-
-fn normalize_optional_thread(value: &str) -> Result<Option<String>, ThreadError> {
-    let value = value.trim();
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        normalize_thread(value).map(Some)
-    }
+        .filter(|word| *word != "!p" && !word.starts_with('#'))
 }
 
 fn confirm_edit(
@@ -2918,15 +2820,6 @@ fn confirm_edit(
     let title = form.title.value().trim().to_string();
     let notes = (!form.notes.value().trim().is_empty()).then(|| form.notes.value().to_string());
     let scope = form.scope.clone();
-    let thread = match normalize_optional_thread(form.thread.value()) {
-        Ok(thread) => thread,
-        Err(error) => {
-            if let Some(form) = model.form.as_mut() {
-                form.thread_refusal = Some(thread_refusal_message(error));
-            }
-            return Ok(IntentOutcome::None);
-        }
-    };
     let step_renames = form
         .steps
         .drafts
@@ -2967,7 +2860,6 @@ fn confirm_edit(
         &title,
         notes.clone(),
         scope.clone(),
-        thread.clone(),
         &step_rename_list,
         &step_removals.iter().copied().collect::<Vec<_>>(),
         &extra_steps,
@@ -2981,7 +2873,6 @@ fn confirm_edit(
         title,
         notes,
         scope,
-        thread,
         step_renames,
         step_removals,
         selected_step,
@@ -2999,7 +2890,7 @@ fn select_step_from_tab(model: &mut BoardModel, forward: bool) {
         if !form.is_task()
             || !form.editing
             || (forward && form.focus != CaptureField::Notes)
-            || (!forward && form.focus != CaptureField::Thread)
+            || (!forward && form.focus != CaptureField::Scope)
         {
             None
         } else {
