@@ -72,6 +72,9 @@ pub struct Task {
     pub merge_base_revision: Option<Uuid>,
     pub title: String,
     pub notes: Option<String>,
+    /// One direct parent by stable UUID; missing/deleted parents remain referenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<Uuid>,
     /// Optional normalized thread name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
@@ -111,6 +114,8 @@ pub enum DomainError {
     UnknownStep(Uuid),
     /// No project record exists and no task carries this project scope path.
     UnknownProject(String),
+    InvalidParent(Uuid),
+    ParentCycle(Uuid),
 }
 
 impl std::fmt::Display for DomainError {
@@ -125,6 +130,12 @@ impl std::fmt::Display for DomainError {
             DomainError::EmptyStepText => write!(f, "step text must be non-empty after trim"),
             DomainError::UnknownStep(id) => write!(f, "unknown step id {id}"),
             DomainError::UnknownProject(path) => write!(f, "unknown project {path}"),
+            DomainError::InvalidParent(id) => {
+                write!(f, "parent {id} is missing, deleted, or a notice")
+            }
+            DomainError::ParentCycle(id) => {
+                write!(f, "parent relationship would form a cycle at {id}")
+            }
         }
     }
 }
@@ -143,7 +154,14 @@ fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 5;
+pub const STORE_FORMAT_VERSION: u32 = 6;
+
+/// A parent is unresolved when its UUID is absent or its task is deleted.
+#[derive(Debug, Clone, Copy)]
+pub enum ParentRelation<'a> {
+    Resolved(&'a Task),
+    Unresolved(Uuid),
+}
 
 fn default_next_notice_number() -> u64 {
     1
@@ -359,6 +377,117 @@ impl DomainState {
         self.tasks.iter().find(|t| t.id == id)
     }
 
+    pub fn parent(&self, task_id: Uuid) -> Option<ParentRelation<'_>> {
+        let id = self.get(task_id)?.parent_task_id?;
+        Some(
+            match self
+                .get(id)
+                .filter(|task| !task.soft_deleted && !task.is_notice())
+            {
+                Some(task) => ParentRelation::Resolved(task),
+                None => ParentRelation::Unresolved(id),
+            },
+        )
+    }
+
+    /// Relationship membership is independent of the working lens: archived children count.
+    pub fn direct_children(&self, parent_id: Uuid) -> Vec<&Task> {
+        let mut children = self
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.parent_task_id == Some(parent_id) && !task.soft_deleted && !task.is_notice()
+            })
+            .collect::<Vec<_>>();
+        children.sort_by_key(|task| (task.number, task.id));
+        children
+    }
+
+    pub fn child_counts(&self, parent_id: Uuid) -> (usize, usize) {
+        let children = self.direct_children(parent_id);
+        (
+            children
+                .iter()
+                .filter(|task| task.status == HumanStatus::Done)
+                .count(),
+            children.len(),
+        )
+    }
+
+    pub fn validate_parent(
+        &self,
+        task_id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<(), DomainError> {
+        let task = self.get(task_id).ok_or(DomainError::UnknownId(task_id))?;
+        if task.soft_deleted {
+            return Err(DomainError::SoftDeleted(task_id));
+        }
+        if task.is_notice() {
+            return Err(DomainError::InvalidParent(task_id));
+        }
+        // An unchanged unresolved relationship stays valid when other fields are edited.
+        if parent_id == task.parent_task_id {
+            return Ok(());
+        }
+        self.validate_new_parent(task_id, parent_id)
+    }
+
+    fn validate_new_parent(
+        &self,
+        task_id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<(), DomainError> {
+        if let Some(id) = parent_id {
+            if !self
+                .get(id)
+                .is_some_and(|task| !task.soft_deleted && !task.is_notice())
+            {
+                return Err(DomainError::InvalidParent(id));
+            }
+            let mut seen = BTreeSet::from([task_id]);
+            let mut cursor = Some(id);
+            while let Some(id) = cursor {
+                if !seen.insert(id) {
+                    return Err(DomainError::ParentCycle(id));
+                }
+                cursor = self.get(id).and_then(|task| task.parent_task_id);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_parent(
+        &mut self,
+        task_id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<bool, DomainError> {
+        self.validate_parent(task_id, parent_id)?;
+        let task = self.task_mut(task_id)?;
+        if task.parent_task_id == parent_id {
+            return Ok(false);
+        }
+        task.parent_task_id = parent_id;
+        record_mutation(task, TaskEventKind::Edited);
+        Ok(true)
+    }
+
+    /// Validate after the locked disk merge, before any document or trash write.
+    /// Vec scans are adequate for the local board; no separate graph is persisted.
+    pub(crate) fn validate_parent_graph(&self) -> Result<(), DomainError> {
+        for task in &self.tasks {
+            let mut seen = BTreeSet::new();
+            let mut cursor = Some(task.id);
+            while let Some(id) = cursor {
+                if !seen.insert(id) {
+                    return Err(DomainError::ParentCycle(id));
+                }
+                cursor = self.get(id).and_then(|task| task.parent_task_id);
+            }
+        }
+        Ok(())
+    }
+
     /// Create a task with human status `open`, provenance, and an optional normalized thread.
     ///
     /// Rejects empty/whitespace-only titles. On success, stores exactly one task with the
@@ -371,6 +500,18 @@ impl DomainState {
         provenance: ProvenanceOrigin,
         thread: Option<String>,
     ) -> Result<Uuid, DomainError> {
+        self.create_with_parent(title, notes, scope, provenance, thread, None)
+    }
+
+    pub fn create_with_parent(
+        &mut self,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        provenance: ProvenanceOrigin,
+        thread: Option<String>,
+        parent_task_id: Option<Uuid>,
+    ) -> Result<Uuid, DomainError> {
         let title = title.as_ref().trim();
         if title.is_empty() {
             return Err(DomainError::EmptyTitle);
@@ -378,6 +519,7 @@ impl DomainState {
 
         let now = SystemTime::now();
         let id = Uuid::new_v4();
+        self.validate_new_parent(id, parent_task_id)?;
         self.tasks.push(Task {
             id,
             number: None,
@@ -386,6 +528,7 @@ impl DomainState {
             merge_base_revision: None,
             title: title.to_string(),
             notes,
+            parent_task_id,
             thread,
             status: HumanStatus::Open,
             scope,
@@ -584,6 +727,23 @@ impl DomainState {
         task.scope = scope;
         task.thread = thread;
         record_mutation(task, TaskEventKind::Edited);
+        Ok(())
+    }
+
+    /// Edit fields and parent as one mutation so save recovery retains one revision baseline.
+    #[allow(clippy::too_many_arguments)]
+    pub fn edit_with_parent(
+        &mut self,
+        id: Uuid,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        thread: Option<String>,
+        parent_task_id: Option<Uuid>,
+    ) -> Result<(), DomainError> {
+        self.validate_parent(id, parent_task_id)?;
+        self.edit(id, title, notes, scope, thread)?;
+        self.task_mut(id)?.parent_task_id = parent_task_id;
         Ok(())
     }
 

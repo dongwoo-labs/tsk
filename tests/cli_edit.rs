@@ -210,7 +210,9 @@ fn edit_without_fields_is_usage() {
     assert_eq!(add_task(&dir, "keep me").code, 0);
     let output = edit(&dir, &["T1"]);
     assert_eq!(output.code, 2);
-    assert!(output.stderr.contains("title or notes is required"));
+    assert!(output
+        .stderr
+        .contains("title, notes, or parent is required"));
 }
 
 #[test]

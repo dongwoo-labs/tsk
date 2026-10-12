@@ -11,6 +11,7 @@ use uuid::Uuid;
 /// Parsed field values after the argv boundary. `None` means leave the stored value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditFields {
+    pub parent: Option<Option<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
 }
@@ -29,6 +30,8 @@ pub enum EditError {
     SoftDeletedTask,
     EmptyTitle,
     InvalidTitle,
+    InvalidParent,
+    ParentCycle,
     Store(String),
 }
 
@@ -39,6 +42,8 @@ impl EditError {
             Self::SoftDeletedTask => "soft-deleted-task",
             Self::EmptyTitle => "empty-title",
             Self::InvalidTitle => "invalid-title",
+            Self::InvalidParent => "invalid-parent",
+            Self::ParentCycle => "parent-cycle",
             Self::Store(_) => "store-error",
         }
     }
@@ -76,6 +81,7 @@ pub fn run(
                     scope: task.scope.clone(),
                     thread: task.thread.clone(),
                     soft_deleted: task.soft_deleted,
+                    parent_task_id: task.parent_task_id,
                 });
             Ok(apply(state, found, &fields))
         })
@@ -90,6 +96,7 @@ struct Found {
     scope: TaskScope,
     thread: Option<String>,
     soft_deleted: bool,
+    parent_task_id: Option<Uuid>,
 }
 
 fn apply(
@@ -117,7 +124,18 @@ fn apply(
         Some(value) => Some(value.to_string()),
         None => found.notes.clone(),
     };
-    if next_title == found.title && next_notes == found.notes {
+    let parent_task_id = match fields.parent {
+        None => found.parent_task_id,
+        Some(None) => None,
+        Some(Some(address)) => match state.tasks().iter().find(|task| address.matches(task)) {
+            Some(task) if !task.soft_deleted => Some(task.id),
+            _ => return (Err(EditError::InvalidParent), false),
+        },
+    };
+    if next_title == found.title
+        && next_notes == found.notes
+        && parent_task_id == found.parent_task_id
+    {
         return (
             Ok(EditResult {
                 number,
@@ -126,7 +144,14 @@ fn apply(
             false,
         );
     }
-    match state.edit(found.id, &next_title, next_notes, found.scope, found.thread) {
+    match state.edit_with_parent(
+        found.id,
+        &next_title,
+        next_notes,
+        found.scope,
+        found.thread,
+        parent_task_id,
+    ) {
         Ok(()) => (
             Ok(EditResult {
                 number,
@@ -136,6 +161,8 @@ fn apply(
         ),
         Err(DomainError::EmptyTitle) => (Err(EditError::EmptyTitle), false),
         Err(DomainError::UnknownId(_)) => (Err(EditError::UnknownTask), false),
+        Err(DomainError::InvalidParent(_)) => (Err(EditError::InvalidParent), false),
+        Err(DomainError::ParentCycle(_)) => (Err(EditError::ParentCycle), false),
         Err(other) => (Err(EditError::Store(other.to_string())), false),
     }
 }

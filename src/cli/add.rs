@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::cli::parser::FlagAdd;
+use crate::cli::parser::{parse_task_address, FlagAdd, TaskAddress};
 use crate::context::snapshot_from_env;
 use crate::domain::{
     normalize_thread, thread_refusal_message, DomainState, ProvenanceOrigin, TaskScope,
@@ -21,6 +21,7 @@ pub enum AddError {
     UnknownProject(String),
     /// The resolved scope is an archived project (cwd default or explicit `-p`).
     ProjectArchived(String),
+    InvalidParent,
     Store(String),
 }
 
@@ -31,6 +32,7 @@ impl AddError {
             Self::InvalidTitle => "invalid-title",
             Self::UnknownProject(_) => "unknown-project",
             Self::ProjectArchived(_) => "project-archived",
+            Self::InvalidParent => "invalid-parent",
             Self::Store(_) => "store-error",
         }
     }
@@ -76,6 +78,7 @@ struct Failed {
 }
 
 struct PlanItem {
+    parent: Option<TaskAddress>,
     i: usize,
     title: String,
     notes: Option<String>,
@@ -86,6 +89,7 @@ struct PlanItem {
 }
 
 struct ResolvedPlanItem {
+    parent: Option<TaskAddress>,
     i: usize,
     title: String,
     notes: Option<String>,
@@ -147,38 +151,47 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     return Ok((Err(AddError::ProjectArchived(short)), false));
                 }
             }
-            let outcome = if let Some(task) =
-                existing_task(domain, &title, &scope, thread.as_deref())
-            {
-                Ok(FlagAddResult::Existing {
-                    id: task.id,
-                    number: task
-                        .number
-                        .expect("loaded tasks receive a number before CLI presentation"),
-                    title: task.title.clone(),
-                    project: scope_project(&task.scope),
-                })
-            } else {
-                let project = scope_project(&scope);
-                let id =
-                    match domain.create(&title, notes, scope, ProvenanceOrigin::Capture, thread) {
+            let outcome =
+                if let Some(task) = existing_task(domain, &title, &scope, thread.as_deref()) {
+                    Ok(FlagAddResult::Existing {
+                        id: task.id,
+                        number: task
+                            .number
+                            .expect("loaded tasks receive a number before CLI presentation"),
+                        title: task.title.clone(),
+                        project: scope_project(&task.scope),
+                    })
+                } else {
+                    let project = scope_project(&scope);
+                    let parent = match resolve_parent(domain, input.parent) {
+                        Ok(parent) => parent,
+                        Err(error) => return Ok((Err(error), false)),
+                    };
+                    let id = match domain.create_with_parent(
+                        &title,
+                        notes,
+                        scope,
+                        ProvenanceOrigin::Capture,
+                        thread,
+                        parent,
+                    ) {
                         Ok(id) => id,
                         Err(error) => {
                             return Ok((Err(AddError::Store(error.to_string())), false));
                         }
                     };
-                domain.assign_numbers_for_persistence();
-                let number = domain
-                    .get(id)
-                    .and_then(|task| task.number)
-                    .expect("new tasks receive a number while the store lock is held");
-                Ok(FlagAddResult::Created {
-                    id,
-                    number,
-                    title,
-                    project,
-                })
-            };
+                    domain.assign_numbers_for_persistence();
+                    let number = domain
+                        .get(id)
+                        .and_then(|task| task.number)
+                        .expect("new tasks receive a number while the store lock is held");
+                    Ok(FlagAddResult::Created {
+                        id,
+                        number,
+                        title,
+                        project,
+                    })
+                };
             let changed = matches!(outcome, Ok(FlagAddResult::Created { .. }));
             Ok((outcome, changed))
         })
@@ -241,15 +254,28 @@ pub fn run_plan(
                     });
                     continue;
                 }
+                let parent = match resolve_parent(domain, item.parent) {
+                    Ok(parent) => parent,
+                    Err(_) => {
+                        failed.push(fail_item(
+                            item.i,
+                            Some(item.title),
+                            "invalid-parent",
+                            "parent is missing, deleted, or a notice",
+                        ));
+                        continue;
+                    }
+                };
                 let id = domain
-                    .create(
+                    .create_with_parent(
                         &item.title,
                         item.notes,
                         item.scope,
                         ProvenanceOrigin::Capture,
                         item.thread,
+                        parent,
                     )
-                    .expect("plan item titles and threads are validated before domain creation");
+                    .map_err(|error| error.to_string())?;
                 domain.assign_numbers_for_persistence();
                 let number = domain
                     .get(id)
@@ -303,6 +329,7 @@ fn resolve_plan_items(
             None => snapshot.default_scope.clone(),
         };
         resolved.push(ResolvedPlanItem {
+            parent: item.parent,
             i: item.i,
             title: item.title,
             notes: item.notes,
@@ -311,6 +338,22 @@ fn resolve_plan_items(
         });
     }
     (resolved, failed)
+}
+
+pub(crate) fn resolve_parent(
+    domain: &DomainState,
+    address: Option<TaskAddress>,
+) -> Result<Option<Uuid>, AddError> {
+    address
+        .map(|address| {
+            domain
+                .tasks()
+                .iter()
+                .find(|task| address.matches(task) && !task.soft_deleted)
+                .map(|task| task.id)
+                .ok_or(AddError::InvalidParent)
+        })
+        .transpose()
 }
 
 fn scope_project(scope: &TaskScope) -> Option<String> {
@@ -411,7 +454,23 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
         }
     };
 
+    let parent =
+        match object.get("parent") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(parse_task_address(value).map_err(|error| {
+                fail_item(i, Some(trimmed_title.clone()), "invalid-parent", error)
+            })?),
+            Some(_) => {
+                return Err(fail_item(
+                    i,
+                    Some(trimmed_title),
+                    "invalid-parent",
+                    "parent must be a task address string or null",
+                ))
+            }
+        };
     Ok(PlanItem {
+        parent,
         i,
         title: trimmed_title,
         notes,
@@ -446,6 +505,7 @@ mod tests {
     #[test]
     fn title_controls_are_rejected_before_end_trimming() {
         let input = FlagAdd {
+            parent: None,
             title: Some("hello\n".into()),
             notes: None,
             project: None,
