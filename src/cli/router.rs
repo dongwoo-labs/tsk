@@ -14,6 +14,9 @@ pub enum Surface {
     Archive,
     Unarchive,
     Project,
+    Sync,
+    /// Git's merge driver for `tsk.json`, installed by `tsk sync --init`; never in help.
+    MergeDriver,
     Setup,
     Update,
     Guide,
@@ -68,6 +71,8 @@ pub fn route<S: AsRef<str>>(
             "archive" => Surface::Archive,
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
+            "sync" => Surface::Sync,
+            "merge-driver" => Surface::MergeDriver,
             "setup" => Surface::Setup,
             "update" => Surface::Update,
             "guide" => Surface::Guide,
@@ -169,6 +174,15 @@ mod tests {
         assert_eq!(
             route(["tsk", "edit", "T3", "--title", "new"], None),
             Surface::Edit
+        );
+    }
+
+    #[test]
+    fn sync_and_the_hidden_merge_driver_select_their_surfaces() {
+        assert_eq!(route(["tsk", "sync", "--init"], None), Surface::Sync);
+        assert_eq!(
+            route(["tsk", "merge-driver", "a", "b", "c"], None),
+            Surface::MergeDriver
         );
     }
 

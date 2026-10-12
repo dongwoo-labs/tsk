@@ -19,14 +19,14 @@ use crate::domain::{DomainState, Task, STORE_FORMAT_VERSION};
 use crate::fsperm;
 
 /// On-disk document name under the state directory.
-const STATE_FILE: &str = "tsk.json";
+pub(crate) const STATE_FILE: &str = "tsk.json";
 /// Previous successful document, retained by hard-link before replace.
-const BACKUP_FILE: &str = "tsk.json.1";
+pub(crate) const BACKUP_FILE: &str = "tsk.json.1";
 /// Inter-process exclusive lock file (sibling of the state document).
-const LOCK_FILE: &str = "tsk.json.lock";
+pub(crate) const LOCK_FILE: &str = "tsk.json.lock";
 /// Trash file for tasks removed from the live store, rewritten atomically on
 /// each change and bounded by the 30-day purge.
-const TRASH_FILE: &str = "trash.jsonl";
+pub(crate) const TRASH_FILE: &str = "trash.jsonl";
 /// Trash lines older than this are dropped on the next trash rewrite.
 const TRASH_PURGE_AFTER: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
@@ -581,18 +581,37 @@ impl TaskStore {
             return Ok(DomainState::new());
         }
         let data = fs::read_to_string(&file)?;
-        let found = peek_format_version(&data)?;
-        // Pre-versioned (0) and newer-than-supported documents are both refused.
-        if found == 0 || found > supported {
-            return Err(StoreError::UnsupportedFormat { found, supported });
+        parse_document_supported(&data, supported, migrations)
+    }
+
+    /// Run `f` while holding the exclusive store lock, so no other tsk writer can
+    /// touch the live document until it returns. `tsk sync` commits and merges under it.
+    pub(crate) fn with_exclusive_lock<T>(&self, f: impl FnOnce() -> T) -> Result<T, StoreError> {
+        let _guard = self.lock_exclusive()?;
+        Ok(f())
+    }
+
+    /// [`Self::load`] for a caller already inside [`Self::with_exclusive_lock`].
+    pub(crate) fn load_while_locked(&self) -> Result<DomainState, StoreError> {
+        self.load_unlocked()
+    }
+
+    /// Write an empty current-format document when none exists yet. Caller holds the lock.
+    pub(crate) fn ensure_document_while_locked(&self) -> Result<(), StoreError> {
+        if self.state_file().exists() {
+            return Ok(());
         }
-        if found < supported {
-            let document: serde_json::Value = serde_json::from_str(&data)?;
-            let migrated = migrations(document, found)?;
-            return Ok(serde_json::from_value(migrated)?);
+        self.save_unlocked(&mut DomainState::new())
+    }
+
+    /// Keep the live document as `tsk.json.1` before something other than a store save
+    /// (a git merge) replaces it. Caller holds the lock.
+    pub(crate) fn retain_backup_while_locked(&self) -> Result<(), StoreError> {
+        let file = self.state_file();
+        if file.exists() {
+            retain_last_good(&file)?;
         }
-        let state = serde_json::from_str(&data)?;
-        Ok(state)
+        Ok(())
     }
 
     fn save_unlocked(&self, state: &mut DomainState) -> Result<(), StoreError> {
@@ -960,6 +979,35 @@ pub fn default_state_dir() -> PathBuf {
     }
     // Last resort: relative per-process dir (still not shared /tmp/tsk-state).
     PathBuf::from(".tsk-state")
+}
+
+/// Parse one `tsk.json` document as this binary would load it: an older format is
+/// migrated in memory, a pre-versioned or newer one is refused.
+pub fn parse_document(data: &str) -> Result<DomainState, StoreError> {
+    parse_document_supported(data, STORE_FORMAT_VERSION, migrate)
+}
+
+fn parse_document_supported(
+    data: &str,
+    supported: u32,
+    migrations: fn(serde_json::Value, u32) -> Result<serde_json::Value, StoreError>,
+) -> Result<DomainState, StoreError> {
+    let found = peek_format_version(data)?;
+    // Pre-versioned (0) and newer-than-supported documents are both refused.
+    if found == 0 || found > supported {
+        return Err(StoreError::UnsupportedFormat { found, supported });
+    }
+    if found < supported {
+        let document: serde_json::Value = serde_json::from_str(data)?;
+        let migrated = migrations(document, found)?;
+        return Ok(serde_json::from_value(migrated)?);
+    }
+    Ok(serde_json::from_str(data)?)
+}
+
+/// The `format_version` a document declares, `0` when it has none.
+pub fn document_format_version(data: &str) -> Result<u32, StoreError> {
+    peek_format_version(data)
 }
 
 fn peek_format_version(data: &str) -> Result<u32, StoreError> {

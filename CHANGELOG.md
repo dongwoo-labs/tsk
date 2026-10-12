@@ -11,6 +11,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- `tsk sync` shares a board between machines and with agents through a git repository you own. `tsk sync --init <remote-url>` turns the state directory into that repository; `tsk sync` commits local changes, then fetches, merges, and pushes. Boards merge task by task (the later edit wins when both sides changed a task, and task numbers stay unique), and a board written by a newer tsk is refused instead of merged. There is no background sync. [Share through git](https://gettsk.sh/docs/storage/#share-through-git).
 - Reorder steps. On the task page, `alt+↑` / `alt+↓` moves the selected step (also **move step up** / **move step down** in the `:` palette, which now opens on the task page too), and `ctrl+a` with a step selected adds the new step directly below it. From the CLI, `tsk steps T12 move <short-id> --before|--after <short-id>` or `--first`/`--last`, and `tsk steps T12 add "…"` with the same place flags. A moved step keeps its short ID and checked state. Thanks @LukasGold (#159).
 
 ### Fixed

@@ -37,6 +37,7 @@ Use `--json` on `add` or `list` for machine-readable output. Read the [exit cont
 | `tsk archive` / `tsk unarchive` | Hide or restore a task |
 | `tsk project archive` / `tsk project unarchive` | Hide or restore a project |
 | `tsk trash restore` | Restore a task from trash |
+| `tsk sync` | Share the board through git |
 | `tsk setup` | Configure Herdr or install an agent skill |
 | `tsk update` | Upgrade an installer-managed copy, or print Homebrew guidance |
 | `tsk guide` | Print the agent workflow |
@@ -266,6 +267,33 @@ Restore returns a task from trash with its original number, no soft-delete flag,
 
 Recent deletions may still be in the main store; use board undo until they move to trash. [Retention and storage](/docs/storage/#deleted-tasks).
 
+## sync
+
+```sh
+tsk sync --init git@github.com:me/tsk-board.git
+tsk sync
+tsk sync --json
+```
+
+| Option | Purpose |
+| --- | --- |
+| `--init [<remote-url>]` | Make the state directory a git repository for sync, or repair one. The URL becomes the remote `origin` |
+| `--json` | One result object |
+| `--state-dir <dir>` | Alternate state directory |
+
+`tsk sync` commits local changes to `tsk.json` and `trash.jsonl`, then, when `origin` exists, fetches, merges, and pushes. If the push is rejected because another machine pushed first, it fetches, merges, and pushes once more. Nothing syncs in the background; run it when you want to share. Setup, merge rules, and sharing with agents: [Share through git](/docs/storage/#share-through-git).
+
+Plain output is three lines: `committed local changes (<hash>)` or `no local changes`; `merged origin/main: 1 added, 2 updated, 0 removed` or `nothing new on origin/main`; `pushed to origin/main` or `nothing to push`. Without a remote the last two lines become `no remote: changes stay in this state directory`.
+
+JSON output: `committed`, `commit` (short hash or `null`), `upstream` (`origin/<branch>` or `null`), `merged`, `pushed`, and `tasks` with `added`, `updated`, and `removed` counts for this board. `--init --json` prints `initialized`, `dir`, `created_repo`, `remote`, and `commit`.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Synced, or set up |
+| `1` | Refused; the board here is unchanged. Not set up, the state directory is inside or already tracks another repository, `origin` already points elsewhere, git is missing, or the remote board cannot be merged or loaded by this tsk |
+| `2` | Invalid arguments; nothing changed |
+| `3` | A git step (often fetch or push) or the store failed partway: `state is indeterminate, run tsk sync again`. A rerun is always safe |
+
 ## help and version
 
 ```sh
@@ -343,7 +371,7 @@ Prints the embedded [agent skill](/docs/agents/) without YAML frontmatter. Exits
 
 ## Exit contract
 
-For data commands:
+For data commands (`tsk sync` has [its own table](#sync)):
 
 | Exit | Meaning | Next step |
 | --- | --- | --- |

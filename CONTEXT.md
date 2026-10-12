@@ -6,6 +6,8 @@ Canonical terms for this repo. No implementation detail.
 - **list command**: headless `tsk list` subcommand that prints tasks from the board store without changing them.
 - **status command**: headless `tsk status` subcommand that sets a task's human status to open, ready, started, blocked, review, or done. `start` is an alias for `started`.
 - **edit command**: headless `tsk edit` subcommand that updates a task's title and/or notes without changing scope or thread.
+- **sync command**: headless `tsk sync` subcommand that shares the board through a git repository in the state directory: commit, then fetch, merge, push. `--init` sets the repository up. Exit `0` synced, `1` refused with the board unchanged, `2` usage, `3` a git or store step failed partway; run it again.
+- **merge driver**: the hidden `tsk merge-driver` verb git calls to merge two `tsk.json` documents task by task.
 - **bulk add**: one `add` invocation that accepts many items, reports each, and makes one durable write of the successes.
 - **invocation default**: capture scope used when the caller omits `project` / `-p`. The cwd repo when known, otherwise the desk.
 - **desk**: your desk holds everything not tied to a project. Selected by `--desk` and by bare `!p`. Stored as scope value `global`.

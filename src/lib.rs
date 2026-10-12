@@ -15,6 +15,7 @@ pub mod scope;
 pub mod setup;
 pub mod setup_agent;
 pub mod store;
+pub mod sync;
 pub(crate) mod text;
 pub mod ui;
 pub mod update;

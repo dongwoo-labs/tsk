@@ -89,6 +89,11 @@ list, `add "…" --after <short_id>` (or `--before`); to reorder, `tsk steps T12
 --before|--after <short_id>` or `--first`/`--last`. A moved step keeps its short id and checked
 state, and a repeated move is safe.
 
+**Shared board.** When the user's board is shared through git (they set up `tsk sync`), run
+`tsk sync` before you read it and after your writes. Exit 3 is a git or network failure: run it
+again. Exit 1 is a refusal (a board from a newer tsk, a merge that would not load): tell the user,
+the local board is unchanged. Never run `tsk sync --init` unless asked.
+
 **Capture many.** `cat plan.json | tsk add` with
 `[{"title": "…", "notes": "…", "project": "…", "thread": "…"}]`; only `title` is required, an
 omitted `project` takes the default scope. The result lists `created`, `existing` and `failed`

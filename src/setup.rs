@@ -313,7 +313,7 @@ fn config_path() -> io::Result<PathBuf> {
     absolute(root.join("herdr").join("config.toml"))
 }
 /// Preserve the invocation symlink (e.g. Homebrew's bin/tsk), not its versioned Cellar target.
-fn installed_binary() -> io::Result<PathBuf> {
+pub(crate) fn installed_binary() -> io::Result<PathBuf> {
     let invoked = PathBuf::from(
         env::args_os()
             .next()
@@ -372,7 +372,7 @@ fn asset_root_name(assets: &[(&str, String)]) -> String {
 }
 
 /// `YYYYMMDD-HHMMSS` from Unix time, UTC. Civil-from-days (Howard Hinnant); no date crate.
-fn utc_timestamp(now: std::time::SystemTime) -> String {
+pub(crate) fn utc_timestamp(now: std::time::SystemTime) -> String {
     let secs = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
