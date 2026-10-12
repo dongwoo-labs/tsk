@@ -23,6 +23,29 @@ The CLI can mark a task done with `tsk status <task> done`. Agent lifecycle does
 
 Use `--json` on `add`, `list`, or `import` for machine-readable output. Read the [exit contract](#exit-contract) before retrying a write.
 
+## Task-linked questions
+
+Question commands run only with an explicit non-personal Agent state directory. `TSK_STATE_DIR` also supplies that selection. They do not open or write the personal default board.
+
+```sh
+tsk ask --file question.json --state-dir /local/agent-board
+tsk questions --task T12 --state-dir /local/agent-board --json
+tsk questions Q1 --state-dir /local/agent-board --json
+tsk answer Q1 --file answer.json --state-dir /local/agent-board
+```
+
+`ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, or `finding`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, and `source`. Nullable fields can be `null`; options defaults to an empty array. Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text.
+
+`answer` takes `expected_revision`, `text`, `actor`, `origin`, `corrects_revision`, `approve`, `confirmed`, `approval`, `user_chat`, and `source`. Ordinary answers use `origin: "agent"`, `approve: false`, and null approval/evidence. A correction names the current answer's revision in `corrects_revision`; it appends instead of replacing history. A stale expected revision refuses without applying another answer. Use `questions` after every uncertain result and before a retry.
+
+Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. CLI refuses `origin: "user_ui"`; only the UI API can submit that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
+
+Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullable `path`. Optional private source metadata preserves original system, question UUID, comment ID, URL, answer ID, parent question ID, actor, time, revision and applied uncertainty. Historical source approvals never issue current authority.
+
+Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means Herdr accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
+
+`questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task. Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
+
 ## Commands
 
 | Command | Action |

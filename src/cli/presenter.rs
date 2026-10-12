@@ -112,6 +112,29 @@ fn exit_line(success: &str, refusal: Option<&str>, store_io: bool) -> String {
     clauses.join(" · ")
 }
 
+pub fn questions_help() -> CliOutput {
+    help(HelpDoc {
+        usage: vec![
+            "tsk ask --file <question.json> --state-dir <Agent-dir>".into(),
+            "tsk answer <Q-number|UUID> --file <answer.json> --state-dir <Agent-dir>".into(),
+            "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
+        ],
+        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval.".into(),
+        groups: vec![group("Options", &[
+            ("--file <path>", "Full JSON question or answer input; no text truncation"),
+            ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
+            ("--task <T-number|UUID>", "Filter question readback by Task"),
+            ("--json", "Full JSON readback (also the default for questions)"),
+        ])],
+        examples: vec!["tsk questions Q1 --state-dir /local/agent-board --json".into()],
+        refusals: vec![
+            "Personal or implicit board, missing/corrupt private record, stale expected revision, invalid correction".into(),
+            "CLI UserUi origin; Agent/imported approval; unverified user evidence or mismatched target/action/H/scope".into(),
+        ],
+        exit: "0 saved/read; notification failure remains separate from save success. 1 refused/not saved/commit unknown/durability uncertain: read back before retrying. 2 usage or invalid JSON. A notified hint proves submission only, not receiver application.".into(),
+    })
+}
+
 pub fn top_level_help() -> String {
     concat!(
         "usage: tsk [capture] | <command> [args] | help [<command>] | --help | --version\n\n",
@@ -122,6 +145,10 @@ pub fn top_level_help() -> String {
         "  edit     update a task's title or notes\n",
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
         "  import   import Linear issues as tasks (one way)\n\n",
+        "Agent questions (explicit non-personal state directory)\n",
+        "  ask        save a full-text question from JSON\n",
+        "  answer     append an answer or correction with expected revision\n",
+        "  questions  read full questions and answer history as JSON\n\n",
         "Board\n",
         "  archive    keep a task off the working views\n",
         "  unarchive  put an archived task back\n",

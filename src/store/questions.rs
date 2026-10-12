@@ -1,0 +1,584 @@
+//! Locked private-snapshot commits for Agent boards.
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::{AtomicFilesystem, StdFilesystem, TaskStore};
+use crate::domain::*;
+
+const PRIVATE_DIR: &str = "questions-private";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionDurability {
+    Durable,
+    /// Shared reference is visible, but a failed directory sync prevents a durability claim.
+    Uncertain,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionSaveResult {
+    pub record: QuestionRecord,
+    pub durability: QuestionDurability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestionError {
+    AgentStoreRequired,
+    InvalidInput,
+    UnknownTask,
+    UnknownQuestion,
+    StaleRevision,
+    InvalidCorrection,
+    ApprovalRefused,
+    PrivateRecordUnavailable,
+    NotSaved,
+    /// Save failed and readback could not establish whether the reference committed.
+    CommitUnknown,
+    StoreUnavailable,
+}
+
+impl std::fmt::Display for QuestionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::AgentStoreRequired => {
+                "question commands require an explicit non-personal Agent state directory"
+            }
+            Self::InvalidInput => "invalid question or answer input",
+            Self::UnknownTask => "unknown, deleted, or notice task",
+            Self::UnknownQuestion => "unknown question",
+            Self::StaleRevision => "question changed: read back its current revision",
+            Self::InvalidCorrection => "correction must link the current answer revision",
+            Self::ApprovalRefused => {
+                "approval requires confirmed user evidence and exact current approval terms"
+            }
+            Self::PrivateRecordUnavailable => {
+                "referenced private question record is missing or corrupt; mutation refused"
+            }
+            Self::NotSaved => "question was not saved; retry with the same expected revision",
+            Self::CommitUnknown => "question commit is unknown; read back before retrying",
+            Self::StoreUnavailable => "question store is unavailable",
+        })
+    }
+}
+impl std::error::Error for QuestionError {}
+
+/// Capability for an explicitly selected Agent board, never an implicit personal board.
+/// This is an isolation boundary, not authentication against the same OS account.
+#[derive(Debug)]
+pub struct QuestionStore {
+    store: TaskStore,
+}
+
+fn resolved_path(path: &Path) -> Option<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    // Resolve symlinks before `..`: lexical normalization would give a different
+    // identity for an existing alias followed by a parent component.
+    if absolute.exists() {
+        return fs::canonicalize(absolute).ok();
+    }
+    let parent = resolved_path(absolute.parent()?)?;
+    Some(parent.join(absolute.file_name()?))
+}
+
+pub fn question_capability(explicit_state_dir: Option<&Path>) -> Result<(), QuestionError> {
+    let selected = explicit_state_dir
+        .filter(|path| !path.as_os_str().is_empty())
+        .and_then(resolved_path)
+        .ok_or(QuestionError::AgentStoreRequired)?;
+    let mut personal = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        personal.push(PathBuf::from(home).join(".tsk"));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").filter(|home| !home.is_empty()) {
+        personal.push(PathBuf::from(home).join(".tsk"));
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|home| !home.is_empty()) {
+        personal.push(PathBuf::from(local).join("tsk"));
+    }
+    if personal
+        .iter()
+        .filter_map(|path| resolved_path(path))
+        .any(|path| selected.starts_with(path))
+    {
+        return Err(QuestionError::AgentStoreRequired);
+    }
+    Ok(())
+}
+
+impl QuestionStore {
+    pub fn new(explicit_state_dir: PathBuf) -> Result<Self, QuestionError> {
+        question_capability(Some(&explicit_state_dir))?;
+        Ok(Self {
+            store: TaskStore::new(explicit_state_dir),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        self.store.path()
+    }
+
+    pub fn list(&self, task_id: Option<Uuid>) -> Result<Vec<QuestionRecord>, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        state
+            .questions()
+            .iter()
+            .filter(|reference| task_id.is_none_or(|id| reference.task_id == id))
+            .map(|reference| self.read_private(reference))
+            .collect()
+    }
+
+    pub fn read(&self, id: Uuid) -> Result<QuestionRecord, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let reference = state
+            .questions()
+            .iter()
+            .find(|reference| reference.id == id)
+            .ok_or(QuestionError::UnknownQuestion)?;
+        self.read_private(reference)
+    }
+
+    pub fn ask(&self, draft: QuestionDraft) -> Result<QuestionSaveResult, QuestionError> {
+        validate_question(&draft)?;
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let mut state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        if state
+            .get(draft.task_id)
+            .is_none_or(|task| task.soft_deleted || task.is_notice())
+        {
+            return Err(QuestionError::UnknownTask);
+        }
+        let number = state
+            .questions()
+            .iter()
+            .map(|reference| reference.number)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(QuestionError::InvalidInput)?;
+        let reference = QuestionRef {
+            id: Uuid::new_v4(),
+            number,
+            task_id: draft.task_id,
+            kind: draft.kind,
+            summary: draft.summary.clone(),
+            revision: Uuid::new_v4(),
+        };
+        let record = QuestionRecord {
+            reference: reference.clone(),
+            draft,
+            created_at: now(),
+            answers: Vec::new(),
+        };
+        state.questions.push(reference);
+        self.commit(&mut state, record)
+    }
+
+    /// Save Recovery confirms the same visible commit without appending another answer.
+    /// Only after all syncs succeed can a caller retry its identifier-only notification.
+    pub fn confirm_durability(
+        &self,
+        id: Uuid,
+        expected_revision: Uuid,
+    ) -> Result<QuestionSaveResult, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let reference = state
+            .questions()
+            .iter()
+            .find(|reference| reference.id == id)
+            .ok_or(QuestionError::UnknownQuestion)?;
+        if reference.revision != expected_revision {
+            return Err(QuestionError::StaleRevision);
+        }
+        let record = self.read_private(reference)?;
+        let directory = self.private_directory()?;
+        std::fs::File::open(directory.join(format!("{}.json", reference.revision)))
+            .and_then(|file| file.sync_all())
+            .map_err(|_| QuestionError::CommitUnknown)?;
+        StdFilesystem
+            .sync_directory(&directory)
+            .map_err(|_| QuestionError::CommitUnknown)?;
+        std::fs::File::open(self.store.state_file())
+            .and_then(|file| file.sync_all())
+            .map_err(|_| QuestionError::CommitUnknown)?;
+        StdFilesystem
+            .sync_directory(self.path())
+            .map_err(|_| QuestionError::CommitUnknown)?;
+        Ok(QuestionSaveResult {
+            record,
+            durability: QuestionDurability::Durable,
+        })
+    }
+
+    /// Terms cannot be silently edited. Ask a new Q for changed approval terms.
+    pub fn answer(
+        &self,
+        id: Uuid,
+        draft: AnswerDraft,
+    ) -> Result<QuestionSaveResult, QuestionError> {
+        self.answer_with_task(id, draft, |_| Ok(None))
+    }
+
+    /// D2701 owns the finding action. This boundary loans it the same store lock:
+    /// create a task and append the answer in one shared replacement, or neither.
+    pub fn answer_with_task(
+        &self,
+        id: Uuid,
+        draft: AnswerDraft,
+        create: impl FnOnce(&mut DomainState) -> Result<Option<Uuid>, String>,
+    ) -> Result<QuestionSaveResult, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let mut state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let index = state
+            .questions()
+            .iter()
+            .position(|reference| reference.id == id)
+            .ok_or(QuestionError::UnknownQuestion)?;
+        let mut record = self.read_private(&state.questions()[index])?;
+        if draft.expected_revision != record.reference.revision {
+            return Err(QuestionError::StaleRevision);
+        }
+        if draft.text.trim().is_empty() || draft.actor.trim().is_empty() {
+            return Err(QuestionError::InvalidInput);
+        }
+        match record.current_answer() {
+            Some(previous) if draft.corrects_revision != Some(previous.revision) => {
+                return Err(QuestionError::InvalidCorrection)
+            }
+            None if draft.corrects_revision.is_some() => {
+                return Err(QuestionError::InvalidCorrection)
+            }
+            _ => {}
+        }
+        validate_answer(&record, &draft)?;
+        let existing_ids: std::collections::BTreeSet<Uuid> =
+            state.tasks().iter().map(|task| task.id).collect();
+        let created_task_id = create(&mut state).map_err(|_| QuestionError::InvalidInput)?;
+        if let Some(task_id) = created_task_id {
+            if record.draft.kind != QuestionKind::Finding
+                || existing_ids.contains(&task_id)
+                || state
+                    .get(task_id)
+                    .is_none_or(|task| task.is_notice() || task.soft_deleted)
+            {
+                return Err(QuestionError::InvalidInput);
+            }
+        }
+        state.assign_numbers_for_persistence();
+        let revision = Uuid::new_v4();
+        record.answers.push(QuestionAnswer {
+            revision,
+            created_task_id,
+            corrects_revision: draft.corrects_revision,
+            text: draft.text,
+            actor: draft.actor,
+            origin: draft.origin,
+            at: now(),
+            approval: if draft.approve { draft.approval } else { None },
+            user_chat: draft.user_chat,
+            source: draft.source,
+        });
+        record.reference.revision = revision;
+        state.questions[index] = record.reference.clone();
+        self.commit(&mut state, record)
+    }
+
+    fn private_directory(&self) -> Result<PathBuf, QuestionError> {
+        let directory = self.path().join(PRIVATE_DIR);
+        if let Ok(metadata) = fs::symlink_metadata(&directory) {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(QuestionError::PrivateRecordUnavailable);
+            }
+        }
+        Ok(directory)
+    }
+
+    fn read_private(&self, reference: &QuestionRef) -> Result<QuestionRecord, QuestionError> {
+        let file = self
+            .private_directory()?
+            .join(format!("{}.json", reference.revision));
+        let metadata =
+            fs::symlink_metadata(&file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(QuestionError::PrivateRecordUnavailable);
+        }
+        let content = fs::read(file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+        let record: QuestionRecord = serde_json::from_slice(&content)
+            .map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+        if record.reference != *reference
+            || record.draft.task_id != reference.task_id
+            || record.draft.kind != reference.kind
+            || record.draft.summary != reference.summary
+            || record
+                .answers
+                .last()
+                .is_some_and(|answer| answer.revision != reference.revision)
+        {
+            return Err(QuestionError::PrivateRecordUnavailable);
+        }
+        validate_question(&record.draft).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+        Ok(record)
+    }
+
+    fn commit(
+        &self,
+        state: &mut DomainState,
+        record: QuestionRecord,
+    ) -> Result<QuestionSaveResult, QuestionError> {
+        let directory = self.private_directory()?;
+        if !directory.exists() {
+            fs::create_dir(&directory).map_err(|_| QuestionError::NotSaved)?;
+            StdFilesystem
+                .sync_directory(self.path())
+                .map_err(|_| QuestionError::NotSaved)?;
+        }
+        // Keep runtime records excluded even when the Agent state directory is in
+        // another Git checkout that does not carry tsk's repository ignore rule.
+        let ignore = directory.join(".gitignore");
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&ignore)
+        {
+            Ok(mut file) => {
+                file.write_all(b"*\n")
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| QuestionError::NotSaved)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata =
+                    fs::symlink_metadata(&ignore).map_err(|_| QuestionError::NotSaved)?;
+                if !metadata.is_file()
+                    || metadata.file_type().is_symlink()
+                    || fs::read(&ignore).map_err(|_| QuestionError::NotSaved)? != b"*\n"
+                {
+                    return Err(QuestionError::NotSaved);
+                }
+                std::fs::File::open(&ignore)
+                    .and_then(|file| file.sync_all())
+                    .map_err(|_| QuestionError::NotSaved)?;
+            }
+            Err(_) => return Err(QuestionError::NotSaved),
+        }
+        let file = directory.join(format!("{}.json", record.reference.revision));
+        let content =
+            serde_json::to_vec_pretty(&record).map_err(|_| QuestionError::InvalidInput)?;
+        // No chmod: standard create permissions follow the caller's existing umask.
+        let mut snapshot = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+            .map_err(|_| QuestionError::NotSaved)?;
+        snapshot
+            .write_all(&content)
+            .and_then(|()| snapshot.sync_all())
+            .map_err(|_| QuestionError::NotSaved)?;
+        drop(snapshot);
+        StdFilesystem
+            .sync_directory(&directory)
+            .map_err(|_| QuestionError::NotSaved)?;
+        // Sync parent on retries too: creation might have been visible but not durable.
+        StdFilesystem
+            .sync_directory(self.path())
+            .map_err(|_| QuestionError::NotSaved)?;
+        state.clear_merge_bases();
+        match self.store.save_unlocked(state) {
+            Ok(()) => Ok(QuestionSaveResult {
+                record,
+                durability: QuestionDurability::Durable,
+            }),
+            Err(_) => {
+                let visible = self
+                    .store
+                    .load_unlocked()
+                    .map_err(|_| QuestionError::CommitUnknown)?;
+                if visible
+                    .questions()
+                    .iter()
+                    .any(|reference| reference == &record.reference)
+                {
+                    self.read_private(&record.reference)?;
+                    Ok(QuestionSaveResult {
+                        record,
+                        durability: QuestionDurability::Uncertain,
+                    })
+                } else {
+                    Err(QuestionError::NotSaved)
+                }
+            }
+        }
+    }
+}
+
+fn now() -> std::time::SystemTime {
+    std::time::SystemTime::now()
+}
+
+fn validate_terms(terms: &ApprovalTerms) -> bool {
+    [
+        terms.target.as_str(),
+        terms.action.as_str(),
+        terms.scope.as_str(),
+        terms.rollback.as_str(),
+    ]
+    .iter()
+    .all(|value| !value.trim().is_empty())
+        && matches!(terms.h.len(), 40 | 64)
+        && terms.h.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
+    if [
+        draft.summary.as_str(),
+        draft.origin_thread.as_str(),
+        draft.recipient.as_str(),
+        draft.text.as_str(),
+    ]
+    .iter()
+    .any(|value| value.trim().is_empty())
+        || draft.options.iter().any(|option| option.trim().is_empty())
+    {
+        return Err(QuestionError::InvalidInput);
+    }
+    if !agent_name(&draft.origin_thread) || !agent_name(&draft.recipient) {
+        return Err(QuestionError::InvalidInput);
+    }
+    match draft.kind {
+        QuestionKind::Approval
+            if draft
+                .approval
+                .as_ref()
+                .is_none_or(|terms| !validate_terms(terms))
+                || draft.finding.is_some() =>
+        {
+            Err(QuestionError::InvalidInput)
+        }
+        QuestionKind::Finding
+            if draft
+                .finding
+                .as_ref()
+                .is_none_or(|finding| finding.detail.trim().is_empty())
+                || draft.approval.is_some() =>
+        {
+            Err(QuestionError::InvalidInput)
+        }
+        QuestionKind::Question if draft.approval.is_some() || draft.finding.is_some() => {
+            Err(QuestionError::InvalidInput)
+        }
+        _ => Ok(()),
+    }
+}
+
+pub fn agent_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+}
+
+fn validate_answer(record: &QuestionRecord, draft: &AnswerDraft) -> Result<(), QuestionError> {
+    if !draft.approve {
+        if draft.approval.is_some() {
+            return Err(QuestionError::ApprovalRefused);
+        }
+        return Ok(());
+    }
+    if record.draft.kind != QuestionKind::Approval
+        || !draft.confirmed
+        || draft.approval != record.draft.approval
+        || draft.approval.is_none()
+    {
+        return Err(QuestionError::ApprovalRefused);
+    }
+    match draft.origin {
+        AnswerOrigin::UserUi => Ok(()),
+        AnswerOrigin::LeadUserChat
+            if draft.user_chat.as_ref().is_some_and(|evidence| {
+                evidence.original_verified
+                    && !evidence.original_user.trim().is_empty()
+                    && !evidence.original_text.trim().is_empty()
+                    && !evidence.source.trim().is_empty()
+                    && !evidence.original_time.trim().is_empty()
+            }) =>
+        {
+            Ok(())
+        }
+        _ => Err(QuestionError::ApprovalRefused),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum QuestionNotification {
+    Notified,
+    Failed,
+    /// A visible but durability-uncertain commit must not invite the recipient to act.
+    NotAttempted,
+}
+
+/// Identifier-only resume hint. Never forwards private text or approval evidence.
+/// The Herdr command's submission success is not evidence of a completed agent turn.
+pub fn notify_question(saved: &QuestionSaveResult, registration: bool) -> QuestionNotification {
+    if saved.durability != QuestionDurability::Durable {
+        return QuestionNotification::NotAttempted;
+    }
+    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+        return QuestionNotification::Failed;
+    }
+    let recipient = if registration {
+        &saved.record.draft.recipient
+    } else {
+        &saved.record.draft.origin_thread
+    };
+    let reference = &saved.record.reference;
+    let hint = format!("tsk question task={} Q{} id={} revision={}; read back from the Agent state directory before acting.",
+        reference.task_id, reference.number, reference.id, reference.revision);
+    match std::process::Command::new("herdr")
+        .args(["agent", "prompt", recipient, &hint])
+        .output()
+    {
+        Ok(output) if output.status.success() => QuestionNotification::Notified,
+        _ => QuestionNotification::Failed,
+    }
+}

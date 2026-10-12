@@ -234,6 +234,9 @@ pub struct DomainState {
     project_intents: BTreeMap<String, bool>,
     /// LIFO undo records for soft-delete and complete.
     undo_stack: Vec<UndoEntry>,
+    /// Shareable metadata only. Full content lives in immutable private snapshots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) questions: Vec<super::QuestionRef>,
 }
 
 impl Default for DomainState {
@@ -252,6 +255,7 @@ impl DomainState {
             projects: BTreeMap::new(),
             project_intents: BTreeMap::new(),
             undo_stack: Vec::new(),
+            questions: Vec::new(),
         }
     }
 
@@ -267,6 +271,10 @@ impl DomainState {
     /// Pop the top undo entry after its revision guard has passed.
     pub(crate) fn pop_undo(&mut self) -> Option<UndoEntry> {
         self.undo_stack.pop()
+    }
+
+    pub fn questions(&self) -> &[super::QuestionRef] {
+        &self.questions
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -845,6 +853,7 @@ impl DomainState {
     /// because this method has no mutation baseline and must not guess with wall-clock
     /// timestamps.
     pub fn merge_tasks_from_disk(&mut self, other: &DomainState) {
+        self.questions.clone_from(&other.questions);
         for incoming in &other.tasks {
             match self.tasks.iter_mut().find(|task| task.id == incoming.id) {
                 Some(existing) if existing.revision != incoming.revision => {
@@ -864,6 +873,7 @@ impl DomainState {
     /// from; otherwise the caller receives a typed save failure instead of overwriting a newer
     /// concurrent mutation.
     pub(crate) fn merge_for_save(&mut self, disk: &DomainState) -> Result<(), String> {
+        self.questions.clone_from(&disk.questions);
         for incoming in &disk.tasks {
             let Some(local) = self.tasks.iter_mut().find(|task| task.id == incoming.id) else {
                 self.tasks.push(incoming.clone());

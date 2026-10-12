@@ -20,6 +20,9 @@ site/node_modules/
 site/dist/
 site/.astro/
 
+# Task-linked question content is local, never shared in Git.
+questions-private/
+
 # Local release preparation and Python test caches
 /dist-release/
 __pycache__/

@@ -29,6 +29,18 @@ An older binary refuses a newer or unversioned store instead of rewriting it. Us
 
 Archived tasks stay in the task document with their existing status. [Archive and restore](/docs/board/#archive).
 
+## Agent questions and private records
+
+Question commands require an explicit Agent `--state-dir` or `TSK_STATE_DIR` that is not the personal default directory. They never fall back to the personal board. Shared `tsk.json` holds only a question UUID, display number, task UUID, kind, shareable summary, and immutable private-snapshot reference. Choose a non-sensitive summary: it is not automatically redacted.
+
+Full questions, options, recommendations, impact, blocking scope, origin Thread, recipient, finding details/path, approval terms, answers and source metadata stay in `questions-private/`. This directory is excluded from Git. There is no new chmod protection, PIN, ACL, encryption, signature, or user authentication. A process running as the same OS user can impersonate a UI caller; confirmation records are not cryptographic identity evidence.
+
+The existing store lock serializes task and question writes. A new private snapshot and its directory entries are synced before the shared reference is replaced. Missing or corrupt referenced records refuse mutation. Replies and corrections use the expected question revision; corrections append a new answer linked by `corrects_revision`. A question does not change its task's status. Imported actors, history and approvals never issue current approval authority.
+
+A saved reply is separate from its Herdr notification. Registration notifies the recipient; answers and corrections notify the origin Thread. If that Thread ended or notification failed, the Lead can read and resolve the same Q UUID from the same Agent store. Read back the revision before acting; do not apply the same answer twice. A visible post-rename readback after a sync failure is **durability uncertain**, not durable success. Retry notification separately, without saving another answer. No delivery database, message server, or Linear comment replica is maintained.
+
+For deployment or irreversible changes, approval binds to the exact target, action, Git H (40 hexadecimal digits) or plan digest (64 hexadecimal digits), scope, and rollback description. Only a confirmed User UI choice or a Lead record that preserves and verifies the original user-chat approval issues authority. An ordinary Agent CLI reply does not approve an action.
+
 ## Starter guides and release notes
 
 The four starter tasks (`N1`… on your desk) are seeded once per state directory on the first board open. Mark one done, archive it, or delete it and it never returns. Deleting `delivery.json` seeds any starter catalog id the task document no longer holds.

@@ -18,6 +18,9 @@ use uuid::Uuid;
 use crate::domain::{DomainState, Task, STORE_FORMAT_VERSION};
 use crate::fsperm;
 
+mod questions;
+pub use questions::*;
+
 /// On-disk document name under the state directory.
 const STATE_FILE: &str = "tsk.json";
 /// Previous successful document, retained by hard-link before replace.
@@ -360,6 +363,15 @@ impl TaskStore {
         check_format_version(state.format_version())?;
         let _guard = self.lock_exclusive()?;
         let mut durable = state.clone();
+        // Only question APIs can mutate references under the lock. Plain task saves
+        // must not erase answers committed since a board loaded its presentation state.
+        match self.load_unlocked() {
+            Ok(disk) => durable.questions = disk.questions,
+            // Preserve the existing explicit save-repair path for corrupt shared
+            // JSON. Keep the caller's references; never fabricate empty records.
+            Err(StoreError::Json(_)) => {}
+            Err(error) => return Err(error),
+        }
         durable.assign_numbers_for_persistence();
         durable.clear_merge_bases();
         self.save_unlocked(&mut durable)

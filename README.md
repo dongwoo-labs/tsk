@@ -81,6 +81,17 @@ On a TTY that detects agents once and asks to install. Or name one agent
 user-level skills directory.
 [Other skill directories and setup options](https://gettsk.sh/docs/cli/#setup).
 
+### Agent questions
+
+On a separate Agent board selected explicitly with `TSK_STATE_DIR` or `--state-dir`,
+use `tsk ask --file question.json`, `tsk questions`, and `tsk answer Q1 --file answer.json`.
+Questions link to a Task UUID without changing its status. Shared task data contains only
+shareable summaries and references; full text and append-only answers stay in the
+Git-excluded `questions-private/` directory. Answers use expected-revision CAS and are
+saved before identifier-only Herdr notification. Agent replies do not grant deployment
+or irreversible-change approval. Same-OS-account UI impersonation is not prevented.
+[Question JSON and retry contract](https://gettsk.sh/docs/cli/#task-linked-questions).
+
 ### Open the board
 
 Run `tsk`, or press **prefix+t** in Herdr.
