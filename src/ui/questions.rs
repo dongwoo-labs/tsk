@@ -95,7 +95,21 @@ pub enum PendingCommit {
         id: Uuid,
         prior_revision: Uuid,
         follow_up: FollowUp,
+        attempt: AnswerAttempt,
     },
+}
+
+/// What one save attempted, kept for this session only. An unknown commit's readback
+/// accepts the visible answer as this save only when it is the one answer added since and
+/// matches every field here; origin alone never proves it. The text is kept as a hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnswerAttempt {
+    pub answers_before: usize,
+    pub routes_before: usize,
+    pub text_hash: u64,
+    pub corrects: Option<Uuid>,
+    pub action: Option<FindingAction>,
+    pub approve: bool,
 }
 
 impl PendingCommit {
@@ -129,6 +143,10 @@ pub struct QuestionsState {
     pub return_question: Option<Uuid>,
     /// First painted row of the open question page.
     pub scroll: Cell<usize>,
+    /// Whether the next paint scrolls the focus row (chosen option, check, input) into
+    /// view. A selection change sets it; an explicit scroll (wheel, `PgUp`/`PgDn`, `j`/`k`
+    /// on a page without choices) clears it so rows above or below the focus stay readable.
+    pub follow: Cell<bool>,
     /// The last save's hint outcome for one question, shown on its page.
     pub report: Option<(Uuid, String)>,
 }
@@ -460,6 +478,23 @@ impl QuestionsState {
         }
     }
 
+    /// Whether quitting would lose a typed answer or an unresolved save.
+    pub fn has_unsaved_work(&self) -> bool {
+        self.pending.is_some()
+            || self
+                .answer
+                .as_ref()
+                .is_some_and(|input| !input.text.is_empty())
+    }
+
+    /// The typed answer opening `id` would discard: one in progress on another question.
+    pub fn answer_elsewhere(&self, id: Uuid) -> Option<Uuid> {
+        self.answer
+            .as_ref()
+            .filter(|input| input.id != id)
+            .map(|input| input.id)
+    }
+
     pub fn choice(&self, record: &QuestionRecord) -> usize {
         let count = choices(record).len();
         self.options
@@ -484,6 +519,19 @@ impl QuestionsState {
         self.correcting = None;
         self.answer = None;
         self.scroll.set(0);
+        // A page opens at its top: the body and terms first, the focus once it moves.
+        self.follow.set(false);
+    }
+
+    /// An explicit page scroll by one row; the focus no longer pins the view.
+    pub fn scroll_page(&self, forward: bool) {
+        let scroll = self.scroll.get();
+        self.scroll.set(if forward {
+            scroll + 1
+        } else {
+            scroll.saturating_sub(1)
+        });
+        self.follow.set(false);
     }
 
     pub fn open(&mut self, id: Uuid) {
@@ -508,6 +556,11 @@ impl QuestionsState {
             (Some(index), true) => (index + 1).min(order.len() - 1),
             (Some(index), false) => index.saturating_sub(1),
         };
+        if self.cursor != Some(order[next]) {
+            // The wide detail follows the cursor: a new record shows from its top.
+            self.scroll.set(0);
+            self.follow.set(false);
+        }
         self.cursor = Some(order[next]);
     }
 
@@ -547,14 +600,10 @@ impl QuestionsState {
                 current.saturating_sub(1)
             };
             self.options.insert(record.reference.id, next);
+            self.follow.set(true);
             return;
         }
-        let scroll = self.scroll.get();
-        self.scroll.set(if forward {
-            scroll + 1
-        } else {
-            scroll.saturating_sub(1)
-        });
+        self.scroll_page(forward);
     }
 
     pub fn toggle_check(&mut self) -> Option<&'static str> {
@@ -571,6 +620,7 @@ impl QuestionsState {
             revision: record.reference.revision,
             terms,
         };
+        self.follow.set(true);
         if self.check.as_ref() == Some(&check) {
             self.check = None;
             Some("check cleared")
@@ -979,11 +1029,9 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
     }
     let mods = key.modifiers;
     let ctrl = mods.contains(KeyModifiers::CONTROL);
-    if ctrl && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('c')) {
-        return Some(BoardIntent::Quit);
-    }
     let extra = mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
     let q = |intent| Some(BoardIntent::Question(intent));
+    // Text entry owns every key: only Enter saves and Esc cancels, so no chord quits here.
     if state.answer.is_some() {
         return match key.code {
             KeyCode::Esc => q(QuestionIntent::AnswerCancel),
@@ -992,6 +1040,9 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
             KeyCode::Char(c) if !extra => q(QuestionIntent::AnswerInsert(c.to_string())),
             _ => None,
         };
+    }
+    if ctrl && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('c')) {
+        return Some(BoardIntent::Quit);
     }
     if extra {
         return None;
@@ -1018,6 +1069,8 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
         KeyCode::Left | KeyCode::Char('h') if wide => q(QuestionIntent::Back),
         KeyCode::Down | KeyCode::Char('j') => q(QuestionIntent::Move(true)),
         KeyCode::Up | KeyCode::Char('k') => q(QuestionIntent::Move(false)),
+        KeyCode::PageDown => q(QuestionIntent::Scroll(true)),
+        KeyCode::PageUp => q(QuestionIntent::Scroll(false)),
         KeyCode::Char('J') => q(QuestionIntent::Step(true)),
         KeyCode::Char('K') => q(QuestionIntent::Step(false)),
         KeyCode::Enter => q(QuestionIntent::Enter),
@@ -1165,27 +1218,48 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
     rows
 }
 
-/// Paint `rows` into `rect`, keeping the focus row in view; returns hit regions per row.
-fn paint_rows(
-    out: &mut Frame<'_>,
-    rect: Rect,
+/// The first painted row: `scroll` clamped to the rows, and with `follow` moved just enough
+/// that the focus row shows above the `↓ more rows` marker instead of under it.
+fn page_scroll(
     rows: &[(Option<Uuid>, PageRow)],
+    height: usize,
     scroll: usize,
-    hits: &mut QueueHitMap,
+    follow: bool,
 ) -> usize {
-    let height = rect.height as usize;
-    if height == 0 {
-        return 0;
-    }
     let max_scroll = rows.len().saturating_sub(height);
     let mut scroll = scroll.min(max_scroll);
+    if !follow {
+        return scroll;
+    }
     if let Some(focus) = rows.iter().position(|(_, row)| row.focus) {
         if focus < scroll {
             scroll = focus;
         } else if focus >= scroll + height {
             scroll = focus + 1 - height;
         }
+        // The last row turns into the marker while more rows follow it.
+        if height > 1 && focus + 1 == scroll + height && rows.len() > scroll + height {
+            scroll = (scroll + 1).min(max_scroll);
+        }
     }
+    scroll
+}
+
+/// Paint `rows` into `rect` from `scroll` (see [`page_scroll`]); returns the first painted
+/// row. `hint` names the keys that scroll this page.
+fn paint_rows(
+    out: &mut Frame<'_>,
+    rect: Rect,
+    rows: &[(Option<Uuid>, PageRow)],
+    (scroll, follow): (usize, bool),
+    hint: &str,
+    hits: &mut QueueHitMap,
+) -> usize {
+    let height = rect.height as usize;
+    if height == 0 {
+        return 0;
+    }
+    let scroll = page_scroll(rows, height, scroll, follow);
     let more_below = rows.len() > scroll + height;
     for (offset, (id, row)) in rows.iter().skip(scroll).take(height).enumerate() {
         let y = rect.y + offset as u16;
@@ -1196,7 +1270,10 @@ fn paint_rows(
                 rect.x,
                 y,
                 rect.width,
-                &format!("  ↓ {} more rows · j/k", rows.len() - scroll - height + 1),
+                &format!(
+                    "  ↓ {} more rows · {hint}",
+                    rows.len() - scroll - height + 1
+                ),
                 RowStyle::Dim,
             );
             break;
@@ -1213,6 +1290,15 @@ fn paint_rows(
         }
     }
     scroll
+}
+
+/// The keys that scroll a page: `j`/`k` unless they choose an option or edit an answer.
+fn scroll_hint(state: &QuestionsState, record: &QuestionRecord) -> &'static str {
+    if state.answer.is_none() && !state.choosing(record) {
+        "j/k"
+    } else {
+        "pgup/pgdn"
+    }
 }
 
 /// Paint the questions tab into `area`: one screen below 110 columns, list and detail side
@@ -1271,7 +1357,7 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
         let split = tier::resolve_responsive(width, height, tier::WideStage::Board);
         let list_rect = Rect::new(area.x + split.board.x, body_top, split.board.width, body_h);
         let rows = list_rows(frame, list_rect.width as usize, true);
-        paint_rows(out, list_rect, &rows, 0, &mut hits);
+        paint_rows(out, list_rect, &rows, (0, true), "j/k", &mut hits);
         if split.rule.width > 0 {
             for y in 0..body_h {
                 put(
@@ -1299,7 +1385,8 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
                     .collect();
             // The detail column starts under the tab row.
             let rect = Rect::new(detail_rect.x, body_top, detail_rect.width, body_h);
-            let scroll = paint_rows(out, rect, &page, state.scroll.get(), &mut hits);
+            let at = (state.scroll.get(), state.follow.get());
+            let scroll = paint_rows(out, rect, &page, at, scroll_hint(state, record), &mut hits);
             state.scroll.set(scroll);
         } else {
             put(
@@ -1318,12 +1405,13 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
                 .into_iter()
                 .map(|row| (None, row))
                 .collect();
-        let scroll = paint_rows(out, rect, &page, state.scroll.get(), &mut hits);
+        let at = (state.scroll.get(), state.follow.get());
+        let scroll = paint_rows(out, rect, &page, at, scroll_hint(state, record), &mut hits);
         state.scroll.set(scroll);
     } else {
         let rect = Rect::new(area.x, body_top, width, body_h);
         let rows = list_rows(frame, width as usize, false);
-        paint_rows(out, rect, &rows, 0, &mut hits);
+        paint_rows(out, rect, &rows, (0, true), "j/k", &mut hits);
     }
 
     // Footer: rule, status, keys.
@@ -1373,4 +1461,42 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
         );
     }
     hits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(count: usize, focus: usize) -> Vec<(Option<Uuid>, PageRow)> {
+        (0..count)
+            .map(|index| {
+                (
+                    None,
+                    PageRow {
+                        text: format!("row {index}"),
+                        style: RowStyle::Plain,
+                        focus: index == focus,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn explicit_scroll_reads_above_the_focus_and_follow_clears_the_marker() {
+        // 40 rows, a 10-row view, the check on row 30.
+        let page = rows(40, 30);
+        // A wheel or PgUp scroll is not pulled back to the focus.
+        assert_eq!(page_scroll(&page, 10, 5, false), 5);
+        assert_eq!(page_scroll(&page, 10, 0, false), 0);
+        // A selection change brings the focus into view above the `↓ more rows` marker,
+        // never on the last row that the marker paints over.
+        let shown = page_scroll(&page, 10, 0, true);
+        assert!(
+            shown <= 30 && 30 < shown + 9,
+            "focus row 30 at scroll {shown}"
+        );
+        // Explicit scrolls past the end still clamp to the last page.
+        assert_eq!(page_scroll(&page, 10, 99, false), 30);
+    }
 }

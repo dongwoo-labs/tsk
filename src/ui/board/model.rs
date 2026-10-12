@@ -32,6 +32,8 @@ use super::commands::CommandSurface;
 pub const BOARD_TITLE: &str = "Tasks";
 
 pub(super) const DIRTY_TASK_SWITCH_REFUSAL: &str = "save or cancel edits before switching tasks";
+const QUESTION_QUIT_REFUSAL: &str =
+    "a question answer or save is unresolved · tab 2: enter saves or confirms · esc cancels";
 
 fn is_header_row(id: Uuid) -> bool {
     matches!(
@@ -1261,7 +1263,7 @@ impl BoardModel {
                 if self.questions.active {
                     return false;
                 }
-                if self.has_unsaved_work() || self.task_editing() {
+                if self.has_unsaved_task_work() || self.task_editing() {
                     self.set_message("save or cancel the edit before opening questions");
                     return false;
                 }
@@ -1361,15 +1363,25 @@ impl BoardModel {
 
     /// Present the existing draft-preservation refusal when quitting would lose work.
     pub(crate) fn refuse_quit_with_unsaved_work(&mut self) -> bool {
-        if !self.has_unsaved_work() {
-            return false;
+        if self.has_unsaved_task_work() {
+            self.set_message(DIRTY_TASK_SWITCH_REFUSAL);
+            return true;
         }
-        self.set_message(DIRTY_TASK_SWITCH_REFUSAL);
-        true
+        if self.questions.has_unsaved_work() {
+            self.set_message(QUESTION_QUIT_REFUSAL);
+            return true;
+        }
+        false
     }
 
-    /// Whether leaving the current surface would discard or hide an unsaved draft.
+    /// Whether quitting would discard or hide an unsaved draft: a task draft, or a typed
+    /// answer or unresolved save on the questions tab, wherever the board now is.
     pub fn has_unsaved_work(&self) -> bool {
+        self.has_unsaved_task_work() || self.questions.has_unsaved_work()
+    }
+
+    /// Whether leaving the current task surface would discard or hide an unsaved draft.
+    pub(crate) fn has_unsaved_task_work(&self) -> bool {
         if self.task_session_dirty()
             || self.quick_add_save.is_some()
             || self.task_edit_save.is_some()

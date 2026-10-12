@@ -121,9 +121,10 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Open the task | `t` |
 | Resend a lead request | `r` |
 | Next / previous record | `J` / `K` |
+| Scroll a record page | `PgUp` / `PgDn` |
 | Board tab | `1` |
 
-These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels.
+These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels; `ctrl+q` and `ctrl+c` do not quit.
 
 ## Quick-add
 

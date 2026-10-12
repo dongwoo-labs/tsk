@@ -3428,6 +3428,80 @@ mod tests {
     }
 
     #[test]
+    fn question_answer_and_unresolved_save_hold_quit_on_every_tab() {
+        use crate::ui::questions::{AnswerInput, FollowUp, PendingCommit};
+        let temp = TempStore::new("question-quit");
+        let mut domain = DomainState::new();
+        temp.store.save(&domain).expect("seed store");
+        let mut model = BoardModel::from_domain(&domain, None);
+        let mut recovery = SaveRecovery::new();
+        let id = uuid::Uuid::from_u128(7);
+        model.questions_mut().active = true;
+        model.questions_mut().answer = Some(AnswerInput {
+            id,
+            revision: uuid::Uuid::from_u128(8),
+            corrects: None,
+            text: "half an answer".into(),
+        });
+        // While the answer is typed, the text entry owns ctrl+q and ctrl+c.
+        for key in ['q', 'c'] {
+            let intent = crate::ui::questions::map_key(
+                model.questions(),
+                false,
+                KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL),
+            );
+            assert_ne!(intent, Some(BoardIntent::Quit), "ctrl+{key}");
+        }
+        // Moved to the board tab (a click), quitting still keeps the draft.
+        apply_intent(
+            &mut domain,
+            &mut model,
+            BoardIntent::SelectNavTab(NavTab::Board),
+            None,
+        )
+        .expect("board tab");
+        assert!(!model.questions().active);
+        assert!(!handle_board_intent(
+            &temp.store,
+            &mut domain,
+            &mut model,
+            BoardIntent::Quit,
+            &mut recovery,
+            false,
+        )
+        .expect("quit refused"));
+        assert_eq!(
+            model.questions().answer.as_ref().map(|a| a.text.as_str()),
+            Some("half an answer")
+        );
+        // An unresolved save holds quit too, and tab 2 still opens to resolve it.
+        model.questions_mut().answer = None;
+        model.questions_mut().pending = Some(PendingCommit::Uncertain {
+            id,
+            revision: uuid::Uuid::from_u128(9),
+            follow_up: FollowUp::NotifyOrigin,
+        });
+        assert!(!handle_board_intent(
+            &temp.store,
+            &mut domain,
+            &mut model,
+            BoardIntent::Quit,
+            &mut recovery,
+            false,
+        )
+        .expect("quit refused"));
+        apply_intent(
+            &mut domain,
+            &mut model,
+            BoardIntent::SelectNavTab(NavTab::Questions),
+            None,
+        )
+        .expect("questions tab");
+        assert!(model.questions().active, "tab 2 opens to resolve the save");
+        assert!(model.questions().pending.is_some());
+    }
+
+    #[test]
     fn t64_save_recovery_refuses_quit_but_quick_capture_keeps_ctrl_c() {
         let temp = TempStore::new("t64-recovery-capture-quit");
         let mut domain = DomainState::new();

@@ -517,7 +517,7 @@ fn apply_board_intent(
         BoardIntent::OpenCapture => {
             model.close_popup();
             // The palette reaches this from a task page too: never drop a dirty session.
-            if model.form.is_some() && model.has_unsaved_work() {
+            if model.form.is_some() && model.has_unsaved_task_work() {
                 model.set_message(DIRTY_TASK_SWITCH_REFUSAL);
                 return Ok(IntentOutcome::None);
             }
@@ -2699,12 +2699,32 @@ pub(crate) fn open_question_from_task(model: &mut BoardModel, question: Uuid) {
         model.set_message("that question is no longer readable");
         return;
     }
+    if refuse_answer_elsewhere(model, question) {
+        return;
+    }
     let task = model.focused_page_task();
     model.questions.active = true;
     model.questions.return_question = None;
     model.questions.open(question);
     model.questions.return_task = task;
     model.clear_message();
+}
+
+/// Opening another question would discard the answer being typed: refuse and say where it is.
+pub(crate) fn refuse_answer_elsewhere(model: &mut BoardModel, question: Uuid) -> bool {
+    let Some(other) = model.questions.answer_elsewhere(question) else {
+        return false;
+    };
+    let name = model
+        .questions
+        .feed
+        .get(other)
+        .map(|record| format!("Q{}", record.reference.number))
+        .unwrap_or_else(|| "another question".to_string());
+    model.set_message(format!(
+        "finish the answer on {name} first · enter saves · esc cancels"
+    ));
+    true
 }
 
 /// A clean `Esc` on a task page opened from a question: back to that question. Returns

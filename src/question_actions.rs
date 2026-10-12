@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     AnswerDraft, AnswerOrigin, DomainState, FindingAction, FindingLink, HumanStatus,
-    ProvenanceOrigin, QuestionKind, QuestionRecord,
+    ProvenanceOrigin, QuestionKind, QuestionRecord, TaskScope,
 };
 use crate::store::{
     default_state_dir, notify_question, QuestionDurability, QuestionError, QuestionNotification,
@@ -20,7 +20,8 @@ use crate::threads::herdr;
 use crate::ui::board::BoardModel;
 use crate::ui::links::{task_links, TaskLink, ThreadRef};
 use crate::ui::questions::{
-    choices, AnswerInput, FollowUp, PendingCommit, QuestionFeed, QuestionIntent, FINDING_ACTIONS,
+    choices, AnswerAttempt, AnswerInput, FollowUp, PendingCommit, QuestionFeed, QuestionIntent,
+    FINDING_ACTIONS,
 };
 
 /// The answering actor the board records. Origin `UserUi` carries the authority.
@@ -101,28 +102,31 @@ pub fn handle(
         }
         QuestionIntent::Scroll(forward) => {
             if model.questions().page.is_some() {
-                let scroll = &model.questions().scroll;
-                scroll.set(if forward {
-                    scroll.get() + 1
-                } else {
-                    scroll.get().saturating_sub(1)
-                });
+                model.questions().scroll_page(forward);
             } else {
                 model.questions_mut().move_cursor(forward);
             }
         }
         QuestionIntent::Open => {
             if let Some(id) = model.questions().cursor {
+                if crate::ui::board::refuse_answer_elsewhere(model, id) {
+                    return;
+                }
                 let questions = model.questions_mut();
                 questions.return_task = None;
                 questions.open(id);
             }
         }
         QuestionIntent::Row(id) => {
+            if crate::ui::board::refuse_answer_elsewhere(model, id) {
+                return;
+            }
             let questions = model.questions_mut();
             if wide && questions.cursor != Some(id) {
                 questions.cursor = Some(id);
                 questions.page = None;
+                questions.scroll.set(0);
+                questions.follow.set(false);
             } else {
                 questions.return_task = None;
                 questions.open(id);
@@ -139,7 +143,10 @@ pub fn handle(
                 model.set_message(message);
             }
         }
-        QuestionIntent::Correct => correct(model),
+        QuestionIntent::Correct => {
+            correct(model);
+            model.questions().follow.set(true);
+        }
         QuestionIntent::OpenTask => {
             if let Some(record) = page_record(model) {
                 crate::ui::board::open_task_from_questions(
@@ -159,17 +166,22 @@ pub fn handle(
             if let Some(input) = model.questions_mut().answer.as_mut() {
                 input.text.push_str(&text);
             }
+            model.questions().follow.set(true);
         }
         QuestionIntent::AnswerBackspace => {
             if let Some(input) = model.questions_mut().answer.as_mut() {
                 input.text.pop();
             }
+            model.questions().follow.set(true);
         }
         QuestionIntent::AnswerCancel => {
             model.questions_mut().answer = None;
             model.set_message("answer discarded · nothing saved");
         }
-        QuestionIntent::Enter => enter(store, domain, model),
+        QuestionIntent::Enter => {
+            enter(store, domain, model);
+            model.questions().follow.set(true);
+        }
         QuestionIntent::Approve => decide_approval(store, domain, model, true),
         QuestionIntent::Reject => decide_approval(store, domain, model, false),
         QuestionIntent::Resend => resend(model),
@@ -422,26 +434,31 @@ fn save(
     let id = record.reference.id;
     let source_task = record.reference.task_id;
     let title = record.reference.summary.clone();
+    let attempt = AnswerAttempt {
+        answers_before: record.answers.len(),
+        routes_before: record.routes.len(),
+        text_hash: text_hash(&answer.text),
+        corrects: answer.corrects_revision,
+        action: answer.action,
+        approve: answer.approve,
+    };
+    let mut refusal = None;
     let result = match create {
         None => questions.answer(id, answer),
         Some(run) => questions.answer_with_task(id, answer, |state| {
-            let scope = state
-                .get(source_task)
-                .filter(|task| !task.soft_deleted)
-                .map(|task| task.scope.clone())
-                .ok_or_else(|| "the finding's task is missing".to_string())?;
-            let task = state
-                .create(&title, None, scope, ProvenanceOrigin::Manual)
-                .map_err(|error| error.to_string())?;
-            if run {
-                state
-                    .set_status(task, HumanStatus::Doing)
-                    .map_err(|error| error.to_string())?;
+            let created = create_finding_task(state, source_task, &title, run);
+            if let Err(reason) = &created {
+                refusal = Some(reason.clone());
             }
-            Ok(Some(task))
+            created
         }),
     };
     let number = record.reference.number;
+    if let (Err(QuestionError::InvalidInput), Some(reason)) = (&result, refusal) {
+        model.set_message(format!("Q{number}: {reason} · nothing saved"));
+        reload(model);
+        return;
+    }
     match result {
         Ok(saved) => {
             {
@@ -473,6 +490,7 @@ fn save(
                 id,
                 prior_revision: record.reference.revision,
                 follow_up: follow,
+                attempt,
             });
             model.set_message(format!(
                 "Q{number}: save result unknown · enter reads it back · nothing retried"
@@ -493,6 +511,38 @@ fn save(
     if create.is_some() {
         reload_tasks(store, domain, model);
     }
+}
+
+/// The finding's task, created inside the question store's lock: the source task's scope,
+/// refused like an ordinary add when that project is archived. Never falls back to the desk.
+fn create_finding_task(
+    state: &mut DomainState,
+    source_task: Uuid,
+    title: &str,
+    run: bool,
+) -> Result<Option<Uuid>, String> {
+    let scope = state
+        .get(source_task)
+        .filter(|task| !task.soft_deleted)
+        .map(|task| task.scope.clone())
+        .ok_or_else(|| "the finding's task is missing".to_string())?;
+    if let TaskScope::Project { path } = &scope {
+        if state.is_project_archived(path) {
+            return Err(format!(
+                "project {} is archived · no task created",
+                crate::ui::render::short_project(path)
+            ));
+        }
+    }
+    let task = state
+        .create(title, None, scope, ProvenanceOrigin::Manual)
+        .map_err(|error| error.to_string())?;
+    if run {
+        state
+            .set_status(task, HumanStatus::Doing)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(Some(task))
 }
 
 fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -529,6 +579,7 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
             id,
             prior_revision,
             follow_up: follow,
+            attempt,
         } => match questions.read(id) {
             Ok(record) if record.reference.revision == prior_revision => {
                 model.questions_mut().pending = None;
@@ -537,11 +588,7 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
                     record.reference.number
                 ));
             }
-            Ok(record)
-                if record
-                    .current_answer()
-                    .is_some_and(|answer| answer.origin == AnswerOrigin::UserUi) =>
-            {
+            Ok(record) if readback_is_attempt(&record, &attempt) => {
                 model.questions_mut().pending = Some(PendingCommit::Uncertain {
                     id,
                     revision: record.reference.revision,
@@ -555,7 +602,7 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
             Ok(record) => {
                 model.questions_mut().pending = None;
                 model.set_message(format!(
-                    "Q{} changed by someone else · read it again · no hint sent",
+                    "Q{} changed and the change cannot be shown to be this save · read it again · no hint sent",
                     record.reference.number
                 ));
             }
@@ -564,6 +611,31 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
     }
     reload(model);
     reload_tasks(store, domain, model);
+}
+
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether a changed record shows exactly the save this board attempted: one new answer and
+/// no route since, at the head, from this board's actor, with the same text, correction
+/// link, finding action, and approval flag. Anything else is someone else's change.
+fn readback_is_attempt(record: &QuestionRecord, attempt: &AnswerAttempt) -> bool {
+    let Some(answer) = record.current_answer() else {
+        return false;
+    };
+    record.answers.len() == attempt.answers_before + 1
+        && record.routes.len() == attempt.routes_before
+        && record.reference.revision == answer.revision
+        && answer.origin == AnswerOrigin::UserUi
+        && answer.actor == USER
+        && text_hash(&answer.text) == attempt.text_hash
+        && answer.corrects_revision == attempt.corrects
+        && answer.action == attempt.action
+        && answer.approval.is_some() == attempt.approve
 }
 
 /// Keep the last hint outcome on the question page, where it can wrap in full.
@@ -594,6 +666,13 @@ fn follow_up(saved: &QuestionSaveResult, follow: FollowUp) -> String {
 /// Send the run request of a finding decided as create-and-run to its explicit Lead
 /// address, only when exactly one live agent carries that name.
 fn request_lead(record: &QuestionRecord) -> String {
+    // The record's own current answer decides, never the action this board meant to save.
+    let decided_run = record
+        .current_answer()
+        .is_some_and(|answer| answer.action == Some(FindingAction::CreateAndRun));
+    if !decided_run {
+        return "run request not sent: the current answer is not create-and-run".to_string();
+    }
     let Some(name) = record.draft.lead_recipient.as_deref() else {
         return "run request not sent: no lead address on this finding".to_string();
     };
@@ -711,5 +790,153 @@ fn focus_thread(reference: &ThreadRef) -> String {
             reference.name, reference.workspace_id, reference.tab_id, reference.pane_id
         ),
         _ => "several live panes match · nothing focused".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{QuestionAnswer, QuestionDraft, QuestionRef, QuestionRoute};
+
+    #[test]
+    fn a_finding_task_is_never_created_in_an_archived_project() {
+        let mut state = DomainState::new();
+        let scope = TaskScope::Project {
+            path: "/repos/old".into(),
+        };
+        let source = state
+            .create("source", None, scope, ProvenanceOrigin::Manual)
+            .expect("source task");
+        state.archive_project("/repos/old").expect("archive");
+        let before = state.tasks().len();
+        for run in [false, true] {
+            let refused = create_finding_task(&mut state, source, "summary", run);
+            assert!(refused.is_err_and(|reason| reason.contains("archived")));
+            assert_eq!(state.tasks().len(), before, "no task, run={run}");
+        }
+        let desk = state
+            .create(
+                "desk source",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+            )
+            .expect("desk task");
+        let created = create_finding_task(&mut state, desk, "summary", false)
+            .expect("live scope creates")
+            .expect("task id");
+        assert_eq!(
+            state.get(created).map(|task| &task.scope),
+            Some(&TaskScope::Global)
+        );
+    }
+
+    fn finding(answers: Vec<QuestionAnswer>, routes: Vec<QuestionRoute>) -> QuestionRecord {
+        let revision = answers
+            .last()
+            .map(|answer| answer.revision)
+            .unwrap_or_else(|| Uuid::from_u128(1));
+        QuestionRecord {
+            reference: QuestionRef {
+                id: Uuid::from_u128(2),
+                number: 4,
+                task_id: Uuid::from_u128(3),
+                kind: QuestionKind::Finding,
+                summary: "summary".into(),
+                revision,
+            },
+            draft: QuestionDraft {
+                task_id: Uuid::from_u128(3),
+                kind: QuestionKind::Finding,
+                summary: "summary".into(),
+                origin_thread: "thr-x".into(),
+                recipient: "user".into(),
+                text: "body".into(),
+                options: Vec::new(),
+                recommendation: None,
+                impact: None,
+                blocking_scope: None,
+                approval: None,
+                finding: None,
+                source: None,
+                audience: None,
+                lead_recipient: Some("lead-x".into()),
+            },
+            created_at: std::time::SystemTime::now(),
+            answers,
+            routes,
+        }
+    }
+
+    fn answer(text: &str, action: FindingAction, origin: AnswerOrigin) -> QuestionAnswer {
+        QuestionAnswer {
+            revision: Uuid::new_v4(),
+            created_task_id: None,
+            corrects_revision: None,
+            text: text.into(),
+            actor: USER.into(),
+            origin,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: Some(action),
+        }
+    }
+
+    #[test]
+    fn an_unknown_commit_is_this_save_only_when_the_readback_matches_the_attempt() {
+        let (run_label, close_label) = (FINDING_ACTIONS[0].1, FINDING_ACTIONS[2].1);
+        let attempt = AnswerAttempt {
+            answers_before: 0,
+            routes_before: 0,
+            text_hash: text_hash(run_label),
+            corrects: None,
+            action: Some(FindingAction::CreateAndRun),
+            approve: false,
+        };
+        let mine = finding(
+            vec![answer(
+                run_label,
+                FindingAction::CreateAndRun,
+                AnswerOrigin::UserUi,
+            )],
+            Vec::new(),
+        );
+        assert!(readback_is_attempt(&mine, &attempt));
+        // Another board (also UserUi) closed it: origin alone proves nothing.
+        let closed = finding(
+            vec![answer(
+                close_label,
+                FindingAction::Close,
+                AnswerOrigin::UserUi,
+            )],
+            Vec::new(),
+        );
+        assert!(!readback_is_attempt(&closed, &attempt));
+        // The same decision plus a later route, or a second answer, is not this save alone.
+        let mut routed = mine.clone();
+        routed.routes.push(QuestionRoute {
+            revision: Uuid::new_v4(),
+            after_answers: 1,
+            audience: crate::domain::Audience::Lead,
+            lead_recipient: None,
+            at: std::time::SystemTime::now(),
+        });
+        routed.reference.revision = routed.routes[0].revision;
+        assert!(!readback_is_attempt(&routed, &attempt));
+        let mut twice = mine.clone();
+        twice.answers.push(answer(
+            run_label,
+            FindingAction::CreateAndRun,
+            AnswerOrigin::UserUi,
+        ));
+        twice.reference.revision = twice.answers[1].revision;
+        assert!(!readback_is_attempt(&twice, &attempt));
+        // The run request checks the record's own current action.
+        assert_eq!(
+            request_lead(&closed),
+            "run request not sent: the current answer is not create-and-run"
+        );
     }
 }

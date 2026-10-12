@@ -830,6 +830,12 @@ fn help_bindings() -> Vec<HelpBinding> {
             "lead request herdr",
         ),
         help_binding(
+            HelpGroup::SurfaceControls,
+            "pgup / pgdn",
+            "scroll a question page",
+            "read terms history",
+        ),
+        help_binding(
             HelpGroup::CreateEdit,
             "e",
             "edit title and notes (task page)",
