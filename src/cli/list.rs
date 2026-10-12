@@ -21,8 +21,8 @@ pub struct ListInput {
     pub done: bool,
     pub deleted: bool,
     pub archived: bool,
-    pub open: bool,
-    pub ready: bool,
+    pub todo: bool,
+    pub doing: bool,
     /// Normalized at the argv boundary so filtering only compares valid names.
     pub thread: Option<String>,
     /// One task addressed by UUID or human number: single-task listing with full detail.
@@ -106,8 +106,8 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         done: false,
         deleted: false,
         archived: false,
-        open: false,
-        ready: false,
+        todo: false,
+        doing: false,
         thread: None,
         task: None,
         state_dir: None,
@@ -164,12 +164,12 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
                 input.archived = true;
                 index += 1;
             }
-            "--open" => {
-                input.open = true;
+            "--todo" => {
+                input.todo = true;
                 index += 1;
             }
-            "--ready" => {
-                input.ready = true;
+            "--doing" => {
+                input.doing = true;
                 index += 1;
             }
             "--help" => {
@@ -214,8 +214,8 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
     if input.task.is_some() && (input.done || input.deleted || input.archived) {
         return Err("task operand cannot be used with --done, --deleted, or --archived".into());
     }
-    if input.task.is_some() && (input.open || input.ready) {
-        return Err("task operand cannot be used with --open or --ready".into());
+    if input.task.is_some() && (input.todo || input.doing) {
+        return Err("task operand cannot be used with --todo or --doing".into());
     }
     if input.done && input.deleted {
         return Err("--done cannot be used with --deleted".into());
@@ -223,12 +223,12 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
     if input.archived && (input.done || input.deleted) {
         return Err("--archived cannot be used with --done or --deleted".into());
     }
-    if input.open && input.ready {
-        return Err("--open cannot be used with --ready".into());
+    if input.todo && input.doing {
+        return Err("--todo cannot be used with --doing".into());
     }
-    if (input.open || input.ready) && (input.done || input.deleted || input.archived) {
+    if (input.todo || input.doing) && (input.done || input.deleted || input.archived) {
         return Err(
-            "--open and --ready cannot be used with --done, --deleted, or --archived".into(),
+            "--todo and --doing cannot be used with --done, --deleted, or --archived".into(),
         );
     }
     Ok(input)
@@ -317,10 +317,10 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             ListView::Open => {
                 !task.soft_deleted
                     && !domain.is_hidden(task)
-                    && if input.open {
-                        task.status == HumanStatus::Open
-                    } else if input.ready {
-                        task.status == HumanStatus::Ready
+                    && if input.todo {
+                        task.status == HumanStatus::Todo
+                    } else if input.doing {
+                        task.status == HumanStatus::Doing
                     } else {
                         is_open(task.status)
                     }
@@ -438,23 +438,13 @@ fn row_for(task: &crate::domain::Task, domain: &crate::domain::DomainState) -> L
 }
 
 fn is_open(status: HumanStatus) -> bool {
-    matches!(
-        status,
-        HumanStatus::Open
-            | HumanStatus::Ready
-            | HumanStatus::Started
-            | HumanStatus::Blocked
-            | HumanStatus::Review
-    )
+    matches!(status, HumanStatus::Todo | HumanStatus::Doing)
 }
 
 fn status_group_rank(status: HumanStatus) -> u8 {
     match status {
-        HumanStatus::Started => 0,
-        HumanStatus::Ready => 1,
-        HumanStatus::Open => 2,
-        HumanStatus::Blocked => 3,
-        HumanStatus::Review => 4,
-        HumanStatus::Done => 5,
+        HumanStatus::Doing => 0,
+        HumanStatus::Todo => 1,
+        HumanStatus::Done => 2,
     }
 }

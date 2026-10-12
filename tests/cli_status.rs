@@ -77,7 +77,7 @@ fn status_sets_each_agent_status_and_repeat_is_idempotent() {
     let added = add_task(&dir, "move me");
     assert_eq!(added.code, 0, "{:?}", added.stderr);
 
-    for value in ["started", "blocked", "review", "ready", "open"] {
+    for value in ["doing", "todo"] {
         let output = status(&dir, "T1", value);
         assert_eq!(output.code, 0, "{value}: {:?}", output.stderr);
         assert_eq!(output.stdout, format!("status T1 {value} move me\n"));
@@ -85,40 +85,38 @@ fn status_sets_each_agent_status_and_repeat_is_idempotent() {
         assert_eq!(
             current,
             match value {
-                "started" => HumanStatus::Started,
-                "blocked" => HumanStatus::Blocked,
-                "review" => HumanStatus::Review,
-                "ready" => HumanStatus::Ready,
-                "open" => HumanStatus::Open,
+                "doing" => HumanStatus::Doing,
+                "todo" => HumanStatus::Todo,
                 _ => unreachable!(),
             }
         );
     }
 
     let (_, events) = loaded_status(&dir);
-    let again = status(&dir, "T1", "open");
+    let again = status(&dir, "T1", "todo");
     assert_eq!(again.code, 0, "{:?}", again.stderr);
-    assert_eq!(again.stdout, "status T1 open move me\n");
+    assert_eq!(again.stdout, "status T1 todo move me\n");
     let (current, after) = loaded_status(&dir);
-    assert_eq!(current, HumanStatus::Open);
+    assert_eq!(current, HumanStatus::Todo);
     assert_eq!(after, events, "a repeat status writes no second event");
 }
 
 #[test]
-fn status_start_is_an_alias_for_started() {
-    let dir = temp_state_dir("start-alias");
+fn status_legacy_values_and_start_alias_are_refused_without_writes() {
+    let dir = temp_state_dir("legacy-refusal");
     let _guard = TempDirGuard(dir.clone());
     assert_eq!(add_task(&dir, "move me").code, 0);
+    let before = fs::read(dir.join("tsk.json")).expect("read baseline");
 
-    let output = status(&dir, "T1", "start");
-    assert_eq!(output.code, 0, "{:?}", output.stderr);
-    assert_eq!(output.stdout, "status T1 started move me\n");
-    assert_eq!(loaded_status(&dir).0, HumanStatus::Started);
-
-    let again = status(&dir, "T1", "start");
-    assert_eq!(again.code, 0);
-    assert_eq!(again.stdout, "status T1 started move me\n");
-    assert_eq!(loaded_status(&dir).1, 1, "start then start writes once");
+    for value in ["open", "ready", "started", "start", "blocked", "review"] {
+        let output = status(&dir, "T1", value);
+        assert_eq!(output.code, 2, "{value}: {}", output.stderr);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.contains("unknown status"));
+        assert_eq!(fs::read(dir.join("tsk.json")).expect("read after"), before);
+    }
+    assert_eq!(loaded_status(&dir).0, HumanStatus::Todo);
+    assert_eq!(loaded_status(&dir).1, 0);
 }
 
 #[test]
@@ -142,7 +140,7 @@ fn status_done_sets_done_and_repeat_is_idempotent() {
 fn status_unknown_and_deleted_refuse_without_mutation() {
     let dir = temp_state_dir("refusals");
     let _guard = TempDirGuard(dir.clone());
-    let missing = status(&dir, "T9", "started");
+    let missing = status(&dir, "T9", "doing");
     assert_eq!(missing.code, 1);
     assert_eq!(
         missing.stderr,
@@ -157,7 +155,7 @@ fn status_unknown_and_deleted_refuse_without_mutation() {
     let state_file = dir.join("tsk.json");
     let before = fs::read(&state_file).expect("read deleted state");
 
-    let deleted = status(&dir, "T1", "started");
+    let deleted = status(&dir, "T1", "doing");
     assert_eq!(deleted.code, 1);
     assert_eq!(
         deleted.stderr,
@@ -184,11 +182,11 @@ fn status_help_names_statuses_and_done_token() {
     assert!(output.stderr.is_empty());
     for term in [
         "usage: tsk status",
-        "ready",
-        "started",
-        "start",
-        "blocked",
-        "review",
+        "todo",
+        "doing",
+        "doing",
+        "doing",
+        "doing",
         "done",
         "Values",
         "Refusals (exit 1):",

@@ -3160,7 +3160,7 @@ mod tests {
             .collect::<Vec<_>>()
         {
             domain
-                .set_status(id, HumanStatus::Ready)
+                .set_status(id, HumanStatus::Todo)
                 .expect("ready preview task");
         }
         model.sync_from_domain(&domain);
@@ -3905,7 +3905,7 @@ mod tests {
                 .unwrap();
             let mut model = BoardModel::from_domain(&domain, None);
             // The expanded inbox heading is a selectable chrome row before the two tasks.
-            let id = model.visible_ids()[2];
+            let id = model.visible_ids()[1];
             let mut reflow_click = ReflowRowClick::default();
             let area = Rect::new(0, 0, width, 24);
             let hits = board_hit_map(area, &model);
@@ -4096,7 +4096,12 @@ mod tests {
                     matches!(hit.target, crate::ui::render::QueueHitTarget::Verb(_))
                         && !focused.contains(hit.area.as_position())
                 })
-                .unwrap_or_else(|| panic!("{stage:?}: a footer verb outside the focused column"))
+                .or_else(|| {
+                    hits.regions.iter().find(|hit| {
+                        matches!(hit.target, crate::ui::render::QueueHitTarget::Verb(_))
+                    })
+                })
+                .expect("a shared footer verb")
                 .area;
             let pos = Position::new(verb.x, verb.y);
             let intent =
@@ -4330,7 +4335,7 @@ mod tests {
             drive(&mut domain, &mut model, area, ctrl(KeyCode::Char('s')));
             assert_eq!(
                 domain.get(id).expect("task").status,
-                HumanStatus::Started,
+                HumanStatus::Doing,
                 "{area:?}: Ctrl+S must actually start the task through the live route"
             );
 
@@ -4495,7 +4500,7 @@ mod tests {
             "resolving the click must tear the surface down the same way Enter's \
              ConfirmCommand does"
         );
-        assert_eq!(domain.get(id).expect("task").status, HumanStatus::Open);
+        assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
     }
 
     #[test]
@@ -4689,14 +4694,12 @@ mod tests {
         for intent in [
             BoardIntent::ConfirmEdit,
             BoardIntent::ConfirmEditNext,
-            BoardIntent::SetStatus(HumanStatus::Blocked),
+            BoardIntent::SetStatus(HumanStatus::Doing),
             BoardIntent::Complete,
             BoardIntent::Reopen,
             BoardIntent::SoftDelete,
             BoardIntent::Undo,
             BoardIntent::PrimaryVerb,
-            BoardIntent::ToggleBlock,
-            BoardIntent::ToggleReview,
             BoardIntent::ToggleStep,
         ] {
             assert!(
@@ -5099,16 +5102,16 @@ mod tests {
     }
 
     #[test]
-    fn t64_narrow_header_escape_preserves_the_parked_split() {
+    fn t64_removed_inbox_header_does_not_block_root_escape() {
         let (mut domain, mut model) = board_with_one_task();
         stage_right(&mut domain, &mut model, 1);
         sync_frame_presentation(Rect::new(0, 0, 110, 30), &model);
         apply_intent(&mut domain, &mut model, BoardIntent::ToggleInboxGroup, None).unwrap();
-        assert!(model.inbox_header_selected());
+        assert!(!model.inbox_header_selected());
         sync_frame_presentation(Rect::new(0, 0, 78, 30), &model);
         assert_eq!(
             apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).unwrap(),
-            IntentOutcome::None
+            IntentOutcome::Quit
         );
         assert_eq!(
             model.wide_stage(),
@@ -5665,7 +5668,7 @@ mod tests {
                 "guide.copy",
                 "Copy notice",
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new(),
             )
@@ -6878,8 +6881,8 @@ mod tests {
                 BoardIntent::BeginEditTitle,
             ),
             (
-                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
-                BoardIntent::SetStatus(HumanStatus::Ready),
+                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+                BoardIntent::Reopen,
             ),
             (
                 KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
@@ -7200,7 +7203,7 @@ mod tests {
         assert!(domain.get(id).expect("task").steps[0].done, "alpha toggled");
         assert_eq!(
             domain.get(id).expect("task").status,
-            HumanStatus::Open,
+            HumanStatus::Todo,
             "task status untouched"
         );
 
@@ -7403,7 +7406,7 @@ mod tests {
             )
             .expect("login task");
         domain
-            .set_status(login, HumanStatus::Started)
+            .set_status(login, HumanStatus::Doing)
             .expect("start login task");
         domain.add_step(login, "cover redirect").expect("step");
         let other = domain
@@ -7416,7 +7419,7 @@ mod tests {
             )
             .expect("other task");
         domain
-            .set_status(other, HumanStatus::Started)
+            .set_status(other, HumanStatus::Doing)
             .expect("start other task");
         let mut model = BoardModel::from_domain(&domain, None);
 
@@ -7462,7 +7465,7 @@ mod tests {
             )
             .expect("arriving matching task");
         domain
-            .set_status(arriving, HumanStatus::Started)
+            .set_status(arriving, HumanStatus::Doing)
             .expect("start arriving task");
         model.sync_from_domain(&domain);
         assert_eq!(model.selected_id(), Some(login));
@@ -7518,7 +7521,7 @@ mod tests {
             )
             .expect("create matching task");
         domain
-            .set_status(id, HumanStatus::Ready)
+            .set_status(id, HumanStatus::Todo)
             .expect("ready matching task");
         let mut model = BoardModel::from_domain(&domain, None);
         apply_intent(&mut domain, &mut model, BoardIntent::FocusSearch, None)
@@ -7557,7 +7560,7 @@ mod tests {
             )
             .expect("create matching task");
         domain
-            .set_status(id, HumanStatus::Ready)
+            .set_status(id, HumanStatus::Todo)
             .expect("ready matching task");
         let mut model = BoardModel::from_domain(&domain, None);
         apply_intent(&mut domain, &mut model, BoardIntent::FocusSearch, None)

@@ -378,7 +378,7 @@ fn query_desk(
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Started)
+        .filter(|t| t.status == HumanStatus::Doing)
         .collect();
     sort_by_status_change_desc(&mut motion);
 
@@ -479,7 +479,7 @@ fn query_projects_index(
                         .count(),
                     in_motion: owned_tasks
                         .iter()
-                        .filter(|task| task.status == HumanStatus::Started)
+                        .filter(|task| task.status == HumanStatus::Doing)
                         .count(),
                     on_deck: owned_tasks
                         .iter()
@@ -581,7 +581,7 @@ fn query_thread_view(
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Started)
+        .filter(|t| t.status == HumanStatus::Doing)
         .collect();
     sort_by_status_change_desc(&mut motion);
     let deck: Vec<&Task> = live
@@ -630,7 +630,7 @@ fn query_project_focus(
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Started && admits(t))
+        .filter(|t| t.status == HumanStatus::Doing && admits(t))
         .collect();
     sort_by_status_change_desc(&mut motion);
 
@@ -640,7 +640,7 @@ fn query_project_focus(
     let pending: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| !matches!(t.status, HumanStatus::Started | HumanStatus::Done) && admits(t))
+        .filter(|t| !matches!(t.status, HumanStatus::Doing | HumanStatus::Done) && admits(t))
         .collect();
     let (mut need, ready) = split_needs_you(&pending);
     sort_by_status_change_desc(&mut need);
@@ -741,7 +741,7 @@ fn append_archived(sections: &mut Vec<QueueSection>, in_scope: &[&Task], drawer_
 fn status_counts(live: &[&Task]) -> StatusCounts {
     let in_motion = live
         .iter()
-        .filter(|t| t.status == HumanStatus::Started)
+        .filter(|t| t.status == HumanStatus::Doing)
         .count();
     let done = live
         .iter()
@@ -758,12 +758,13 @@ fn status_counts(live: &[&Task]) -> StatusCounts {
     }
 }
 
-fn is_needs_you_status(status: HumanStatus) -> bool {
-    matches!(status, HumanStatus::Blocked | HumanStatus::Review)
+fn is_needs_you_status(_status: HumanStatus) -> bool {
+    // Questions are separate records; human progress never means waiting for a user.
+    false
 }
 
 fn is_on_deck_status(status: HumanStatus) -> bool {
-    matches!(status, HumanStatus::Ready | HumanStatus::Open)
+    matches!(status, HumanStatus::Todo)
 }
 
 fn split_needs_you<'a>(tasks: &[&'a Task]) -> (Vec<&'a Task>, Vec<&'a Task>) {
@@ -796,19 +797,18 @@ fn push_deck(
     let mut ready: Vec<&Task> = deck
         .iter()
         .copied()
-        .filter(|task| task.status == HumanStatus::Ready)
+        .filter(|task| task.status == HumanStatus::Todo)
         .collect();
-    let mut inbox: Vec<&Task> = deck
-        .iter()
-        .copied()
-        .filter(|task| task.status == HumanStatus::Open)
-        .collect();
-    sort_ready_by_pick_asc(&mut ready);
-    sort_by_created_asc(&mut inbox);
-    if ready.is_empty() && inbox.is_empty() && !need.is_empty() {
+    sort_by_created_asc(&mut ready);
+    if ready.is_empty()
+        && (!need.is_empty()
+            || sections
+                .iter()
+                .any(|section| section.kind == SectionKind::InMotion && section.count > 0))
+    {
         return;
     }
-    let count = ready.len() + inbox.len();
+    let count = ready.len();
     sections.push(QueueSection {
         kind: SectionKind::OnDeck,
         project_label,
@@ -816,9 +816,6 @@ fn push_deck(
         count,
         empty_hint: count == 0,
     });
-    if !inbox.is_empty() {
-        sections.push(section_from(SectionKind::Inbox, None, &inbox));
-    }
 }
 
 /// Whether a task belongs to the project at `path`, tolerating the same directory
@@ -864,26 +861,12 @@ fn cmp_created_asc(a: &Task, b: &Task) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
-/// Ready picks: oldest `status_changed_at` first. Notices still lead.
-fn sort_ready_by_pick_asc(tasks: &mut [&Task]) {
-    tasks.sort_by(|a, b| cmp_ready_pick_asc(a, b));
-}
-
-fn cmp_ready_pick_asc(a: &Task, b: &Task) -> Ordering {
-    b.is_notice()
-        .cmp(&a.is_notice())
-        .then_with(|| a.status_changed_at().cmp(&b.status_changed_at()))
-        .then_with(|| a.created_at.cmp(&b.created_at))
-        .then_with(|| a.id.cmp(&b.id))
-}
-
 /// The board's order between two tasks of the same status, for surfaces outside the
 /// board (`tsk list`) that group by status: ready by oldest pick, open by oldest
 /// capture, every other status by most recent status change.
 pub fn cmp_within_status(a: &Task, b: &Task) -> Ordering {
     match a.status {
-        HumanStatus::Ready => cmp_ready_pick_asc(a, b),
-        HumanStatus::Open => cmp_created_asc(a, b),
+        HumanStatus::Todo => cmp_created_asc(a, b),
         _ => cmp_status_change_desc(a, b),
     }
 }
@@ -1011,7 +994,7 @@ mod tests {
     fn task_search_requires_every_word_across_content_fields_and_number() {
         let mut candidate = task_with_thread(
             52,
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/app"),
             false,
             10,
@@ -1035,7 +1018,7 @@ mod tests {
     fn task_search_combines_with_project_and_thread_lenses() {
         let mut project_auth = task_with_thread(
             1,
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/app"),
             false,
             30,
@@ -1044,7 +1027,7 @@ mod tests {
         project_auth.title = "login callback".into();
         let mut project_api = task_with_thread(
             2,
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/app"),
             false,
             20,
@@ -1053,7 +1036,7 @@ mod tests {
         project_api.title = "login endpoint".into();
         let mut other_auth = task_with_thread(
             3,
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/other"),
             false,
             10,
@@ -1091,8 +1074,8 @@ mod tests {
     #[test]
     fn task_search_prunes_empty_sections_and_recounts_hidden_done_work() {
         let mut tasks = vec![
-            task(1, HumanStatus::Started, TaskScope::Global, false, 40),
-            task(2, HumanStatus::Started, TaskScope::Global, false, 30),
+            task(1, HumanStatus::Doing, TaskScope::Global, false, 40),
+            task(2, HumanStatus::Doing, TaskScope::Global, false, 30),
             task(3, HumanStatus::Done, TaskScope::Global, false, 20),
             task(4, HumanStatus::Done, TaskScope::Global, false, 10),
         ];
@@ -1207,7 +1190,7 @@ mod tests {
     fn an_archived_only_thread_paints_no_filter_match_anywhere() {
         let mut tasks = vec![task_with_thread(
             1,
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/a"),
             false,
             30,
@@ -1255,18 +1238,18 @@ mod tests {
         let mut archived = BTreeSet::new();
         archived.insert("/repos/gone".to_string());
         let tasks = vec![
-            task(1, HumanStatus::Started, project("/repos/gone"), false, 50),
-            task(2, HumanStatus::Ready, project("/repos/gone"), false, 40),
+            task(1, HumanStatus::Doing, project("/repos/gone"), false, 50),
+            task(2, HumanStatus::Todo, project("/repos/gone"), false, 40),
             task_with_thread(
                 3,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/repos/gone"),
                 false,
                 30,
                 Some("release"),
             ),
-            task(4, HumanStatus::Started, TaskScope::Global, false, 20),
-            task(5, HumanStatus::Ready, project("/repos/here"), false, 10),
+            task(4, HumanStatus::Doing, TaskScope::Global, false, 20),
+            task(5, HumanStatus::Todo, project("/repos/here"), false, 10),
         ];
 
         // Projects index: the archived project paints no row, the live one stays.
@@ -1321,19 +1304,19 @@ mod tests {
         // (60, 80, 100): the newest status change leads, not the newest edit.
         let tasks = vec![
             with_status_event(
-                task(1, HumanStatus::Started, TaskScope::Global, false, 90),
+                task(1, HumanStatus::Doing, TaskScope::Global, false, 90),
                 TaskEventKind::StatusSet,
                 60,
             ),
             with_status_event(
-                task(2, HumanStatus::Started, project("/repos/a"), false, 10),
+                task(2, HumanStatus::Doing, project("/repos/a"), false, 10),
                 TaskEventKind::StatusSet,
                 100,
             ),
-            task(3, HumanStatus::Started, TaskScope::Global, true, 40),
-            task(4, HumanStatus::Ready, TaskScope::Global, false, 50),
+            task(3, HumanStatus::Doing, TaskScope::Global, true, 40),
+            task(4, HumanStatus::Todo, TaskScope::Global, false, 50),
             with_status_event(
-                task(5, HumanStatus::Started, project("/repos/b"), false, 50),
+                task(5, HumanStatus::Doing, project("/repos/b"), false, 50),
                 TaskEventKind::StatusSet,
                 80,
             ),
@@ -1366,12 +1349,12 @@ mod tests {
     #[test]
     fn ticking_a_step_on_the_older_started_task_does_not_reorder_in_motion() {
         let older = with_status_event(
-            task(1, HumanStatus::Started, TaskScope::Global, false, 10),
+            task(1, HumanStatus::Doing, TaskScope::Global, false, 10),
             TaskEventKind::StatusSet,
             20,
         );
         let newer = with_status_event(
-            task(2, HumanStatus::Started, TaskScope::Global, false, 30),
+            task(2, HumanStatus::Doing, TaskScope::Global, false, 30),
             TaskEventKind::StatusSet,
             50,
         );
@@ -1392,18 +1375,18 @@ mod tests {
     fn setting_status_moves_a_task_to_the_top_of_its_new_section() {
         let tasks = vec![
             with_status_event(
-                task(1, HumanStatus::Started, TaskScope::Global, false, 10),
+                task(1, HumanStatus::Doing, TaskScope::Global, false, 10),
                 TaskEventKind::StatusSet,
                 20,
             ),
             with_status_event(
-                task(2, HumanStatus::Started, TaskScope::Global, false, 30),
+                task(2, HumanStatus::Doing, TaskScope::Global, false, 30),
                 TaskEventKind::StatusSet,
                 40,
             ),
             // Task 3 is the oldest created but was just started at 100.
             with_status_event(
-                task(3, HumanStatus::Started, TaskScope::Global, false, 5),
+                task(3, HumanStatus::Doing, TaskScope::Global, false, 5),
                 TaskEventKind::StatusSet,
                 100,
             ),
@@ -1421,14 +1404,14 @@ mod tests {
     #[test]
     fn on_deck_is_oldest_first_and_an_edit_does_not_move_a_row() {
         let tasks = vec![
-            task(1, HumanStatus::Ready, TaskScope::Global, false, 10),
+            task(1, HumanStatus::Todo, TaskScope::Global, false, 10),
             // Task 2 is edited at 90, past both neighbours: it stays in FIFO place.
             mutated(
-                task(2, HumanStatus::Ready, TaskScope::Global, false, 20),
+                task(2, HumanStatus::Todo, TaskScope::Global, false, 20),
                 TaskEventKind::Edited,
                 90,
             ),
-            task(3, HumanStatus::Ready, TaskScope::Global, false, 30),
+            task(3, HumanStatus::Todo, TaskScope::Global, false, 30),
         ];
 
         let view = query_lens(&tasks, None, BoardLens::Desk, false);
@@ -1444,14 +1427,14 @@ mod tests {
     fn notices_lead_on_deck_ahead_of_an_older_backlog() {
         // A starter guide seeded today (created 90) on a desk with tasks from 10 and 20:
         // FIFO alone would bury it, so notices lead and the backlog keeps its own order.
-        let mut guide = task(3, HumanStatus::Ready, TaskScope::Global, false, 90);
+        let mut guide = task(3, HumanStatus::Todo, TaskScope::Global, false, 90);
         guide.notice = Some(crate::domain::Notice {
             catalog_id: "guide.welcome".into(),
             number: None,
         });
         let tasks = vec![
-            task(1, HumanStatus::Ready, TaskScope::Global, false, 10),
-            task(2, HumanStatus::Ready, TaskScope::Global, false, 20),
+            task(1, HumanStatus::Todo, TaskScope::Global, false, 10),
+            task(2, HumanStatus::Todo, TaskScope::Global, false, 20),
             guide,
         ];
 
@@ -1470,22 +1453,22 @@ mod tests {
         // status event, created at 30.
         let tasks = vec![
             with_status_event(
-                task(1, HumanStatus::Blocked, TaskScope::Global, false, 10),
+                task(1, HumanStatus::Doing, TaskScope::Global, false, 10),
                 TaskEventKind::StatusSet,
                 50,
             ),
             mutated(
-                task(2, HumanStatus::Blocked, TaskScope::Global, false, 20),
+                task(2, HumanStatus::Doing, TaskScope::Global, false, 20),
                 TaskEventKind::Edited,
                 99,
             ),
-            task(3, HumanStatus::Blocked, TaskScope::Global, false, 30),
+            task(3, HumanStatus::Doing, TaskScope::Global, false, 30),
         ];
 
         let view = query_lens(&tasks, None, BoardLens::Desk, false);
 
         assert_eq!(
-            section_ids(&view, SectionKind::NeedsYou),
+            section_ids(&view, SectionKind::InMotion),
             vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(2)],
             "no status event falls back to created_at, never updated_at"
         );
@@ -1494,12 +1477,12 @@ mod tests {
     #[test]
     fn desk_needs_you_is_global_across_every_live_scope() {
         let tasks = vec![
-            task(1, HumanStatus::Blocked, TaskScope::Global, false, 10),
-            task(2, HumanStatus::Review, project("/repos/a"), false, 30),
-            task(3, HumanStatus::Ready, TaskScope::Global, false, 20),
-            task(4, HumanStatus::Blocked, project("/repos/b"), false, 40),
-            task(5, HumanStatus::Review, project("/repos/a"), false, 50),
-            task(6, HumanStatus::Blocked, project("/repos/gone"), false, 60),
+            task(1, HumanStatus::Doing, TaskScope::Global, false, 10),
+            task(2, HumanStatus::Doing, project("/repos/a"), false, 30),
+            task(3, HumanStatus::Todo, TaskScope::Global, false, 20),
+            task(4, HumanStatus::Doing, project("/repos/b"), false, 40),
+            task(5, HumanStatus::Doing, project("/repos/a"), false, 50),
+            task(6, HumanStatus::Doing, project("/repos/gone"), false, 60),
         ];
         let mut gone = BTreeSet::new();
         gone.insert("/repos/gone".to_string());
@@ -1513,7 +1496,7 @@ mod tests {
             &ThreadFilter::All,
         );
         assert_eq!(
-            section_ids(&view, SectionKind::NeedsYou),
+            section_ids(&view, SectionKind::InMotion),
             vec![
                 Uuid::from_u128(5),
                 Uuid::from_u128(4),
@@ -1527,17 +1510,17 @@ mod tests {
             vec![Uuid::from_u128(3)],
             "project ready tasks never leak into the desk backlog"
         );
-        assert_eq!(view.sections[0].kind, SectionKind::NeedsYou);
+        assert_eq!(view.sections[0].kind, SectionKind::InMotion);
     }
 
     #[test]
     fn project_board_puts_blocked_and_review_in_needs_you() {
         let tasks = vec![
-            task(1, HumanStatus::Started, project("/repos/a"), false, 100),
-            task(2, HumanStatus::Blocked, project("/repos/a"), false, 80),
-            task(3, HumanStatus::Review, project("/repos/a"), false, 90),
-            task(4, HumanStatus::Ready, project("/repos/a"), false, 70),
-            task(5, HumanStatus::Blocked, project("/repos/b"), false, 60),
+            task(1, HumanStatus::Doing, project("/repos/a"), false, 100),
+            task(2, HumanStatus::Doing, project("/repos/a"), false, 80),
+            task(3, HumanStatus::Doing, project("/repos/a"), false, 90),
+            task(4, HumanStatus::Todo, project("/repos/a"), false, 70),
+            task(5, HumanStatus::Doing, project("/repos/b"), false, 60),
         ];
 
         let view = query_board(
@@ -1549,25 +1532,25 @@ mod tests {
             &ThreadFilter::All,
         );
         assert_eq!(
-            section_ids(&view, SectionKind::NeedsYou),
-            vec![Uuid::from_u128(3), Uuid::from_u128(2)]
+            section_ids(&view, SectionKind::InMotion),
+            vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(2)]
         );
         assert_eq!(
             section_ids(&view, SectionKind::OnDeck),
             vec![Uuid::from_u128(4)]
         );
         assert!(!all_listed_ids(&view).contains(&Uuid::from_u128(5)));
-        assert_eq!(view.sections[0].kind, SectionKind::NeedsYou);
+        assert_eq!(view.sections[0].kind, SectionKind::InMotion);
     }
 
     #[test]
     fn empty_deck_is_omitted_when_needs_you_has_rows() {
-        let desk_tasks = vec![task(1, HumanStatus::Blocked, TaskScope::Global, false, 10)];
+        let desk_tasks = vec![task(1, HumanStatus::Doing, TaskScope::Global, false, 10)];
         let desk = query_lens(&desk_tasks, None, BoardLens::Desk, false);
         assert!(desk.sections.iter().all(|s| s.kind != SectionKind::OnDeck));
         assert!(!desk.sections.iter().any(|s| s.empty_hint));
 
-        let project_tasks = vec![task(2, HumanStatus::Review, project("/repos/a"), false, 10)];
+        let project_tasks = vec![task(2, HumanStatus::Doing, project("/repos/a"), false, 10)];
         let project = query_board(
             &project_tasks,
             &BTreeSet::new(),
@@ -1585,7 +1568,7 @@ mod tests {
 
     #[test]
     fn empty_project_board_keeps_one_hinted_deck_section() {
-        let tasks = vec![task(9, HumanStatus::Ready, project("/repos/b"), false, 10)];
+        let tasks = vec![task(9, HumanStatus::Todo, project("/repos/b"), false, 10)];
         let view = query_board(
             &tasks,
             &BTreeSet::new(),
@@ -1606,33 +1589,19 @@ mod tests {
     #[test]
     fn thread_filter_narrows_every_project_status_and_the_drawer() {
         let tasks = vec![
-            task_with_thread(
-                1,
-                HumanStatus::Blocked,
-                project("/a"),
-                false,
-                50,
-                Some("nav"),
-            ),
-            task_with_thread(
-                2,
-                HumanStatus::Started,
-                project("/a"),
-                false,
-                40,
-                Some("nav"),
-            ),
-            task_with_thread(3, HumanStatus::Ready, project("/a"), false, 30, Some("nav")),
+            task_with_thread(1, HumanStatus::Doing, project("/a"), false, 50, Some("nav")),
+            task_with_thread(2, HumanStatus::Doing, project("/a"), false, 40, Some("nav")),
+            task_with_thread(3, HumanStatus::Todo, project("/a"), false, 30, Some("nav")),
             task_with_thread(4, HumanStatus::Done, project("/a"), false, 20, Some("nav")),
             task_with_thread(
                 5,
-                HumanStatus::Blocked,
+                HumanStatus::Doing,
                 project("/a"),
                 false,
                 60,
                 Some("docs"),
             ),
-            task_with_thread(6, HumanStatus::Ready, project("/a"), false, 70, None),
+            task_with_thread(6, HumanStatus::Todo, project("/a"), false, 70, None),
         ];
         let lens = BoardLens::Project(Path::new("/a"));
 
@@ -1645,12 +1614,12 @@ mod tests {
             &ThreadFilter::Named("nav".to_string()),
         );
         assert_eq!(
-            section_ids(&nav, SectionKind::NeedsYou),
-            vec![Uuid::from_u128(1)]
+            section_ids(&nav, SectionKind::InMotion),
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
         );
         assert_eq!(
             section_ids(&nav, SectionKind::InMotion),
-            vec![Uuid::from_u128(2)]
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
         );
         assert_eq!(
             section_ids(&nav, SectionKind::OnDeck),
@@ -1660,7 +1629,7 @@ mod tests {
             section_ids(&nav, SectionKind::Done),
             vec![Uuid::from_u128(4)]
         );
-        assert_eq!(nav.counts.need, 1, "status counts reflect the filtered set");
+        assert_eq!(nav.counts.need, 0, "status counts reflect the filtered set");
 
         let without = query_board(
             &tasks,
@@ -1675,7 +1644,7 @@ mod tests {
             vec![Uuid::from_u128(6)],
             "unthreaded tasks are the Without-a-thread filter's matches"
         );
-        assert!(section_ids(&without, SectionKind::NeedsYou).is_empty());
+        assert!(section_ids(&without, SectionKind::InMotion).is_empty());
     }
 
     #[test]
@@ -1683,7 +1652,7 @@ mod tests {
         let tasks = vec![
             task_with_thread(
                 1,
-                HumanStatus::Started,
+                HumanStatus::Doing,
                 project("/repos/a"),
                 false,
                 30,
@@ -1691,7 +1660,7 @@ mod tests {
             ),
             task_with_thread(
                 2,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 false,
                 20,
@@ -1699,7 +1668,7 @@ mod tests {
             ),
             task_with_thread(
                 3,
-                HumanStatus::Review,
+                HumanStatus::Doing,
                 project("/repos/b"),
                 false,
                 10,
@@ -1707,7 +1676,7 @@ mod tests {
             ),
             task_with_thread(
                 4,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/repos/a"),
                 false,
                 5,
@@ -1715,7 +1684,7 @@ mod tests {
             ),
             task_with_thread(
                 5,
-                HumanStatus::Blocked,
+                HumanStatus::Doing,
                 project("/repos/a"),
                 false,
                 8,
@@ -1732,12 +1701,12 @@ mod tests {
             &ThreadFilter::All,
         );
         assert_eq!(
-            section_ids(&view, SectionKind::NeedsYou),
-            vec![Uuid::from_u128(3), Uuid::from_u128(5)]
+            section_ids(&view, SectionKind::InMotion),
+            vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(5)]
         );
         assert_eq!(
             section_ids(&view, SectionKind::InMotion),
-            vec![Uuid::from_u128(1)]
+            vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(5)]
         );
         assert_eq!(
             section_ids(&view, SectionKind::OnDeck),
@@ -1755,7 +1724,7 @@ mod tests {
         let tasks = vec![
             task_with_thread(
                 1,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/a"),
                 false,
                 10,
@@ -1791,15 +1760,15 @@ mod tests {
     #[test]
     fn projects_index_lists_counts_current_first_and_keeps_same_named_projects() {
         let tasks = vec![
-            task(1, HumanStatus::Blocked, project("/w/launch"), false, 10),
-            task(2, HumanStatus::Started, project("/w/launch"), false, 20),
-            task(3, HumanStatus::Ready, project("/w/launch"), false, 30),
-            task(4, HumanStatus::Ready, project("/w/launch"), false, 35),
-            task(9, HumanStatus::Open, project("/w/launch"), false, 36),
-            task(5, HumanStatus::Review, project("/w/herdr"), false, 40),
+            task(1, HumanStatus::Doing, project("/w/launch"), false, 10),
+            task(2, HumanStatus::Doing, project("/w/launch"), false, 20),
+            task(3, HumanStatus::Todo, project("/w/launch"), false, 30),
+            task(4, HumanStatus::Todo, project("/w/launch"), false, 35),
+            task(9, HumanStatus::Todo, project("/w/launch"), false, 36),
+            task(5, HumanStatus::Doing, project("/w/herdr"), false, 40),
             task(6, HumanStatus::Done, project("/w/herdr"), false, 50),
-            task(7, HumanStatus::Ready, project("/x/site"), false, 60),
-            task(8, HumanStatus::Ready, project("/y/site"), false, 70),
+            task(7, HumanStatus::Todo, project("/x/site"), false, 60),
+            task(8, HumanStatus::Todo, project("/y/site"), false, 70),
         ];
 
         let view = query_board(
@@ -1821,8 +1790,8 @@ mod tests {
         assert!(!view.projects[1].current);
 
         let launch = &view.projects[1];
-        assert_eq!(launch.needs_you, 1, "blocked counts as needs-you");
-        assert_eq!(launch.in_motion, 1);
+        assert_eq!(launch.needs_you, 0, "human progress is not a question wait");
+        assert_eq!(launch.in_motion, 2);
         assert_eq!(
             launch.on_deck, 3,
             "ready and open tasks share the project's ON DECK tally"
@@ -1840,7 +1809,7 @@ mod tests {
 
     #[test]
     fn projects_index_lists_the_invocation_project_even_with_no_tasks() {
-        let tasks = vec![task(1, HumanStatus::Ready, project("/w/other"), false, 10)];
+        let tasks = vec![task(1, HumanStatus::Todo, project("/w/other"), false, 10)];
         let view = query_board(
             &tasks,
             &BTreeSet::new(),
@@ -1922,7 +1891,7 @@ mod tests {
 
         let stored = dir.to_string_lossy().into_owned();
         let invoked = link.to_string_lossy().into_owned();
-        let tasks = vec![task(1, HumanStatus::Ready, project(&stored), false, 10)];
+        let tasks = vec![task(1, HumanStatus::Todo, project(&stored), false, 10)];
         let view = query_board(
             &tasks,
             &BTreeSet::new(),
@@ -1946,7 +1915,7 @@ mod tests {
             task(1, HumanStatus::Done, TaskScope::Global, false, 10),
             task(2, HumanStatus::Done, project("/repos/a"), false, 30),
             task(3, HumanStatus::Done, TaskScope::Global, true, 40),
-            task(4, HumanStatus::Ready, TaskScope::Global, false, 50),
+            task(4, HumanStatus::Todo, TaskScope::Global, false, 50),
         ];
 
         let closed = query_lens(&tasks, None, BoardLens::Desk, false);
@@ -1965,9 +1934,9 @@ mod tests {
     #[test]
     fn project_board_filters_sections_to_matching_project() {
         let tasks = vec![
-            task(1, HumanStatus::Started, project("/repos/a"), false, 100),
-            task(2, HumanStatus::Started, project("/repos/b"), false, 90),
-            task(10, HumanStatus::Ready, project("/repos/a"), false, 70),
+            task(1, HumanStatus::Doing, project("/repos/a"), false, 100),
+            task(2, HumanStatus::Doing, project("/repos/b"), false, 90),
+            task(10, HumanStatus::Todo, project("/repos/a"), false, 70),
             task(20, HumanStatus::Done, project("/repos/a"), false, 40),
         ];
 
@@ -1994,7 +1963,7 @@ mod tests {
     #[test]
     fn visible_task_ids_keeps_done_drawer_rows_selectable() {
         let tasks = vec![
-            task(1, HumanStatus::Ready, project("/repos/a"), false, 10),
+            task(1, HumanStatus::Todo, project("/repos/a"), false, 10),
             task(2, HumanStatus::Done, project("/repos/a"), false, 40),
         ];
         let view = query_board(
@@ -2022,7 +1991,7 @@ mod tests {
         // can toggle the group; the collapsed group paints only its header.
         let mut tasks = tasks.clone();
         let mut archived =
-            task_with_thread(3, HumanStatus::Ready, project("/repos/a"), false, 50, None);
+            task_with_thread(3, HumanStatus::Todo, project("/repos/a"), false, 50, None);
         archived.archived = true;
         tasks.push(archived);
         let view = query_board(
@@ -2053,28 +2022,33 @@ mod tests {
     fn on_deck_puts_ready_picks_above_inbox_open_rows() {
         let tasks = vec![
             with_status_event(
-                task(1, HumanStatus::Ready, TaskScope::Global, false, 10),
+                task(1, HumanStatus::Todo, TaskScope::Global, false, 10),
                 TaskEventKind::StatusSet,
                 80,
             ),
             with_status_event(
-                task(2, HumanStatus::Ready, TaskScope::Global, false, 20),
+                task(2, HumanStatus::Todo, TaskScope::Global, false, 20),
                 TaskEventKind::StatusSet,
                 40,
             ),
-            task(3, HumanStatus::Open, TaskScope::Global, false, 30),
-            task(4, HumanStatus::Open, TaskScope::Global, false, 5),
+            task(3, HumanStatus::Todo, TaskScope::Global, false, 30),
+            task(4, HumanStatus::Todo, TaskScope::Global, false, 5),
         ];
         let view = query_lens(&tasks, None, BoardLens::Desk, false);
         assert_eq!(
             section_ids(&view, SectionKind::OnDeck),
-            vec![Uuid::from_u128(2), Uuid::from_u128(1)],
-            "ready rows are oldest pick first"
+            vec![
+                Uuid::from_u128(4),
+                Uuid::from_u128(1),
+                Uuid::from_u128(2),
+                Uuid::from_u128(3)
+            ],
+            "all Todo tasks are oldest capture first"
         );
         assert_eq!(
             section_ids(&view, SectionKind::Inbox),
-            vec![Uuid::from_u128(4), Uuid::from_u128(3)],
-            "inbox is oldest created first"
+            Vec::<Uuid>::new(),
+            "Todo has no separate inbox section"
         );
         let deck = view
             .sections
@@ -2086,7 +2060,7 @@ mod tests {
 
     #[test]
     fn inbox_heading_is_absent_without_open_and_present_without_ready() {
-        let ready_only = vec![task(1, HumanStatus::Ready, TaskScope::Global, false, 10)];
+        let ready_only = vec![task(1, HumanStatus::Todo, TaskScope::Global, false, 10)];
         let ready_view = query_lens(&ready_only, None, BoardLens::Desk, false);
         assert!(
             ready_view
@@ -2096,63 +2070,57 @@ mod tests {
             "no open tasks means no inbox heading"
         );
 
-        let open_only = vec![task(2, HumanStatus::Open, TaskScope::Global, false, 10)];
+        let open_only = vec![task(2, HumanStatus::Todo, TaskScope::Global, false, 10)];
         let open_view = query_lens(&open_only, None, BoardLens::Desk, false);
         let deck = open_view
             .sections
             .iter()
             .find(|section| section.kind == SectionKind::OnDeck)
             .expect("on deck still paints");
-        assert!(deck.task_ids.is_empty());
+        assert_eq!(deck.task_ids, vec![Uuid::from_u128(2)]);
         assert_eq!(deck.count, 1);
         assert!(!deck.empty_hint);
         assert_eq!(
             section_ids(&open_view, SectionKind::Inbox),
-            vec![Uuid::from_u128(2)]
+            Vec::<Uuid>::new()
         );
     }
 
     #[test]
     fn folded_inbox_hides_open_rows() {
         let tasks = vec![
-            task(1, HumanStatus::Ready, TaskScope::Global, false, 10),
-            task(2, HumanStatus::Open, TaskScope::Global, false, 20),
+            task(1, HumanStatus::Todo, TaskScope::Global, false, 10),
+            task(2, HumanStatus::Todo, TaskScope::Global, false, 20),
         ];
         let view = query_lens(&tasks, None, BoardLens::Desk, false);
         let expanded = visible_task_ids(&view, false, false);
-        assert_eq!(
-            expanded,
-            vec![Uuid::from_u128(1), INBOX_HEADER_ROW_ID, Uuid::from_u128(2)]
-        );
+        assert_eq!(expanded, vec![Uuid::from_u128(1), Uuid::from_u128(2)]);
         let collapsed = visible_task_ids(&view, false, true);
         assert_eq!(
             collapsed,
-            vec![Uuid::from_u128(1), INBOX_HEADER_ROW_ID],
-            "a folded inbox paints only its heading"
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+            "legacy inbox fold state cannot hide Todo tasks"
         );
         assert!(
-            !collapsed.contains(&Uuid::from_u128(2)),
-            "selection cannot rest on a folded inbox row"
+            collapsed.contains(&Uuid::from_u128(2)),
+            "Todo selection remains available"
         );
     }
 
     #[test]
     fn desk_on_deck_excludes_project_ready_and_open() {
         let tasks = vec![
-            task(1, HumanStatus::Ready, TaskScope::Global, false, 10),
-            task(2, HumanStatus::Open, TaskScope::Global, false, 20),
-            task(3, HumanStatus::Ready, project("/repos/a"), false, 30),
-            task(4, HumanStatus::Open, project("/repos/a"), false, 40),
+            task(1, HumanStatus::Todo, TaskScope::Global, false, 10),
+            task(2, HumanStatus::Todo, TaskScope::Global, false, 20),
+            task(3, HumanStatus::Todo, project("/repos/a"), false, 30),
+            task(4, HumanStatus::Todo, project("/repos/a"), false, 40),
         ];
         let view = query_lens(&tasks, None, BoardLens::Desk, false);
         assert_eq!(
             section_ids(&view, SectionKind::OnDeck),
-            vec![Uuid::from_u128(1)]
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
         );
-        assert_eq!(
-            section_ids(&view, SectionKind::Inbox),
-            vec![Uuid::from_u128(2)]
-        );
+        assert_eq!(section_ids(&view, SectionKind::Inbox), Vec::<Uuid>::new());
         assert!(!all_listed_ids(&view).contains(&Uuid::from_u128(3)));
         assert!(!all_listed_ids(&view).contains(&Uuid::from_u128(4)));
     }

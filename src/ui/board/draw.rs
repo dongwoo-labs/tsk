@@ -187,7 +187,7 @@ pub fn board_verb_items(model: &BoardModel) -> Vec<VerbEntry<'static>> {
         entries.extend(status_verbs(task.status));
         // Add is useful from the backlog and inbox, but the status-heavy in-motion and
         // done legends use that seat for their truthful lifecycle actions.
-        if !matches!(task.status, HumanStatus::Started | HumanStatus::Done) {
+        if !matches!(task.status, HumanStatus::Doing | HumanStatus::Done) {
             entries.push(ADD);
         }
     }
@@ -195,56 +195,25 @@ pub fn board_verb_items(model: &BoardModel) -> Vec<VerbEntry<'static>> {
     entries
 }
 
-/// The status verbs a task's current status makes meaningful. `n` picks a task for ON DECK,
-/// while `o` sends it to the inbox.
+/// The three human progress verbs.
 fn status_verbs(status: HumanStatus) -> Vec<VerbEntry<'static>> {
-    const START: VerbEntry<'static> = VerbEntry {
+    const DOING: VerbEntry<'static> = VerbEntry {
         key: "s",
-        label: "start",
+        label: "doing",
     };
-    const NEXT: VerbEntry<'static> = VerbEntry {
-        key: "n",
-        label: "next",
-    };
-    const INBOX: VerbEntry<'static> = VerbEntry {
+    const TODO: VerbEntry<'static> = VerbEntry {
         key: "o",
-        label: "inbox",
+        label: "todo",
     };
     const DONE: VerbEntry<'static> = VerbEntry {
         key: "d",
         label: "done",
     };
     match status {
-        HumanStatus::Open => vec![START, NEXT, DONE],
-        HumanStatus::Ready => vec![START, INBOX, DONE],
-        HumanStatus::Started => vec![
-            DONE,
-            NEXT,
-            INBOX,
-            VerbEntry {
-                key: "b",
-                label: "block",
-            },
-        ],
-        HumanStatus::Blocked => vec![
-            DONE,
-            VerbEntry {
-                key: "b",
-                label: "unblock",
-            },
-            INBOX,
-        ],
-        HumanStatus::Review => vec![
-            DONE,
-            VerbEntry {
-                key: "b",
-                label: "block",
-            },
-            INBOX,
-        ],
+        HumanStatus::Todo => vec![DOING, DONE],
+        HumanStatus::Doing => vec![TODO, DONE],
         HumanStatus::Done => vec![
-            NEXT,
-            INBOX,
+            TODO,
             VerbEntry {
                 key: "u",
                 label: "undo",
@@ -450,16 +419,13 @@ fn build_task_page_overlay<'a>(
     };
     let status = bound_task
         .map(|task| task.status)
-        .unwrap_or(HumanStatus::Ready);
+        .unwrap_or(HumanStatus::Todo);
     // AC-8: an archived task's header slot reads `archived` in place of the status word.
     let status_word = match bound_task {
         Some(task) if task.archived => "archived",
         _ => match status {
-            HumanStatus::Open => "open",
-            HumanStatus::Ready => "ready",
-            HumanStatus::Started => "started",
-            HumanStatus::Blocked => "blocked",
-            HumanStatus::Review => "review",
+            HumanStatus::Todo => "todo",
+            HumanStatus::Doing => "doing",
             HumanStatus::Done => "done",
         },
     };
@@ -1148,11 +1114,8 @@ fn task_header_state(model: &BoardModel, form: &BoardForm, task: &crate::domain:
         "archived"
     } else {
         match task.status {
-            HumanStatus::Open => "open",
-            HumanStatus::Ready => "ready",
-            HumanStatus::Started => "started",
-            HumanStatus::Blocked => "blocked",
-            HumanStatus::Review => "review",
+            HumanStatus::Todo => "todo",
+            HumanStatus::Doing => "doing",
             HumanStatus::Done => "done",
         }
     };
@@ -1622,7 +1585,7 @@ fn draw_projects_wide_board(
                 // column. Keep its draft title in the same header slot as a saved task instead
                 // of letting draw_task_column replace it with the empty-pane hint.
                 right_header_visible = true;
-                right_header_glyph = render::status_glyph(HumanStatus::Ready);
+                right_header_glyph = render::status_glyph(HumanStatus::Todo);
                 right_header_state = editing_field(right)
                     .map(|field| format!("editing {field}"))
                     .unwrap_or_else(|| "ready".to_string());

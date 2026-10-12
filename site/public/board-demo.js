@@ -10,11 +10,8 @@ import { parseCapture } from "./capture.js";
   const WIDE_SPLIT_MIN_COLUMNS = 110;
 
   const GLYPH = {
-    open: "◌",
-    ready: "○",
-    started: "●",
-    blocked: "■",
-    review: "▲",
+    todo: "○",
+    doing: "●",
     done: "✓",
   };
 
@@ -53,7 +50,7 @@ import { parseCapture } from "./capture.js";
     return [
       task({
         title: "Rotate refresh tokens on every use",
-        status: "started",
+        status: "doing",
         project: "launchpad",
         thread: "auth",
         notes:
@@ -78,7 +75,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Make webhook delivery idempotent",
-        status: "ready",
+        status: "todo",
         project: "launchpad",
         thread: "api",
         notes:
@@ -103,7 +100,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Investigate slow integration tests",
-        status: "open",
+        status: "todo",
         project: null,
         thread: null,
         notes:
@@ -128,7 +125,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Unblock OIDC login in staging",
-        status: "blocked",
+        status: "doing",
         project: "launchpad",
         thread: "auth",
         notes:
@@ -153,7 +150,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Review API key scope checks",
-        status: "review",
+        status: "doing",
         project: "launchpad",
         thread: "auth",
         notes:
@@ -178,7 +175,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Generate the TypeScript API client",
-        status: "blocked",
+        status: "doing",
         project: "website",
         thread: "api",
         notes:
@@ -203,7 +200,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Review error states in the API console",
-        status: "review",
+        status: "doing",
         project: "website",
         thread: "api",
         notes:
@@ -228,7 +225,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Add cursor pagination to the events endpoint",
-        status: "open",
+        status: "todo",
         project: "launchpad",
         thread: "api",
         notes:
@@ -293,7 +290,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Prototype a GraphQL gateway",
-        status: "ready",
+        status: "todo",
         project: "launchpad",
         thread: "api",
         notes:
@@ -314,40 +311,40 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Plan the support handoff",
-        status: "ready",
+        status: "todo",
         thread: "triage",
         notes:
           "Pick the owner, escalation path, and first response expectations before the pilot opens.",
       }),
       task({
         title: "Clean up stale local branches",
-        status: "ready",
+        status: "todo",
         notes:
           "Keep only the branches needed for the release train and document anything retained.",
       }),
       task({
         title: "Sort feedback from the pilot",
-        status: "open",
+        status: "todo",
         thread: "triage",
         notes:
           "Group feedback by workflow before deciding which issues to pick next.",
       }),
       task({
         title: "Record the retry runbook",
-        status: "open",
+        status: "todo",
         notes:
           "Capture the safe retry steps while the incident details are still fresh.",
       }),
       task({
         title: "Add audit events for admin changes",
-        status: "ready",
+        status: "todo",
         project: "launchpad",
         thread: "ops",
         notes: "Record actor, target, and result for each privileged change.",
       }),
       task({
         title: "Trace worker queue saturation",
-        status: "open",
+        status: "todo",
         project: "launchpad",
         thread: "ops",
         notes:
@@ -355,7 +352,7 @@ import { parseCapture } from "./capture.js";
       }),
       task({
         title: "Document regional failover checks",
-        status: "open",
+        status: "todo",
         project: "launchpad",
         thread: "ops",
         notes:
@@ -663,24 +660,18 @@ import { parseCapture } from "./capture.js";
 
   function previewVisibleTasks() {
     const scoped = previewProjectTasks().filter(previewMatchesThread);
-    const live = scoped.filter((task) => taskMatchesSearch(task, preview.searchQuery));
+    const live = scoped.filter((task) =>
+      taskMatchesSearch(task, preview.searchQuery),
+    );
     const done = preview.drawer
       ? scoped.filter((task) => taskMatchesSearch(task, preview.searchQuery))
       : scoped;
     return {
-      started: live
-        .filter((task) => task.status === "started")
+      doing: live
+        .filter((task) => task.status === "doing")
         .sort(byStatusChange),
-      review: live
-        .filter((task) => task.status === "review")
-        .sort(byStatusChange),
-      blocked: live
-        .filter((task) => task.status === "blocked")
-        .sort(byStatusChange),
-      ready: live.filter((task) => task.status === "ready").sort(byCreated),
-      done: done
-        .filter((task) => task.status === "done")
-        .sort(byStatusChange),
+      todo: live.filter((task) => task.status === "todo").sort(byCreated),
+      done: done.filter((task) => task.status === "done").sort(byStatusChange),
     };
   }
 
@@ -691,18 +682,13 @@ import { parseCapture } from "./capture.js";
       rows.push({ kind: "section", label, count, selectable: false });
     const pushTask = (task, dim = false) =>
       rows.push({ kind: "task", task, selectable: true, id: task.id, dim });
-    const need = [...v.review, ...v.blocked].sort(byStatusChange);
-    if (need.length) {
-      pushHeader("NEEDS YOU", need.length);
-      need.forEach((task) => pushTask(task));
+    if (v.doing.length) {
+      pushHeader("DOING", v.doing.length);
+      v.doing.forEach((task) => pushTask(task));
     }
-    if (v.started.length) {
-      pushHeader("IN MOTION", v.started.length);
-      v.started.forEach((task) => pushTask(task));
-    }
-    if (v.ready.length || !preview.searchQuery.trim())
-      pushHeader("ON DECK", v.ready.length);
-    v.ready.forEach((task) => pushTask(task));
+    if (v.todo.length || !preview.searchQuery.trim())
+      pushHeader("TODO", v.todo.length);
+    v.todo.forEach((task) => pushTask(task));
     if (preview.drawer) {
       if (v.done.length) pushHeader("DONE", v.done.length);
       v.done.forEach((task) => pushTask(task));
@@ -961,44 +947,29 @@ import { parseCapture } from "./capture.js";
           (!state.drawer || taskMatchesSearch(t, state.searchQuery)),
       )
       .sort(byStatusChange);
+    const inScope = (task) =>
+      !state.focusProject ||
+      (state.focusProject === "desk"
+        ? !task.project
+        : task.project === state.focusProject);
     if (state.focusProject || isProjectsThreadView()) {
-      const inP = (t) =>
-        !state.focusProject ||
-        (state.focusProject === "desk"
-          ? !t.project
-          : t.project === state.focusProject);
       return {
-        started: open
-          .filter((t) => inP(t) && t.status === "started")
+        doing: open
+          .filter((task) => inScope(task) && task.status === "doing")
           .sort(byStatusChange),
-        review: open
-          .filter((t) => inP(t) && t.status === "review")
-          .sort(byStatusChange),
-        blocked: open
-          .filter((t) => inP(t) && t.status === "blocked")
-          .sort(byStatusChange),
-        ready: open
-          .filter((t) => inP(t) && t.status === "ready")
+        todo: open
+          .filter((task) => inScope(task) && task.status === "todo")
           .sort(byCreated),
-        inbox: open
-          .filter((t) => inP(t) && t.status === "open")
-          .sort(byCreated),
-        done: done.filter(inP),
+        done: done.filter(inScope),
       };
     }
     if (state.tab === "desk") {
       return {
-        started: open
-          .filter((t) => t.status === "started")
+        doing: open
+          .filter((task) => task.status === "doing")
           .sort(byStatusChange),
-        need: open
-          .filter((t) => t.status === "blocked" || t.status === "review")
-          .sort(byStatusChange),
-        desk: open
-          .filter((t) => !t.project && t.status === "ready")
-          .sort(byCreated),
-        inbox: open
-          .filter((t) => !t.project && t.status === "open")
+        todo: open
+          .filter((task) => !task.project && task.status === "todo")
           .sort(byCreated),
         done,
       };
@@ -1017,30 +988,11 @@ import { parseCapture } from "./capture.js";
 
     if (state.tab === "desk" && !state.focusProject) {
       const v = visibleTasks();
-      if (v.need.length) {
-        pushHeader("section", "NEEDS YOU", v.need.length);
-        v.need.forEach((t) => pushTask(t));
-      }
-      if (v.started.length)
-        pushHeader("section", "IN MOTION", v.started.length);
-      v.started.forEach((t) => pushTask(t));
-      if (
-        v.desk.length ||
-        v.inbox.length ||
-        (!v.need.length && !state.searchQuery.trim())
-      )
-        pushHeader("section", "ON DECK · desk", v.desk.length + v.inbox.length);
-      v.desk.forEach((t) => pushTask(t));
-      if (v.inbox.length) {
-        rows.push({
-          kind: "inbox",
-          label: "inbox",
-          count: v.inbox.length,
-          selectable: true,
-          id: "nav:inbox",
-        });
-        if (state.inboxOpen) v.inbox.forEach((t) => pushTask(t));
-      }
+      if (v.doing.length) pushHeader("section", "DOING", v.doing.length);
+      v.doing.forEach((task) => pushTask(task));
+      if (v.todo.length || !state.searchQuery.trim())
+        pushHeader("section", "TODO · desk", v.todo.length);
+      v.todo.forEach((task) => pushTask(task));
       if (state.drawer) {
         if (v.done.length) pushHeader("section", "DONE", v.done.length);
         v.done.forEach((t) => pushTask(t));
@@ -1071,27 +1023,11 @@ import { parseCapture } from "./capture.js";
 
     if (state.focusProject || isProjectsThreadView()) {
       const v = visibleTasks();
-      const need = [...v.review, ...v.blocked].sort(byStatusChange);
-      if (need.length) {
-        pushHeader("section", "NEEDS YOU", need.length);
-        need.forEach((t) => pushTask(t));
-      }
-      if (v.started.length)
-        pushHeader("section", "IN MOTION", v.started.length);
-      v.started.forEach((t) => pushTask(t));
-      if (v.ready.length || v.inbox.length || !state.searchQuery.trim())
-        pushHeader("section", "ON DECK", v.ready.length + v.inbox.length);
-      v.ready.forEach((t) => pushTask(t));
-      if (v.inbox.length) {
-        rows.push({
-          kind: "inbox",
-          label: "inbox",
-          count: v.inbox.length,
-          selectable: true,
-          id: "nav:inbox",
-        });
-        if (state.inboxOpen) v.inbox.forEach((t) => pushTask(t));
-      }
+      if (v.doing.length) pushHeader("section", "DOING", v.doing.length);
+      v.doing.forEach((task) => pushTask(task));
+      if (v.todo.length || !state.searchQuery.trim())
+        pushHeader("section", "TODO", v.todo.length);
+      v.todo.forEach((task) => pushTask(task));
       if (state.drawer) {
         if (v.done.length) pushHeader("section", "DONE", v.done.length);
         v.done.forEach((t) => pushTask(t));
@@ -1126,25 +1062,14 @@ import { parseCapture } from "./capture.js";
           (t) => (t.project || "desk") === name && !t.archived,
         );
         const open = group.filter((t) => t.status !== "done");
-        const started = open
-          .filter((t) => t.status === "started")
-          .sort(byStatusChange);
-        const review = open
-          .filter((t) => t.status === "review")
-          .sort(byStatusChange);
-        const blocked = open
-          .filter((t) => t.status === "blocked")
-          .sort(byStatusChange);
-        const onDeck = open.filter(
-          (t) => t.status === "ready" || t.status === "open",
-        );
+        const doing = open.filter((task) => task.status === "doing");
+        const onDeck = open.filter((task) => task.status === "todo");
         const done = group.filter((t) => t.status === "done");
         rows.push({
           kind: "project",
           label: name,
           project: name,
-          needs: review.length + blocked.length,
-          motion: started.length,
+          motion: doing.length,
           onDeck: onDeck.length,
           done: done.length,
           selectable: true,
@@ -1294,17 +1219,9 @@ import { parseCapture } from "./capture.js";
       ];
     }
     const items = [{ id: "open", label: "enter open" }];
-    if (task.status === "open" || task.status === "ready")
-      items.push({ id: "start", label: "s start" });
-    if (task.status !== "ready") items.push({ id: "ready", label: "n ready" });
-    if (task.status !== "open") items.push({ id: "inbox", label: "o inbox" });
-    if (task.status !== "done") {
-      items.push({ id: "done", label: "d done" });
-      items.push({
-        id: "block",
-        label: task.status === "blocked" ? "b unblock" : "b block",
-      });
-    }
+    if (task.status === "todo") items.push({ id: "start", label: "s doing" });
+    if (task.status !== "todo") items.push({ id: "todo", label: "o todo" });
+    if (task.status !== "done") items.push({ id: "done", label: "d done" });
     items.push(
       { id: "capture", label: "+ add" },
       { id: "help", label: "? help" },
@@ -1333,40 +1250,22 @@ import { parseCapture } from "./capture.js";
       state.paletteI = 0;
     }
     if (id === "start") primaryVerb();
-    if (id === "ready") setStatus("ready");
-    if (id === "inbox") setStatus("open");
+    if (id === "todo") setStatus("todo");
     if (id === "done") setStatus("done");
-    if (id === "block") toggleBlock();
+    if (id === "start") primaryVerb();
+    if (id === "todo") setStatus("todo");
+    if (id === "undo") undoDelete();
     if (id === "file") fileSelected();
   }
 
   function paletteCommands() {
     const q = state.paletteQ.trim().toLowerCase();
     const all = [
+      { id: "todo", label: "set status: todo", run: () => setStatus("todo") },
       {
-        id: "open",
-        label: "set status: open",
-        run: () => setStatus("open"),
-      },
-      {
-        id: "ready",
-        label: "set status: ready",
-        run: () => setStatus("ready"),
-      },
-      {
-        id: "started",
-        label: "set status: started",
-        run: () => setStatus("started"),
-      },
-      {
-        id: "blocked",
-        label: "set status: blocked",
-        run: () => setStatus("blocked"),
-      },
-      {
-        id: "review",
-        label: "set status: review",
-        run: () => setStatus("review"),
+        id: "doing",
+        label: "set status: doing",
+        run: () => setStatus("doing"),
       },
       { id: "done", label: "set status: done", run: () => setStatus("done") },
       { id: "desk", label: "go desk", run: () => goTab("desk") },
@@ -1654,7 +1553,7 @@ import { parseCapture } from "./capture.js";
       steps: [],
       thread: parsed.thread === undefined ? null : parsed.thread,
       project: parsed.project,
-      status: "open",
+      status: "todo",
       createdAt: now,
       updatedAt: now,
       rawDraft: state.draft,
@@ -1808,7 +1707,7 @@ import { parseCapture } from "./capture.js";
       number: state.nextNumber++,
       title: parsed.title,
       notes: "",
-      status: "open",
+      status: "todo",
       project: parsed.project,
       thread: parsed.thread === undefined ? null : parsed.thread,
       createdAt: now,
@@ -1898,35 +1797,13 @@ import { parseCapture } from "./capture.js";
     state.message = "";
   }
 
-  function toggleBlock() {
-    const tasks = targetTasks();
-    if (!state.markedIds.size && tasks[0]?.status === "done") return;
-    const status =
-      tasks.length && tasks.every((task) => task.status === "blocked")
-        ? "ready"
-        : "blocked";
-    setStatus(status);
-  }
-
-  function toggleReview() {
-    const tasks = targetTasks();
-    if (!state.markedIds.size && tasks[0]?.status === "done") return;
-    const status =
-      tasks.length && tasks.every((task) => task.status === "review")
-        ? "ready"
-        : "review";
-    setStatus(status);
-  }
-
   function primaryVerb() {
     const bulk = state.markMode && state.markedIds.size > 0;
     const tasks = targetTasks();
-    const changed = tasks.filter(
-      (task) => task.status === "open" || task.status === "ready",
-    );
+    const changed = tasks.filter((task) => task.status === "todo");
     const skippedDone = tasks.filter((task) => task.status === "done").length;
     for (const task of changed) {
-      task.status = "started";
+      task.status = "doing";
       task.updatedAt = clock();
       task.statusAt = task.updatedAt;
     }
@@ -1934,7 +1811,7 @@ import { parseCapture } from "./capture.js";
     state.pendingDelete = null;
     state.message =
       bulk && skippedDone
-        ? `started ${changed.length} · skipped ${skippedDone} done (n or o reopens them)`
+        ? `doing ${changed.length} · skipped ${skippedDone} done (o reopens them)`
         : "";
     flashTasks(changed);
   }
@@ -1954,35 +1831,13 @@ import { parseCapture } from "./capture.js";
     flashTasks(changed);
   }
 
-  function previewToggleBlock() {
-    const tasks = targetTasks(preview);
-    if (!preview.markedIds.size && tasks[0]?.status === "done") return;
-    previewSetStatus(
-      tasks.length && tasks.every((task) => task.status === "blocked")
-        ? "ready"
-        : "blocked",
-    );
-  }
-
-  function previewToggleReview() {
-    const tasks = targetTasks(preview);
-    if (!preview.markedIds.size && tasks[0]?.status === "done") return;
-    previewSetStatus(
-      tasks.length && tasks.every((task) => task.status === "review")
-        ? "ready"
-        : "review",
-    );
-  }
-
   function previewPrimaryVerb() {
     const bulk = preview.markMode && preview.markedIds.size > 0;
     const tasks = targetTasks(preview);
-    const changed = tasks.filter(
-      (task) => task.status === "open" || task.status === "ready",
-    );
+    const changed = tasks.filter((task) => task.status === "todo");
     const skippedDone = tasks.filter((task) => task.status === "done").length;
     for (const task of changed) {
-      task.status = "started";
+      task.status = "doing";
       task.updatedAt = clock();
       task.statusAt = task.updatedAt;
     }
@@ -1990,7 +1845,7 @@ import { parseCapture } from "./capture.js";
     preview.pendingDelete = null;
     preview.message =
       bulk && skippedDone
-        ? `started ${changed.length} · skipped ${skippedDone} done (n or o reopens them)`
+        ? `doing ${changed.length} · skipped ${skippedDone} done (o reopens them)`
         : "";
     flashTasks(changed);
   }
@@ -2109,15 +1964,17 @@ import { parseCapture } from "./capture.js";
       ["navigation", "space", "toggle mark (multi-select)", "select multiple"],
       ["navigation", "enter", "open task", "detail"],
       ["navigation", "←/h · →/l", "close or peek / slide", "wide view"],
-      ["task actions", "s", "start", "status open or ready"],
+      ["task actions", "s", "doing", "status todo"],
       ["task actions", "d", "done", "status finish complete"],
-      ["task actions", "b", "block", "status"],
-      ["task actions", "r", "review", "status"],
-      ["task actions", "n", "pick", "status ready"],
-      ["task actions", "o", "inbox", "status open"],
+      ["task actions", "o", "todo", "status reopen"],
       ["task actions", "x", "delete", "remove"],
       ["task actions", "u", "undo", "restore"],
-      ["task actions", "f", "archive / restore (archived: z drawer)", "file hide restore"],
+      [
+        "task actions",
+        "f",
+        "archive / restore (archived: z drawer)",
+        "file hide restore",
+      ],
       ["create & edit", "+", "quick-add", "capture new task"],
       ["create & edit", "e", "edit title", "rename"],
       [
@@ -2137,7 +1994,12 @@ import { parseCapture } from "./capture.js";
       ["views & find", "3", "projects", "switch view"],
       ["views & find", "p", "project picker", "switch find"],
       ["views & find", "z / D", "done drawer", "completed tasks"],
-      ["views & find", "g", "fold / unfold group", "collapse expand inbox archived"],
+      [
+        "views & find",
+        "g",
+        "fold / unfold group",
+        "collapse expand inbox archived",
+      ],
       ["views & find", "/", "search board", "find filter tasks projects"],
       ["views & find", ":", "command palette", "find actions"],
       ["app controls", "?", "help", "shortcuts keys"],
@@ -2233,7 +2095,9 @@ import { parseCapture } from "./capture.js";
       state.editDraft = task.notes || "";
     }
     if (id === "done") setStatus("done");
-    if (id === "block") toggleBlock();
+    if (id === "start") primaryVerb();
+    if (id === "todo") setStatus("todo");
+    if (id === "undo") undoDelete();
     if (id === "file") fileSelected();
   }
 
@@ -2254,8 +2118,10 @@ import { parseCapture } from "./capture.js";
       return;
     }
     if (id === "edit") openPreviewTaskPage("title");
+    if (id === "start") previewPrimaryVerb();
     if (id === "done") previewSetStatus("done");
-    if (id === "block") previewToggleBlock();
+    if (id === "todo") previewSetStatus("todo");
+    if (id === "undo") previewUndoDelete();
   }
 
   function runPreviewVerb(id) {
@@ -2263,9 +2129,10 @@ import { parseCapture } from "./capture.js";
     if (id === "capture") openQuickAdd("preview");
     if (id === "start") previewPrimaryVerb();
     if (id === "done") previewSetStatus("done");
-    if (id === "block") previewToggleBlock();
+    if (id === "todo") previewSetStatus("todo");
+    if (id === "undo") previewUndoDelete();
     if (id === "reopen" && previewTask()?.status === "done")
-      previewSetStatus("ready");
+      previewSetStatus("todo");
     if (id === "file") previewFileSelected();
     if (id === "delete") previewDeleteSelected();
     if (id === "help") {
@@ -2400,10 +2267,12 @@ import { parseCapture } from "./capture.js";
   function previewPageVerbBar() {
     if (previewSteps.editor || previewSteps.dirty || preview.editField)
       return "shift+enter save · esc cancel";
-    return PAGE_VERBS.map(
-      (verb) =>
-        `<button type="button" class="tsk-verb" data-preview-page-verb="${verb.id}">${verb.label}</button>`,
-    ).join("<span> · </span>");
+    return pageVerbs(previewTask())
+      .map(
+        (verb) =>
+          `<button type="button" class="tsk-verb" data-preview-page-verb="${verb.id}">${verb.label}</button>`,
+      )
+      .join("<span> · </span>");
   }
 
   function previewBoardWidth() {
@@ -2571,7 +2440,7 @@ import { parseCapture } from "./capture.js";
         if (row.kind === "project") {
           const selected = row.id === state.selectedId;
           if (rail) {
-            return `<button type="button" class="tsk-row tsk-rail-project-row ${selected ? "is-sel" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-row-main"><span class="tsk-rail-project-name">${selected ? "▸" : " "} ${esc(row.label)}</span><span class="dim tsk-rail-project-counts">${count(row.needs)} ${count(row.motion)} ${count(row.onDeck)} ${count(row.done)}</span></span></button>`;
+            return `<button type="button" class="tsk-row tsk-rail-project-row ${selected ? "is-sel" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-row-main"><span class="tsk-rail-project-name">${selected ? "▸" : " "} ${esc(row.label)}</span><span class="dim tsk-rail-project-counts">${count(row.motion)} ${count(row.onDeck)} ${count(row.done)}</span></span></button>`;
           }
           const threads = [
             ...new Set(
@@ -2586,7 +2455,7 @@ import { parseCapture } from "./capture.js";
                 .filter(Boolean),
             ),
           ].sort();
-          return `<button type="button" class="tsk-project-row ${selected ? "is-selected" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-project-name">${selected ? "▸" : " "} <span>${esc(row.label)}</span>${row.project === launchProject() ? `<span class="dim"> · here</span>` : ""}</span>${showThreads ? `<span class="dim tsk-project-threads">${esc(threadCell(threads, threadWidth))}</span>` : ""}<span class="${row.needs ? "is-bold" : "dim"}">${count(row.needs)}</span><span>${count(row.motion)}</span><span class="dim">${count(row.onDeck)}</span><span class="dim">${count(row.done)}</span></button>`;
+          return `<button type="button" class="tsk-project-row ${selected ? "is-selected" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-project-name">${selected ? "▸" : " "} <span>${esc(row.label)}</span>${row.project === launchProject() ? `<span class="dim"> · here</span>` : ""}</span>${showThreads ? `<span class="dim tsk-project-threads">${esc(threadCell(threads, threadWidth))}</span>` : ""}<span>${count(row.motion)}</span><span class="dim">${count(row.onDeck)}</span><span class="dim">${count(row.done)}</span></button>`;
         }
         if (row.kind === "group") {
           const mark = row.collapsed ? "▸" : "▾";
@@ -2680,27 +2549,32 @@ import { parseCapture } from "./capture.js";
         : "nothing here";
     const column = `
       <div class="tsk-tabs">${tabs}${control}</div>
-      <div class="tsk-list ${index ? "tsk-project-table" : ""} ${showThreads ? "with-threads" : ""}" style="--project-name-width:${nameWidth + 2}ch;--project-thread-width:${threadWidth + 2}ch">${index ? `<div class="tsk-project-legend"><span>  PROJECT</span>${showThreads ? "<span>THREADS</span>" : ""}<span>NEEDS YOU</span><span>IN MOTION</span><span>ON DECK</span><span>DONE</span></div>` : ""}${body || `<div class="dim">  ${empty}</div>`}</div>`;
+      <div class="tsk-list ${index ? "tsk-project-table" : ""} ${showThreads ? "with-threads" : ""}" style="--project-name-width:${nameWidth + 2}ch;--project-thread-width:${threadWidth + 2}ch">${index ? `<div class="tsk-project-legend"><span>  PROJECT</span>${showThreads ? "<span>THREADS</span>" : ""}<span>DOING</span><span>TODO</span><span>DONE</span></div>` : ""}${body || `<div class="dim">  ${empty}</div>`}</div>`;
     // Wide stages paint one shared footer under both columns, so a column omits its own.
     return rail || bare ? column : column + renderFooter();
   }
 
-  const PAGE_VERBS = [
-    { id: "edit", label: "e edit" },
-    { id: "done", label: "d done" },
-    { id: "block", label: "b block" },
-    { id: "close", label: "esc close" },
-  ];
+  function pageVerbs(task) {
+    const verbs = [{ id: "edit", label: "e edit" }];
+    if (task?.status === "todo") verbs.push({ id: "start", label: "s doing" });
+    else verbs.push({ id: "todo", label: "o todo" });
+    if (task?.status !== "done") verbs.push({ id: "done", label: "d done" });
+    else verbs.push({ id: "undo", label: "u undo" });
+    verbs.push({ id: "close", label: "esc close" });
+    return verbs;
+  }
 
   function pageVerbBar() {
     // Same guard as previewPageVerbBar: a title or notes editor owns the footer, so the
     // verbs are not clickable while typing.
     if (steps.editor || steps.dirty || state.editField)
       return "shift+enter save · esc cancel";
-    return PAGE_VERBS.map(
-      (v) =>
-        `<button type="button" class="tsk-verb" data-page-verb="${v.id}">${v.label}</button>`,
-    ).join("<span> · </span>");
+    return pageVerbs(selectedTask())
+      .map(
+        (v) =>
+          `<button type="button" class="tsk-verb" data-page-verb="${v.id}">${v.label}</button>`,
+      )
+      .join("<span> · </span>");
   }
 
   // One footer for the frame: a rule, the status row (active lens · stage crumb), and the verb
@@ -3106,21 +2980,21 @@ import { parseCapture } from "./capture.js";
       render();
       return true;
     }
+    if (bare && e.key === "o") {
+      e.preventDefault();
+      previewSetStatus("todo");
+      render();
+      return true;
+    }
+    if (bare && e.key === "s") {
+      e.preventDefault();
+      previewPrimaryVerb();
+      render();
+      return true;
+    }
     if (bare && e.key === "d") {
       e.preventDefault();
       previewSetStatus("done");
-      render();
-      return true;
-    }
-    if (bare && e.key === "b") {
-      e.preventDefault();
-      previewToggleBlock();
-      render();
-      return true;
-    }
-    if (bare && e.key === "r") {
-      e.preventDefault();
-      previewToggleReview();
       render();
       return true;
     }
@@ -3221,21 +3095,9 @@ import { parseCapture } from "./capture.js";
       render();
       return true;
     }
-    if (bare && e.key === "b") {
-      e.preventDefault();
-      previewToggleBlock();
-      render();
-      return true;
-    }
-    if (bare && e.key === "r") {
-      e.preventDefault();
-      previewToggleReview();
-      render();
-      return true;
-    }
     if (bare && e.key === "o") {
       e.preventDefault();
-      previewSetStatus("open");
+      previewSetStatus("todo");
       render();
       return true;
     }
@@ -3275,12 +3137,6 @@ import { parseCapture } from "./capture.js";
     if (bare && e.key === "e") {
       e.preventDefault();
       if (previewTask()) openPreviewTaskPage("title");
-      render();
-      return true;
-    }
-    if (bare && e.key === "n") {
-      e.preventDefault();
-      previewSetStatus("ready");
       render();
       return true;
     }
@@ -3913,19 +3769,7 @@ import { parseCapture } from "./capture.js";
     }
     if (e.key === "o") {
       e.preventDefault();
-      setStatus("open");
-      render();
-      return;
-    }
-    if (e.key === "b") {
-      e.preventDefault();
-      toggleBlock();
-      render();
-      return;
-    }
-    if (e.key === "r") {
-      e.preventDefault();
-      toggleReview();
+      setStatus("todo");
       render();
       return;
     }
@@ -3957,12 +3801,6 @@ import { parseCapture } from "./capture.js";
         state.editField = "title";
         state.editDraft = task.title;
       }
-      render();
-      return;
-    }
-    if (e.key === "n") {
-      e.preventDefault();
-      setStatus("ready");
       render();
       return;
     }

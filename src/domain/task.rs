@@ -15,11 +15,8 @@ use crate::scope::paths_equivalent;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanStatus {
-    Open,
-    Ready,
-    Started,
-    Blocked,
-    Review,
+    Todo,
+    Doing,
     Done,
 }
 
@@ -154,7 +151,7 @@ fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 6;
+pub const STORE_FORMAT_VERSION: u32 = 7;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]
@@ -496,7 +493,7 @@ impl DomainState {
         Ok(())
     }
 
-    /// Create a task with human status `open`, provenance, and an optional normalized thread.
+    /// Create a task with human status `todo`, provenance, and an optional normalized thread.
     ///
     /// Rejects empty/whitespace-only titles. On success, stores exactly one task with the
     /// trimmed title and optional notes, and appends a `Created` event.
@@ -538,7 +535,7 @@ impl DomainState {
             notes,
             parent_task_id,
             thread,
-            status: HumanStatus::Open,
+            status: HumanStatus::Todo,
             scope,
             provenance,
             history: vec![TaskEvent {
@@ -631,9 +628,9 @@ impl DomainState {
         Ok(())
     }
 
-    /// Reopen a `done` task to `open` (inbox).
+    /// Reopen a `done` task to `todo`.
     pub fn reopen(&mut self, id: Uuid) -> Result<(), DomainError> {
-        self.apply_status(id, HumanStatus::Open, TaskEventKind::Reopened)
+        self.apply_status(id, HumanStatus::Todo, TaskEventKind::Reopened)
     }
 
     /// Soft-delete: mark excluded from board views until restore. Stays in store.
@@ -1330,7 +1327,7 @@ mod tests {
         let task = &state.tasks()[0];
         assert_eq!(task.id, id);
         assert_eq!(task.title, "Fix flake");
-        assert_eq!(task.status, HumanStatus::Open);
+        assert_eq!(task.status, HumanStatus::Todo);
         assert_eq!(task.notes, None);
         assert!(!task.soft_deleted);
         assert_eq!(task.scope, TaskScope::Global);
@@ -1401,7 +1398,7 @@ mod tests {
         );
 
         state
-            .set_status(id, HumanStatus::Started)
+            .set_status(id, HumanStatus::Doing)
             .expect("set_status");
         let after_status = state.get(id).expect("task").status_changed_at();
         assert!(after_status >= created, "a status change is recorded");
@@ -1454,7 +1451,7 @@ mod tests {
         assert!(kinds(&state).contains(&TaskEventKind::Edited));
 
         state
-            .set_status(id, HumanStatus::Started)
+            .set_status(id, HumanStatus::Doing)
             .expect("set_status");
         assert!(kinds(&state).contains(&TaskEventKind::StatusSet));
 
@@ -1501,7 +1498,7 @@ mod tests {
             .edit(id, "Edited", None, TaskScope::Global, None)
             .expect("edit");
         assert_refreshed(&state);
-        state.set_status(id, HumanStatus::Started).expect("status");
+        state.set_status(id, HumanStatus::Doing).expect("status");
         assert_refreshed(&state);
         state.complete(id).expect("complete");
         assert_refreshed(&state);
@@ -1528,7 +1525,7 @@ mod tests {
         let mut state = DomainState::new();
         let id = create_sample(&mut state);
         state
-            .set_status(id, HumanStatus::Blocked)
+            .set_status(id, HumanStatus::Doing)
             .expect("blocked status");
         let undo_before = state.last_undo().cloned();
 
@@ -1538,7 +1535,7 @@ mod tests {
         {
             let task = state.get(id).expect("task exists");
             assert!(task.archived);
-            assert_eq!(task.status, HumanStatus::Blocked);
+            assert_eq!(task.status, HumanStatus::Doing);
             assert_eq!(
                 task.history.last().map(|event| event.kind),
                 Some(TaskEventKind::Archived)
@@ -1684,11 +1681,11 @@ mod tests {
         let mut state = DomainState::new();
         let id = create_sample(&mut state);
         for status in [
-            HumanStatus::Open,
-            HumanStatus::Ready,
-            HumanStatus::Started,
-            HumanStatus::Blocked,
-            HumanStatus::Review,
+            HumanStatus::Todo,
+            HumanStatus::Todo,
+            HumanStatus::Doing,
+            HumanStatus::Doing,
+            HumanStatus::Doing,
             HumanStatus::Done,
         ] {
             state
@@ -1717,7 +1714,7 @@ mod tests {
         state.reopen(id).expect("reopen known id");
         assert_eq!(
             state.get(id).expect("task exists").status,
-            HumanStatus::Open
+            HumanStatus::Todo
         );
     }
 
@@ -1877,7 +1874,7 @@ mod tests {
         let mut state = DomainState::new();
         let missing = Uuid::new_v4();
         assert_eq!(
-            state.set_status(missing, HumanStatus::Started),
+            state.set_status(missing, HumanStatus::Doing),
             Err(DomainError::UnknownId(missing))
         );
         assert_eq!(
@@ -2053,7 +2050,7 @@ mod tests {
         let mut state = DomainState::new();
         let id = create_sample(&mut state);
         state
-            .set_status(id, HumanStatus::Started)
+            .set_status(id, HumanStatus::Doing)
             .expect("set_status");
         let step = state.add_step(id, "Only step").expect("add step");
         state
@@ -2063,7 +2060,7 @@ mod tests {
         assert!(task.steps[0].done, "the only step is now done");
         assert_eq!(
             task.status,
-            HumanStatus::Started,
+            HumanStatus::Doing,
             "completing the steps must never change human status"
         );
     }
@@ -2171,7 +2168,7 @@ mod tests {
                 "welcome",
                 "  Welcome to tsk  ",
                 Some("read me".into()),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 vec![("open the board".into(), false), ("press ?".into(), true)],
             )
@@ -2181,7 +2178,7 @@ mod tests {
                 "whats-new",
                 "What's new",
                 None,
-                HumanStatus::Started,
+                HumanStatus::Doing,
                 TaskScope::Global,
                 Vec::new(),
             )
@@ -2191,7 +2188,7 @@ mod tests {
                 "empty",
                 "  ",
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new()
             ),
@@ -2227,7 +2224,7 @@ mod tests {
             vec![TaskEventKind::Created]
         );
         let task = state.get(second).expect("second notice");
-        assert_eq!(task.status, HumanStatus::Started);
+        assert_eq!(task.status, HumanStatus::Doing);
         assert_eq!(task.notice.as_ref().map(|notice| notice.number), Some(None));
 
         state.assign_numbers_for_persistence();
@@ -2268,7 +2265,7 @@ mod tests {
                 "left",
                 "Left notice",
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new(),
             )
@@ -2278,7 +2275,7 @@ mod tests {
                 "right",
                 "Right notice",
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new(),
             )
@@ -2327,7 +2324,7 @@ mod tests {
                 "welcome",
                 "Welcome",
                 None,
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 Vec::new(),
             )
@@ -2359,7 +2356,7 @@ mod tests {
                         "welcome",
                         "Welcome",
                         None,
-                        HumanStatus::Ready,
+                        HumanStatus::Todo,
                         TaskScope::Global,
                         Vec::new(),
                     )
@@ -2410,7 +2407,7 @@ mod tests {
                 Some("thread".into()),
             )
             .expect("edit");
-        state.set_status(id, HumanStatus::Started).expect("status");
+        state.set_status(id, HumanStatus::Doing).expect("status");
         state.complete(id).expect("complete");
         state.soft_delete(id).expect("delete");
         assert_eq!(state.get(id).and_then(|task| task.number), number);
@@ -2431,8 +2428,8 @@ mod tests {
 
     #[test]
     fn removed_status_and_step_wire_names_are_rejected() {
-        assert!(serde_json::from_str::<HumanStatus>("\"todo\"").is_err());
-        assert!(serde_json::from_str::<HumanStatus>("\"doing\"").is_err());
+        assert!(serde_json::from_str::<HumanStatus>("\"open\"").is_err());
+        assert!(serde_json::from_str::<HumanStatus>("\"blocked\"").is_err());
         assert!(serde_json::from_str::<TaskEventKind>("\"checklist_item_added\"").is_err());
 
         let mut state = DomainState::new();

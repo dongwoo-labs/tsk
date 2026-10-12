@@ -15,9 +15,9 @@ tsk list
 Install the skill with `tsk setup pi`, or use your [agent's setup target](#setup). `tsk guide` prints the workflow.
 
 1. Read the task with `tsk list T12`.
-2. Set its status with `tsk status T12 started` (or `ready` to pick it from the inbox).
+2. Set its status with `tsk status T12 doing`.
 3. Update notes or steps as work progresses.
-4. Set `review`, `blocked`, `open`, or `done` explicitly.
+4. Leave it Doing when handing back work. Record questions separately; set Done only when the user requests it.
 
 The CLI can mark a task done with `tsk status <task> done`. Agent lifecycle does not change task status automatically.
 
@@ -76,11 +76,8 @@ Data commands accept `--state-dir <dir>`. Setup, update, and guide do not use th
 
 | Status | Meaning |
 | --- | --- |
-| `open` | Captured, not yet picked (inbox) |
-| `ready` | Picked, up next (on deck) |
-| `started` | In motion |
-| `blocked` | Waiting on something |
-| `review` | Done by the agent, waiting on you |
+| `todo` | Captured, not yet in progress |
+| `doing` | Work in progress |
 | `done` | Closed |
 
 ### Task addresses
@@ -106,7 +103,7 @@ For adds, a bare project name must match exactly one project the board already k
 
 ```sh
 tsk add -t "Fix login timeout" -n "Reproduce on a slow connection" --thread auth
-# new tasks start open; use `tsk status T<n> ready` when picked
+# new tasks start todo; use `tsk status T<n> doing` when work begins
 tsk add -t "Buy coffee" --desk
 tsk add -t "Draft release notes" -p atlas --json
 ```
@@ -174,31 +171,31 @@ tsk list T12
 tsk list --all --json
 tsk list -p atlas --thread auth
 tsk list --done --all
-tsk list --open --all
-tsk list --ready --all
+tsk list --todo --all
+tsk list --doing --all
 tsk list --archived --all
 tsk list --deleted --all
 ```
 
 ```text
-tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--open | --ready | --done | --deleted | --archived] [--json] [--state-dir <dir>]
+tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]
 ```
 
 | Filter | Result |
 | --- | --- |
-| Default | Open, ready, started, blocked, and review tasks; excludes archived, deleted, and notice (`N`) tasks |
-| `--open` | Inbox tasks with status `open` |
-| `--ready` | Picked on-deck tasks with status `ready` |
+| Default | Todo and Doing tasks; excludes archived, deleted, and notice (`N`) tasks |
+| `--todo` | Tasks with status `todo` |
+| `--doing` | Tasks with status `doing` |
 | `--done` | Completed tasks |
 | `--archived` | Individually archived tasks and tasks in archived projects, across statuses |
 | `--deleted` | Live soft-deleted tasks and `trash.jsonl` entries, deduped by task with the live copy winning, newest deletion first. Trash is retained for 30 days, see [storage](/docs/storage/#deleted-tasks). |
 | `--thread` | Filter within the selected scope |
 
-Scope flags are mutually exclusive. So are `--open`, `--ready`, `--done`, `--deleted`, and `--archived`.
+Scope flags are mutually exclusive. So are `--todo`, `--doing`, `--done`, `--deleted`, and `--archived`.
 
 A direct task address searches the main store, including done, archived, and recently deleted tasks. It cannot be combined with scope, thread, or status filters. A missing task exits 2. A task already moved to `trash.jsonl` is not addressable; find it with `tsk list --deleted` (optionally `-p`), or restore it with `tsk trash restore`.
 
-Human output groups by status in `STARTED`, `READY`, `OPEN`, `BLOCKED`, `REVIEW` order. Within a status, rows follow the board's section order: `ready` oldest pick first, `open` oldest capture first, and `started`, `blocked`, `review` and `done` most recent status change first. JSON is that flat board order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number and thread, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, archived marks, and threads use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
+Human output groups by status in `DOING`, `TODO` order. Todo rows use oldest capture first; Doing and Done use most recent status change first. JSON is that flat board order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number and thread, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, archived marks, and threads use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
 
 Single-task output removes the thread from the title row and presents notes, steps, then `#thread` as separate blocks. A blank line separates adjacent blocks that exist. Human step rows show state and text without machine-oriented short IDs.
 
@@ -209,17 +206,16 @@ Relationship fields add `parent_task_id` (`null` for no parent), `children_done`
 ## status
 
 ```sh
-tsk status T12 open
-tsk status T12 ready
-tsk status T12 started
-tsk status T12 review
+tsk status T12 todo
+tsk status T12 doing
+tsk status T12 done
 ```
 
-Accepts `open`, `ready`, `started` (or `start`), `blocked`, `review`, and `done`.
+Accepts only `todo`, `doing`, and `done`. Legacy values and the `start` alias refuse with a usage error and do not write the store. Questions and Herdr execution status do not alter Task status.
 
-Unlike keyboard toggles, this command sets the requested status directly. Repeating the same value is safe.
+This command sets the requested status directly. Repeating the same value is safe.
 
-Output: `status T12 <status> <title>`. The output uses `started`, even when the input was `start`.
+Output: `status T12 <status> <title>`.
 
 ## edit
 
@@ -338,8 +334,8 @@ One-way import from [Linear](https://linear.app): reads issues through Linear's 
 
 | Linear state type | Task status |
 | --- | --- |
-| `triage`, `backlog`, `unstarted` | `open` |
-| `started` | `started`, or `review` when the state name contains "review" (any case) |
+| `triage`, `backlog`, `unstarted` | `todo` |
+| `started` | `doing`, including review-named states |
 | `completed` | `done` |
 | `canceled` (including duplicates) | Skipped, counted in the report |
 
@@ -352,7 +348,7 @@ Plain output starts with `fetched <n> · created <n> · updated <n> · unchanged
 JSON output is one object: `dry_run`, `fetched`, and four arrays. `created`, `updated`, and `unchanged` rows carry `identifier`, `number` (`null` for a dry-run create), `title`, and `status`; `skipped` rows carry `identifier` and the Linear `state` type.
 
 ```json
-{"dry_run":false,"fetched":3,"created":[{"identifier":"ENG-123","number":14,"title":"ENG-123 Fix login timeout","status":"started"}],"updated":[],"unchanged":[{"identifier":"ENG-120","number":9,"title":"ENG-120 Draft release notes","status":"review"}],"skipped":[{"identifier":"ENG-99","state":"canceled"}]}
+{"dry_run":false,"fetched":3,"created":[{"identifier":"ENG-123","number":14,"title":"ENG-123 Fix login timeout","status":"doing"}],"updated":[],"unchanged":[{"identifier":"ENG-120","number":9,"title":"ENG-120 Draft release notes","status":"doing"}],"skipped":[{"identifier":"ENG-99","state":"canceled"}]}
 ```
 
 Every issue is fetched before anything is written, so a missing key, a network or HTTP failure, or a GraphQL error refuses with exit 1 and saves nothing. Exit 3 is reserved for a store error during the single write.

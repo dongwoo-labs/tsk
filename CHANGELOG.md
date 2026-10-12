@@ -9,6 +9,10 @@ the GitHub release notes verbatim.
 
 ## Unreleased
 
+### Breaking
+
+- Task progress is now Todo, Doing, or Done, with strict CLI values `todo`, `doing`, and `done`. Store v7 maps open/ready to todo and started/blocked/review to doing, preserving history, undo, steps, archive, parent links and thread. An older binary refuses v7; rollback requires the original `tsk.json.v<N>` plus `trash.jsonl.pre-v7` after trash rewrites. Question waiting is separate from human progress.
+
 ### Added
 
 - Threads pane. `tsk threads` (or the **Open tsk threads** Herdr action) lists the live `lead-` and `thr-` agent sessions grouped only by Herdr execution status as BLOCKED, IN MOTION and ON DECK, with each one's status, how long it has held, and optional inbox metadata as an annotation. Neither blocked execution nor inbox text indicates a wait for the user. `Enter` focuses the selected session's tab and pane; `tsk threads --json` and `tsk threads focus <name>` do the same headlessly. It only reads Herdr and never reads or writes the task or question store.

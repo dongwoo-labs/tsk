@@ -54,7 +54,7 @@ for (const width of [40, 78, 109, 110])
     await expect(page.locator(".tsk-steps-heading")).toHaveText("steps 2/2");
     await expect(page.locator(".tsk-task-column")).toHaveAttribute(
       "data-status",
-      "started",
+      "doing",
     );
     await page.keyboard.press("e");
     await page.locator("#tsk-step-edit").fill("Renamed first step");

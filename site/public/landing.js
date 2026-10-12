@@ -24,53 +24,19 @@
     reveal.forEach((el) => el.classList.add("is-in"));
   }
 
-  // ── status cycle: one row walking through the six human states ──────────
+  // ── status cycle: one row walking through the three human states ──────────
   const cycle = document.querySelector("[data-cycle]");
   if (cycle) {
     const steps = [
+      { sec: "TODO", glyph: "○", status: "todo", key: "ctrl+s", next: "doing" },
       {
-        sec: "inbox",
-        glyph: "◌",
-        status: "open",
-        key: "ctrl+n",
-        next: "ready",
-      },
-      {
-        sec: "ON DECK",
-        glyph: "○",
-        status: "ready",
-        key: "ctrl+s",
-        next: "started",
-      },
-      {
-        sec: "IN MOTION",
+        sec: "DOING",
         glyph: "●",
-        status: "started",
-        key: "ctrl+b",
-        next: "blocked",
-      },
-      {
-        sec: "ON DECK",
-        glyph: "■",
-        status: "blocked",
-        key: "ctrl+b",
-        next: "ready",
-      },
-      {
-        sec: "ON DECK",
-        glyph: "○",
-        status: "ready",
-        key: "ctrl+r",
-        next: "review",
-      },
-      {
-        sec: "ON DECK",
-        glyph: "▲",
-        status: "review",
+        status: "doing",
         key: "ctrl+d",
         next: "done",
       },
-      { sec: "DONE", glyph: "✓", status: "done", key: "ctrl+o", next: "open" },
+      { sec: "DONE", glyph: "✓", status: "done", key: "ctrl+o", next: "todo" },
     ];
     const sec = cycle.querySelector("[data-cycle-sec]");
     const glyph = cycle.querySelector("[data-cycle-glyph]");

@@ -94,7 +94,7 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
         )
         .expect("create T12");
     domain
-        .set_status(started, HumanStatus::Started)
+        .set_status(started, HumanStatus::Doing)
         .expect("start T12");
     let ready = domain
         .create(
@@ -106,7 +106,7 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
         )
         .expect("create T15");
     domain
-        .set_status(ready, HumanStatus::Ready)
+        .set_status(ready, HumanStatus::Todo)
         .expect("ready T15");
     let mut tasks = domain.tasks().to_vec();
     tasks[0].number = Some(12);
@@ -545,22 +545,21 @@ fn stage_zero_and_full_task_render_the_standard_tier_at_130x24() {
         rows[1].contains("desk  ·  tsk ▾  ·  projects"),
         "selector row"
     );
-    assert!(rows[2].trim().is_empty(), "blank above IN MOTION");
-    assert!(rows[3].starts_with(" IN MOTION ─"));
+    assert!(rows[2].trim().is_empty(), "blank above DOING");
+    assert!(rows[3].starts_with(" DOING ─"));
     assert!(rows[4].trim().is_empty(), "blank between header and rows");
     assert!(rows[5].starts_with("▸ ● T12 Frame the wide task view"));
     assert!(!rows.iter().any(|row| row.contains("└─ tsk")));
     assert!(rows[6].trim().is_empty());
-    assert!(rows[7].starts_with(" ON DECK · desk ─"));
+    assert!(rows[7].starts_with(" TODO · desk ─"));
     assert!(rows[9].starts_with("  ○ T15 Renew domain"));
     let verbs = hits
         .regions
         .iter()
         .filter(|hit| matches!(hit.target, QueueHitTarget::Verb(_)))
         .count();
-    // The bar is a fixed shape (open · status verbs · help): a started row paints
-    // six entries at every tier, well inside the standard budget.
-    assert_eq!(verbs, 6, "started row bar: {verbs}");
+    // The Doing bar has four entries: open · todo · done · help.
+    assert_eq!(verbs, 4, "doing row bar: {verbs}");
     assert!(verbs <= usize::from(STANDARD_VERB_BAR_ENTRY_BUDGET));
 
     to_stage(&mut domain, &mut model, WideStage::FullTask);
@@ -571,7 +570,7 @@ fn stage_zero_and_full_task_render_the_standard_tier_at_130x24() {
     let (rows, _) = render(&model, 130, 24);
     assert!(rows[0].trim().is_empty(), "F keeps the blank row");
     assert!(rows[1].starts_with(" ● T12 Frame the wide task view"));
-    assert!(rows[1].trim_end().ends_with("started · tsk"));
+    assert!(rows[1].trim_end().ends_with("doing · tsk"));
     assert!(
         rows[2].chars().all(|c| c == '─'),
         "the rule sits under the title"
@@ -597,7 +596,7 @@ fn task_column_header_replaces_the_in_pane_header_with_stage_weight() {
             "{stage:?}: {header}"
         );
         assert!(
-            header.trim_end().ends_with("started · tsk"),
+            header.trim_end().ends_with("doing · tsk"),
             "{stage:?}: {header}"
         );
         assert!(
@@ -706,7 +705,7 @@ fn rail_wraps_titles_with_indent_four_and_dims_every_cell() {
     }
     let rail_text = rail_rows.join("\n");
     assert!(!rail_text.contains("0s"), "rail drops the meta column");
-    assert!(rail_text.contains(" IN MOTION ─"));
+    assert!(rail_text.contains(" DOING ─"));
     assert!(rail_text.contains(" desk ─"));
     assert!(rail_text.contains("desk  ·  tsk"));
 }
@@ -794,9 +793,9 @@ fn stage_a_board_meta_column_sizes_to_the_widest_meta() {
             None,
         )
         .expect("create long-title task");
-    // Started puts the task in IN MOTION, where its meta paints `tsk · 0s`.
+    // Started puts the task in DOING, where its meta paints `tsk · 0s`.
     domain
-        .set_status(id, HumanStatus::Started)
+        .set_status(id, HumanStatus::Doing)
         .expect("start task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO)));
     to_stage(&mut domain, &mut model, WideStage::Split);
@@ -830,7 +829,7 @@ fn stage_a_board_meta_column_sizes_to_the_widest_meta() {
         )
         .expect("create 60-char title task");
     domain
-        .set_status(id, HumanStatus::Started)
+        .set_status(id, HumanStatus::Doing)
         .expect("start task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO)));
     to_stage(&mut domain, &mut model, WideStage::Split);
@@ -2451,7 +2450,7 @@ fn dirty_refusal_clears_after_save_and_the_pane_retargets_again() {
     assert!(model.message().is_none());
     assert!(!model.task_session_dirty());
     assert_eq!(domain.get(bound).expect("saved").title, draft);
-    assert!(header_title_row(&model, WideStage::Rail).ends_with("started · tsk"));
+    assert!(header_title_row(&model, WideStage::Rail).ends_with("doing · tsk"));
 
     press(&mut domain, &mut model, KeyCode::Left);
     assert_eq!(model.wide_stage(), WideStage::Split);
@@ -2475,7 +2474,7 @@ fn dirty_refusal_clears_after_cancel() {
     assert!(model.message().is_none());
     assert!(!model.task_session_dirty());
     assert_eq!(model.edit_buffer(), saved);
-    assert!(header_title_row(&model, WideStage::Rail).ends_with("started · tsk"));
+    assert!(header_title_row(&model, WideStage::Rail).ends_with("doing · tsk"));
     press(&mut domain, &mut model, KeyCode::Left);
     press(&mut domain, &mut model, KeyCode::Char('j'));
     assert_ne!(model.selected_id(), Some(bound));
@@ -2679,7 +2678,7 @@ fn wide_task_column_header_derives_the_notice_n_identifier_and_its_copy_hit() {
             "guide.wide",
             "Wide guide header",
             None,
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             Vec::new(),
         )
@@ -2855,7 +2854,7 @@ fn expanded_quick_add_draft_paints_at_wide_widths_and_esc_returns_to_the_line() 
             "{width} cols: draft verb bar missing\n{text}"
         );
         assert!(
-            !text.contains("IN MOTION"),
+            !text.contains("DOING"),
             "{width} cols: board still painted\n{text}"
         );
     }
@@ -2863,7 +2862,7 @@ fn expanded_quick_add_draft_paints_at_wide_widths_and_esc_returns_to_the_line() 
     assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
     let (buffer, _) = render_buffer(&model, 140, 30);
     let text = rows_of(&buffer).join("\n");
-    assert!(text.contains("IN MOTION"), "board should be back\n{text}");
+    assert!(text.contains("DOING"), "board should be back\n{text}");
     assert!(
         text.contains("buy milk"),
         "quick-add line should keep the title\n{text}"
@@ -2882,8 +2881,8 @@ fn rail_keeps_the_done_drawer_and_selects_the_open_done_task() {
         .create("Open work", None, scope(), ProvenanceOrigin::Manual, None)
         .expect("create started");
     domain
-        .set_status(started, HumanStatus::Started)
-        .expect("start");
+        .set_status(started, HumanStatus::Doing)
+        .expect("doing");
     let done = domain
         .create("Shipped fix", None, scope(), ProvenanceOrigin::Manual, None)
         .expect("create done");

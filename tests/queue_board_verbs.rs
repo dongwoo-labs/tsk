@@ -61,7 +61,7 @@ fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel
             None,
         )
         .expect("create");
-    if status != HumanStatus::Open {
+    if status != HumanStatus::Todo {
         domain.set_status(id, status).expect("status");
     }
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -95,7 +95,7 @@ fn mark_tasks(domain: &mut DomainState, model: &mut BoardModel, ids: &[uuid::Uui
 
 #[test]
 fn shift_arrows_and_space_build_a_session_only_marked_set() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -170,7 +170,7 @@ fn shift_arrows_and_space_build_a_session_only_marked_set() {
 
 #[test]
 fn status_verbs_target_all_marks_once_then_clear_them() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -187,28 +187,25 @@ fn status_verbs_target_all_marks_once_then_clear_them() {
     let outcome = apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::SetStatus(HumanStatus::Blocked),
+        BoardIntent::SetStatus(HumanStatus::Doing),
         None,
     )
     .expect("block marked set");
     assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(
-        domain.get(first).expect("first").status,
-        HumanStatus::Blocked
-    );
+    assert_eq!(domain.get(first).expect("first").status, HumanStatus::Doing);
     assert_eq!(
         domain.get(second).expect("second").status,
-        HumanStatus::Blocked
+        HumanStatus::Doing
     );
     assert_eq!(model.marked_count(), 0, "a completed verb clears marks");
 }
 
 #[test]
 fn bulk_start_preserves_per_task_eligibility_and_toggle_verbs_are_all_or_nothing() {
-    let (mut domain, mut model, open) = board_with_task("open", HumanStatus::Open);
+    let (mut domain, mut model, open) = board_with_task("todo", HumanStatus::Todo);
     let blocked = domain
         .create(
-            "blocked",
+            "doing",
             None,
             project(THIS_REPO),
             ProvenanceOrigin::Manual,
@@ -216,61 +213,86 @@ fn bulk_start_preserves_per_task_eligibility_and_toggle_verbs_are_all_or_nothing
         )
         .expect("create blocked");
     domain
-        .set_status(blocked, HumanStatus::Blocked)
+        .set_status(blocked, HumanStatus::Doing)
         .expect("set blocked");
     model.sync_from_domain(&domain);
 
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
     apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None)
         .expect("start eligible marks");
-    assert_eq!(domain.get(open).expect("open").status, HumanStatus::Started);
+    assert_eq!(domain.get(open).expect("todo").status, HumanStatus::Doing);
     assert_eq!(
-        domain.get(blocked).expect("blocked").status,
-        HumanStatus::Blocked,
+        domain.get(blocked).expect("doing").status,
+        HumanStatus::Doing,
         "bulk start skips blocked tasks"
     );
 
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None)
-        .expect("mixed set goes blocked");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+        None,
+    )
+    .expect("mixed set goes blocked");
     assert!([open, blocked]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Blocked));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Doing));
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None)
-        .expect("all-blocked set goes ready");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Todo),
+        None,
+    )
+    .expect("set all Todo");
     assert!([open, blocked]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Ready));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Todo));
 
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleReview, None)
-        .expect("mixed set goes review");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+        None,
+    )
+    .expect("mixed set goes review");
     assert!([open, blocked]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Review));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Doing));
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleReview, None)
-        .expect("all-review set goes ready");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Todo),
+        None,
+    )
+    .expect("set all Todo");
     assert!([open, blocked]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Ready));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Todo));
 
     domain.complete(blocked).expect("complete one target");
     model.sync_from_domain(&domain);
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None)
         .expect("open done drawer");
     mark_tasks(&mut domain, &mut model, &[open, blocked]);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None)
-        .expect("bulk block includes a done target");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+        None,
+    )
+    .expect("bulk block includes a done target");
     assert!([open, blocked]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Blocked));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Doing));
 }
 
 #[test]
 fn bulk_start_names_skipped_done_marks_on_the_status_row() {
-    let (mut domain, mut model, open) = board_with_task("open", HumanStatus::Open);
+    let (mut domain, mut model, open) = board_with_task("todo", HumanStatus::Todo);
     let mut done = Vec::new();
     for title in ["done one", "done two"] {
         let id = domain
@@ -293,13 +315,13 @@ fn bulk_start_names_skipped_done_marks_on_the_status_row() {
     let outcome = apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None)
         .expect("start marked set");
     assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(domain.get(open).expect("open").status, HumanStatus::Started);
+    assert_eq!(domain.get(open).expect("todo").status, HumanStatus::Doing);
     assert!(done
         .iter()
         .all(|id| domain.get(*id).expect("done").status == HumanStatus::Done));
     assert_eq!(
         model.message(),
-        Some("started 1 · skipped 2 done (ctrl+n or ctrl+o reopens them)")
+        Some("doing 1 · skipped 2 done (ctrl+o reopens them)")
     );
 
     // A marked set of only done tasks changes nothing but still says why.
@@ -309,7 +331,7 @@ fn bulk_start_names_skipped_done_marks_on_the_status_row() {
     assert_eq!(outcome, IntentOutcome::None);
     assert_eq!(
         model.message(),
-        Some("started 0 · skipped 1 done (ctrl+n or ctrl+o reopens them)")
+        Some("doing 0 · skipped 1 done (ctrl+o reopens them)")
     );
 }
 
@@ -355,7 +377,7 @@ fn bulk_verbs_reach_marked_done_drawer_rows_and_archive_each_mark() {
     apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("reopen done marks");
     assert!([first, second]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Open));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Todo));
     assert_eq!(model.marked_count(), 0);
 
     mark_tasks(&mut domain, &mut model, &[first, second]);
@@ -372,7 +394,7 @@ fn bulk_verbs_reach_marked_done_drawer_rows_and_archive_each_mark() {
 
 #[test]
 fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -427,7 +449,7 @@ fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
     );
     assert!([first, second]
         .into_iter()
-        .all(|id| domain.get(id).expect("task").status == HumanStatus::Open));
+        .all(|id| domain.get(id).expect("task").status == HumanStatus::Todo));
     assert_eq!(
         domain.get(already_done).expect("already done").status,
         HumanStatus::Done,
@@ -437,7 +459,7 @@ fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
     mark_tasks(&mut domain, &mut model, &[first, second]);
     apply_intent(&mut domain, &mut model, BoardIntent::Complete, None).expect("second bulk done");
     domain
-        .set_status(second, HumanStatus::Blocked)
+        .set_status(second, HumanStatus::Doing)
         .expect("make one child stale");
     model.sync_from_domain(&domain);
     for _ in 0..2 {
@@ -449,14 +471,14 @@ fn one_undo_reverses_bulk_done_and_a_stale_batch_refuses_atomically() {
         assert_eq!(domain.get(first).expect("first").status, HumanStatus::Done);
         assert_eq!(
             domain.get(second).expect("second").status,
-            HumanStatus::Blocked
+            HumanStatus::Doing
         );
     }
 }
 
 #[test]
 fn bulk_delete_confirms_count_once_and_one_undo_restores_the_set() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -506,7 +528,7 @@ fn bulk_delete_confirms_count_once_and_one_undo_restores_the_set() {
 
 #[test]
 fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -562,27 +584,23 @@ fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None)
         .expect("open drawer");
     assert_eq!(model.marked_count(), 0, "drawer changes clear marks");
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleInboxGroup, None).expect("fold inbox");
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleInboxGroup, None)
-        .expect("reopen inbox on its header");
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None)
-        .expect("select an inbox task");
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleMarkMode, None)
-        .expect("enter mark mode");
-    apply_intent(&mut domain, &mut model, BoardIntent::MarkToggle, None).expect("mark inbox task");
-    assert_eq!(model.marked_count(), 1);
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectPrev, None)
-        .expect("return to inbox header");
-    assert!(model.inbox_header_selected());
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
-        .expect("fold inbox with Enter");
-    assert_eq!(
-        model.marked_count(),
-        0,
-        "Enter on a group header clears hidden marks"
-    );
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
-        .expect("reopen inbox with Enter");
+    let index = model
+        .visible_ids()
+        .iter()
+        .position(|id| *id == first)
+        .expect("first task");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SelectIndex(index),
+        None,
+    )
+    .expect("select");
+    mark_tasks(&mut domain, &mut model, &[first]);
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open task");
+    assert_eq!(model.marked_count(), 0, "Enter clears marks");
+    assert!(!model.inbox_header_selected());
+    apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("close task");
     mark_tasks(&mut domain, &mut model, &[first]);
     apply_intent(
         &mut domain,
@@ -596,7 +614,7 @@ fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
 
 #[test]
 fn parked_task_page_still_allows_marking_and_bulk_verbs_on_the_board() {
-    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Open);
+    let (mut domain, mut model, first) = board_with_task("first", HumanStatus::Todo);
     let second = domain
         .create(
             "second",
@@ -636,7 +654,7 @@ fn parked_task_page_still_allows_marking_and_bulk_verbs_on_the_board() {
 
 #[test]
 fn task_page_status_verbs_stay_cursor_only_and_clear_board_marks() {
-    let (mut domain, mut model, cursor) = board_with_task("cursor", HumanStatus::Open);
+    let (mut domain, mut model, cursor) = board_with_task("cursor", HumanStatus::Todo);
     let marked = domain
         .create(
             "marked",
@@ -665,43 +683,44 @@ fn task_page_status_verbs_stay_cursor_only_and_clear_board_marks() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::SetStatus(HumanStatus::Blocked),
+        BoardIntent::SetStatus(HumanStatus::Doing),
         None,
     )
     .expect("apply status from task page");
     assert_eq!(
         domain.get(cursor).expect("cursor").status,
-        HumanStatus::Blocked
+        HumanStatus::Doing
     );
     assert_eq!(
         domain.get(marked).expect("marked").status,
-        HumanStatus::Open
+        HumanStatus::Todo
     );
     assert_eq!(model.edit_target(), Some(cursor));
     assert_eq!(model.marked_count(), 0);
 }
 
 #[test]
-fn ctrl_n_sets_ready_and_ctrl_o_sets_open_from_every_status_without_ready_open_events() {
-    assert_eq!(
-        map_key(BoardInputMode::Normal, ctrl(KeyCode::Char('n'))),
-        Some(BoardIntent::SetStatus(HumanStatus::Ready))
-    );
+fn removed_status_keys_are_inert_and_ctrl_o_sets_todo_from_every_status() {
+    for mode in [BoardInputMode::Normal, BoardInputMode::TaskPage] {
+        for key in ['n', 'b', 'r'] {
+            assert_eq!(map_key(mode, ctrl(KeyCode::Char(key))), None);
+        }
+    }
     assert_eq!(
         map_key(BoardInputMode::Normal, ctrl(KeyCode::Char('o'))),
         Some(BoardIntent::Reopen)
     );
     assert_eq!(
-        map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('n'))),
-        Some(BoardIntent::SetStatus(HumanStatus::Ready))
+        map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('o'))),
+        Some(BoardIntent::Reopen)
     );
 
     for from in [
-        HumanStatus::Open,
-        HumanStatus::Ready,
-        HumanStatus::Started,
-        HumanStatus::Blocked,
-        HumanStatus::Review,
+        HumanStatus::Todo,
+        HumanStatus::Todo,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
         HumanStatus::Done,
     ] {
         let (mut domain, mut model, id) = board_with_task("ready target", from);
@@ -712,13 +731,13 @@ fn ctrl_n_sets_ready_and_ctrl_o_sets_open_from_every_status_without_ready_open_e
         let outcome = apply_intent(
             &mut domain,
             &mut model,
-            BoardIntent::SetStatus(HumanStatus::Ready),
+            BoardIntent::SetStatus(HumanStatus::Todo),
             None,
         )
         .expect("set ready");
         let task = domain.get(id).expect("task");
-        assert_eq!(task.status, HumanStatus::Ready, "{from:?} → ready");
-        if from == HumanStatus::Ready {
+        assert_eq!(task.status, HumanStatus::Todo, "{from:?} → ready");
+        if from == HumanStatus::Todo {
             assert_eq!(outcome, IntentOutcome::None, "ready is a no-op");
             assert_eq!(task.revision, before.revision, "ready has no event");
             assert_eq!(
@@ -740,8 +759,8 @@ fn ctrl_n_sets_ready_and_ctrl_o_sets_open_from_every_status_without_ready_open_e
             .expect("ctrl+o maps to reopen");
         let outcome = apply_intent(&mut domain, &mut model, reopen, None).expect("set open");
         let task = domain.get(id).expect("task");
-        assert_eq!(task.status, HumanStatus::Open, "{from:?} → open");
-        if from == HumanStatus::Open {
+        assert_eq!(task.status, HumanStatus::Todo, "{from:?} → open");
+        if from == HumanStatus::Todo {
             assert_eq!(outcome, IntentOutcome::None, "open is a no-op");
             assert_eq!(task.revision, before.revision, "open has no event");
             assert_eq!(
@@ -767,20 +786,20 @@ fn ctrl_n_sets_ready_and_ctrl_o_sets_open_from_every_status_without_ready_open_e
 
 #[test]
 fn space_on_todo_sets_doing_via_domain() {
-    let (mut domain, mut model, id) = board_with_task("start me", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("start me", HumanStatus::Todo);
     assert_eq!(model.selected_id(), Some(id));
 
     let outcome =
         apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("primary");
     assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Started);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
     assert_eq!(
         model
             .visible_tasks()
             .iter()
             .find(|t| t.id == id)
             .map(|t| t.status),
-        Some(HumanStatus::Started)
+        Some(HumanStatus::Doing)
     );
     assert!(
         board_intent_may_persist(&BoardIntent::PrimaryVerb),
@@ -816,7 +835,7 @@ fn space_on_done_is_silent_noop() {
 
 #[test]
 fn space_on_doing_is_silent_noop() {
-    let (mut domain, mut model, id) = board_with_task("already going", HumanStatus::Started);
+    let (mut domain, mut model, id) = board_with_task("already going", HumanStatus::Doing);
     let before = domain.get(id).expect("task").clone();
 
     let outcome =
@@ -831,7 +850,7 @@ fn space_on_doing_is_silent_noop() {
 #[test]
 fn d_completes_non_done_and_o_reopens_done() {
     // d completes non-done
-    let (mut domain, mut model, id) = board_with_task("finish me", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("finish me", HumanStatus::Todo);
     let outcome =
         apply_intent(&mut domain, &mut model, BoardIntent::Complete, None).expect("complete");
     assert_eq!(outcome, IntentOutcome::Persist);
@@ -849,7 +868,7 @@ fn d_completes_non_done_and_o_reopens_done() {
     }
     let outcome = apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("reopen");
     assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Open);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
 
     assert!(board_intent_may_persist(&BoardIntent::Complete));
     assert!(board_intent_may_persist(&BoardIntent::Reopen));
@@ -857,13 +876,18 @@ fn d_completes_non_done_and_o_reopens_done() {
 
 #[test]
 fn b_on_blocked_sets_todo_and_keeps_task_on_deck_not_in_motion() {
-    let (mut domain, mut model, id) = board_with_task("unblock me", HumanStatus::Blocked);
+    let (mut domain, mut model, id) = board_with_task("unblock me", HumanStatus::Doing);
 
-    let outcome =
-        apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None).expect("unblock");
+    let outcome = apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SetStatus(HumanStatus::Todo),
+        None,
+    )
+    .expect("set Todo");
 
     assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Ready);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
     let view = model.queue_view();
     assert!(view
         .sections
@@ -873,25 +897,36 @@ fn b_on_blocked_sets_todo_and_keeps_task_on_deck_not_in_motion() {
         .sections
         .iter()
         .any(|section| section.kind == SectionKind::InMotion && section.task_ids.contains(&id)));
-    assert!(board_intent_may_persist(&BoardIntent::ToggleBlock));
+    assert!(board_intent_may_persist(&BoardIntent::SetStatus(
+        HumanStatus::Doing
+    )));
 }
 
 #[test]
 fn b_blocks_todo_doing_and_review() {
-    for status in [
-        HumanStatus::Ready,
-        HumanStatus::Started,
-        HumanStatus::Review,
-    ] {
+    for status in [HumanStatus::Todo, HumanStatus::Doing, HumanStatus::Doing] {
         let (mut domain, mut model, id) = board_with_task("block me", status);
 
-        let outcome =
-            apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None).expect("block");
+        let outcome = apply_intent(
+            &mut domain,
+            &mut model,
+            BoardIntent::SetStatus(HumanStatus::Doing),
+            None,
+        )
+        .expect("block");
 
-        assert_eq!(outcome, IntentOutcome::Persist, "{status:?}");
+        assert_eq!(
+            outcome,
+            if status == HumanStatus::Doing {
+                IntentOutcome::None
+            } else {
+                IntentOutcome::Persist
+            },
+            "{status:?}"
+        );
         assert_eq!(
             domain.get(id).expect("task").status,
-            HumanStatus::Blocked,
+            HumanStatus::Doing,
             "{status:?}"
         );
     }
@@ -899,7 +934,7 @@ fn b_blocks_todo_doing_and_review() {
 
 #[test]
 fn enter_opens_the_task_page_and_enter_again_closes_it_without_mutating() {
-    let (mut domain, mut model, id) = board_with_task("inspect me", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("inspect me", HumanStatus::Todo);
     let rev_before = domain.get(id).expect("task").revision;
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
 
@@ -909,7 +944,7 @@ fn enter_opens_the_task_page_and_enter_again_closes_it_without_mutating() {
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
     assert_eq!(model.detail_open(), None, "the page replaces any peek");
     assert_eq!(domain.get(id).expect("task").revision, rev_before);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Ready);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
 
     let outcome = apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
         .expect("close task page");
@@ -921,7 +956,7 @@ fn enter_opens_the_task_page_and_enter_again_closes_it_without_mutating() {
 
 #[test]
 fn right_arrow_peeks_detail_and_left_arrow_collapses_it() {
-    let (mut domain, mut model, id) = board_with_task("peek me", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("peek me", HumanStatus::Todo);
     let rev_before = domain.get(id).expect("task").revision;
     assert_eq!(model.detail_open(), None);
 
@@ -954,7 +989,7 @@ fn right_arrow_peeks_detail_and_left_arrow_collapses_it() {
 
 #[test]
 fn detail_closes_when_its_task_leaves_the_visible_set() {
-    let (mut domain, mut model, id) = board_with_task("inspect then remove", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("inspect then remove", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("open peek");
     assert_eq!(model.detail_open(), Some(id));
 
@@ -1023,14 +1058,17 @@ fn block_on_done_and_verbs_without_selection_leave_visible_notices() {
     .expect("select done task");
 
     let outcome =
-        apply_intent(&mut domain, &mut model, BoardIntent::ToggleBlock, None).expect("block done");
+        apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("skip done");
     assert_eq!(outcome, IntentOutcome::None);
     assert_eq!(domain.get(id).expect("done task").status, HumanStatus::Done);
-    assert!(model.message().is_some_and(|message| !message.is_empty()));
+    assert!(model.message().is_none());
 
     let mut empty_domain = DomainState::new();
     let mut empty_model = BoardModel::from_domain(&empty_domain, Some(PathBuf::from(THIS_REPO)));
-    for intent in [BoardIntent::PrimaryVerb, BoardIntent::ToggleBlock] {
+    for intent in [
+        BoardIntent::PrimaryVerb,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+    ] {
         let outcome = apply_intent(&mut empty_domain, &mut empty_model, intent, None)
             .expect("verb without selection");
         assert_eq!(outcome, IntentOutcome::None);
@@ -1042,7 +1080,7 @@ fn block_on_done_and_verbs_without_selection_leave_visible_notices() {
 
 #[test]
 fn esc_closes_transient_then_detail_then_quits_at_the_root() {
-    let (mut domain, mut model, id) = board_with_task("layered", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("layered", HumanStatus::Todo);
 
     // Transient: help card
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("help");
@@ -1127,7 +1165,7 @@ fn t64_ctrl_q_quits_every_non_editor_mode_and_stays_inert_in_editors_and_recover
 
 #[test]
 fn t64_ctrl_q_quits_instead_of_dismissing_help_or_pickers() {
-    let (mut domain, mut model, _) = board_with_task("quit surfaces", HumanStatus::Ready);
+    let (mut domain, mut model, _) = board_with_task("quit surfaces", HumanStatus::Todo);
 
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     assert_eq!(
@@ -1168,7 +1206,7 @@ fn t64_root_esc_quits_on_each_navigation_tab_without_resetting_it() {
             )
             .expect("project task");
         domain
-            .set_status(id, HumanStatus::Ready)
+            .set_status(id, HumanStatus::Todo)
             .expect("put task on deck");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
         if tab == tsk_tui::ui::queue::NavTab::ProjectBoard {
@@ -1204,7 +1242,7 @@ fn t64_root_esc_quits_on_each_navigation_tab_without_resetting_it() {
 
 #[test]
 fn t64_esc_collapses_split_without_quitting_and_keeps_header_exclusions() {
-    let (mut domain, mut model, _) = board_with_task("split", HumanStatus::Ready);
+    let (mut domain, mut model, _) = board_with_task("split", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::StageRight, None).expect("open split");
     assert_eq!(model.wide_stage(), tier::WideStage::Split);
     assert_eq!(
@@ -1242,17 +1280,16 @@ fn t64_esc_collapses_split_without_quitting_and_keeps_header_exclusions() {
 }
 
 #[test]
-fn t64_inbox_header_esc_does_not_quit() {
-    let (mut domain, mut model, _) = board_with_task("inbox", HumanStatus::Open);
+fn t64_removed_inbox_header_does_not_block_root_escape() {
+    let (mut domain, mut model, _) = board_with_task("inbox", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleInboxGroup, None)
         .expect("select inbox header");
-    assert!(model.inbox_header_selected());
+    assert!(!model.inbox_header_selected());
     assert_eq!(model.wide_stage(), tier::WideStage::FullBoard);
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
     assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None)
-            .expect("inbox header Esc"),
-        IntentOutcome::None
+        apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("root Esc"),
+        IntentOutcome::Quit
     );
 }
 
@@ -1309,7 +1346,7 @@ fn board_chrome_row(model: &BoardModel, mode: (u16, u16)) -> String {
 #[test]
 fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_dispatches_same_intents_as_keys(
 ) {
-    let (mut domain, mut model, id) = board_with_task("palette me", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("palette me", HumanStatus::Todo);
 
     apply_intent(
         &mut domain,
@@ -1322,11 +1359,9 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
 
     let labels: Vec<&str> = model.visible_commands().iter().map(|c| c.label).collect();
     let expected = [
-        "set status: ready",
-        "set status: open",
-        "set status: started",
-        "set status: blocked",
-        "set status: review",
+        "set status: todo",
+        "set status: doing",
+        "set status: done",
         "edit notes",
         "change scope",
         "new task",
@@ -1342,12 +1377,12 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
          the destinations have no collapsible task groups)"
     );
     assert!(
-        labels.contains(&"set status: open"),
+        labels.contains(&"set status: todo"),
         "a ready selection offers the absolute inbox status"
     );
 
-    // Subsequence (not substring): "started" matches only that status label.
-    for ch in "started".chars() {
+    // Subsequence (not substring): "doing" matches only that status label.
+    for ch in "ssg".chars() {
         apply_intent(
             &mut domain,
             &mut model,
@@ -1357,7 +1392,7 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
         .expect("type");
     }
     let filtered: Vec<&str> = model.visible_commands().iter().map(|c| c.label).collect();
-    assert_eq!(filtered, vec!["set status: started"]);
+    assert_eq!(filtered, vec!["set status: doing"]);
     // Substring-only would need the contiguous run "ssg"; none of the labels contain it.
     assert!(
         model
@@ -1369,9 +1404,9 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
 
     // Confirm dispatches the same intent as SetStatus(Doing) would.
     let resolved = resolve_board_command(&mut model, BoardIntent::ConfirmCommand).expect("resolve");
-    assert_eq!(resolved, BoardIntent::SetStatus(HumanStatus::Started));
+    assert_eq!(resolved, BoardIntent::SetStatus(HumanStatus::Doing));
     apply_intent(&mut domain, &mut model, resolved, None).expect("apply");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Started);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
 
     // The absolute status commands remain available from every working status.
     apply_intent(
@@ -1385,7 +1420,7 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
         model
             .visible_commands()
             .iter()
-            .any(|c| c.label == "set status: open"),
+            .any(|c| c.label == "set status: todo"),
         "a doing selection offers the absolute inbox status"
     );
 
@@ -1414,10 +1449,10 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
         model
             .visible_commands()
             .iter()
-            .any(|c| c.label == "set status: open"),
-        "a done selection must offer set status: open"
+            .any(|c| c.label == "set status: todo"),
+        "a done selection must offer set status: todo"
     );
-    for ch in "set status: open".chars() {
+    for ch in "set status: todo".chars() {
         apply_intent(
             &mut domain,
             &mut model,
@@ -1428,9 +1463,9 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
     }
     let via_palette =
         resolve_board_command(&mut model, BoardIntent::ConfirmCommand).expect("open cmd");
-    assert_eq!(via_palette, BoardIntent::SetStatus(HumanStatus::Open));
-    apply_intent(&mut domain, &mut model, via_palette, None).expect("open");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Open);
+    assert_eq!(via_palette, BoardIntent::SetStatus(HumanStatus::Todo));
+    apply_intent(&mut domain, &mut model, via_palette, None).expect("todo");
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
 
     // Direct key route lands on the same intent.
     assert_eq!(
@@ -1460,7 +1495,7 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
 /// recovery surface is gone from this tree.
 #[test]
 fn palette_excludes_park_resume_link_dispatch() {
-    let (mut domain, mut model, _id) = board_with_task("no classic tail", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("no classic tail", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1484,7 +1519,7 @@ fn palette_excludes_park_resume_link_dispatch() {
 /// The palette window follows a wrapped selection, so Enter never targets an invisible row.
 #[test]
 fn palette_window_keeps_wrapped_last_command_visible() {
-    let (mut domain, mut model, _id) = board_with_task("palette window", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("palette window", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1508,7 +1543,7 @@ fn palette_window_keeps_wrapped_last_command_visible() {
 
 #[test]
 fn help_card_uses_one_binding_per_row_and_opens_from_the_task_page() {
-    let (mut domain, mut model, _id) = board_with_task("help structure", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("help structure", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("help");
     let frame = rendered_board(&model, 80, 24);
     assert!(
@@ -1532,7 +1567,7 @@ fn help_card_uses_one_binding_per_row_and_opens_from_the_task_page() {
 /// Help lists every binding, filters from its focused query, scrolls, and closes progressively.
 #[test]
 fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
-    let (mut domain, mut model, _id) = board_with_task("help me", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("help me", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("help");
     assert_eq!(model.input_mode(), BoardInputMode::Help);
     assert_eq!(model.help_query(), "");
@@ -1863,7 +1898,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
         )
         .expect("motion app");
     domain
-        .set_status(motion_app, HumanStatus::Started)
+        .set_status(motion_app, HumanStatus::Doing)
         .expect("doing");
     let motion_other = domain
         .create(
@@ -1875,7 +1910,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
         )
         .expect("motion other");
     domain
-        .set_status(motion_other, HumanStatus::Started)
+        .set_status(motion_other, HumanStatus::Doing)
         .expect("doing other");
     let motion_global = domain
         .create(
@@ -1887,7 +1922,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
         )
         .expect("motion global");
     domain
-        .set_status(motion_global, HumanStatus::Started)
+        .set_status(motion_global, HumanStatus::Doing)
         .expect("doing global");
     let deck_app = domain
         .create(
@@ -2034,12 +2069,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
     assert_eq!(other_view.counts.done, 1);
     assert_eq!(
         model.visible_ids(),
-        vec![
-            motion_other,
-            tsk_tui::ui::queue::INBOX_HEADER_ROW_ID,
-            deck_other,
-            done_other,
-        ],
+        vec![motion_other, deck_other, done_other,],
         "a project scope leaves no task from another scope visible"
     );
     assert!(!model.visible_ids().contains(&done_app));
@@ -2219,7 +2249,7 @@ fn x_soft_deletes_and_status_line_names_task_with_undo_hint() {
 
 #[test]
 fn delete_notice_prefixes_the_board_verb_bar_with_undo_until_undone() {
-    let (mut domain, mut model, id) = board_with_task("undo seat", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("undo seat", HumanStatus::Todo);
     // A neighbour keeps a truthful selection alive after the delete reanchors.
     let other = domain
         .create(
@@ -2428,15 +2458,16 @@ fn page_verbs_act_on_the_page_task_and_the_page_stays_open() {
     // `o` reopens it, still from the page.
     let reopen = map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('o'))).expect("o");
     apply_intent(&mut domain, &mut model, reopen, None).expect("reopen");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Open);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
-    // `b` blocks, `b` again unblocks.
-    let block = map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('b'))).expect("b");
+    // `s` sets Doing; `o` returns to Todo.
+    let block = map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('s'))).expect("s");
     apply_intent(&mut domain, &mut model, block.clone(), None).expect("block");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Blocked);
-    apply_intent(&mut domain, &mut model, block, None).expect("unblock");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Ready);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
+    let todo = map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('o'))).expect("o");
+    apply_intent(&mut domain, &mut model, todo, None).expect("Todo");
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
 }
 
 #[test]
@@ -2737,7 +2768,7 @@ fn task_edit_save_uses_shift_enter_only_and_title_enter_advances_to_notes() {
         "Ctrl+Alt+Enter must not be a hidden capture save chord"
     );
 
-    let (mut domain, mut model, _) = board_with_task("Shift save label", HumanStatus::Ready);
+    let (mut domain, mut model, _) = board_with_task("Shift save label", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
         .expect("open task title");
     let frame = rendered_board(&model, 80, 24);
@@ -2767,12 +2798,12 @@ fn ctrl_s_replaces_ctrl_space_as_the_primary_verb() {
         "the legacy NUL encoding of Ctrl+Space must also be retired"
     );
 
-    for from in [HumanStatus::Open, HumanStatus::Ready] {
+    for from in [HumanStatus::Todo, HumanStatus::Todo] {
         let (mut domain, mut model, id) = board_with_task("startable", from);
         let outcome =
-            apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("start");
+            apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("doing");
         assert_eq!(outcome, IntentOutcome::Persist);
-        assert_eq!(domain.get(id).expect("task").status, HumanStatus::Started);
+        assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
     }
 }
 
@@ -2845,7 +2876,7 @@ fn view_mode_add_starts_the_normal_inline_step_flow() {
         .expect("create");
     domain.add_step(id, "first step").expect("step");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
@@ -2918,7 +2949,7 @@ fn view_tab_selection_wraps_without_starting_task_edit_and_ctrl_e_opens_inline_s
     domain.add_step(id, "first step").expect("first");
     domain.add_step(id, "second step").expect("second");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let _ = rendered_board(&model, 80, 24);
 
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
@@ -2943,7 +2974,7 @@ fn view_tab_selection_wraps_without_starting_task_edit_and_ctrl_e_opens_inline_s
     );
     assert_eq!(
         domain.get(id).expect("task").status,
-        HumanStatus::Started,
+        HumanStatus::Doing,
         "ctrl+s is the task's primary verb even with a step selected"
     );
     assert_eq!(
@@ -3154,7 +3185,7 @@ fn ctrl_d_with_a_step_selected_completes_the_task_and_enter_toggles_the_step() {
     );
     assert_eq!(
         task.status,
-        HumanStatus::Open,
+        HumanStatus::Todo,
         "toggling a step never changes human status"
     );
     assert_ne!(
@@ -3189,63 +3220,47 @@ fn ctrl_d_with_a_step_selected_completes_the_task_and_enter_toggles_the_step() {
     assert_eq!(dones, vec![false, false, false], "no step flipped");
 }
 
-/// `ctrl+r` walks review ↔ ready and rides the persist path; a done task refuses.
+/// Absolute status changes are durable, repeatable, and independent of the prior status.
 #[test]
-fn ctrl_r_toggles_review_and_ready_and_refuses_on_done() {
-    let (mut domain, mut model, id) = board_with_task("Review me", HumanStatus::Ready);
-    let review = map_key(BoardInputMode::Normal, ctrl(KeyCode::Char('r'))).expect("ctrl+r");
-    assert_eq!(review, BoardIntent::ToggleReview);
-    assert!(
-        board_intent_may_persist(&review),
-        "review is a durable status change"
-    );
-
-    let outcome = apply_intent(&mut domain, &mut model, review.clone(), None).expect("to review");
-    assert_eq!(outcome, IntentOutcome::Persist);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Review);
-
-    // Review lives in NEEDS YOU, so the row stays selected and the bar keeps done/block.
-    let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
-    assert_eq!(verbs, vec!["enter", "d", "b", "o", "+", "?"]);
-
-    apply_intent(&mut domain, &mut model, review.clone(), None).expect("back to ready");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Ready);
-
-    for from in [HumanStatus::Started, HumanStatus::Blocked] {
-        domain.set_status(id, from).expect("seed status");
-        model.sync_from_domain(&domain);
-        apply_intent(&mut domain, &mut model, review.clone(), None).expect("to review");
+fn absolute_doing_status_is_idempotent_and_can_reopen_done() {
+    for from in [HumanStatus::Todo, HumanStatus::Doing, HumanStatus::Done] {
+        let (mut domain, mut model, id) = board_with_task("Move me", from);
+        if from == HumanStatus::Done {
+            select_done_task(&mut domain, &mut model, id);
+        }
+        let intent = BoardIntent::SetStatus(HumanStatus::Doing);
+        assert!(board_intent_may_persist(&intent));
+        let before = domain.get(id).expect("task").revision;
+        let outcome =
+            apply_intent(&mut domain, &mut model, intent.clone(), None).expect("set doing");
+        assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
         assert_eq!(
-            domain.get(id).expect("task").status,
-            HumanStatus::Review,
-            "{from:?} → review"
+            outcome,
+            if from == HumanStatus::Doing {
+                IntentOutcome::None
+            } else {
+                IntentOutcome::Persist
+            }
         );
+        if from == HumanStatus::Doing {
+            assert_eq!(domain.get(id).expect("task").revision, before);
+        }
+        let revision = domain.get(id).expect("task").revision;
+        assert_eq!(
+            apply_intent(&mut domain, &mut model, intent, None).expect("repeat"),
+            IntentOutcome::None
+        );
+        assert_eq!(domain.get(id).expect("task").revision, revision);
     }
-
-    domain.set_status(id, HumanStatus::Done).expect("done");
-    model.sync_from_domain(&domain);
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None).expect("drawer");
-    let idx = model
-        .visible_ids()
-        .iter()
-        .position(|&row| row == id)
-        .expect("done row visible");
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectIndex(idx), None).expect("select");
-    let outcome = apply_intent(&mut domain, &mut model, review.clone(), None).expect("refused");
-    assert_eq!(outcome, IntentOutcome::None);
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Done);
-    assert_eq!(model.message(), Some("completed tasks cannot go to review"));
-
-    // The task page maps the same chord.
-    assert_eq!(
-        map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('r'))),
-        Some(BoardIntent::ToggleReview)
-    );
-
-    // No selection: the shared refusal.
-    let mut empty = BoardModel::from_domain(&DomainState::new(), None);
     let mut empty_domain = DomainState::new();
-    apply_intent(&mut empty_domain, &mut empty, review, None).expect("no selection");
+    let mut empty = BoardModel::from_domain(&empty_domain, None);
+    apply_intent(
+        &mut empty_domain,
+        &mut empty,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+        None,
+    )
+    .expect("no selection");
     assert_eq!(empty.message(), Some("select a task first"));
 }
 
@@ -3748,7 +3763,7 @@ fn first_step_up_deactivates_before_inactive_up_scrolls_then_down_reactivates() 
     assert!(
         active_verbs
             .iter()
-            .any(|entry| entry.key == "s" && entry.label == "start"),
+            .any(|entry| entry.key == "s" && entry.label == "doing"),
         "the bar keeps the task verb with a step selected (Enter owns the step): {active_verbs:?}"
     );
 
@@ -3844,7 +3859,7 @@ fn stale_step_cursor_falls_back_to_the_live_task_status_verb() {
         "a stale cursor must not advertise a dead step: {verbs:?}"
     );
     apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("primary verb");
-    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Started);
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Doing);
 }
 
 /// Down activates the first step rather than behaving as plain page navigation, even when notes overflow.
@@ -3863,7 +3878,7 @@ fn down_activates_the_cursor_when_content_overflows() {
     domain.add_step(id, "alpha step").expect("first");
     domain.add_step(id, "bravo step").expect("second");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let initial = rendered_board(&model, 80, 24);
     assert!(
         !initial.contains("▸ ▪"),
@@ -4524,7 +4539,7 @@ fn ctrl_f_archives_the_selected_task_keeping_status_and_pushing_no_undo() {
             None,
         )
         .expect("create a");
-    domain.set_status(a, HumanStatus::Review).expect("review");
+    domain.set_status(a, HumanStatus::Doing).expect("doing");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     // Newest (A) sorts first in ON DECK, so the seeded selection rests on it.
     assert_eq!(model.selected_id(), Some(a));
@@ -4532,7 +4547,7 @@ fn ctrl_f_archives_the_selected_task_keeping_status_and_pushing_no_undo() {
     apply_intent(&mut domain, &mut model, BoardIntent::File, None).expect("file verb");
     let task_a = domain.get(a).expect("task a");
     assert!(task_a.archived, "ctrl+f archives the selected task");
-    assert_eq!(task_a.status, HumanStatus::Review, "human status is kept");
+    assert_eq!(task_a.status, HumanStatus::Doing, "human status is kept");
     assert!(
         !model.visible_ids().contains(&a),
         "the archived row leaves the working lens"
@@ -4558,17 +4573,17 @@ fn ctrl_f_archives_the_selected_task_keeping_status_and_pushing_no_undo() {
         task_a.archived,
         "archive pushes no undo entry, so undo cannot touch A"
     );
-    assert_eq!(task_a.status, HumanStatus::Review);
+    assert_eq!(task_a.status, HumanStatus::Doing);
     assert_eq!(
         domain.get(b).expect("task b").status,
-        HumanStatus::Open,
+        HumanStatus::Todo,
         "the empty-stack undo is a no-op"
     );
 }
 
 #[test]
 fn ctrl_f_in_the_archived_group_unarchives_and_the_row_returns_to_the_deck() {
-    let (mut domain, mut model, id) = board_with_task("filed away", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("filed away", HumanStatus::Todo);
     domain.archive_task(id).expect("archive");
     model.sync_from_domain(&domain);
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None).expect("drawer");
@@ -4653,14 +4668,14 @@ fn ctrl_u_on_an_archived_selection_unarchives_without_popping_the_undo_stack() {
     apply_intent(&mut domain, &mut model, BoardIntent::Undo, None).expect("undo k");
     assert_eq!(
         domain.get(k).expect("k").status,
-        HumanStatus::Open,
+        HumanStatus::Todo,
         "the seeded undo entry survived the unarchive (stack length unchanged)"
     );
 }
 
 #[test]
 fn help_card_lists_ctrl_f_and_the_verb_bar_keeps_archive_out_of_its_seats() {
-    let (mut domain, mut model, _id) = board_with_task("help me", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("help me", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("help");
     apply_intent(
         &mut domain,
@@ -4690,7 +4705,7 @@ fn help_card_lists_ctrl_f_and_the_verb_bar_keeps_archive_out_of_its_seats() {
     );
     assert_eq!(
         verbs.iter().map(|entry| entry.key).collect::<Vec<_>>(),
-        vec!["enter", "s", "o", "d", "+", "?"],
+        vec!["enter", "s", "d", "+", "?"],
         "ready row bar: open · start · inbox · done · add · help"
     );
 
@@ -4840,7 +4855,7 @@ fn ctrl_f_and_ctrl_u_on_the_archived_tab_unarchive_and_every_task_keeps_its_stat
             None,
         )
         .expect("create b");
-    domain.set_status(b, HumanStatus::Started).expect("started");
+    domain.set_status(b, HumanStatus::Doing).expect("doing");
     let statuses_before: Vec<(uuid::Uuid, HumanStatus)> = domain
         .tasks()
         .iter()
@@ -5236,8 +5251,8 @@ fn every_mutating_verb_in_read_only_focus_refuses_with_the_archived_message() {
         BoardIntent::PrimaryVerb,
         BoardIntent::Complete,
         BoardIntent::Reopen,
-        BoardIntent::ToggleBlock,
-        BoardIntent::ToggleReview,
+        BoardIntent::SetStatus(HumanStatus::Doing),
+        BoardIntent::SetStatus(HumanStatus::Doing),
         BoardIntent::ToggleStep,
         BoardIntent::BeginEditTitle,
         BoardIntent::BeginEditNotes,

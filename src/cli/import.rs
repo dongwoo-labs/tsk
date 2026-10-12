@@ -291,15 +291,15 @@ pub enum Mapped {
     Skip,
 }
 
-/// Map a Linear workflow state to a human status. A started state whose name contains
-/// "review" (any case) is `review`; canceled, duplicate, and unknown types are skipped.
+/// Map a Linear workflow state to a human status. Every started state, including
+/// review, is `doing`; canceled, duplicate, and unknown types are skipped.
 pub fn map_state(state_type: &str, state_name: &str) -> Mapped {
     match state_type {
-        "triage" | "backlog" | "unstarted" => Mapped::Status(HumanStatus::Open),
+        "triage" | "backlog" | "unstarted" => Mapped::Status(HumanStatus::Todo),
         "started" if state_name.to_lowercase().contains("review") => {
-            Mapped::Status(HumanStatus::Review)
+            Mapped::Status(HumanStatus::Doing)
         }
-        "started" => Mapped::Status(HumanStatus::Started),
+        "started" => Mapped::Status(HumanStatus::Doing),
         "completed" => Mapped::Status(HumanStatus::Done),
         _ => Mapped::Skip,
     }
@@ -556,11 +556,8 @@ pub struct ImportReport {
 
 pub fn status_name(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Open => "open",
-        HumanStatus::Ready => "ready",
-        HumanStatus::Started => "started",
-        HumanStatus::Blocked => "blocked",
-        HumanStatus::Review => "review",
+        HumanStatus::Todo => "todo",
+        HumanStatus::Doing => "doing",
         HumanStatus::Done => "done",
     }
 }
@@ -728,7 +725,7 @@ fn create(
     let id: Uuid = domain
         .create(title, Some(notes), scope, ProvenanceOrigin::Capture, None)
         .expect("imported titles always carry the identifier");
-    if status != HumanStatus::Open {
+    if status != HumanStatus::Todo {
         domain
             .set_status(id, status)
             .expect("a just-created task accepts a status");
@@ -974,23 +971,23 @@ mod tests {
     fn status_mapping_covers_review_and_canceled() {
         assert_eq!(
             map_state("backlog", "Backlog"),
-            Mapped::Status(HumanStatus::Open)
+            Mapped::Status(HumanStatus::Todo)
         );
         assert_eq!(
             map_state("unstarted", "Todo"),
-            Mapped::Status(HumanStatus::Open)
+            Mapped::Status(HumanStatus::Todo)
         );
         assert_eq!(
             map_state("started", "In Progress"),
-            Mapped::Status(HumanStatus::Started)
+            Mapped::Status(HumanStatus::Doing)
         );
         assert_eq!(
             map_state("started", "In Review"),
-            Mapped::Status(HumanStatus::Review)
+            Mapped::Status(HumanStatus::Doing)
         );
         assert_eq!(
             map_state("started", "CODE REVIEW"),
-            Mapped::Status(HumanStatus::Review)
+            Mapped::Status(HumanStatus::Doing)
         );
         assert_eq!(
             map_state("completed", "Done"),
@@ -1204,7 +1201,7 @@ mod tests {
         );
         let state = TaskStore::new(&dir).load().unwrap();
         let review = find_existing(&state, "ENG-2").unwrap();
-        assert_eq!(review.status, HumanStatus::Review);
+        assert_eq!(review.status, HumanStatus::Doing);
         assert_eq!(review.title, "ENG-2 title of ENG-2");
         assert!(find_existing(&state, "ENG-3").is_none());
         // A prefix identifier never matches a longer one.
@@ -1231,7 +1228,7 @@ mod tests {
         let state = TaskStore::new(&dir).load().unwrap();
         assert_eq!(
             find_existing(&state, "ENG-1").unwrap().status,
-            HumanStatus::Open
+            HumanStatus::Todo
         );
 
         let update = ImportInput {

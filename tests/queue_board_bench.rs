@@ -56,10 +56,10 @@ const HEIGHT: u16 = 24;
 /// queue query does the same section/grouping work a real board this size would.
 fn build_domain_with_n_tasks(n: usize) -> DomainState {
     let statuses = [
-        HumanStatus::Ready,
-        HumanStatus::Started,
-        HumanStatus::Blocked,
-        HumanStatus::Review,
+        HumanStatus::Todo,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
         HumanStatus::Done,
     ];
     let projects = [
@@ -88,7 +88,7 @@ fn build_domain_with_n_tasks(n: usize) -> DomainState {
             )
             .expect("create bench fixture task");
         let status = statuses[i % statuses.len()];
-        if status != HumanStatus::Ready {
+        if status != HumanStatus::Todo {
             domain
                 .set_status(id, status)
                 .expect("set bench fixture status");

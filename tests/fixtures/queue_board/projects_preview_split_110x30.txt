@@ -2,11 +2,11 @@
 │                                            │                                                                 │
 │ desk  ·  tsk ▾  ·  projects     Overview ▾ │  tsk                                                            │
 │                                            │                                                                 │
-│   PROJECT            NEED MOTION DECK DONE │  IN MOTION ───────────────────────────────────────────────────1 │
+│   PROJECT                  DOING TODO DONE │  DOING ───────────────────────────────────────────────────────1 │
 │                                            │                                                                 │
-│ ▸ tsk · here            ·      1    2    1 │ ▸ ● T1 Smoke-test worktree dispatch                             │
-│   herdr                 2      1    ·    · │                                                                 │
-│                                            │  ON DECK ─────────────────────────────────────────────────────2 │
+│ ▸ tsk · here                   1    2    1 │ ▸ ● T1 Smoke-test worktree dispatch                             │
+│   herdr                        3    ·    · │                                                                 │
+│                                            │  TODO ────────────────────────────────────────────────────────2 │
 │                                            │                                                                 │
 │                                            │   ○ T4 Cut rust-toolchain pin into CI docs                      │
 │                                            │   ○ T3 Prototype the queue-style board UI                       │

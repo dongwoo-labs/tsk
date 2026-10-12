@@ -159,11 +159,8 @@ pub fn top_level_help() -> String {
         "  update   install the latest stable release\n",
         "  guide    print the agent workflow skill\n\n",
         "Statuses\n",
-        "  open     captured, not yet picked (inbox)\n",
-        "  ready    picked, up next (on deck)\n",
-        "  started  in motion\n",
-        "  blocked  waiting on something\n",
-        "  review   done by the agent, waiting on you\n",
+        "  todo     intended work\n",
+        "  doing    work in progress\n",
         "  done     closed\n\n",
         "Run `tsk help <command>` or `tsk <command> --help` for one command.\n",
         "Agents: run `tsk guide`, or read https://gettsk.sh/docs/agents.md\n"
@@ -210,11 +207,11 @@ pub fn add_help() -> CliOutput {
 
 pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--open | --ready | --done | --deleted | --archived] [--json] [--state-dir <dir>]".into()],
+        usage: vec!["tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]".into()],
         purpose: "Inspect tasks in the selected scope, or one task anywhere in the live store.".into(),
         groups: vec![
             group("Scope", &[("-p, --project <project>", "select a project"), ("--desk", "select your desk"), ("--all", "select every scope")]),
-            group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--thread <name>", "filter within the selected scope"), ("--open, --ready", "show inbox or picked on-deck tasks"), ("--done, --archived", "show done or archived tasks"), ("--deleted", "show soft-deleted and trashed tasks")]),
+            group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--thread <name>", "filter within the selected scope"), ("--todo, --doing", "show todo or doing tasks"), ("--done, --archived", "show done or archived tasks"), ("--deleted", "show soft-deleted and trashed tasks")]),
             group("Output", &[("--json", "print machine-readable task rows")]),
             group("Values", &[("--state-dir <dir>", "use another board store"), ("--project=<scope>", "use equals syntax for a dash-leading project or state-dir value")]),
         ],
@@ -355,11 +352,8 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
     let output_width = terminal_width.unwrap_or(usize::MAX);
     let groups: &[(Option<HumanStatus>, &str)] = match result.view {
         ListView::Open => &[
-            (Some(HumanStatus::Started), "STARTED"),
-            (Some(HumanStatus::Ready), "READY"),
-            (Some(HumanStatus::Open), "OPEN"),
-            (Some(HumanStatus::Blocked), "BLOCKED"),
-            (Some(HumanStatus::Review), "REVIEW"),
+            (Some(HumanStatus::Doing), "DOING"),
+            (Some(HumanStatus::Todo), "TODO"),
         ],
         ListView::Done => &[(None, "DONE")],
         ListView::Deleted => &[(None, "DELETED")],
@@ -990,11 +984,8 @@ pub fn steps_rejected(error: StepsError, task: TaskAddress) -> CliOutput {
 
 fn status_name(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Open => "open",
-        HumanStatus::Ready => "ready",
-        HumanStatus::Started => "started",
-        HumanStatus::Blocked => "blocked",
-        HumanStatus::Review => "review",
+        HumanStatus::Todo => "todo",
+        HumanStatus::Doing => "doing",
         HumanStatus::Done => "done",
     }
 }
@@ -1007,17 +998,11 @@ pub fn status_help() -> CliOutput {
             "Values",
             &[
                 ("<task>", "a task number or UUID"),
-                (
-                    "<status>",
-                    "open, ready, started (or start), blocked, review, or done",
-                ),
+                ("<status>", "todo, doing, or done"),
                 ("--state-dir <dir>", "use another board store"),
             ],
         )],
-        examples: vec![
-            "tsk status T12 ready".into(),
-            "tsk status T12 review".into(),
-        ],
+        examples: vec!["tsk status T12 todo".into(), "tsk status T12 doing".into()],
         refusals: vec!["unknown-task".into(), "soft-deleted-task".into()],
         exit: exit_line(
             "status set, or it already had the value",
@@ -1338,7 +1323,7 @@ pub fn archive_rejected(error: ArchiveCliError, verb: &str) -> CliOutput {
 
 pub fn list_usage(reason: &str, terminal_width: Option<usize>) -> CliOutput {
     let stderr = format!(
-        "tsk list: {}\nusage: tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--open | --ready | --done | --deleted | --archived] [--json] [--state-dir <dir>]\n",
+        "tsk list: {}\nusage: tsk list [<task>] [-p <project> | --desk | --all] [--thread <name>] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]\n",
         human_reason(reason)
     );
     CliOutput {

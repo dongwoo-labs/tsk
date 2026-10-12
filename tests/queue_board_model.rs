@@ -150,21 +150,9 @@ fn list_files_recursive(root: &Path) -> Vec<PathBuf> {
 #[test]
 fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
     // Case A: startup in a repo opens its project board and seeds by lane order.
-    let motion_newer = task(
-        1,
-        "motion-new",
-        HumanStatus::Started,
-        project(THIS_REPO),
-        100,
-    );
-    let motion_older = task(
-        2,
-        "motion-old",
-        HumanStatus::Started,
-        project(THIS_REPO),
-        50,
-    );
-    let deck = task(3, "deck", HumanStatus::Ready, project(THIS_REPO), 200);
+    let motion_newer = task(1, "motion-new", HumanStatus::Doing, project(THIS_REPO), 100);
+    let motion_older = task(2, "motion-old", HumanStatus::Doing, project(THIS_REPO), 50);
+    let deck = task(3, "deck", HumanStatus::Todo, project(THIS_REPO), 200);
     let tasks = vec![motion_newer.clone(), motion_older.clone(), deck.clone()];
     let model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from(THIS_REPO)));
     let view = query_lens(&tasks, Some(Path::new(THIS_REPO)), BoardLens::Desk, false);
@@ -191,7 +179,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
             None,
         )
         .unwrap();
-    domain.set_status(id_new, HumanStatus::Started).unwrap();
+    domain.set_status(id_new, HumanStatus::Doing).unwrap();
     let id_old = domain
         .create(
             "motion-old",
@@ -201,7 +189,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
             None,
         )
         .unwrap();
-    domain.set_status(id_old, HumanStatus::Started).unwrap();
+    domain.set_status(id_old, HumanStatus::Doing).unwrap();
     let _deck = domain
         .create(
             "deck",
@@ -216,13 +204,13 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
     let selected = from_domain.selected_id().expect("selection");
     assert_eq!(
         domain.get(selected).unwrap().status,
-        HumanStatus::Started,
+        HumanStatus::Doing,
         "from_domain seeds an IN MOTION task when any exist"
     );
 
     // Case B: a ready-only project opens its own board and seeds the first ON DECK row.
-    let deck_a = task(10, "a", HumanStatus::Ready, project("/repos/a"), 30);
-    let deck_b = task(11, "b", HumanStatus::Ready, project(THIS_REPO), 40);
+    let deck_a = task(10, "a", HumanStatus::Todo, project("/repos/a"), 30);
+    let deck_b = task(11, "b", HumanStatus::Todo, project(THIS_REPO), 40);
     let deck_tasks = vec![deck_a.clone(), deck_b.clone()];
     let view = query_lens(
         &deck_tasks,
@@ -291,7 +279,7 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
         Some(Path::new(THIS_REPO)),
         "launch inside a repo opens that project's board"
     );
-    assert_eq!(model.visible_ids(), vec![INBOX_HEADER_ROW_ID, live_id]);
+    assert_eq!(model.visible_ids(), vec![live_id]);
     assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::ProjectBoard);
 
     // Empty project: same destination, useful empty state (no fallback lens).
@@ -376,7 +364,7 @@ fn confirming_project_choice_changes_visible_queue_sections() {
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     assert_eq!(
         model.visible_ids(),
-        vec![INBOX_HEADER_ROW_ID, app_id],
+        vec![app_id],
         "startup sits on the invocation project's board"
     );
 
@@ -415,7 +403,7 @@ fn confirming_project_choice_changes_visible_queue_sections() {
     .unwrap();
 
     assert_eq!(model.selected_project(), Some(Path::new("/repos/other")));
-    assert_eq!(model.visible_ids(), vec![INBOX_HEADER_ROW_ID, other_id]);
+    assert_eq!(model.visible_ids(), vec![other_id]);
 }
 
 /// After a domain sync, selection stays on the same id when it remains visible.
@@ -431,7 +419,7 @@ fn sync_from_domain_reanchors_by_id() {
             None,
         )
         .unwrap();
-    domain.set_status(id_doing, HumanStatus::Started).unwrap();
+    domain.set_status(id_doing, HumanStatus::Doing).unwrap();
     let id_todo = domain
         .create(
             "todo",
@@ -488,7 +476,7 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
             None,
         )
         .unwrap();
-    domain.set_status(first_ready, HumanStatus::Ready).unwrap();
+    domain.set_status(first_ready, HumanStatus::Todo).unwrap();
     let last_ready = domain
         .create(
             "last ready",
@@ -498,7 +486,7 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
             None,
         )
         .unwrap();
-    domain.set_status(last_ready, HumanStatus::Ready).unwrap();
+    domain.set_status(last_ready, HumanStatus::Todo).unwrap();
     let open = domain
         .create(
             "inbox neighbor",
@@ -515,11 +503,8 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
         .iter()
         .position(|&id| id == last_ready)
         .expect("last ready row");
-    let inbox_index = visible
-        .iter()
-        .position(|&id| id == INBOX_HEADER_ROW_ID)
-        .expect("inbox heading");
-    assert_eq!(last_ready_index + 1, inbox_index);
+    assert!(!visible.contains(&INBOX_HEADER_ROW_ID));
+    assert_eq!(visible[last_ready_index + 1], open);
     assert!(visible.contains(&open));
     apply_intent(
         &mut domain,
@@ -533,7 +518,7 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
 
     assert_eq!(model.selected_id(), Some(first_ready));
     assert_ne!(model.selected_id(), None);
-    assert_ne!(model.selected_id(), Some(open));
+    assert!(model.visible_ids().contains(&open));
     assert!(!model.visible_ids().contains(&last_ready));
 }
 
@@ -542,8 +527,8 @@ fn project_deck_lists_tasks_flat_with_thread_filter_across_statuses() {
     let tasks = vec![
         threaded_task(
             1,
-            "open",
-            HumanStatus::Ready,
+            "todo",
+            HumanStatus::Todo,
             project(THIS_REPO),
             20,
             "Release",
@@ -559,7 +544,7 @@ fn project_deck_lists_tasks_flat_with_thread_filter_across_statuses() {
         threaded_task(
             3,
             "doing",
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project(THIS_REPO),
             40,
             "release",
@@ -608,16 +593,16 @@ fn project_deck_orders_ready_tasks_oldest_first_across_threads() {
         threaded_task(
             1,
             "alpha older",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             20,
             "alpha",
         ),
-        task(3, "loose", HumanStatus::Ready, project(THIS_REPO), 40),
+        task(3, "loose", HumanStatus::Todo, project(THIS_REPO), 40),
         threaded_task(
             2,
             "alpha newer",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             50,
             "alpha",
@@ -643,17 +628,11 @@ fn project_deck_orders_ready_tasks_oldest_first_across_threads() {
 #[test]
 fn without_a_thread_filter_keeps_only_unthreaded_tasks() {
     let tasks = vec![
-        task(
-            1,
-            "loose newest",
-            HumanStatus::Ready,
-            project(THIS_REPO),
-            30,
-        ),
+        task(1, "loose newest", HumanStatus::Todo, project(THIS_REPO), 30),
         threaded_task(
             2,
             "threaded",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             20,
             "release",
@@ -680,7 +659,7 @@ fn same_thread_name_joins_only_in_the_global_view_not_the_local_filter() {
         threaded_task(
             1,
             "project",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             20,
             "release",
@@ -688,7 +667,7 @@ fn same_thread_name_joins_only_in_the_global_view_not_the_local_filter() {
         threaded_task(
             2,
             "global",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             30,
             "release",
@@ -730,16 +709,16 @@ fn thread_view_covers_needs_you_motion_deck_and_drawer() {
     let tasks = vec![
         threaded_task(
             1,
-            "blocked",
-            HumanStatus::Blocked,
+            "doing",
+            HumanStatus::Doing,
             project(THIS_REPO),
             10,
             "release",
         ),
         threaded_task(
             2,
-            "review",
-            HumanStatus::Review,
+            "doing",
+            HumanStatus::Doing,
             project(THIS_REPO),
             15,
             "release",
@@ -747,7 +726,7 @@ fn thread_view_covers_needs_you_motion_deck_and_drawer() {
         threaded_task(
             3,
             "motion",
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project(THIS_REPO),
             20,
             "release",
@@ -755,7 +734,7 @@ fn thread_view_covers_needs_you_motion_deck_and_drawer() {
         threaded_task(
             4,
             "deck",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             25,
             "release",
@@ -780,11 +759,11 @@ fn thread_view_covers_needs_you_motion_deck_and_drawer() {
     );
     assert_eq!(
         section_ids(&view, SectionKind::NeedsYou),
-        vec![Uuid::from_u128(2), Uuid::from_u128(1)]
+        Vec::<Uuid>::new()
     );
     assert_eq!(
         section_ids(&view, SectionKind::InMotion),
-        vec![Uuid::from_u128(3)]
+        vec![Uuid::from_u128(3), Uuid::from_u128(2), Uuid::from_u128(1)]
     );
     assert_eq!(
         section_ids(&view, SectionKind::OnDeck),
@@ -801,8 +780,8 @@ fn projects_index_rows_carry_open_work_counts() {
     let tasks = vec![
         threaded_task(
             1,
-            "blocked",
-            HumanStatus::Blocked,
+            "doing",
+            HumanStatus::Doing,
             project(THIS_REPO),
             10,
             "release",
@@ -810,7 +789,7 @@ fn projects_index_rows_carry_open_work_counts() {
         threaded_task(
             2,
             "motion",
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project(THIS_REPO),
             20,
             "release",
@@ -818,7 +797,7 @@ fn projects_index_rows_carry_open_work_counts() {
         threaded_task(
             3,
             "deck",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project(THIS_REPO),
             25,
             "release",
@@ -845,8 +824,8 @@ fn projects_index_rows_carry_open_work_counts() {
     assert_eq!(view.projects.len(), 1);
     let row = &view.projects[0];
     assert_eq!(row.path, THIS_REPO);
-    assert_eq!(row.needs_you, 1);
-    assert_eq!(row.in_motion, 1);
+    assert_eq!(row.needs_you, 0);
+    assert_eq!(row.in_motion, 2);
     assert_eq!(row.on_deck, 1, "ready and open tasks share ON DECK");
     assert_eq!(row.done, 1, "live done tasks have their own count");
     assert_eq!(
@@ -859,13 +838,13 @@ fn projects_index_rows_carry_open_work_counts() {
 
 #[test]
 fn selection_stays_on_task_id_across_motion_reorder() {
-    let mut alpha_task = task(1, "alpha", HumanStatus::Started, project(THIS_REPO), 10);
+    let mut alpha_task = task(1, "alpha", HumanStatus::Doing, project(THIS_REPO), 10);
     alpha_task.history.push(TaskEvent {
         kind: TaskEventKind::StatusSet,
         at: epoch_plus(100),
     });
     let alpha = alpha_task.id;
-    let mut beta_task = task(2, "beta", HumanStatus::Started, project(THIS_REPO), 20);
+    let mut beta_task = task(2, "beta", HumanStatus::Doing, project(THIS_REPO), 20);
     beta_task.history.push(TaskEvent {
         kind: TaskEventKind::StatusSet,
         at: epoch_plus(200),
@@ -952,8 +931,8 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
         )
         .expect("create review");
     domain
-        .set_status(review, HumanStatus::Review)
-        .expect("review");
+        .set_status(review, HumanStatus::Doing)
+        .expect("doing");
     let ready = domain
         .create(
             "ready task",
@@ -968,7 +947,7 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
     let ids = model.visible_ids();
     assert_eq!(
         ids,
-        vec![review, INBOX_HEADER_ROW_ID, ready],
+        vec![review, ready],
         "needs-you first, then on deck and its inbox heading"
     );
     apply_intent(&mut domain, &mut model, BoardIntent::SelectIndex(0), None)
@@ -981,7 +960,7 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
         .expect("first task paints");
     let header_y = rows
         .iter()
-        .position(|row| row.contains("NEEDS YOU"))
+        .position(|row| row.contains("DOING"))
         .expect("the NEEDS YOU header paints");
     let second_y = rows
         .iter()
@@ -995,13 +974,7 @@ fn arrow_navigation_crosses_painted_header_task_to_task() {
 
     apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None)
         .expect("arrow navigation moves to the inbox heading");
-    assert_eq!(
-        model.selected_id(),
-        None,
-        "the selected inbox heading is chrome, not a task"
-    );
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None)
-        .expect("arrow navigation crosses the inbox heading");
+    assert!(!model.inbox_header_selected());
     assert_eq!(
         model.selected_id(),
         Some(ready),
@@ -1066,7 +1039,7 @@ fn two_fresh_models_from_same_store_share_no_ui_state_and_no_ui_writes_under_sta
     );
     assert_eq!(
         b_fresh.visible_ids(),
-        vec![INBOX_HEADER_ROW_ID, id],
+        vec![id],
         "the startup board renders that project's rows and inbox heading"
     );
 

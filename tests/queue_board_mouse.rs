@@ -112,7 +112,7 @@ fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel
             None,
         )
         .expect("create task");
-    if status != HumanStatus::Open {
+    if status != HumanStatus::Todo {
         domain.set_status(id, status).expect("set status");
     }
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -200,7 +200,7 @@ fn click(region: &QueueHit, model: &BoardModel, hits: &QueueHitMap) -> Option<Bo
 #[test]
 fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_rows_help() {
     // Base list: selection row, verbs, selector chip (project focus only).
-    let (_domain, mut model, id) = board_with_task("Fix flake", HumanStatus::Ready);
+    let (_domain, mut model, id) = board_with_task("Fix flake", HumanStatus::Todo);
     model.set_selected_project(Some(PathBuf::from(THIS_REPO)));
     let hits = board_hit_map(STANDARD, &model);
     assert!(
@@ -252,7 +252,7 @@ fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_row
     );
 
     // Palette rows.
-    let (mut domain, mut model, _id) = board_with_task("palette", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("palette", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -269,7 +269,7 @@ fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_row
     );
 
     // Help card.
-    let (mut domain, mut model, _id) = board_with_task("help", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("help", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     let hits = board_hit_map(STANDARD, &model);
     assert!(
@@ -728,14 +728,19 @@ fn assert_verb_parity(title: &str, status: HumanStatus, chord: &str, key: KeyCod
 fn click_and_wheel_match_keyboard_effects_for_each_control() {
     // Verb bar: every chord a ready task shows, plus a block chord from IN MOTION and the
     // Done-only inbox chord.
-    assert_verb_parity("s", HumanStatus::Ready, "s", KeyCode::Char('s'));
-    assert_verb_parity("enter", HumanStatus::Ready, "enter", KeyCode::Enter);
-    assert_verb_parity("d", HumanStatus::Ready, "d", KeyCode::Char('d'));
-    assert_verb_parity("b", HumanStatus::Started, "b", KeyCode::Char('b'));
-    assert_verb_parity("question", HumanStatus::Ready, "?", KeyCode::Char('?'));
-    assert_verb_parity("add", HumanStatus::Ready, "+", KeyCode::Char('+'));
+    assert_verb_parity("s", HumanStatus::Todo, "s", KeyCode::Char('s'));
+    assert_verb_parity("enter", HumanStatus::Todo, "enter", KeyCode::Enter);
+    assert_verb_parity("d", HumanStatus::Todo, "d", KeyCode::Char('d'));
+    assert_verb_parity("todo", HumanStatus::Doing, "o", KeyCode::Char('o'));
+    assert_verb_parity("question", HumanStatus::Todo, "?", KeyCode::Char('?'));
+    assert_verb_parity("add", HumanStatus::Todo, "+", KeyCode::Char('+'));
     // Archive has no bar seat: it lives in `?` / `:` and on ctrl+f.
-    assert_verb_parity("unblock", HumanStatus::Blocked, "b", KeyCode::Char('b'));
+    assert_verb_parity(
+        "done from doing",
+        HumanStatus::Doing,
+        "d",
+        KeyCode::Char('d'),
+    );
     assert_verb_parity("inbox", HumanStatus::Done, "o", KeyCode::Char('o'));
 
     // Drawer toggle: open it by keyboard on both boards first (a shared start state), then
@@ -792,8 +797,8 @@ fn click_and_wheel_match_keyboard_effects_for_each_control() {
     // Project selector chip: no the key binds it (mouse-only, like `SelectIndex`), so its
     // effect is proved against the same `OpenProjectSelector` the reducer would apply for
     // any future key bound to it, on an independently built, otherwise-identical board.
-    let (mut domain_direct, mut model_direct, _id3) = board_with_task("chip a", HumanStatus::Ready);
-    let (mut domain_mouse, mut model_mouse, _id4) = board_with_task("chip b", HumanStatus::Ready);
+    let (mut domain_direct, mut model_direct, _id3) = board_with_task("chip a", HumanStatus::Todo);
+    let (mut domain_mouse, mut model_mouse, _id4) = board_with_task("chip b", HumanStatus::Todo);
     model_direct.set_selected_project(Some(PathBuf::from(THIS_REPO)));
     model_mouse.set_selected_project(Some(PathBuf::from(THIS_REPO)));
     apply_intent(
@@ -891,8 +896,8 @@ fn click_and_wheel_match_keyboard_effects_for_each_control() {
     // is now visible -- one ON DECK task, the one scoped to the chosen project -- rather
     // than exact ids.
     // The selected project contains one open task plus its inbox heading.
-    assert_eq!(model_key.visible_ids().len(), 2);
-    assert_eq!(model_mouse.visible_ids().len(), 2);
+    assert_eq!(model_key.visible_ids().len(), 1);
+    assert_eq!(model_mouse.visible_ids().len(), 1);
 }
 
 /// non-regression: the standalone quick-capture popup's mouse paths are untouched by
@@ -1242,8 +1247,8 @@ fn stepping_selection_past_the_fold_with_select_next_keeps_the_selected_row_pain
     let visible = model.visible_ids();
     let last = visible.len() - 1;
 
-    // The inbox heading is visible[0], and the model initially selects task 0 at visible[1].
-    for step in 0..last.saturating_sub(1) {
+    // Todo has no inbox heading; the initial selection is visible[0].
+    for step in 0..last {
         apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None).expect("select next");
         let selected = model
             .selected_id()
@@ -1271,7 +1276,7 @@ fn stepping_selection_past_the_fold_with_select_next_keeps_the_selected_row_pain
 /// fallthrough: only a click genuinely outside the whole surface closes it.
 #[test]
 fn a_click_on_the_palettes_own_chrome_does_not_dismiss_it() {
-    let (mut domain, mut model, _id) = board_with_task("palette chrome", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("palette chrome", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1310,7 +1315,7 @@ fn a_click_on_the_palettes_own_chrome_does_not_dismiss_it() {
 #[test]
 fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_project_picker() {
     // Palette: `[x]` closes the command surface; the card's own border is inert.
-    let (mut domain, mut model, _id) = board_with_task("modal card palette", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("modal card palette", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1340,7 +1345,7 @@ fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_
     );
 
     // Project picker: `[x]` cancels the picker; the card's own border is inert.
-    let (mut domain, mut model, _id) = board_with_task("modal card scope", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("modal card scope", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1371,7 +1376,7 @@ fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_
 
     // Help: `[x]` closes the layer, while its border, focused search field, and binding
     // rows are inert. Only an explicit close or a click outside dismisses the searchable card.
-    let (mut domain, mut model, _id) = board_with_task("modal card help", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("modal card help", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     let hits = board_hit_map(STANDARD, &model);
     let close_hit = hits
@@ -1446,7 +1451,7 @@ fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_
 /// wheel did nothing over an open palette.
 #[test]
 fn wheel_scrolls_the_open_command_surface_so_every_command_becomes_reachable() {
-    let (mut domain, mut model, _id) = board_with_task("palette wheel", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("palette wheel", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -1458,7 +1463,7 @@ fn wheel_scrolls_the_open_command_surface_so_every_command_becomes_reachable() {
     let commands = model.visible_commands();
     assert_eq!(
         commands.len(),
-        13,
+        11,
         "this ready fixture must expose every palette command a ready selection has: {commands:?}"
     );
     let last = commands.len() - 1;
@@ -1544,7 +1549,7 @@ fn wheel_scrolls_the_open_command_surface_so_every_command_becomes_reachable() {
 /// (deleted in this rewrite) used to guard. Matches the keyboard's own `u` -> `Undo`.
 #[test]
 fn delete_notice_undo_control_is_clickable_and_matches_the_keyboard() {
-    let (mut domain, mut model, id) = board_with_task("doomed", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("doomed", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::SoftDelete, None).expect("arm delete");
     apply_intent(&mut domain, &mut model, BoardIntent::SoftDelete, None).expect("soft delete");
     assert!(
@@ -1579,7 +1584,7 @@ fn delete_notice_undo_control_is_clickable_and_matches_the_keyboard() {
 /// not fire `Undo`.
 #[test]
 fn delete_notice_undo_region_survives_a_title_containing_the_literal_undo_control() {
-    let (mut domain, mut model, id) = board_with_task("ctrl+u undo now", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("ctrl+u undo now", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::SoftDelete, None).expect("arm delete");
     apply_intent(&mut domain, &mut model, BoardIntent::SoftDelete, None).expect("soft delete");
     assert!(
@@ -1635,7 +1640,7 @@ fn delete_notice_undo_region_survives_a_title_containing_the_literal_undo_contro
 /// click over a live control (the first verb-bar entry) must not dispatch anything.
 #[test]
 fn non_left_clicks_over_a_live_control_are_ignored() {
-    let (_domain, model, _id) = board_with_task("click kinds", HumanStatus::Ready);
+    let (_domain, model, _id) = board_with_task("click kinds", HumanStatus::Todo);
     let hits = board_hit_map(STANDARD, &model);
     let verb_hit = hits
         .regions
@@ -1690,7 +1695,7 @@ fn section_headers_have_no_hits_and_collapsed_task_titles_are_selectable() {
         .expect("task title paints without attribution");
     let header_y = rows
         .iter()
-        .position(|row| row.contains("ON DECK"))
+        .position(|row| row.contains("TODO"))
         .expect("the ON DECK header paints");
     let hits = board_hit_map(STANDARD, &model);
 
@@ -1754,7 +1759,7 @@ fn a_row_click_selects_and_peeks_and_a_second_click_opens_the_task_page() {
 
 #[test]
 fn task_identifier_click_copies_without_falling_through_to_row_or_page_actions() {
-    let (domain, _model, id) = board_with_task("Copy this identifier", HumanStatus::Ready);
+    let (domain, _model, id) = board_with_task("Copy this identifier", HumanStatus::Todo);
     let mut task = domain.get(id).expect("task").clone();
     task.number = Some(30);
     let mut model = BoardModel::from_tasks(vec![task], Some(PathBuf::from(THIS_REPO)));
@@ -1780,7 +1785,7 @@ fn task_identifier_click_copies_without_falling_through_to_row_or_page_actions()
 
 #[test]
 fn quick_add_identifier_click_copies_without_discarding_the_draft() {
-    let (mut domain, _model, id) = board_with_task("Copy while drafting", HumanStatus::Ready);
+    let (mut domain, _model, id) = board_with_task("Copy while drafting", HumanStatus::Todo);
     let mut task = domain.get(id).expect("task").clone();
     task.number = Some(30);
     let mut model = BoardModel::from_tasks(vec![task], Some(PathBuf::from(THIS_REPO)));
@@ -1802,7 +1807,7 @@ fn quick_add_identifier_click_copies_without_discarding_the_draft() {
 
 #[test]
 fn unnumbered_rows_and_drafts_register_no_identifier_hit() {
-    let (mut domain, mut model, _id) = board_with_task("Unsaved task", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("Unsaved task", HumanStatus::Todo);
     assert!(
         !board_hit_map(STANDARD, &model)
             .regions
@@ -1832,7 +1837,7 @@ fn unnumbered_rows_and_drafts_register_no_identifier_hit() {
 
 #[test]
 fn task_page_identifier_click_copies_instead_of_hitting_the_title_region() {
-    let (mut domain, _model, id) = board_with_task("Copy this page identifier", HumanStatus::Ready);
+    let (mut domain, _model, id) = board_with_task("Copy this page identifier", HumanStatus::Todo);
     let mut task = domain.get(id).expect("task").clone();
     task.number = Some(31);
     let mut model = BoardModel::from_tasks(vec![task], Some(PathBuf::from(THIS_REPO)));
@@ -1974,7 +1979,7 @@ fn the_wheel_scrolls_the_page_notes_not_the_board_list() {
 
 #[test]
 fn the_wheel_keeps_scrolling_while_a_step_add_is_open() {
-    let (mut domain, mut model, id) = board_with_task("Scrollable step add", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("Scrollable step add", HumanStatus::Todo);
     for index in 0..30 {
         domain
             .add_step(id, format!("step {index:02}"))
@@ -2080,39 +2085,21 @@ fn page_verb_clicks_resolve_through_the_page_legend() {
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
     assert_eq!(
         verbs,
-        vec!["e", "n", "o", "u", "esc"],
-        "done page bar: edit · ready · inbox · undo · close"
+        vec!["e", "o", "u", "esc"],
+        "done page bar: edit · todo · undo · close"
     );
     assert_eq!(click_verb(&model, "o"), BoardIntent::Reopen);
-    apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("todo");
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
-    assert_eq!(verbs, vec!["e", "s", "n", "d", "esc"], "open page bar");
+    assert_eq!(verbs, vec!["e", "s", "d", "esc"], "todo page bar");
     assert_eq!(click_verb(&model, "e"), BoardIntent::BeginEditTitle);
     assert_eq!(click_verb(&model, "s"), BoardIntent::PrimaryVerb);
-    assert_eq!(
-        click_verb(&model, "n"),
-        BoardIntent::SetStatus(HumanStatus::Ready)
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SetStatus(HumanStatus::Ready),
-        None,
-    )
-    .expect("pick ready");
+    apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("doing");
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
-    assert_eq!(verbs, vec!["e", "s", "o", "d", "esc"], "ready page bar");
+    assert_eq!(verbs, vec!["e", "o", "d", "esc"], "doing page bar");
     assert_eq!(click_verb(&model, "o"), BoardIntent::Reopen);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SetStatus(HumanStatus::Open),
-        None,
-    )
-    .expect("send to inbox");
-    assert_eq!(click_verb(&model, "s"), BoardIntent::PrimaryVerb);
-    apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("start");
-    assert_eq!(click_verb(&model, "b"), BoardIntent::ToggleBlock);
+    apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("back to todo");
+    assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
     let close = click_verb(&model, "esc");
     assert_eq!(close, BoardIntent::CloseLayer);
     apply_intent(&mut domain, &mut model, close, None).expect("close via click");
@@ -2185,7 +2172,7 @@ fn page_step_add_footer_chip_routes_to_begin_add_step() {
     let id = model.selected_id().expect("task");
     domain.add_step(id, "existing step").expect("add step");
     model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
         .expect("enter task edit mode");
     apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None).expect("return to page");
@@ -2211,7 +2198,7 @@ fn page_step_add_footer_chip_routes_to_begin_add_step() {
 /// task-edit state, including the selected and active Thread states plus an inline editor.
 #[test]
 fn clicking_trailing_step_add_works_from_every_task_page_edit_mode() {
-    let (mut domain, mut model, id) = board_with_task("step add click", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("step add click", HumanStatus::Todo);
     domain.add_step(id, "stored step").expect("add stored step");
     model.sync_from_domain(&domain);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
@@ -2272,7 +2259,7 @@ fn step_editor_verb_chips_follow_their_keyboard_intents() {
     let id = model.selected_id().expect("task");
     domain.add_step(id, "existing step").expect("add step");
     model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
         .expect("enter edit session");
     apply_intent(&mut domain, &mut model, BoardIntent::CancelEdit, None).expect("return page");
@@ -2352,7 +2339,7 @@ fn page_rows(model: &BoardModel) -> Vec<String> {
 /// persists nor toggles, and it never falls back to the retired footer editor.
 #[test]
 fn clicking_a_step_row_opens_its_inline_editor() {
-    let (mut domain, mut model, id) = board_with_task("Click target", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("Click target", HumanStatus::Todo);
     for text in ["alpha step", "bravo step", "charlie step"] {
         domain.add_step(id, text).expect("add step");
     }
@@ -2454,7 +2441,7 @@ fn drag_selection_copies_painted_task_title_not_undeclared_chrome() {
     use ratatui::layout::Position;
     use tsk_tui::ui::text_select::{selection_text, TextSelection};
 
-    let (_domain, mut model, _id) = board_with_task("copyable title text", HumanStatus::Ready);
+    let (_domain, mut model, _id) = board_with_task("copyable title text", HumanStatus::Todo);
     let hits = board_hit_map(STANDARD, &model);
     assert!(
         !hits.copyable.is_empty(),
@@ -2526,7 +2513,7 @@ fn peek_on_project_board_copy_excludes_pipe_gutter() {
             None,
         )
         .expect("create");
-    domain.set_status(id, HumanStatus::Started).expect("start");
+    domain.set_status(id, HumanStatus::Doing).expect("doing");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     // Focus the project board (the "project page" surface), then open peek.
     apply_intent(
@@ -2621,7 +2608,7 @@ fn task_page_title_copy_excludes_glyph_and_status_word() {
     use ratatui::layout::Position;
     use tsk_tui::ui::text_select::{selection_text, TextSelection};
 
-    let (mut domain, mut model, _id) = board_with_task("title only please", HumanStatus::Started);
+    let (mut domain, mut model, _id) = board_with_task("title only please", HumanStatus::Doing);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
 
     let hits = board_hit_map(STANDARD, &model);
@@ -2650,7 +2637,7 @@ fn task_page_title_copy_excludes_glyph_and_status_word() {
         "sanity: status glyph is on the title row"
     );
     assert!(
-        rows[title_y as usize].contains("started"),
+        rows[title_y as usize].contains("doing"),
         "sanity: status word is on the title row"
     );
 
@@ -2673,7 +2660,7 @@ fn the_modal_cards_copyable_rects_exclude_its_own_border_and_footer() {
     use ratatui::layout::Position;
     use tsk_tui::ui::text_select::{selection_text, TextSelection};
 
-    let (mut domain, mut model, _id) = board_with_task("modal card copyable", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("modal card copyable", HumanStatus::Todo);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     let hits = board_hit_map(STANDARD, &model);
 
@@ -2757,7 +2744,7 @@ fn the_modal_cards_copyable_rects_exclude_its_own_border_and_footer() {
 fn list_scrollbar_click_jumps_viewport_without_changing_selection() {
     let (mut domain, mut model) = deck_of(40);
     let first = model.selected_id().expect("the first task is selected");
-    assert_eq!(model.visible_ids()[1], first);
+    assert_eq!(model.visible_ids()[0], first);
     assert_eq!(model.detail_open(), None);
 
     let hits = board_hit_map(STANDARD, &model);
@@ -3251,7 +3238,7 @@ fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header
 
 #[test]
 fn the_project_picker_tab_row_click_selects_the_tab() {
-    let (mut domain, mut model, _id) = board_with_task("tab click", HumanStatus::Ready);
+    let (mut domain, mut model, _id) = board_with_task("tab click", HumanStatus::Todo);
     apply_intent(
         &mut domain,
         &mut model,
@@ -3547,7 +3534,7 @@ fn peek_attribution_is_copyable_but_not_a_task_click_target() {
 /// `+ step` row means the end of the list, whatever step is selected.
 #[test]
 fn clicking_trailing_step_add_appends_even_with_a_step_selected() {
-    let (mut domain, mut model, id) = board_with_task("append click", HumanStatus::Ready);
+    let (mut domain, mut model, id) = board_with_task("append click", HumanStatus::Todo);
     for text in ["a", "b"] {
         domain.add_step(id, text).expect("add stored step");
     }
