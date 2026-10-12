@@ -80,7 +80,7 @@ The **2 questions** tab lists the questions, approvals, and findings agents file
 | **WITH LEAD** | Open records addressed to the lead; shown, never counted |
 | **CLOSED** | Answered, approved, rejected, or closed records |
 
-A record from an older agent that names no audience shows apart as *target unknown · route with tsk route*. tsk never guesses its target, offers no answer on it, and leaves it out of the tab number and row marks; an agent sets the audience with [`tsk route`](/docs/cli/#route).
+A record from an older agent that names no audience shows apart as *target unknown · route with tsk route*. tsk never guesses its target, offers no answer or correction on it (answered or not), and leaves it out of the tab number and row marks; an agent sets the audience with [`tsk route`](/docs/cli/#route).
 
 Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page below 110 columns, the list and the record side by side at 110 and up (`→`/`l` opens, `←`/`h` goes back). On the page:
 
@@ -101,7 +101,7 @@ A page opens at its top. Scrolling never moves the chosen option or the check; c
 
 A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
 
-An approval saves only for the target, scope, and revision you checked; if the record changed, the check clears. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
+An approval saves only for the target, scope, and revision you checked; if the record changed, the check clears. A typed answer to a record that changed meanwhile is not saved and not moved onto the newer revision: the text stays on the page until `Esc` discards it. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
 
 ## Notices
 

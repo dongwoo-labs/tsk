@@ -223,8 +223,10 @@ fn pending_elsewhere(model: &mut BoardModel, id: Uuid) -> bool {
     }
 }
 
+/// No board write on a record without an audience, open or closed: tsk never guesses its
+/// target, so neither an answer nor a correction is offered until `tsk route` sets one.
 fn refuse_unrouted(model: &mut BoardModel, record: &QuestionRecord) -> bool {
-    if record.draft.audience.is_none() && record.is_open() {
+    if record.draft.audience.is_none() {
         model.set_message(format!(
             "Q{} has no target · route it with tsk route before answering",
             record.reference.number
@@ -247,6 +249,9 @@ fn correct(model: &mut BoardModel) {
         .is_some_and(|pending| pending.id() == record.reference.id)
     {
         model.set_message("confirm the pending save first (enter)");
+        return;
+    }
+    if refuse_unrouted(model, &record) {
         return;
     }
     let Some(current) = record.current_answer() else {
@@ -289,7 +294,7 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
         resolve_pending(store, domain, model);
         return;
     }
-    if pending_elsewhere(model, id) {
+    if pending_elsewhere(model, id) || refuse_unrouted(model, &record) {
         return;
     }
     if let Some(input) = model.questions().answer.clone() {
@@ -308,9 +313,6 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
             FollowUp::NotifyOrigin,
             None,
         );
-        return;
-    }
-    if refuse_unrouted(model, &record) {
         return;
     }
     let questions = model.questions();
@@ -497,12 +499,18 @@ fn save(
             ));
         }
         Err(QuestionError::StaleRevision) => {
+            // The typed text and the revision it was written against stay as they were:
+            // nothing retargets it to the newer record, and only Esc discards it.
             let questions = model.questions_mut();
-            questions.answer = None;
             questions.correcting = None;
             questions.check = None;
+            let kept = if questions.answer.is_some() {
+                " · your text stays · esc discards it"
+            } else {
+                ""
+            };
             model.set_message(format!(
-                "Q{number} changed since you read it · read it again · nothing saved"
+                "Q{number} changed since you read it · read it again · nothing saved{kept}"
             ));
         }
         Err(error) => model.set_message(format!("Q{number}: {error}")),

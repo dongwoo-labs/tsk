@@ -869,10 +869,10 @@ pub fn page_rows(
             RowStyle::Dim,
             false,
         );
-    } else if record.is_open() && record.draft.audience.is_none() {
+    } else if record.draft.audience.is_none() {
         page.blank();
         page.push(
-            "target unknown · route it with tsk route before anyone answers here",
+            "target unknown · route it with tsk route before anyone answers or corrects here",
             RowStyle::Dim,
             false,
         );
@@ -912,7 +912,10 @@ pub fn page_rows(
                 false,
             );
         }
-        if record.reference.kind != QuestionKind::Approval && state.correcting.is_none() {
+        if record.reference.kind != QuestionKind::Approval
+            && state.correcting.is_none()
+            && record.draft.audience.is_some()
+        {
             page.push(
                 "c corrects · the earlier answer stays in history",
                 RowStyle::Dim,
@@ -1004,7 +1007,7 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
     if state.pending.is_some_and(|p| p.id() == record.reference.id) {
         return "enter confirm · J/K next · esc back";
     }
-    if record.is_open() && record.draft.audience.is_none() {
+    if record.draft.audience.is_none() {
         return "J/K next · t task · esc back";
     }
     if record.reference.kind == QuestionKind::Approval && record.is_open() {
