@@ -20,6 +20,7 @@ use super::capture::{
     CAPTURE_SCOPE_CONTROLS,
 };
 use super::input::{BoardIntent, CaptureIntent, PrimaryCaptureAction, PRIMARY_CAPTURE_ACTIONS};
+use super::queue::NavTab;
 use super::render::{form_verb_items, QueueHitMap, QueueHitTarget, QUICK_ADD_VERBS};
 use super::tier::{FocusedSurface, ResponsivePresentation, WideStage};
 
@@ -53,7 +54,6 @@ pub struct CaptureLayout {
     pub subtitle_area: Rect,
     pub title_area: Rect,
     pub notes_area: Rect,
-    pub thread_area: Rect,
     pub scope_area: Rect,
     pub scope_chips: Vec<Chip<CaptureScopeChoice>>,
     pub this_project_available: bool,
@@ -188,13 +188,12 @@ pub fn capture_layout_state(
         1,
         notes_height,
         1,
-        1,
         u16::from(show_path),
         1,
         1,
         inner
             .height
-            .saturating_sub(7 + notes_height + u16::from(show_path)),
+            .saturating_sub(6 + notes_height + u16::from(show_path)),
         1,
     ];
     let mut y = inner.y;
@@ -204,10 +203,10 @@ pub fn capture_layout_state(
         areas.push(Rect::new(inner.x, y, inner.width, height));
         y = y.saturating_add(height);
     }
-    let scope_row = areas[4];
+    let scope_row = areas[3];
     let scope_chips = place_scope_chips(scope_row);
-    let scope_path_area = if show_path { areas[5] } else { Rect::default() };
-    let buttons = areas[7];
+    let scope_path_area = if show_path { areas[4] } else { Rect::default() };
+    let buttons = areas[6];
     let save_label = if save_recovery { " Retry " } else { " Save " };
     let cancel_label = " Cancel ";
     let save_width = save_label.chars().count() as u16;
@@ -236,12 +235,11 @@ pub fn capture_layout_state(
         subtitle_area: areas[0],
         title_area: areas[1],
         notes_area: areas[2],
-        thread_area: areas[3],
         scope_area: scope_row,
         scope_chips,
         this_project_available,
         scope_path_area,
-        message_area: areas[6],
+        message_area: areas[5],
         save_chip: Chip {
             rect: save_rect,
             label: save_label,
@@ -252,12 +250,12 @@ pub fn capture_layout_state(
             label: cancel_label,
             value: (),
         },
-        help_area: areas[9],
+        help_area: areas[8],
     }
 }
 
 pub const CAPTURE_NOTES_MAX_ROWS: u16 = 3;
-const CAPTURE_FIXED_ROWS: u16 = 7;
+const CAPTURE_FIXED_ROWS: u16 = 6;
 
 fn capture_notes_rows(inner_height: u16, show_path: bool) -> u16 {
     inner_height
@@ -364,7 +362,7 @@ fn hit_at(hits: &QueueHitMap, pos: Position) -> Option<QueueHitTarget> {
 /// Rectangle that currently owns pointer input for this presentation.
 pub fn focused_mouse_area(model: &BoardModel, area: Rect) -> Rect {
     let responsive = model.responsive_geometry(area);
-    if model.project_right_seat_focused() || model.focused_surface() == FocusedSurface::Task {
+    if model.focused_surface() == FocusedSurface::Task {
         responsive.task_content()
     } else {
         responsive.board
@@ -380,7 +378,8 @@ pub fn press_on_focused_surface(
     area: Rect,
     pos: Position,
 ) -> bool {
-    if focused_mouse_area(model, area).contains(pos) {
+    // Tab 2 is one surface: every press on it is focused.
+    if model.questions().active || focused_mouse_area(model, area).contains(pos) {
         return true;
     }
     let responsive = model.responsive_geometry(area);
@@ -393,9 +392,9 @@ fn wide_footer_contains(hits: &QueueHitMap, pos: Position) -> bool {
     hits.footer.is_some_and(|footer| footer.contains(pos))
 }
 
-/// Stage move that must run before dispatching a stage A click on the task column.
+/// Focus move that must run before dispatching a list-focused click on the detail column.
 ///
-/// Any press inside the preview column (above the shared footer) slides to G first; the
+/// Any press inside the detail column (above the shared footer) moves focus there first; the
 /// caller then dispatches the same click against the frame the user saw (AC-11).
 pub fn wide_mouse_focus_intent(
     model: &BoardModel,
@@ -404,7 +403,8 @@ pub fn wide_mouse_focus_intent(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-        || model.wide_stage() != WideStage::Split
+        || model.questions().active
+        || model.wide_stage() != WideStage::Board
         || model.input_mode() != BoardInputMode::Normal
     {
         return None;
@@ -416,12 +416,8 @@ pub fn wide_mouse_focus_intent(
     let pos = point(mouse.column, mouse.row);
     (responsive.task.contains(pos)
         && !wide_footer_contains(hits, pos)
-        && if model.projects_overview() {
-            model.selected_project_row().is_some()
-        } else {
-            model.selected_id().is_some()
-        })
-    .then_some(BoardIntent::StageRight)
+        && model.selected_id().is_some())
+    .then_some(BoardIntent::FocusDetail)
 }
 
 /// Map pointer input only through the live responsive surface and translated renderer hits.
@@ -432,19 +428,13 @@ pub fn map_responsive_board_mouse(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     let responsive = model.responsive_geometry(area);
-    if responsive.presentation != ResponsivePresentation::WideSplit {
+    // Tab 2 has no board focus columns: its own rows are the targets at every width.
+    if responsive.presentation != ResponsivePresentation::WideSplit || model.questions().active {
         return map_board_mouse(model, hits, mouse);
     }
     let pos = point(mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-            if model.project_right_seat_focused() {
-                return responsive.task.contains(pos).then(|| {
-                    model
-                        .right_seat()
-                        .and_then(|right| map_board_mouse(right, hits, mouse))
-                })?;
-            }
             if model.input_mode() == BoardInputMode::Help {
                 return map_board_mouse(model, hits, mouse);
             }
@@ -459,31 +449,7 @@ pub fn map_responsive_board_mouse(
     // The shared footer belongs to whichever surface owns input: its verbs, status controls
     // and inputs route exactly as the single-pane frame's own bottom rows do.
     if wide_footer_contains(hits, pos) {
-        return if model.project_right_seat_focused() {
-            model
-                .right_seat()
-                .and_then(|right| map_board_mouse(right, hits, mouse))
-        } else {
-            map_board_mouse(model, hits, mouse)
-        };
-    }
-
-    // In the projects Rail the left side is still a clickable index, but every other control
-    // in that side only moves the slider back. The project board is a complete narrow board
-    // session, so its own mapper owns the translated hits and wheel behavior.
-    if model.project_right_seat_focused() {
-        if responsive.task.contains(pos) {
-            return model
-                .right_seat()
-                .and_then(|right| map_board_mouse(right, hits, mouse));
-        }
-        if responsive.board.contains(pos) {
-            if let Some(QueueHitTarget::ProjectRow(index)) = hit_at(hits, pos) {
-                return Some(BoardIntent::SelectProjectRow(index));
-            }
-            return Some(BoardIntent::StageLeft);
-        }
-        return None;
+        return map_board_mouse(model, hits, mouse);
     }
 
     let view_mode = matches!(
@@ -495,12 +461,11 @@ pub fn map_responsive_board_mouse(
             model.input_mode(),
             BoardInputMode::EditTitle
                 | BoardInputMode::EditNotes
-                | BoardInputMode::EditThread
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
         );
-    // A task-row click opens or retargets the task beside the board in A (the reducer
-    // moves the stage). In mark mode, a plain click stays on the board and toggles that row.
+    // A task-row click retargets the detail column and gives the list focus (the reducer
+    // moves it). In mark mode, a plain click stays on the list and toggles that row.
     if responsive.board.contains(pos)
         && model.input_mode() == BoardInputMode::Normal
         && model.mark_mode_active()
@@ -535,17 +500,17 @@ pub fn map_responsive_board_mouse(
         return match model.input_mode() {
             BoardInputMode::Help => Some(BoardIntent::CloseHelp),
             BoardInputMode::Palette => Some(BoardIntent::CloseCommandSurface),
+            // A press on the list column dismisses the detail's parent chooser, the same as a
+            // press beside its card inside the detail column.
+            BoardInputMode::ParentPicker => Some(BoardIntent::CancelListPicker),
             _ => None,
         };
     }
 
     if responsive.board.contains(pos) {
         if model.focused_surface() == FocusedSurface::Task {
-            // The task owns input, so a press on the rail takes focus left.
-            if model.wide_stage() == WideStage::Rail {
-                return Some(BoardIntent::StageLeft);
-            }
-            return None;
+            // The detail owns input, so a press elsewhere on the list takes focus back.
+            return Some(BoardIntent::FocusList);
         }
         return map_board_mouse(model, hits, mouse);
     }
@@ -629,8 +594,6 @@ pub fn map_scrollbar_mouse(
             | BoardInputMode::EditTitle
             | BoardInputMode::EditNotes
             | BoardInputMode::EditScope
-            | BoardInputMode::EditThread
-            | BoardInputMode::SelectThread
     ) {
         *dragging = false;
         return ScrollbarMouse::Miss;
@@ -663,13 +626,21 @@ pub fn map_scrollbar_mouse(
 }
 
 fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardIntent> {
+    if model.questions().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        return Some(BoardIntent::Question(
+            crate::ui::questions::QuestionIntent::Scroll(kind == MouseEventKind::ScrollDown),
+        ));
+    }
     match model.input_mode() {
         BoardInputMode::TaskPage
         | BoardInputMode::EditTitle
         | BoardInputMode::EditNotes
         | BoardInputMode::EditScope
-        | BoardInputMode::EditThread
-        | BoardInputMode::SelectThread
         | BoardInputMode::EditStep => match kind {
             MouseEventKind::ScrollUp => Some(BoardIntent::PageWheelScrollUp),
             MouseEventKind::ScrollDown => Some(BoardIntent::PageWheelScrollDown),
@@ -698,6 +669,11 @@ fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardI
             MouseEventKind::ScrollDown => Some(BoardIntent::HelpScrollDown),
             _ => None,
         },
+        BoardInputMode::ParentPicker => match kind {
+            MouseEventKind::ScrollUp => Some(BoardIntent::ListPickerScrollUp),
+            MouseEventKind::ScrollDown => Some(BoardIntent::ListPickerScrollDown),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -716,14 +692,27 @@ pub fn map_board_mouse(
         _ => return None,
     }
     let pos = point(mouse.column, mouse.row);
+    // Tab 2 paints its own frame: only its tabs and question rows are targets.
+    if model.questions().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        return match hit_at(hits, pos) {
+            Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
+            Some(QueueHitTarget::Question(id)) => Some(BoardIntent::Question(
+                crate::ui::questions::QuestionIntent::Row(id),
+            )),
+            _ => None,
+        };
+    }
     if model.expanded_capture_open()
         && matches!(
             model.input_mode(),
             BoardInputMode::EditTitle
                 | BoardInputMode::EditNotes
                 | BoardInputMode::EditScope
-                | BoardInputMode::EditThread
-                | BoardInputMode::SelectThread
                 | BoardInputMode::EditStep
         )
     {
@@ -803,9 +792,6 @@ pub fn map_board_mouse(
                     Some(BoardIntent::FocusFormField(CaptureField::Notes))
                 }
                 Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
-                Some(QueueHitTarget::FormThread) => {
-                    Some(BoardIntent::FocusFormField(CaptureField::Thread))
-                }
                 Some(QueueHitTarget::Step(index)) if model.task_editing() => {
                     Some(BoardIntent::SelectStep(index))
                 }
@@ -814,22 +800,6 @@ pub fn map_board_mouse(
                 _ => None,
             }
         }
-        BoardInputMode::SelectThread | BoardInputMode::EditThread => match hit_at(hits, pos) {
-            Some(QueueHitTarget::FormThread) => Some(BoardIntent::ToggleThreadEditing),
-            Some(QueueHitTarget::FormTitle) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Title))
-            }
-            Some(QueueHitTarget::FormNotes(_)) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Notes))
-            }
-            Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
-            Some(QueueHitTarget::Step(index)) if model.task_editing() => {
-                Some(BoardIntent::SelectStep(index))
-            }
-            Some(QueueHitTarget::StepAdd) => Some(BoardIntent::BeginAppendStep),
-            Some(QueueHitTarget::Verb(index)) => form_verb_intent(model, index),
-            _ => None,
-        },
         BoardInputMode::TaskPage | BoardInputMode::CapturePage => match hit_at(hits, pos) {
             Some(QueueHitTarget::TaskNumber(id)) => Some(BoardIntent::CopyTaskNumber(id)),
             Some(QueueHitTarget::FormTitle) if model.task_editing() => {
@@ -838,9 +808,6 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::FormNotes(_)) if model.task_editing() => {
                 Some(BoardIntent::FocusFormField(CaptureField::Notes))
             }
-            Some(QueueHitTarget::FormThread) if model.task_editing() => {
-                Some(BoardIntent::FocusFormField(CaptureField::Thread))
-            }
             Some(QueueHitTarget::FormScope) if model.task_editing() => {
                 Some(BoardIntent::OpenFormScopeDropdown)
             }
@@ -848,6 +815,9 @@ pub fn map_board_mouse(
             // the inline editor only when the task edit session is already active.
             Some(QueueHitTarget::Step(index)) => Some(BoardIntent::SelectStep(index)),
             Some(QueueHitTarget::StepAdd) => Some(BoardIntent::BeginAppendStep),
+            // A relation row acts in view mode, on every wrapped row: the parent-none line
+            // opens the parent picker, a parent or child opens its page.
+            Some(QueueHitTarget::Relation(index)) => model.relation_intent_at(index),
             Some(QueueHitTarget::PageScroll(offset)) => Some(BoardIntent::PageScrollTo(offset)),
             Some(QueueHitTarget::Verb(index)) => verb_intent(model, index),
             _ => None,
@@ -865,9 +835,6 @@ pub fn map_board_mouse(
             }
             Some(QueueHitTarget::FormNotes(_)) => {
                 Some(BoardIntent::FocusFormField(CaptureField::Notes))
-            }
-            Some(QueueHitTarget::FormThread) => {
-                Some(BoardIntent::FocusFormField(CaptureField::Thread))
             }
             Some(QueueHitTarget::FormScope) => Some(BoardIntent::OpenFormScopeDropdown),
             Some(QueueHitTarget::Step(index)) => Some(BoardIntent::SelectStep(index)),
@@ -892,17 +859,16 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::LaunchOption(1)) => Some(BoardIntent::LaunchKeepArchived),
             _ => None,
         },
-        BoardInputMode::ListPicker => match hit_at(hits, pos) {
+        // The parent chooser paints the same card; a row click saves that parent.
+        BoardInputMode::ParentPicker => match hit_at(hits, pos) {
             Some(QueueHitTarget::ListPickerOption(index)) => {
-                Some(BoardIntent::SelectListOption(index))
+                Some(BoardIntent::SelectParentOption(index))
             }
             Some(QueueHitTarget::ModalChrome) => None,
-            Some(QueueHitTarget::ModalClose) => Some(BoardIntent::CancelListPicker),
             _ => Some(BoardIntent::CancelListPicker),
         },
         BoardInputMode::Search => match hit_at(hits, pos) {
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
-            Some(QueueHitTarget::ProjectRow(index)) => Some(BoardIntent::SelectProjectRow(index)),
             Some(QueueHitTarget::TaskNumber(id)) => Some(BoardIntent::CopyTaskNumber(id)),
             Some(QueueHitTarget::Task(id)) => model
                 .visible_ids()
@@ -915,17 +881,10 @@ pub fn map_board_mouse(
         },
         BoardInputMode::Normal => match hit_at(hits, pos) {
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
-            Some(QueueHitTarget::NavChip) => match model.nav_chip_kind() {
-                Some(crate::ui::render::NavChipKind::ThreadFilter) => {
-                    Some(BoardIntent::OpenThreadFilterPicker)
-                }
-                Some(crate::ui::render::NavChipKind::ProjectsView) => {
-                    Some(BoardIntent::OpenProjectsViewPicker)
-                }
-                None => None,
-            },
+            Some(QueueHitTarget::Waiting) => Some(BoardIntent::SelectNavTab(NavTab::Questions)),
+            Some(QueueHitTarget::ScopeChip) => Some(BoardIntent::OpenProjectSelector),
+            Some(QueueHitTarget::SortChip) => Some(BoardIntent::ToggleSort),
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
-            Some(QueueHitTarget::ProjectRow(index)) => Some(BoardIntent::SelectProjectRow(index)),
             Some(QueueHitTarget::Drawer) => Some(BoardIntent::ToggleDoneDrawer),
             Some(QueueHitTarget::ArchivedHeader) => Some(BoardIntent::ToggleArchivedGroup),
             Some(QueueHitTarget::InboxHeader) => Some(BoardIntent::ToggleInboxGroup),
@@ -989,9 +948,6 @@ pub fn map_capture_mouse(layout: &CaptureLayout, mouse: MouseEvent) -> Option<Ca
     }
     if layout.notes_area.contains(pos) {
         return Some(CaptureIntent::FocusField(CaptureField::Notes));
-    }
-    if layout.thread_area.contains(pos) {
-        return Some(CaptureIntent::FocusField(CaptureField::Thread));
     }
     for chip in &layout.scope_chips {
         if chip.rect.contains(pos) {

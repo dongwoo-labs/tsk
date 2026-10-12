@@ -16,21 +16,21 @@ pub enum FocusedSurface {
     Task,
 }
 
-/// Session-only wide-slider position. Its focus owner is derived from the stage.
+/// Session-only focus owner: the task list or the task detail. Below 110 columns it picks the
+/// one surface the frame paints; at 110 columns or wider both surfaces paint side by side and
+/// it only decides which column owns input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WideStage {
     #[default]
-    FullBoard,
-    Split,
-    Rail,
-    FullTask,
+    Board,
+    Task,
 }
 
 impl WideStage {
     pub const fn focused_surface(self) -> FocusedSurface {
         match self {
-            Self::FullBoard | Self::Split => FocusedSurface::Board,
-            Self::Rail | Self::FullTask => FocusedSurface::Task,
+            Self::Board => FocusedSurface::Board,
+            Self::Task => FocusedSurface::Task,
         }
     }
 }
@@ -48,7 +48,7 @@ pub enum ResponsivePresentation {
 pub struct ResponsiveGeometry {
     pub presentation: ResponsivePresentation,
     pub board: Rect,
-    /// The one-column separator between board/rail and task, empty outside split stages.
+    /// The one-column separator between list and detail, empty below the wide threshold.
     pub rule: Rect,
     pub task: Rect,
     pub density: Tier,
@@ -72,9 +72,6 @@ impl ResponsiveGeometry {
 
 /// Minimum usable width for the wide split view.
 pub const WIDE_SPLIT_MIN_WIDTH: u16 = 110;
-
-/// Width of the stage G rail column, including its leading space.
-pub const RAIL_WIDTH: u16 = 32;
 
 /// Pure frame geometry for one terminal size.
 ///
@@ -200,11 +197,11 @@ pub(crate) fn resolve_density(width: u16, height: u16, tier: Tier) -> TierGeomet
     }
 }
 
-/// Map usable dimensions and the slider stage to one or two bounded surfaces.
+/// Map usable dimensions and the focus owner to one or two bounded surfaces.
 ///
-/// Wide stages A and G divide the frame into a left column, a one-column rule and a task
-/// column whose first cell is a pad. Stages 0 and F use the whole frame. Both columns share
-/// the frame's density.
+/// Below the wide threshold the focused surface takes the whole frame. At 110 columns or wider
+/// the frame always divides into a list column (two fifths), a one-column rule and a detail
+/// column whose first cell is a pad. Both columns share the frame's density.
 pub fn resolve_responsive(width: u16, height: u16, stage: WideStage) -> ResponsiveGeometry {
     let frame = Rect::new(0, 0, width, height);
     if width < WIDE_SPLIT_MIN_WIDTH {
@@ -226,39 +223,16 @@ pub fn resolve_responsive(width: u16, height: u16, stage: WideStage) -> Responsi
         };
     }
 
-    let (board, rule, task) = match stage {
-        WideStage::FullBoard => (frame, Rect::default(), Rect::default()),
-        WideStage::FullTask => (Rect::default(), Rect::default(), frame),
-        WideStage::Split => {
-            let board_width = width.saturating_mul(2) / 5;
-            let rule = Rect::new(board_width, 0, 1, height);
-            let task_x = board_width.saturating_add(rule.width);
-            (
-                Rect::new(0, 0, board_width, height),
-                rule,
-                Rect::new(task_x, 0, width.saturating_sub(task_x), height),
-            )
-        }
-        WideStage::Rail => {
-            // Only reached at width >= WIDE_SPLIT_MIN_WIDTH, so the rail, rule and pad
-            // always fit.
-            let rule = Rect::new(RAIL_WIDTH, 0, 1, height);
-            let task_x = RAIL_WIDTH.saturating_add(rule.width);
-            (
-                Rect::new(0, 0, RAIL_WIDTH, height),
-                rule,
-                Rect::new(task_x, 0, width.saturating_sub(task_x), height),
-            )
-        }
-    };
-    // Density follows the frame, not the narrower column: a split at 130×24 keeps the
-    // standard row rhythm and the board's meta column, and a full-width stage is exactly the
-    // standard board. Only a short frame (height < 24) drops to compact.
+    let board_width = width.saturating_mul(2) / 5;
+    let rule = Rect::new(board_width, 0, 1, height);
+    let task_x = board_width.saturating_add(rule.width);
+    // Density follows the frame, not the narrower column: a split at 130x24 keeps the
+    // standard row rhythm. Only a short frame (height < 24) drops to compact.
     ResponsiveGeometry {
         presentation: ResponsivePresentation::WideSplit,
-        board,
+        board: Rect::new(0, 0, board_width, height),
         rule,
-        task,
+        task: Rect::new(task_x, 0, width.saturating_sub(task_x), height),
         density: resolve(width, height).tier,
     }
 }
@@ -309,45 +283,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wide_stage_geometry_has_exact_allocations_and_preserves_narrow_mapping() {
-        for (width, split_board, split_task, rail_task) in [(110, 44, 65, 77), (130, 52, 77, 97)] {
-            let split = resolve_responsive(width, 24, WideStage::Split);
-            assert_eq!(split.board, Rect::new(0, 0, split_board, 24));
-            assert_eq!(split.rule, Rect::new(split_board, 0, 1, 24));
-            assert_eq!(split.task, Rect::new(split_board + 1, 0, split_task, 24));
-            let rail = resolve_responsive(width, 24, WideStage::Rail);
-            assert_eq!(rail.board, Rect::new(0, 0, 32, 24));
-            assert_eq!(rail.rule, Rect::new(32, 0, 1, 24));
-            assert_eq!(rail.task, Rect::new(33, 0, rail_task, 24));
-            assert_eq!(
-                resolve_responsive(width, 24, WideStage::FullBoard).board,
-                Rect::new(0, 0, width, 24)
-            );
-            assert_eq!(
-                resolve_responsive(width, 24, WideStage::FullTask).task,
-                Rect::new(0, 0, width, 24)
-            );
+    fn wide_geometry_is_always_list_plus_detail_and_narrow_shows_the_focused_surface() {
+        for (width, list, detail) in [(110, 44, 65), (130, 52, 77)] {
+            for stage in [WideStage::Board, WideStage::Task] {
+                let split = resolve_responsive(width, 24, stage);
+                assert_eq!(split.presentation, ResponsivePresentation::WideSplit);
+                assert_eq!(split.board, Rect::new(0, 0, list, 24));
+                assert_eq!(split.rule, Rect::new(list, 0, 1, 24));
+                assert_eq!(split.task, Rect::new(list + 1, 0, detail, 24));
+            }
         }
         assert_eq!(
-            resolve_responsive(109, 24, WideStage::Split).presentation,
+            resolve_responsive(109, 24, WideStage::Board).presentation,
             ResponsivePresentation::SingleBoard
         );
         assert_eq!(
-            resolve_responsive(109, 24, WideStage::Rail).presentation,
+            resolve_responsive(109, 24, WideStage::Task).presentation,
             ResponsivePresentation::SingleTask
         );
     }
 
     #[test]
-    fn wide_stage_geometry_is_bounded_and_exhausts_every_column() {
+    fn wide_geometry_is_bounded_and_exhausts_every_column() {
         for width in WIDE_SPLIT_MIN_WIDTH..=250 {
             for height in 10..=60 {
-                for stage in [
-                    WideStage::FullBoard,
-                    WideStage::Split,
-                    WideStage::Rail,
-                    WideStage::FullTask,
-                ] {
+                for stage in [WideStage::Board, WideStage::Task] {
                     let geometry = resolve_responsive(width, height, stage);
                     assert_eq!(
                         geometry.board.width + geometry.rule.width + geometry.task.width,

@@ -24,16 +24,7 @@ test("agent transcript matches the current CLI output contract", async ({
     const actual = JSON.parse(
       execFileSync(
         binary,
-        [
-          "add",
-          "-t",
-          shown.title,
-          "-p",
-          "launchpad",
-          "--thread",
-          "api",
-          "--json",
-        ],
+        ["add", "-t", shown.title, "-p", "launchpad", "--json"],
         { cwd: project, env, encoding: "utf8" },
       ),
     );

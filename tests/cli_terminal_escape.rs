@@ -50,7 +50,7 @@ fn state_dir_arg(dir: &Path) -> String {
 fn seed_task(dir: &Path, title: &str, scope: TaskScope) -> (u64, uuid::Uuid) {
     let mut state = DomainState::new();
     let id = state
-        .create(title, None, scope, ProvenanceOrigin::Manual, None)
+        .create(title, None, scope, ProvenanceOrigin::Manual)
         .expect("seed task");
     TaskStore::new(dir).save(&state).expect("save seed");
     let loaded = TaskStore::new(dir).load().expect("reload");
@@ -120,13 +120,7 @@ fn steps_toggle_escapes_control_step_text() {
     let _guard = TempDirGuard(dir.clone());
     let mut state = DomainState::new();
     let id = state
-        .create(
-            TITLE,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(TITLE, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("seed task");
     state.add_step(id, STEP).expect("seed step");
     TaskStore::new(&dir).save(&state).expect("save seed");
@@ -216,22 +210,10 @@ fn trash_restore_escapes_control_titles() {
     let _guard = TempDirGuard(dir.clone());
     let mut state = DomainState::new();
     let deleted = state
-        .create(
-            TITLE,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(TITLE, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("deleted");
     let other = state
-        .create(
-            "other",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create("other", None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("other");
     state.soft_delete(deleted).expect("soft delete");
     state.complete(other).expect("later undoable action");

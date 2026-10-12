@@ -34,7 +34,6 @@ pub enum CaptureField {
     #[default]
     Title,
     Notes,
-    Thread,
     Scope,
 }
 
@@ -100,10 +99,6 @@ pub struct CaptureModel {
     /// across focus changes.
     title: EditBuffer,
     notes: EditBuffer,
-    /// Optional task thread, normalized with the shared domain rule at save time.
-    thread: EditBuffer,
-    /// Field-local thread validation feedback, painted on the Thread row.
-    thread_refusal: Option<String>,
     /// Scope that will be saved (starts as snapshot default; user may override).
     scope: TaskScope,
     this_repo: Option<PathBuf>,
@@ -139,8 +134,6 @@ impl CaptureModel {
         Self {
             title: seeded_draft(snapshot.title_prefill.as_deref().unwrap_or_default()),
             notes: seeded_draft(""),
-            thread: seeded_draft(""),
-            thread_refusal: None,
             scope: Self::default_scope(snapshot),
             this_repo: snapshot.this_repo.clone(),
             this_repo_archived: false,
@@ -159,10 +152,6 @@ impl CaptureModel {
 
     pub fn notes(&self) -> &str {
         self.notes.value()
-    }
-
-    pub fn thread(&self) -> &str {
-        self.thread.value()
     }
 
     pub fn scope(&self) -> &TaskScope {
@@ -293,7 +282,6 @@ impl CaptureModel {
         match self.focused {
             CaptureField::Title => Some(&mut self.title),
             CaptureField::Notes => Some(&mut self.notes),
-            CaptureField::Thread => Some(&mut self.thread),
             CaptureField::Scope => None,
         }
     }
@@ -302,8 +290,7 @@ impl CaptureModel {
         self.abandon_path_edit();
         self.focused = match self.focused {
             CaptureField::Title => CaptureField::Notes,
-            CaptureField::Notes => CaptureField::Thread,
-            CaptureField::Thread => CaptureField::Scope,
+            CaptureField::Notes => CaptureField::Scope,
             CaptureField::Scope => CaptureField::Title,
         };
     }
@@ -313,8 +300,7 @@ impl CaptureModel {
         self.focused = match self.focused {
             CaptureField::Title => CaptureField::Scope,
             CaptureField::Notes => CaptureField::Title,
-            CaptureField::Thread => CaptureField::Notes,
-            CaptureField::Scope => CaptureField::Thread,
+            CaptureField::Scope => CaptureField::Notes,
         };
     }
 
@@ -447,7 +433,6 @@ pub fn apply_capture_intent(
                 return Ok(CaptureOutcome::None);
             }
             model.message = None;
-            model.thread_refusal = None;
             Ok(CaptureOutcome::Cancelled)
         }
         CaptureIntent::FocusNext => {
@@ -487,7 +472,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
-                CaptureField::Title | CaptureField::Notes | CaptureField::Thread => {
+                CaptureField::Title | CaptureField::Notes => {
                     edit_draft(model, |draft| draft.insert_char(c));
                 }
             }
@@ -501,7 +486,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
-                CaptureField::Title | CaptureField::Notes | CaptureField::Thread => {
+                CaptureField::Title | CaptureField::Notes => {
                     edit_draft(model, EditBuffer::backspace);
                 }
             }
@@ -519,7 +504,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
-                CaptureField::Title | CaptureField::Thread => {
+                CaptureField::Title => {
                     edit_draft(model, |draft| {
                         draft.insert_text(&flatten_line_breaks(&text))
                     });
@@ -597,19 +582,6 @@ pub fn apply_capture_intent(
             } else {
                 Some(model.notes().to_string())
             };
-            let thread_value = model.thread().trim();
-            let thread = if thread_value.is_empty() {
-                None
-            } else {
-                match crate::domain::normalize_thread(thread_value) {
-                    Ok(thread) => Some(thread),
-                    Err(error) => {
-                        model.thread_refusal = Some(crate::domain::thread_refusal_message(error));
-                        model.message = None;
-                        return Ok(CaptureOutcome::None);
-                    }
-                }
-            };
             // The controller owns independent baseline and working snapshots, so an error
             // cannot leak a staged task into the active domain or close this form.
             let baseline =
@@ -623,7 +595,6 @@ pub fn apply_capture_intent(
                 model.title(),
                 notes,
                 Some(model.scope.clone()),
-                thread,
             ) {
                 Ok(id) => id,
                 Err(error) => {
@@ -658,13 +629,9 @@ pub fn apply_capture_intent(
 /// Inert on the scope row: its path buffer is not one of the pinned editable text fields
 /// and keeps its plain-`String` handling, so every cursor intent is a no-op there.
 fn edit_draft(model: &mut CaptureModel, operation: impl FnOnce(&mut EditBuffer)) {
-    let editing_thread = model.focused == CaptureField::Thread;
     if let Some(draft) = model.focused_draft_mut() {
         operation(draft);
         model.message = None;
-        if editing_thread {
-            model.thread_refusal = None;
-        }
     }
 }
 
@@ -883,7 +850,6 @@ pub fn draw_capture(frame: &mut Frame, model: &CaptureModel) {
 
     let title_focused = model.focused == CaptureField::Title;
     let notes_focused = model.focused == CaptureField::Notes;
-    let thread_focused = model.focused == CaptureField::Thread;
     let (title_lines, title_cursor) =
         text_field_block("Title:", &model.title, layout.title_area, title_focused);
     // A multiline Notes draft occupies the whole Notes field, wrapped at word
@@ -897,8 +863,6 @@ pub fn draw_capture(frame: &mut Frame, model: &CaptureModel) {
     );
     let (notes_lines, notes_cursor) =
         notes_field_block(&model.notes, layout.notes_area, notes_focused);
-    let (thread_lines, thread_cursor) =
-        text_field_block("Thread:", &model.thread, layout.thread_area, thread_focused);
 
     // Keep "Title:" / "Notes:" / "Scope:" tokens for render tests and screen readers.
     frame.render_widget(
@@ -909,42 +873,13 @@ pub fn draw_capture(frame: &mut Frame, model: &CaptureModel) {
         Paragraph::new(notes_lines).style(field_style(notes_focused)),
         layout.notes_area,
     );
-    frame.render_widget(
-        Paragraph::new(thread_lines).style(field_style(thread_focused)),
-        layout.thread_area,
-    );
     // The terminal's own cursor carries the edit position; only the focused field has one,
     // and only while the field actually accepts input: every editing intent is inert until
     // a failed save is retried or cancelled, so no cursor is offered there.
     if !model.is_save_recovery() {
-        if let Some((region, row, column)) = title_cursor.or(notes_cursor).or(thread_cursor) {
+        if let Some((region, row, column)) = title_cursor.or(notes_cursor) {
             place_edit_cursor_at(frame, region, row, column);
         }
-    }
-
-    if let Some(refusal) = model.thread_refusal.as_deref() {
-        frame.render_widget(
-            Paragraph::new(present_line(
-                refusal,
-                layout
-                    .thread_area
-                    .width
-                    .saturating_sub(CAPTURE_FIELD_LABEL_WIDTH) as usize,
-            ))
-            .style(render::style_reverse_bold()),
-            ratatui::layout::Rect::new(
-                layout
-                    .thread_area
-                    .x
-                    .saturating_add(CAPTURE_FIELD_LABEL_WIDTH),
-                layout.thread_area.y,
-                layout
-                    .thread_area
-                    .width
-                    .saturating_sub(CAPTURE_FIELD_LABEL_WIDTH),
-                1,
-            ),
-        );
     }
 
     // Scope row: label, then one explicit control per choice.
@@ -2096,8 +2031,7 @@ mod tests {
         // Park the Notes cursor at its start; this must not disturb Title's own cursor.
         apply(&mut domain, &snap, &mut model, CaptureIntent::MoveLineStart);
 
-        // The complete ring returns to Title after Thread and Scope.
-        apply(&mut domain, &snap, &mut model, CaptureIntent::FocusNext);
+        // The complete ring returns to Title after Scope.
         apply(&mut domain, &snap, &mut model, CaptureIntent::FocusNext);
         apply(&mut domain, &snap, &mut model, CaptureIntent::FocusNext);
         assert_eq!(model.focused(), CaptureField::Title);
@@ -2401,14 +2335,9 @@ mod tests {
                 "the Notes field vanished at {width}x{height}"
             );
             assert_eq!(
-                layout.thread_area.y,
-                notes_area.y + notes_area.height,
-                "Notes and Thread disagree about the row after the field at {width}x{height}"
-            );
-            assert_eq!(
                 layout.scope_area.y,
-                layout.thread_area.y + layout.thread_area.height,
-                "Thread and Scope disagree about their shared layout at {width}x{height}"
+                notes_area.y + notes_area.height,
+                "Notes and Scope disagree about the row after the field at {width}x{height}"
             );
             assert!(
                 layout.help_area.y > layout.save_chip.rect.y && layout.help_area.y < height,
@@ -2417,7 +2346,7 @@ mod tests {
 
             let rows = render_rows(&model, width, height);
             let plain = rows.join("\n");
-            for token in ["Title:", "Notes:", "Thread:", "Scope:", "Save", "Cancel"] {
+            for token in ["Title:", "Notes:", "Scope:", "Save", "Cancel"] {
                 assert!(
                     plain.contains(token),
                     "missing {token:?} at {width}x{height}: {plain}"
@@ -2495,63 +2424,6 @@ mod tests {
                 || plain.contains("Esc"),
             "missing help: {plain}"
         );
-    }
-
-    #[test]
-    fn capture_form_accepts_optional_thread_with_shared_validation() {
-        let snapshot = project_snapshot("/repos/app");
-        let mut domain = DomainState::new();
-        let mut model = CaptureModel::from_snapshot(&snapshot);
-        apply(
-            &mut domain,
-            &snapshot,
-            &mut model,
-            CaptureIntent::InsertText("Threaded capture".into()),
-        );
-        model.focused = CaptureField::Thread;
-        apply(
-            &mut domain,
-            &snapshot,
-            &mut model,
-            CaptureIntent::InsertText("Release-2026".into()),
-        );
-        let CaptureOutcome::Saved(id) =
-            apply(&mut domain, &snapshot, &mut model, CaptureIntent::Save)
-        else {
-            panic!("threaded capture did not save");
-        };
-        assert_eq!(
-            domain.get(id).expect("task").thread.as_deref(),
-            Some("release-2026")
-        );
-    }
-
-    #[test]
-    fn capture_form_refuses_invalid_thread_without_persisting() {
-        let snapshot = project_snapshot("/repos/app");
-        let mut domain = DomainState::new();
-        let mut model = CaptureModel::from_snapshot(&snapshot);
-        apply(
-            &mut domain,
-            &snapshot,
-            &mut model,
-            CaptureIntent::InsertText("Invalid threaded capture".into()),
-        );
-        model.focused = CaptureField::Thread;
-        apply(
-            &mut domain,
-            &snapshot,
-            &mut model,
-            CaptureIntent::InsertText("bad_name".into()),
-        );
-        assert_eq!(
-            apply(&mut domain, &snapshot, &mut model, CaptureIntent::Save),
-            CaptureOutcome::None
-        );
-        assert!(domain.tasks().is_empty());
-        let refusal = model.thread_refusal.as_deref().expect("thread refusal");
-        assert!(refusal.contains("hyphens"), "{refusal}");
-        assert!(render_plain(&model, 80, 16).contains("hyphens"));
     }
 
     #[cfg(unix)]

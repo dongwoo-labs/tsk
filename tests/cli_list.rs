@@ -99,26 +99,19 @@ fn list_at_width(args: &[String], terminal_width: usize) -> tsk_tui::cli::CliOut
 
 fn create_task(state: &mut DomainState, title: &str, scope: TaskScope, status: HumanStatus) {
     let id = state
-        .create(title, None, scope, ProvenanceOrigin::Manual, None)
+        .create(title, None, scope, ProvenanceOrigin::Manual)
         .expect("create task");
     state.set_status(id, status).expect("set status");
 }
 
-fn create_task_with_thread(
+fn create_task_returning_id(
     state: &mut DomainState,
     title: &str,
     scope: TaskScope,
     status: HumanStatus,
-    thread: Option<&str>,
 ) -> uuid::Uuid {
     let id = state
-        .create(
-            title,
-            None,
-            scope,
-            ProvenanceOrigin::Manual,
-            thread.map(str::to_owned),
-        )
+        .create(title, None, scope, ProvenanceOrigin::Manual)
         .expect("create task");
     state.set_status(id, status).expect("set status");
     id
@@ -190,7 +183,6 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create deleted task");
     state.soft_delete(deleted).expect("soft delete task");
@@ -320,7 +312,6 @@ fn list_done_and_deleted_filters_are_status_and_soft_delete_specific() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create deleted ready");
     state.soft_delete(deleted_ready).expect("soft delete ready");
@@ -330,7 +321,6 @@ fn list_done_and_deleted_filters_are_status_and_soft_delete_specific() {
             None,
             project.clone(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create deleted done");
     state.complete(deleted_done).expect("complete deleted task");
@@ -457,7 +447,6 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create global deleted task");
     state
@@ -471,7 +460,6 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
                 path: "/projects/other".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create other deleted task");
     state
@@ -557,7 +545,6 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
                 "parent_task_id",
                 "project",
                 "status",
-                "thread",
                 "title"
             ]
         );
@@ -833,13 +820,7 @@ fn human_list_escapes_terminal_control_titles_without_changing_json() {
     create_task(&mut state, title, TaskScope::Global, HumanStatus::Todo);
     create_task(&mut state, title, TaskScope::Global, HumanStatus::Done);
     let deleted = state
-        .create(
-            title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("create deleted task");
     state.soft_delete(deleted).expect("soft delete task");
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -889,7 +870,6 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
             Some(notes.into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            Some("release-2026-long-thread".into()),
         )
         .expect("create wrapping notes task");
     state.add_step(task, step).expect("seed wrapping step");
@@ -909,7 +889,7 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n\n   #release-2026-long-thread\n"
+        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n"
     );
     assert!(
         output.stdout.lines().all(|line| line.len() <= 50),
@@ -959,14 +939,13 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
 fn scoped_human_list_wraps_task_rows_and_scope_labels() {
     let dir = temp_state_dir("wrapped-list-rows");
     let mut state = DomainState::new();
-    create_task_with_thread(
+    create_task_returning_id(
         &mut state,
         "a very long task title that wraps across the supported terminal floor",
         TaskScope::Project {
             path: "/projects/a-very-long-project-name-that-needs-wrapping-at-fifty-columns".into(),
         },
         HumanStatus::Todo,
-        Some("release-2026-long"),
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -1009,45 +988,6 @@ fn scoped_human_list_wraps_task_rows_and_scope_labels() {
 }
 
 #[test]
-fn unscoped_human_list_wraps_threaded_task_rows() {
-    let dir = temp_state_dir("wrapped-unscoped-row");
-    let mut state = DomainState::new();
-    create_task_with_thread(
-        &mut state,
-        "a default list task title that must wrap across the supported fifty column floor",
-        TaskScope::Global,
-        HumanStatus::Todo,
-        Some("release-2026-long"),
-    );
-    TaskStore::new(&dir).save(&state).expect("seed store");
-
-    let output = list_at_width(
-        &[
-            "tsk".into(),
-            "list".into(),
-            "--desk".into(),
-            "--state-dir".into(),
-            state_dir_arg(&dir),
-        ],
-        50,
-    );
-
-    assert_eq!(output.code, 0);
-    assert!(output.stdout.lines().all(|line| line.len() <= 50));
-    assert!(
-        output
-            .stdout
-            .lines()
-            .any(|line| line.starts_with("     ") && line.contains("supported")),
-        "unscoped task row did not wrap with its hanging indent: {}",
-        output.stdout
-    );
-    assert!(output.stdout.contains("#release-2026-long"));
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn list_help_wraps_at_eighty_while_usage_errors_follow_the_terminal_width() {
     let help = list_at_width(&["tsk".into(), "list".into(), "--help".into()], 50);
     let wide_help = list_at_width(&["tsk".into(), "list".into(), "--help".into()], 100);
@@ -1082,13 +1022,7 @@ fn binary_uses_stdout_terminal_width_and_leaves_redirects_unwrapped() {
     let title =
         "a terminal width handoff title deliberately longer than fifty columns at the boundary";
     let mut state = DomainState::new();
-    let task = create_task_with_thread(
-        &mut state,
-        title,
-        TaskScope::Global,
-        HumanStatus::Todo,
-        None,
-    );
+    let task = create_task_returning_id(&mut state, title, TaskScope::Global, HumanStatus::Todo);
     TaskStore::new(root.join("state"))
         .save(&state)
         .expect("seed PTY store");
@@ -1146,7 +1080,6 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
             Some(notes.into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            Some("release".into()),
         )
         .expect("create notes task");
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1161,7 +1094,7 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
     assert_eq!(human.code, 0);
     assert_eq!(
         human.stdout,
-        "TODO\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n\n   #release\n"
+        "TODO\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n"
     );
     assert!(!human.stdout.contains('\t'));
     assert!(!human.stdout.contains('\u{001b}'));
@@ -1177,49 +1110,6 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
     ]);
     let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).expect("JSON rows");
     assert_eq!(rows[0]["notes"], notes);
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn human_list_escapes_terminal_control_thread_markers_without_changing_json() {
-    let _env = env_lock();
-    let dir = temp_state_dir("terminal-control-thread");
-    let thread = "release\u{001b}]52;c;clipboard\u{0007}";
-    let escaped = "release\\u{001b}]52;c;clipboard\\u{0007}";
-    let mut state = DomainState::new();
-    create_task_with_thread(
-        &mut state,
-        "threaded task",
-        TaskScope::Global,
-        HumanStatus::Todo,
-        Some(thread),
-    );
-    TaskStore::new(&dir).save(&state).expect("seed store");
-
-    let human = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--desk".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(human.code, 0);
-    assert!(human.stdout.contains(escaped));
-    assert!(!human.stdout.contains('\u{001b}'));
-    assert!(!human.stdout.contains('\u{0007}'));
-
-    let json = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--desk".into(),
-        "--json".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(json.code, 0);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).expect("JSON rows");
-    assert_eq!(rows[0]["thread"], thread);
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1376,26 +1266,6 @@ fn list_rejects_conflicting_scope_and_filter_flags_and_missing_project_values() 
 }
 
 #[test]
-fn list_thread_parse_rejects_invalid_space_and_equals_forms() {
-    let _env = env_lock();
-    let dir = temp_state_dir("invalid-thread");
-
-    for thread in ["--thread", "--thread=bad_name"] {
-        let mut args = vec!["tsk".into(), "list".into(), thread.into()];
-        if thread == "--thread" {
-            args.push("bad_name".into());
-        }
-        args.extend(["--state-dir".into(), state_dir_arg(&dir)]);
-        let output = list(&args);
-        assert_eq!(output.code, 2, "{thread}");
-        assert!(output.stdout.is_empty(), "{thread}");
-        assert!(output.stderr.contains("invalid thread name"), "{thread}");
-    }
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn list_equals_project_form_accepts_dash_leading_scope() {
     let _env = env_lock();
     let dir = temp_state_dir("equals-project");
@@ -1428,7 +1298,6 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
             "title": "maintenance task",
             "status": "todo",
             "project": "-maintenance",
-            "thread": null,
             "parent_task_id": null,
             "children_done": 0,
             "children_total": 0,
@@ -1546,7 +1415,6 @@ fn state_with_steps(done_first: bool) -> (DomainState, tsk_tui::domain::Step) {
             Some("First note\nSecond note".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            Some("release".into()),
         )
         .expect("seed steps task");
     state.add_step(id, "First step").expect("seed first step");
@@ -1590,8 +1458,8 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         output.stdout,
-        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   [x] First step\n   [ ] Second step\n\n   #release\n",
-        "direct detail separates notes, steps, and the trailing thread"
+        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   [x] First step\n   [ ] Second step\n",
+        "direct detail separates notes and steps"
     );
     assert!(
         first_step.id.to_string().starts_with("aaa1"),
@@ -1608,12 +1476,12 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     ]);
     assert_eq!(json.code, 0);
     let expected_json = format!(
-        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"thread\":\"release\",\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[]}}]\n",
+        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[]}}]\n",
         task, first_step.id
     );
     assert_eq!(
         json.stdout, expected_json,
-        "direct JSON keeps title, notes, steps, and thread together in contract order"
+        "direct JSON keeps title, notes, and steps together in contract order"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -1655,10 +1523,10 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["notes"], serde_json::Value::Null);
     assert_eq!(rows[0]["steps"], serde_json::json!([]));
-    assert_eq!(rows[0]["thread"], serde_json::Value::Null);
+    assert!(rows[0].get("thread").is_none(), "v8 rows carry no thread");
     let raw = plain_json.stdout.as_str();
     assert!(
-        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"thread\":null"),
+        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"parent_task_id\""),
         "direct JSON keeps empty detail fields and their contract order: {raw}"
     );
 
@@ -1675,19 +1543,6 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
         assert!(output.stdout.is_empty());
         assert!(output.stderr.contains("usage: tsk list"));
     }
-    let threaded = list(&[
-        "tsk".into(),
-        "list".into(),
-        task.to_string(),
-        "--thread".into(),
-        "release".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(threaded.code, 2, "task id with --thread is usage");
-    assert!(threaded.stdout.is_empty());
-    assert!(threaded.stderr.contains("usage: tsk list"));
-
     let invalid = list(&[
         "tsk".into(),
         "list".into(),
@@ -1698,121 +1553,6 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
     assert_eq!(invalid.code, 2);
     assert!(invalid.stdout.is_empty());
     assert!(invalid.stderr.contains("invalid task id"));
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn list_thread_filters_after_scope_selection() {
-    let _env = env_lock();
-    let dir = temp_state_dir("thread-filter");
-    let mut state = DomainState::new();
-    create_task_with_thread(
-        &mut state,
-        "selected thread",
-        TaskScope::Project {
-            path: "/projects/selected".into(),
-        },
-        HumanStatus::Todo,
-        Some("release"),
-    );
-    create_task_with_thread(
-        &mut state,
-        "selected other thread",
-        TaskScope::Project {
-            path: "/projects/selected".into(),
-        },
-        HumanStatus::Todo,
-        Some("ops"),
-    );
-    create_task_with_thread(
-        &mut state,
-        "other scope same thread",
-        TaskScope::Project {
-            path: "/projects/other".into(),
-        },
-        HumanStatus::Todo,
-        Some("release"),
-    );
-    TaskStore::new(&dir).save(&state).expect("seed store");
-
-    let scoped = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--project".into(),
-        "selected".into(),
-        "--thread".into(),
-        "Release".into(),
-        "--json".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-
-    assert_eq!(scoped.code, 0, "{}", scoped.stderr);
-    assert_eq!(
-        serde_json::from_str::<Vec<serde_json::Value>>(&scoped.stdout)
-            .expect("scoped JSON rows")
-            .iter()
-            .map(|row| row["title"].as_str().expect("title"))
-            .collect::<Vec<_>>(),
-        vec!["selected thread"]
-    );
-
-    let all = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--all".into(),
-        "--thread=RELEASE".into(),
-        "--json".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(all.code, 0, "{}", all.stderr);
-    assert_eq!(
-        serde_json::from_str::<Vec<serde_json::Value>>(&all.stdout)
-            .expect("all JSON rows")
-            .iter()
-            .map(|row| row["title"].as_str().expect("title"))
-            .collect::<Vec<_>>(),
-        vec!["selected thread", "other scope same thread"]
-    );
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn json_rows_always_carry_thread_field() {
-    let _env = env_lock();
-    let dir = temp_state_dir("thread-json");
-    let mut state = DomainState::new();
-    create_task_with_thread(
-        &mut state,
-        "threaded",
-        TaskScope::Global,
-        HumanStatus::Todo,
-        Some("release"),
-    );
-    create_task(
-        &mut state,
-        "unthreaded",
-        TaskScope::Global,
-        HumanStatus::Todo,
-    );
-    TaskStore::new(&dir).save(&state).expect("seed store");
-
-    let output = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--desk".into(),
-        "--json".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-
-    assert_eq!(output.code, 0, "{}", output.stderr);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&output.stdout).expect("JSON rows");
-    assert_eq!(rows[0]["thread"], "release");
-    assert!(rows[1].get("thread").expect("unthreaded field").is_null());
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1883,14 +1623,13 @@ fn list_displayed_or_bare_number_finds_the_task_from_another_cwd() {
     let _context = EnvironmentGuard::context_for(&invocation_repo);
     let dir = temp_state_dir("number-other-cwd");
     let mut state = DomainState::new();
-    let task = create_task_with_thread(
+    let task = create_task_returning_id(
         &mut state,
         "other project task",
         TaskScope::Project {
             path: "/projects/other".into(),
         },
         HumanStatus::Todo,
-        None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
     let number = TaskStore::new(&dir)
@@ -1934,7 +1673,6 @@ fn list_bare_digits_finds_done_and_deleted_tasks() {
             Some("done notes".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            Some("done-thread".into()),
         )
         .expect("create done task");
     state
@@ -1947,7 +1685,6 @@ fn list_bare_digits_finds_done_and_deleted_tasks() {
             Some("deleted notes".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            Some("deleted-thread".into()),
         )
         .expect("create deleted task");
     state
@@ -1974,12 +1711,7 @@ fn list_bare_digits_finds_done_and_deleted_tasks() {
         assert_eq!(human.code, 0, "{}", human.stderr);
         let notes_at = human.stdout.find(&format!("   {label} notes")).unwrap();
         let step_at = human.stdout.find(&format!("   [ ] {label} step")).unwrap();
-        let thread_at = human.stdout.find(&format!("   #{label}-thread")).unwrap();
-        assert!(
-            notes_at < step_at && step_at < thread_at,
-            "{}",
-            human.stdout
-        );
+        assert!(notes_at < step_at, "{}", human.stdout);
 
         let mut json_args = args.to_vec();
         json_args.insert(3, "--json".into());
@@ -1989,7 +1721,6 @@ fn list_bare_digits_finds_done_and_deleted_tasks() {
         assert_eq!(rows[0]["id"], task.to_string());
         assert_eq!(rows[0]["notes"], format!("{label} notes"));
         assert_eq!(rows[0]["steps"][0]["text"], format!("{label} step"));
-        assert_eq!(rows[0]["thread"], format!("{label}-thread"));
     }
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1998,12 +1729,11 @@ fn list_bare_digits_finds_done_and_deleted_tasks() {
 fn list_uuid_still_finds_the_task() {
     let dir = temp_state_dir("uuid-address");
     let mut state = DomainState::new();
-    let task = create_task_with_thread(
+    let task = create_task_returning_id(
         &mut state,
         "uuid target",
         TaskScope::Global,
         HumanStatus::Todo,
-        None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
 
@@ -2027,12 +1757,11 @@ fn list_uuid_still_finds_the_task() {
 fn list_bare_digits_with_scope_or_status_flags_is_usage() {
     let dir = temp_state_dir("number-filter-usage");
     let mut state = DomainState::new();
-    let task = create_task_with_thread(
+    let task = create_task_returning_id(
         &mut state,
         "number target",
         TaskScope::Global,
         HumanStatus::Todo,
-        None,
     );
     TaskStore::new(&dir).save(&state).expect("seed store");
     let number = TaskStore::new(&dir)
@@ -2044,7 +1773,7 @@ fn list_bare_digits_with_scope_or_status_flags_is_usage() {
         .expect("task number")
         .to_string();
 
-    for flag in ["--desk", "--all", "--thread=release", "--done", "--deleted"] {
+    for flag in ["--desk", "--all", "--done", "--deleted"] {
         let output = list(&[
             "tsk".into(),
             "list".into(),
@@ -2088,91 +1817,6 @@ fn list_unknown_number_matches_unknown_uuid_refusal() {
 }
 
 #[test]
-fn human_output_appends_thread_marker_iff_row_threaded_snapshots() {
-    let _env = env_lock();
-    let repo = project_repo("thread-human");
-    let _context = EnvironmentGuard::context_for(&repo);
-    let dir = temp_state_dir("thread-human");
-    let project = TaskScope::Project {
-        path: repo.to_string_lossy().into_owned(),
-    };
-    let mut state = DomainState::new();
-    create_task_with_thread(
-        &mut state,
-        "scoped threaded",
-        project.clone(),
-        HumanStatus::Todo,
-        Some("alpha"),
-    );
-    create_task(
-        &mut state,
-        "scoped unthreaded",
-        project.clone(),
-        HumanStatus::Todo,
-    );
-    create_task_with_thread(
-        &mut state,
-        "global threaded",
-        TaskScope::Global,
-        HumanStatus::Todo,
-        Some("ops"),
-    );
-    let step = create_task_with_thread(
-        &mut state,
-        "step threaded",
-        TaskScope::Global,
-        HumanStatus::Done,
-        Some("steps"),
-    );
-    state.add_step(step, "Keep this line").expect("add step");
-    TaskStore::new(&dir).save(&state).expect("seed store");
-    let project_name = repo
-        .file_name()
-        .and_then(|name| name.to_str())
-        .expect("project basename");
-
-    let scoped = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(
-        scoped.stdout,
-        "TODO\n - 1 scoped threaded #alpha\n - 2 scoped unthreaded\n"
-    );
-
-    let all = list(&[
-        "tsk".into(),
-        "list".into(),
-        "--all".into(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(
-        all.stdout,
-        format!(
-            "TODO\n  {project_name}\n    - 1 scoped threaded #alpha\n    - 2 scoped unthreaded\n  desk\n    - 3 global threaded #ops\n"
-        )
-    );
-
-    let single = list(&[
-        "tsk".into(),
-        "list".into(),
-        step.to_string(),
-        "--state-dir".into(),
-        state_dir_arg(&dir),
-    ]);
-    assert_eq!(
-        single.stdout,
-        "DONE\n - 4 step threaded\n   [ ] Keep this line\n\n   #steps\n"
-    );
-
-    let _ = std::fs::remove_dir_all(repo);
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn default_list_views_exclude_archived_tasks_and_tasks_of_archived_projects() {
     let dir = temp_state_dir("archived-excluded");
     let mut state = DomainState::new();
@@ -2208,7 +1852,6 @@ fn default_list_views_exclude_archived_tasks_and_tasks_of_archived_projects() {
                 path: "/repos/gone".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     state
@@ -2383,7 +2026,6 @@ fn list_archived_marks_task_and_project_rows_once_per_id() {
                 path: "/repos/gone".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     state.archive_task(both_id).expect("archive it");
@@ -2397,7 +2039,6 @@ fn list_archived_marks_task_and_project_rows_once_per_id() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create");
     state.archive_task(deleted_id).expect("archive it");
@@ -2637,13 +2278,7 @@ fn list_ready_puts_the_oldest_pick_first_like_the_board() {
     let mut state = DomainState::new();
     for title in ["first captured", "second captured"] {
         state
-            .create(
-                title,
-                None,
-                TaskScope::Global,
-                ProvenanceOrigin::Manual,
-                None,
-            )
+            .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
             .expect("create task");
     }
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -2669,7 +2304,6 @@ fn list_orders_each_status_group_like_its_board_section() {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
     }
@@ -2723,7 +2357,6 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
                 None,
                 scope,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create task");
     }

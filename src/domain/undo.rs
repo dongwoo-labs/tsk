@@ -121,7 +121,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("valid title creates a task")
     }
@@ -152,7 +151,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Manual,
-                    None,
                 )
                 .expect("create");
             state.complete(id).expect("complete");
@@ -198,7 +196,6 @@ mod tests {
                 "edited after the undoable action",
                 None,
                 TaskScope::Global,
-                None,
             )
             .expect("edit moves the revision on");
         state.complete(live_target).expect("complete");
@@ -230,7 +227,7 @@ mod tests {
         let id = create_sample(&mut state);
         state.complete(id).expect("complete");
         state
-            .edit(id, "changed", None, TaskScope::Global, None)
+            .edit(id, "changed", None, TaskScope::Global)
             .expect("edit");
 
         let error = state.undo().expect_err("a stale top entry refuses");
@@ -256,7 +253,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Manual,
-                    None,
                 )
                 .expect("create");
             state.complete(id).expect("complete");
@@ -264,7 +260,7 @@ mod tests {
         }
         // Task 25's entry goes stale: 51 entries, one stale in the middle.
         state
-            .edit(ids[25], "moved on", None, TaskScope::Global, None)
+            .edit(ids[25], "moved on", None, TaskScope::Global)
             .expect("edit");
 
         store.save(&state).expect("save");
@@ -298,7 +294,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Manual,
-                    None,
                 )
                 .expect("create");
             disk_side.complete(id).expect("complete");
@@ -314,7 +309,6 @@ mod tests {
                     None,
                     TaskScope::Global,
                     ProvenanceOrigin::Manual,
-                    None,
                 )
                 .expect("create");
             local.complete(id).expect("complete");
@@ -411,7 +405,7 @@ mod tests {
             .complete_batch(&[first, second])
             .expect("bulk complete");
         state
-            .edit(second, "changed", None, TaskScope::Global, None)
+            .edit(second, "changed", None, TaskScope::Global)
             .expect("make the second child stale");
         let before = serde_json::to_value(&state).expect("snapshot");
 
@@ -435,7 +429,7 @@ mod tests {
             .complete_batch(&[first, second])
             .expect("bulk complete");
         state
-            .edit(second, "changed", None, TaskScope::Global, None)
+            .edit(second, "changed", None, TaskScope::Global)
             .expect("make one child stale");
 
         store.save(&state).expect("save prunes stale batch");

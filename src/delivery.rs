@@ -191,7 +191,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("task");
         state.complete(done).expect("complete");

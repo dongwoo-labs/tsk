@@ -31,6 +31,9 @@ run `tsk` in your terminal.
 Use `tsk add -t "Implement parser" --parent T10` to create a child task, and
 `tsk edit T12 --parent T11` or `--no-parent` to change or clear its parent.
 `tsk list T10` shows direct children and their calculated Done/total count.
+On the board, press `P` on a task page to choose its parent and `U` to clear it;
+the page lists the direct children, and their parent's row shows `⊂done/total`.
+Press `Enter` on the parent or a child line to open it, and `Esc` to go back.
 Relationships never complete or delete other tasks. See the [CLI guide](https://gettsk.sh/docs/cli/#edit).
 
 ### Coming soon
@@ -97,6 +100,9 @@ shareable summaries and references; full text and append-only answers stay in th
 Git-excluded `questions-private/` directory. Answers use expected-revision CAS and are
 saved before identifier-only Herdr notification. Agent replies do not grant deployment
 or irreversible-change approval. Same-OS-account UI impersonation is not prevented.
+`tsk route Q1 --file route.json` sets who a question is for (`audience` `user` or
+`lead`). On that board, press `2` for the questions tab: approve, answer, correct, or turn
+a finding into a task, and see what waits on you above the board's sections.
 [Question JSON and retry contract](https://gettsk.sh/docs/cli/#task-linked-questions).
 
 ### Open the board
@@ -104,7 +110,7 @@ or irreversible-change approval. Same-OS-account UI impersonation is not prevent
 Run `tsk`, or press **prefix+t** in Herdr.
 
 **No project setup needed.** Inside Git, tsk opens the repository project. Outside
-Git, it opens your desk and keeps the current directory ready on the project tab.
+Git, it opens every task: your desk and all your projects.
 
 ### Add a task
 
@@ -121,7 +127,7 @@ the bug.”
 
 ## Usage
 
-Mouse or keyboard, your choice. Click tabs to switch views, double-click a task
+Mouse or keyboard, your choice. Click the scope and sort controls to change what the board shows, double-click a task
 to open it, and scroll through your board. The actions along the bottom are
 clickable too, including adding a task and changing its status. `Shift+M` marks
 several tasks so one action covers them all.
@@ -134,13 +140,14 @@ Prefer the keyboard? A few keys for everyday use:
 | `Shift+M` | Enter or leave multi-select |
 | `Shift+↑` / `Shift+↓` | In multi-select, mark the current task, then move |
 | `Space` or click | In multi-select, mark or unmark a task |
-| `→` / `←` or `l` / `h` | Peek at a task and close the peek in narrow panes; move between board and task views in wide panes |
+| `→` / `←` or `l` / `h` | In wide panes, move between the task list and the task detail beside it |
+| `S` | Order tasks by number or group them by project |
 | `+` | Add a task |
 | `Enter` | Open the selected task |
 | `ctrl+s` | Set a Todo task to Doing |
 | `ctrl+o` | Set Todo, including reopening Done |
 | `ctrl+d` | Mark the selected task done |
-| `p` | Switch projects |
+| `p` | Show all tasks, your desk, or one project |
 | `d` | Show or hide completed tasks |
 | `?` | Show all shortcuts |
 

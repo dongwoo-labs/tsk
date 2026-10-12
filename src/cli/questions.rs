@@ -5,7 +5,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{parser::parse_task_address, CliOutput};
-use crate::domain::{AnswerDraft, AnswerOrigin, QuestionDraft};
+use crate::domain::{AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, RouteDraft};
 use crate::store::{notify_question, QuestionDurability, QuestionStore, TaskStore};
 
 pub fn help() -> CliOutput {
@@ -134,6 +134,14 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
             if draft.origin == AnswerOrigin::UserUi {
                 return Err(("UserUi answers are not a CLI capability".into(), 1));
             }
+            // Creating a task from a finding happens in the board, under the same lock as
+            // its answer. The CLI may record a close, never a creation it did not do.
+            if matches!(
+                draft.action,
+                Some(FindingAction::CreateAndRun | FindingAction::CreateOnly)
+            ) {
+                return Err(("finding task creation is a board action".into(), 1));
+            }
             let saved = store
                 .answer(id, draft)
                 .map_err(|error| (error.to_string(), 1))?;
@@ -147,6 +155,22 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
                 &serde_json::json!({"saved": saved, "notification": notification}),
                 code,
             ))
+        }
+        "route" => {
+            let operand = operand.ok_or_else(|| ("Q number or UUID required".into(), 2))?;
+            let id = resolve(&store, &operand, None)?;
+            let draft: RouteDraft = serde_json::from_slice(&read_input()?)
+                .map_err(|_| ("invalid route JSON".into(), 2))?;
+            // A route changes who acts; it sends no prompt of its own.
+            let saved = store
+                .route(id, draft)
+                .map_err(|error| (error.to_string(), 1))?;
+            let code = if saved.durability == QuestionDurability::Uncertain {
+                1
+            } else {
+                0
+            };
+            Ok(json(&serde_json::json!({"saved": saved}), code))
         }
         "questions" => {
             if file.is_some() {
@@ -163,7 +187,7 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
                 Ok(json(&records, 0))
             }
         }
-        _ => Err(("expected ask, answer, or questions".into(), 2)),
+        _ => Err(("expected ask, answer, route, or questions".into(), 2)),
     }
 }
 

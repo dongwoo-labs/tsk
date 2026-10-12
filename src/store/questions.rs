@@ -39,6 +39,8 @@ pub enum QuestionError {
     /// Save failed and readback could not establish whether the reference committed.
     CommitUnknown,
     StoreUnavailable,
+    /// A finding's history links several distinct created tasks.
+    LinkAmbiguous,
 }
 
 impl std::fmt::Display for QuestionError {
@@ -61,6 +63,9 @@ impl std::fmt::Display for QuestionError {
             Self::NotSaved => "question was not saved; retry with the same expected revision",
             Self::CommitUnknown => "question commit is unknown; read back before retrying",
             Self::StoreUnavailable => "question store is unavailable",
+            Self::LinkAmbiguous => {
+                "finding history links several created tasks; nothing was created"
+            }
         })
     }
 }
@@ -218,6 +223,7 @@ impl QuestionStore {
             draft,
             created_at: now(),
             answers: Vec::new(),
+            routes: Vec::new(),
         };
         state.questions.push(reference);
         self.commit(&mut state, record)
@@ -270,6 +276,53 @@ impl QuestionStore {
         })
     }
 
+    /// Change only the audience (and optionally the run-request address) under the same
+    /// Q-ID. The text, terms, answers, and history move unchanged into a new immutable
+    /// revision; an answered question stays answered.
+    pub fn route(&self, id: Uuid, draft: RouteDraft) -> Result<QuestionSaveResult, QuestionError> {
+        if draft
+            .lead_recipient
+            .as_deref()
+            .is_some_and(|name| !agent_name(name))
+        {
+            return Err(QuestionError::InvalidInput);
+        }
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let mut state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let index = state
+            .questions()
+            .iter()
+            .position(|reference| reference.id == id)
+            .ok_or(QuestionError::UnknownQuestion)?;
+        let mut record = self.read_private(&state.questions()[index])?;
+        if draft.expected_revision != record.reference.revision {
+            return Err(QuestionError::StaleRevision);
+        }
+        record.draft.audience = Some(draft.audience);
+        if let Some(name) = draft.lead_recipient.clone() {
+            record.draft.lead_recipient = Some(name);
+        }
+        // Answers keep their own revisions; the route is its own history event and
+        // becomes the head revision the shared reference points at.
+        let revision = Uuid::new_v4();
+        record.routes.push(QuestionRoute {
+            revision,
+            after_answers: record.answers.len(),
+            audience: draft.audience,
+            lead_recipient: draft.lead_recipient,
+            at: now(),
+        });
+        record.reference.revision = revision;
+        state.questions[index] = record.reference.clone();
+        self.commit(&mut state, record)
+    }
+
     /// Terms cannot be silently edited. Ask a new Q for changed approval terms.
     pub fn answer(
         &self,
@@ -317,19 +370,31 @@ impl QuestionStore {
             _ => {}
         }
         validate_answer(&record, &draft)?;
-        let existing_ids: std::collections::BTreeSet<Uuid> =
-            state.tasks().iter().map(|task| task.id).collect();
-        let created_task_id = create(&mut state).map_err(|_| QuestionError::InvalidInput)?;
-        if let Some(task_id) = created_task_id {
-            if record.draft.kind != QuestionKind::Finding
-                || existing_ids.contains(&task_id)
-                || state
-                    .get(task_id)
-                    .is_none_or(|task| task.is_notice() || task.soft_deleted)
-            {
-                return Err(QuestionError::InvalidInput);
-            }
+        if draft.action.is_some() && record.draft.kind != QuestionKind::Finding {
+            return Err(QuestionError::InvalidInput);
         }
+        // The whole preserved history decides the link, so a correction or close keeps
+        // it and the creation closure never runs twice for one finding.
+        let created_task_id = match record.finding_link() {
+            FindingLink::One(existing) => Some(existing),
+            FindingLink::Ambiguous => return Err(QuestionError::LinkAmbiguous),
+            FindingLink::None => {
+                let existing_ids: std::collections::BTreeSet<Uuid> =
+                    state.tasks().iter().map(|task| task.id).collect();
+                let created = create(&mut state).map_err(|_| QuestionError::InvalidInput)?;
+                if let Some(task_id) = created {
+                    if record.draft.kind != QuestionKind::Finding
+                        || existing_ids.contains(&task_id)
+                        || state
+                            .get(task_id)
+                            .is_none_or(|task| task.is_notice() || task.soft_deleted)
+                    {
+                        return Err(QuestionError::InvalidInput);
+                    }
+                }
+                created
+            }
+        };
         state.assign_numbers_for_persistence();
         let revision = Uuid::new_v4();
         record.answers.push(QuestionAnswer {
@@ -343,6 +408,7 @@ impl QuestionStore {
             approval: if draft.approve { draft.approval } else { None },
             user_chat: draft.user_chat,
             source: draft.source,
+            action: draft.action,
         });
         record.reference.revision = revision;
         state.questions[index] = record.reference.clone();
@@ -376,9 +442,8 @@ impl QuestionStore {
             || record.draft.kind != reference.kind
             || record.draft.summary != reference.summary
             || record
-                .answers
-                .last()
-                .is_some_and(|answer| answer.revision != reference.revision)
+                .head_revision()
+                .is_some_and(|revision| revision != reference.revision)
         {
             return Err(QuestionError::PrivateRecordUnavailable);
         }
@@ -508,7 +573,13 @@ fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
     {
         return Err(QuestionError::InvalidInput);
     }
-    if !agent_name(&draft.origin_thread) || !agent_name(&draft.recipient) {
+    if !agent_name(&draft.origin_thread)
+        || !agent_name(&draft.recipient)
+        || draft
+            .lead_recipient
+            .as_deref()
+            .is_some_and(|name| !agent_name(name))
+    {
         return Err(QuestionError::InvalidInput);
     }
     match draft.kind {

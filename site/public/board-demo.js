@@ -2,505 +2,26 @@ import { TaskSteps } from "./task-steps.js";
 import { wrapText } from "./board-wrap.js";
 import { parseCapture } from "./capture.js";
 
+// The landing page's board: sample data only, disconnected from any store, Herdr, or Lead.
+// It follows the app's screens and keys, except that status verbs are bare letters
+// (s doing, o todo, d done, x delete, u undo, f archive) because browsers keep the
+// control chords. Nothing here is saved, sent, or approved.
 (() => {
   const root = document.getElementById("tsk-demo");
   const frame = document.getElementById("board-demo");
   if (!root || !frame) return;
 
   const WIDE_SPLIT_MIN_COLUMNS = 110;
+  const GLYPH = { todo: "○", doing: "●", done: "✓" };
 
-  const GLYPH = {
-    todo: "○",
-    doing: "●",
-    done: "✓",
-  };
-
-  const TABS = [
-    ["desk", "desk"],
-    ["project", "selected project"],
-    ["projects", "projects"],
-  ];
   // Optional fixture data is supplied only by the local parity harness.
   const fixture = JSON.parse(
     document.getElementById("tsk-demo-fixture")?.textContent || "null",
   );
   const clock = () => fixture?.now ?? Date.now();
   const launchProject = () => fixture?.selectedProject || "launchpad";
-  const isProjectsThreadView = () =>
-    state.tab === "projects" && state.projectView !== null;
   const NOW = clock();
   const MIN = 60 * 1000;
-  const HOUR = 60 * MIN;
-  const DAY = 24 * HOUR;
-
-  const seed = () => {
-    let n = 12;
-    const task = (partial) => ({
-      id: `t${n}`,
-      number: n++,
-      notes: "",
-      steps: [],
-      thread: null,
-      project: null,
-      archived: false,
-      createdAt: NOW - 3 * MIN,
-      updatedAt: NOW - 3 * MIN,
-      ...partial,
-    });
-    return [
-      task({
-        title: "Rotate refresh tokens on every use",
-        status: "doing",
-        project: "launchpad",
-        thread: "auth",
-        notes:
-          "Store a hash of each refresh token and revoke its token family if an old token is reused.",
-        steps: [
-          {
-            id: "sample-0-0",
-            text: "Add token-family storage",
-            done: true,
-          },
-          {
-            id: "sample-0-1",
-            text: "Rotate tokens in the refresh endpoint",
-            done: false,
-          },
-          {
-            id: "sample-0-2",
-            text: "Test replay and expiry",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Make webhook delivery idempotent",
-        status: "todo",
-        project: "launchpad",
-        thread: "api",
-        notes:
-          "Retries can deliver the same event twice. Deduplicate by event ID before applying side effects.",
-        steps: [
-          {
-            id: "sample-1-0",
-            text: "Reproduce duplicate delivery",
-            done: false,
-          },
-          {
-            id: "sample-1-1",
-            text: "Persist processed event IDs",
-            done: false,
-          },
-          {
-            id: "sample-1-2",
-            text: "Test concurrent retries",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Investigate slow integration tests",
-        status: "todo",
-        project: null,
-        thread: null,
-        notes:
-          "The API suite takes twelve minutes in CI. Measure where the time goes before changing the runner.",
-        steps: [
-          {
-            id: "sample-2-0",
-            text: "Capture per-test timings",
-            done: false,
-          },
-          {
-            id: "sample-2-1",
-            text: "Find repeated database setup",
-            done: false,
-          },
-          {
-            id: "sample-2-2",
-            text: "Compare the next CI run",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Unblock OIDC login in staging",
-        status: "doing",
-        project: "launchpad",
-        thread: "auth",
-        notes:
-          "Waiting for the identity provider's staging client registration. The callback handler is ready.",
-        steps: [
-          {
-            id: "sample-3-0",
-            text: "Verify the redirect URI",
-            done: true,
-          },
-          {
-            id: "sample-3-1",
-            text: "Register the staging client",
-            done: false,
-          },
-          {
-            id: "sample-3-2",
-            text: "Run the end-to-end login test",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Review API key scope checks",
-        status: "doing",
-        project: "launchpad",
-        thread: "auth",
-        notes:
-          "The middleware now checks scopes before routing. Review the denial paths and ensure logs never include credentials.",
-        steps: [
-          {
-            id: "sample-4-0",
-            text: "Add scope middleware",
-            done: true,
-          },
-          {
-            id: "sample-4-1",
-            text: "Test missing and insufficient scopes",
-            done: false,
-          },
-          {
-            id: "sample-4-2",
-            text: "Review the audit log fields",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Generate the TypeScript API client",
-        status: "doing",
-        project: "website",
-        thread: "api",
-        notes:
-          "Waiting for the pagination schema to be finalized before generating the client used by the console.",
-        steps: [
-          {
-            id: "sample-5-0",
-            text: "Validate the OpenAPI schema",
-            done: true,
-          },
-          {
-            id: "sample-5-1",
-            text: "Generate typed request methods",
-            done: false,
-          },
-          {
-            id: "sample-5-2",
-            text: "Run the client against staging",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Review error states in the API console",
-        status: "doing",
-        project: "website",
-        thread: "api",
-        notes:
-          "Check how the console handles expired sessions, rate limits, and server errors without losing request input.",
-        steps: [
-          {
-            id: "sample-6-0",
-            text: "Handle 401 and 429 responses",
-            done: true,
-          },
-          {
-            id: "sample-6-1",
-            text: "Preserve the request body on failure",
-            done: false,
-          },
-          {
-            id: "sample-6-2",
-            text: "Check retry and loading states",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Add cursor pagination to the events endpoint",
-        status: "todo",
-        project: "launchpad",
-        thread: "api",
-        notes:
-          "Use a stable cursor for events with matching timestamps. Keep the response contract backwards compatible.",
-        steps: [
-          {
-            id: "sample-7-0",
-            text: "Add the cursor query",
-            done: false,
-          },
-          {
-            id: "sample-7-1",
-            text: "Cover equal-timestamp boundaries",
-            done: false,
-          },
-          {
-            id: "sample-7-2",
-            text: "Document next-page tokens",
-            done: false,
-          },
-        ],
-      }),
-      task({
-        title: "Add a health check for the worker pool",
-        status: "done",
-        project: "launchpad",
-        thread: "reliability",
-        notes:
-          "Readiness now fails when workers stop consuming jobs; liveness stays independent.",
-        steps: [
-          {
-            id: "sample-8-0",
-            text: "Expose readiness and liveness",
-            done: true,
-          },
-          {
-            id: "sample-8-1",
-            text: "Test a stalled worker",
-            done: true,
-          },
-        ],
-      }),
-      task({
-        title: "Fix the console build cache",
-        status: "done",
-        project: "website",
-        thread: "tooling",
-        notes:
-          "Cache dependencies by lockfile and runtime version so CI does not reuse incompatible artifacts.",
-        steps: [
-          {
-            id: "sample-9-0",
-            text: "Update the cache key",
-            done: true,
-          },
-          {
-            id: "sample-9-1",
-            text: "Verify a clean CI build",
-            done: true,
-          },
-        ],
-      }),
-      task({
-        title: "Prototype a GraphQL gateway",
-        status: "todo",
-        project: "launchpad",
-        thread: "api",
-        notes:
-          "Keep the prototype for reference while the REST API stabilizes.",
-        steps: [
-          {
-            id: "sample-10-0",
-            text: "Map the existing endpoints",
-            done: false,
-          },
-          {
-            id: "sample-10-1",
-            text: "Measure query overhead",
-            done: false,
-          },
-        ],
-        archived: true,
-      }),
-      task({
-        title: "Plan the support handoff",
-        status: "todo",
-        thread: "triage",
-        notes:
-          "Pick the owner, escalation path, and first response expectations before the pilot opens.",
-      }),
-      task({
-        title: "Clean up stale local branches",
-        status: "todo",
-        notes:
-          "Keep only the branches needed for the release train and document anything retained.",
-      }),
-      task({
-        title: "Sort feedback from the pilot",
-        status: "todo",
-        thread: "triage",
-        notes:
-          "Group feedback by workflow before deciding which issues to pick next.",
-      }),
-      task({
-        title: "Record the retry runbook",
-        status: "todo",
-        notes:
-          "Capture the safe retry steps while the incident details are still fresh.",
-      }),
-      task({
-        title: "Add audit events for admin changes",
-        status: "todo",
-        project: "launchpad",
-        thread: "ops",
-        notes: "Record actor, target, and result for each privileged change.",
-      }),
-      task({
-        title: "Trace worker queue saturation",
-        status: "todo",
-        project: "launchpad",
-        thread: "ops",
-        notes:
-          "Measure queue depth and worker lag before choosing a scaling threshold.",
-      }),
-      task({
-        title: "Document regional failover checks",
-        status: "todo",
-        project: "launchpad",
-        thread: "ops",
-        notes:
-          "Write the operator checks that confirm a region can take traffic safely.",
-      }),
-    ];
-  };
-
-  const state = {
-    tasks: fixture ? structuredClone(fixture.tasks) : seed(),
-    tab: "desk",
-    // The focused scope is transient, while this is the project selected by tab 2.
-    selectedProject: launchProject(),
-    focusProject: null,
-    searchQuery: "",
-    searchPinned: false,
-    threadFilter: null,
-    projectView: null,
-    filterI: 0,
-    collapsed: new Set(),
-    selectedId: "t1",
-    markMode: false,
-    markedIds: new Set(),
-    pendingDelete: null,
-    pendingDeleteBulk: false,
-    message: "",
-    peekId: null,
-    flashId: null,
-    copyNotice: "",
-    drawer: false,
-    archivedOpen: false,
-    inboxOpen: true,
-    overlay: null,
-    draft: "",
-    paletteQ: "",
-    paletteI: 0,
-    helpQ: "",
-    pickerI: 0,
-    editField: null,
-    editDraft: "",
-    quickExpanded: false,
-    capture: null,
-    quickStage: null,
-    undo: null,
-    refuse: "",
-    quickOwner: "outer",
-    nextId: 20,
-    nextNumber: 22,
-    // Wide stage slider: board · split · rail · page. Focus is the stage.
-    stage: "board",
-    stageOrigin: null,
-  };
-
-  const steps = new TaskSteps();
-  const previewSteps = new TaskSteps();
-  const preview = {
-    project: null,
-    selectedId: null,
-    markMode: false,
-    markedIds: new Set(),
-    pendingDelete: null,
-    pendingDeleteBulk: false,
-    threadFilter: null,
-    peekId: null,
-    drawer: false,
-    archivedOpen: false,
-    page: false,
-    editField: null,
-    editDraft: "",
-    undo: null,
-    lastClick: 0,
-    message: "",
-    searchQuery: "",
-    searchPinned: false,
-  };
-
-  function projectsOverview() {
-    return (
-      state.tab === "projects" &&
-      state.projectView === null &&
-      !state.focusProject
-    );
-  }
-  function projectsPreviewActive() {
-    return (
-      projectsOverview() &&
-      isWideSplit() &&
-      ["split", "rail"].includes(state.stage)
-    );
-  }
-  function projectsPreviewFocused() {
-    return projectsPreviewActive() && state.stage === "rail";
-  }
-  function projectsPreviewPage() {
-    return projectsPreviewFocused() && preview.page;
-  }
-  const TASK_STAGES = ["rail", "page"];
-  function taskFocus() {
-    return !projectsOverview() && TASK_STAGES.includes(state.stage);
-  }
-  function stageRight() {
-    if (projectsOverview()) {
-      if (state.stage === "board") openProjectPreview();
-      else if (state.stage === "split") state.stage = "rail";
-      return;
-    }
-    if (!state.selectedId) return;
-    if (state.stage === "board") state.stage = "split";
-    else if (state.stage === "split") state.stage = "rail";
-    else if (state.stage === "rail") {
-      state.stageOrigin = "rail";
-      state.stage = "page";
-    }
-  }
-  function stageLeft() {
-    if (projectsOverview()) {
-      if (state.stage === "rail") state.stage = "split";
-      else if (state.stage === "split") {
-        if (!previewHasUnsavedWork()) dropProjectPreview();
-        state.stage = "board";
-      }
-      return;
-    }
-    if (state.stage === "split") state.stage = "board";
-    else if (state.stage === "rail") state.stage = "split";
-    else if (state.stage === "page") {
-      state.stageOrigin = null;
-      state.stage = "rail";
-    }
-  }
-  function openFullPage() {
-    if (!state.selectedId) return;
-    if (state.stage !== "page") state.stageOrigin = state.stage;
-    state.stage = "page";
-  }
-  function leaveTaskPage() {
-    steps.reset();
-    if (state.stage === "page") {
-      state.stage = state.stageOrigin || "board";
-      state.stageOrigin = null;
-    } else if (state.stage === "rail") state.stage = "split";
-  }
-  function enterTaskStage() {
-    if (state.stage === "board") {
-      state.stageOrigin = "board";
-      state.stage = "page";
-    } else if (state.stage === "split") state.stage = "rail";
-  }
 
   const esc = (s) =>
     String(s).replace(
@@ -514,7 +35,6 @@ import { parseCapture } from "./capture.js";
           "'": "&#39;",
         })[c],
     );
-
   const age = (ts) => {
     const secs = Math.max(0, Math.floor((clock() - ts) / 1000));
     if (secs < 60) return `${secs}s`;
@@ -522,51 +42,314 @@ import { parseCapture } from "./capture.js";
     if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
     return `${Math.floor(secs / 86400)}d`;
   };
-
   const projectName = (task) => task.project || "desk";
-  // Same rule as the TUI: status sections show the newest status change first (statusAt
-  // moves only in setStatus, never on an edit or a step), ready and inbox backlogs are FIFO
-  // by pick or capture time. Ties break by createdAt then id so the order is stable.
-  const statusAt = (t) => t.statusAt ?? t.createdAt;
-  const byStatusChange = (a, b) =>
-    statusAt(b) - statusAt(a) ||
-    a.createdAt - b.createdAt ||
-    String(a.id).localeCompare(String(b.id));
-  const byCreated = (a, b) =>
-    a.createdAt - b.createdAt || String(a.id).localeCompare(String(b.id));
-  const taskById = (id) => state.tasks.find((t) => t.id === id);
 
-  function pickerOptions() {
-    const set = new Set();
-    for (const t of state.tasks) if (t.project) set.add(t.project);
-    return ["desk", ...[...set].sort()];
+  // ── sample data ───────────────────────────────────────────────────────────
+  const seed = () => {
+    let n = 12;
+    const task = (partial) => ({
+      id: `t${n}`,
+      number: n++,
+      notes: "",
+      steps: [],
+      project: null,
+      parent: null,
+      archived: false,
+      createdAt: NOW - (40 - n) * MIN,
+      updatedAt: NOW - 3 * MIN,
+      ...partial,
+    });
+    const steps = (prefix, rows) =>
+      rows.map(([text, done], i) => ({ id: `${prefix}-${i}`, text, done }));
+    return [
+      task({
+        title: "Rotate refresh tokens on every use",
+        status: "doing",
+        project: "launchpad",
+        notes:
+          "Store a hash of each refresh token and revoke its token family if an old token is reused.\nLinear: LAUNCH-12 https://linear.app/example/issue/LAUNCH-12\nThread: thr-launch-12 w1 t2 p3",
+        steps: steps("s12", [
+          ["Add token-family storage", true],
+          ["Rotate tokens in the refresh endpoint", false],
+          ["Test replay and expiry", false],
+        ]),
+      }),
+      task({
+        title: "Make webhook delivery idempotent",
+        status: "todo",
+        project: "launchpad",
+        notes:
+          "Retries can deliver the same event twice. Deduplicate by event ID before applying side effects.\nPR: https://github.com/example/launchpad/pull/88",
+        steps: steps("s13", [
+          ["Reproduce duplicate delivery", false],
+          ["Persist processed event IDs", false],
+          ["Test concurrent retries", false],
+        ]),
+      }),
+      task({
+        title: "Investigate slow integration tests",
+        status: "todo",
+        notes:
+          "The API suite takes twelve minutes in CI. Measure where the time goes before changing the runner.",
+        steps: steps("s14", [
+          ["Capture per-test timings", false],
+          ["Find repeated database setup", false],
+        ]),
+      }),
+      task({
+        title: "Unblock OIDC login in staging",
+        status: "doing",
+        project: "launchpad",
+        parent: "t12",
+        notes:
+          "Waiting for the identity provider's staging client registration. The callback handler is ready.",
+        steps: steps("s15", [
+          ["Verify the redirect URI", true],
+          ["Register the staging client", false],
+        ]),
+      }),
+      task({
+        title: "Review API key scope checks",
+        status: "done",
+        project: "launchpad",
+        parent: "t12",
+        notes:
+          "The middleware checks scopes before routing. Logs never include credentials.",
+      }),
+      task({
+        title: "Generate the TypeScript API client",
+        status: "doing",
+        project: "website",
+        notes:
+          "Waiting for the pagination schema before generating the client used by the console.",
+      }),
+      task({
+        title: "Review error states in the API console",
+        status: "todo",
+        project: "website",
+        notes:
+          "Check how the console handles expired sessions, rate limits, and server errors without losing request input.",
+      }),
+      task({
+        title: "Add cursor pagination to the events endpoint",
+        status: "todo",
+        project: "launchpad",
+        notes:
+          "Use a stable cursor for events with matching timestamps. Keep the response contract backwards compatible.",
+      }),
+      task({
+        title: "Add a health check for the worker pool",
+        status: "done",
+        project: "launchpad",
+        notes:
+          "Readiness fails when workers stop consuming jobs; liveness stays independent.",
+      }),
+      task({
+        title: "Prototype a GraphQL gateway",
+        status: "todo",
+        project: "launchpad",
+        notes:
+          "Keep the prototype for reference while the REST API stabilizes.",
+        archived: true,
+      }),
+      task({
+        title: "Plan the support handoff",
+        status: "todo",
+        notes:
+          "Pick the owner, escalation path, and first response expectations before the pilot opens.",
+      }),
+      task({
+        title: "Record the retry runbook",
+        status: "todo",
+        notes:
+          "Capture the safe retry steps while the incident details are still fresh.",
+      }),
+      task({
+        title: "Trace worker queue saturation",
+        status: "todo",
+        project: "launchpad",
+        notes:
+          "Measure queue depth and worker lag before choosing a scaling threshold.",
+      }),
+    ];
+  };
+
+  // Sample agent questions. Nothing here is a real private record or a real target.
+  const seedQuestions = () => {
+    const q = (n, partial) => ({
+      id: `q${n}`,
+      number: n,
+      options: [],
+      recommendation: null,
+      audience: "user",
+      leadRecipient: null,
+      approval: null,
+      finding: null,
+      blocks: null,
+      answers: [],
+      origin: "thr-launch-12",
+      ...partial,
+    });
+    return [
+      q(1, {
+        taskId: "t12",
+        kind: "approval",
+        summary: "Deploy token rotation to staging",
+        text: "The rotation passes its tests. May I deploy it to staging?",
+        blocks: "staging rollout only",
+        approval: {
+          action: "deploy token rotation",
+          target: "staging",
+          scope: "launchpad api",
+          h: "4f2c9a1e7b3d5c8a0f6e2d4b1a9c7e5f3d2b1a08",
+          rollback: "redeploy the previous build",
+        },
+      }),
+      q(2, {
+        taskId: "t13",
+        kind: "question",
+        origin: "thr-launch-13",
+        summary: "Where should processed event IDs live?",
+        text: "The dedupe check needs a store. Which one fits?",
+        options: ["postgres table", "redis set with a TTL"],
+        recommendation: "postgres table",
+      }),
+      q(3, {
+        taskId: "t12",
+        kind: "question",
+        summary: "Name the token-family table",
+        text: "What should the new table be called?",
+      }),
+      q(4, {
+        taskId: "t13",
+        kind: "finding",
+        origin: "thr-launch-13",
+        summary: "Retries skip the dead-letter queue",
+        text: "A failed retry is dropped instead of parked.",
+        leadRecipient: "lead-demo",
+        finding: {
+          kind: "issue",
+          detail: "Events that fail three times are lost.",
+          path: "src/webhooks/retry.ts",
+        },
+      }),
+      q(5, {
+        taskId: "t19",
+        kind: "question",
+        audience: "lead",
+        origin: "thr-launch-19",
+        summary: "Pick a reviewer for the cursor change",
+        text: "Who reviews the pagination change?",
+      }),
+      q(6, {
+        taskId: "t14",
+        kind: "question",
+        audience: null,
+        origin: "thr-ci",
+        summary: "Legacy question without a target",
+        text: "An older record that names no target.",
+      }),
+      q(7, {
+        taskId: "t16",
+        kind: "question",
+        summary: "Log scope denials?",
+        text: "Should denied requests be logged?",
+        answers: [
+          { actor: "user", text: "yes, without the key", action: null },
+        ],
+      }),
+    ];
+  };
+
+  const state = {
+    tasks: fixture ? structuredClone(fixture.tasks) : seed(),
+    // null: no Agent questions on this board (the parity fixture), as on a personal board.
+    questions: fixture ? (fixture.questions ?? null) : seedQuestions(),
+    tab: "board",
+    scope: fixture?.scope ?? launchProject(),
+    sort: "number",
+    searchQuery: "",
+    searchPinned: false,
+    selectedId: null,
+    markMode: false,
+    markedIds: new Set(),
+    pendingDelete: null,
+    pendingDeleteBulk: false,
+    message: "",
+    flashId: null,
+    copyNotice: "",
+    drawer: false,
+    archivedOpen: false,
+    overlay: null,
+    draft: "",
+    paletteQ: "",
+    paletteI: 0,
+    helpQ: "",
+    pickerI: 0,
+    parentQ: "",
+    parentI: 0,
+    // Narrow: the task page owns the screen. Wide: the detail beside the list has focus.
+    page: false,
+    trail: [],
+    edit: null,
+    quickExpanded: false,
+    capture: null,
+    refuse: "",
+    undo: null,
+    nextId: 40,
+    nextNumber: fixture ? 23 : 25,
+    q: {
+      cursor: null,
+      page: null,
+      options: {},
+      check: null,
+      answer: null,
+      correcting: null,
+      report: {},
+      returnTask: null,
+      returnQuestion: null,
+      returnDepth: 0,
+    },
+  };
+  const steps = new TaskSteps();
+
+  // ── geometry ──────────────────────────────────────────────────────────────
+  let renderColumns = null;
+  function terminalColumns() {
+    if (renderColumns !== null) return renderColumns;
+    const style = getComputedStyle(root);
+    const context = document.createElement("canvas").getContext("2d");
+    context.font = `${style.fontSize} ${style.fontFamily}`;
+    const cell = context.measureText("0").width;
+    const padding =
+      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    return Math.round((root.clientWidth - padding) / cell);
   }
+  const isWide = () => terminalColumns() >= WIDE_SPLIT_MIN_COLUMNS;
+  const listColumns = () =>
+    isWide() ? Math.floor(terminalColumns() * 0.4) : terminalColumns();
+  const detailColumns = () =>
+    isWide() ? terminalColumns() - listColumns() - 2 : terminalColumns();
+
+  // ── tasks ─────────────────────────────────────────────────────────────────
+  const taskById = (id) => state.tasks.find((t) => t.id === id);
+  const statusAt = (t) => t.statusAt ?? t.createdAt;
+  const byNumber = (a, b) => (a.number ?? 1e9) - (b.number ?? 1e9);
+  const byStatusChange = (a, b) =>
+    statusAt(b) - statusAt(a) || String(a.id).localeCompare(String(b.id));
+  const children = (task) => state.tasks.filter((t) => t.parent === task.id);
 
   function projectNames() {
-    const names = new Set(
-      state.tasks.filter((t) => t.project && !t.archived).map((t) => t.project),
-    );
-    return [...names].sort((a, b) => {
-      if (a === launchProject()) return -1;
-      if (b === launchProject()) return 1;
-      return a.localeCompare(b);
-    });
+    const names = new Set();
+    for (const t of state.tasks) if (t.project) names.add(t.project);
+    return [...names].sort();
   }
+  const scopeOptions = () => ["all", "desk", ...projectNames()];
 
-  function projectPath(name) {
-    return (
-      state.tasks.find((t) => t.project === name)?.scope?.project?.path ||
-      `/projects/${name}`
-    );
-  }
-  function matchingProjectNames() {
-    const query = state.searchQuery.trim().toLowerCase();
-    return projectNames().filter(
-      (name) =>
-        !query ||
-        name.toLowerCase().includes(query) ||
-        projectPath(name).toLowerCase().includes(query),
-    );
+  function inScope(task) {
+    if (state.scope === "all") return true;
+    if (state.scope === "desk") return !task.project || task.status === "doing";
+    return task.project === state.scope;
   }
 
   function taskMatchesSearch(task, query) {
@@ -576,7 +359,6 @@ import { parseCapture } from "./capture.js";
       task.title,
       task.notes,
       ...(task.steps || []).map((step) => step.text),
-      task.thread,
       `T${task.number}`,
     ]
       .filter(Boolean)
@@ -585,723 +367,531 @@ import { parseCapture } from "./capture.js";
     return words.every((word) => content.includes(word));
   }
 
-  function searchOwner() {
-    return projectsPreviewFocused() ? preview : state;
-  }
-
-  function updateSearchQuery(owner, value) {
-    const previousRows = owner === preview ? previewRows() : buildRows();
-    owner.searchQuery = value;
-    if (owner === preview) ensurePreviewSelection(previewRows(), previousRows);
-    else ensureSelection(buildRows(), previousRows);
-  }
-
-  function pinSearch(owner) {
-    if (!owner.searchQuery.trim()) updateSearchQuery(owner, "");
-    owner.searchPinned = Boolean(owner.searchQuery);
-  }
-
-  function selectedTask() {
-    if (state.quickExpanded && state.quickOwner === "outer")
-      return state.capture;
-    return taskById(state.selectedId) || null;
-  }
-
-  function targetTasks(form = state) {
-    const marked = form.markMode
-      ? [...form.markedIds].map(taskById).filter(Boolean)
-      : [];
-    if (marked.length) return marked;
-    const selected = form === preview ? previewTask() : selectedTask();
-    return selected ? [selected] : [];
-  }
-
-  function clearMarks(form = state) {
-    form.markMode = false;
-    form.markedIds.clear();
-  }
-
-  function toggleMarkMode(form = state) {
-    if (form.markMode) clearMarks(form);
-    else form.markMode = true;
-  }
-
-  function markCurrent(form = state) {
-    const id = form.selectedId;
-    if (id && taskById(id)) form.markedIds.add(id);
-  }
-
-  function toggleMark(form = state) {
-    const id = form.selectedId;
-    if (!id || !taskById(id)) return;
-    if (form.markedIds.has(id)) form.markedIds.delete(id);
-    else form.markedIds.add(id);
-  }
-
-  function previewTask() {
-    if (state.quickExpanded && state.quickOwner === "preview")
-      return state.capture;
-    return taskById(preview.selectedId) || null;
-  }
-
-  function previewProjectTasks() {
-    if (!preview.project) return [];
-    return state.tasks.filter(
-      (task) => task.project === preview.project && !task.archived,
-    );
-  }
-
-  function previewMatchesThread(task) {
-    return (
-      preview.threadFilter === null ||
-      (task.thread || "") === preview.threadFilter
-    );
-  }
-
-  function previewVisibleTasks() {
-    const scoped = previewProjectTasks().filter(previewMatchesThread);
-    const live = scoped.filter((task) =>
-      taskMatchesSearch(task, preview.searchQuery),
-    );
-    const done = preview.drawer
-      ? scoped.filter((task) => taskMatchesSearch(task, preview.searchQuery))
-      : scoped;
-    return {
-      doing: live
-        .filter((task) => task.status === "doing")
-        .sort(byStatusChange),
-      todo: live.filter((task) => task.status === "todo").sort(byCreated),
-      done: done.filter((task) => task.status === "done").sort(byStatusChange),
-    };
-  }
-
-  function previewRows() {
-    const rows = [];
-    const v = previewVisibleTasks();
-    const pushHeader = (label, count) =>
-      rows.push({ kind: "section", label, count, selectable: false });
-    const pushTask = (task, dim = false) =>
-      rows.push({ kind: "task", task, selectable: true, id: task.id, dim });
-    if (v.doing.length) {
-      pushHeader("DOING", v.doing.length);
-      v.doing.forEach((task) => pushTask(task));
-    }
-    if (v.todo.length || !preview.searchQuery.trim())
-      pushHeader("TODO", v.todo.length);
-    v.todo.forEach((task) => pushTask(task));
-    if (preview.drawer) {
-      if (v.done.length) pushHeader("DONE", v.done.length);
-      v.done.forEach((task) => pushTask(task));
-      const archived = state.tasks
-        .filter(
-          (task) =>
-            task.project === preview.project &&
-            task.archived &&
-            previewMatchesThread(task) &&
-            taskMatchesSearch(task, preview.searchQuery),
-        )
-        .sort(byStatusChange);
-      if (archived.length) {
-        rows.push({
-          kind: "archived",
-          label: "archived",
-          count: archived.length,
-          selectable: true,
-          id: "nav:preview-archived",
-        });
-        if (preview.archivedOpen)
-          archived.forEach((task) => pushTask(task, true));
-      }
-    }
-    return rows;
-  }
-
-  function previewFilterOptions() {
-    const tasks = state.tasks.filter(
-      (task) =>
-        task.project === preview.project &&
-        !task.archived &&
-        task.status !== "done",
-    );
-    const names = [
-      ...new Set(tasks.map((task) => task.thread).filter(Boolean)),
-    ].sort(
-      (a, b) =>
-        tasks.filter((task) => task.thread === b).length -
-          tasks.filter((task) => task.thread === a).length ||
-        a.localeCompare(b),
-    );
-    return [
-      { value: null, label: `All tasks  ${tasks.length}` },
-      ...names.map((name) => ({
-        value: name,
-        label: `#${name}  ${tasks.filter((task) => task.thread === name).length}`,
-      })),
-      {
-        value: "",
-        label: `Without a thread  ${tasks.filter((task) => !task.thread).length}`,
-      },
-    ];
-  }
-
-  function previewFilterLabel() {
-    return preview.threadFilter === null
-      ? "all"
-      : preview.threadFilter === ""
-        ? "without a thread"
-        : `#${preview.threadFilter}`;
-  }
-
-  function openPreviewFilter() {
-    if (!projectsPreviewFocused() || previewHasUnsavedWork()) return;
-    state.overlay = "preview-filter";
-    state.filterI = Math.max(
-      0,
-      previewFilterOptions().findIndex(
-        (option) => option.value === preview.threadFilter,
-      ),
-    );
-  }
-
-  function choosePreviewFilter(index) {
-    const option = previewFilterOptions()[index];
-    if (!option) return;
-    clearMarks(preview);
-    preview.threadFilter = option.value;
-    preview.peekId = null;
-    ensurePreviewSelection();
-    state.overlay = null;
-  }
-
-  function renderPreviewFilter() {
-    return `<div class="tsk-box" role="dialog" aria-label="project thread filter"><div class="tsk-box-top"><span class="tsk-box-title">project thread</span><button type="button" class="tsk-box-close" data-close="1">[x]</button></div><div class="tsk-box-body">${previewFilterOptions()
-      .map(
-        (option, index) =>
-          `<div class="tsk-pal-row" data-preview-filter-option="${index}"><span class="${index === state.filterI ? "sel-text" : ""}">${index === state.filterI ? "▸" : " "} ${esc(option.label)}</span></div>`,
-      )
-      .join(
-        "",
-      )}</div><div class="tsk-box-foot">↑↓ move · enter choose · esc close</div></div>`;
-  }
-
-  function previewSelectableIds(rows = previewRows()) {
-    return rows.filter((row) => row.selectable).map((row) => row.id);
-  }
-
-  function ensurePreviewSelection(rows = previewRows(), previousRows = null) {
-    const ids = previewSelectableIds(rows);
-    if (!ids.length) {
-      preview.selectedId = null;
-      return;
-    }
-    if (!ids.includes(preview.selectedId)) {
-      preview.selectedId = nearestVisibleId(
-        preview.selectedId,
-        previousRows ? previewSelectableIds(previousRows) : [],
-        ids,
-      );
-    }
-  }
-
-  function previewHasUnsavedWork() {
-    return Boolean(
-      preview.editField ||
-      previewSteps.dirty ||
-      previewSteps.editor ||
-      (state.overlay === "quick" && state.quickOwner === "preview"),
-    );
-  }
-
-  let renderColumns = null;
-  function terminalColumns() {
-    if (renderColumns !== null) return renderColumns;
-    const style = getComputedStyle(root);
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    context.font = `${style.fontSize} ${style.fontFamily}`;
-    const cell = context.measureText("0").width;
-    const padding =
-      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-    return Math.round((root.clientWidth - padding) / cell);
-  }
-
-  function isWideSplit() {
-    return terminalColumns() >= WIDE_SPLIT_MIN_COLUMNS;
-  }
-
-  function fallbackProject() {
-    if (state.quickOwner === "preview") return preview.project;
-    if (state.focusProject) return state.focusProject;
-    return null;
-  }
-
-  function archivedInScope() {
-    const archived = state.tasks
-      .filter(
-        (t) =>
-          t.archived &&
-          matchesThread(t) &&
-          (!state.drawer || taskMatchesSearch(t, state.searchQuery)),
-      )
-      .sort(byStatusChange);
-    if (state.focusProject || isProjectsThreadView()) {
-      const inP = (t) =>
-        !state.focusProject ||
-        (state.focusProject === "desk"
-          ? !t.project
-          : t.project === state.focusProject);
-      return archived.filter(inP);
-    }
-    return archived;
-  }
-
-  function filterOptions() {
-    const project = state.focusProject;
-    const tasks = state.tasks.filter(
-      (t) =>
-        !t.archived &&
-        t.status !== "done" &&
-        (!project || t.project === project),
-    );
-    const names = [...new Set(tasks.map((t) => t.thread).filter(Boolean))].sort(
-      (a, b) =>
-        tasks.filter((t) => t.thread === b).length -
-          tasks.filter((t) => t.thread === a).length || a.localeCompare(b),
-    );
-    return [
-      {
-        value: null,
-        label: project ? `All tasks  ${tasks.length}` : "Overview",
-      },
-      ...names.map((name) => ({
-        value: name,
-        label: `#${name}  ${tasks.filter((t) => t.thread === name).length}`,
-      })),
-      ...(project
-        ? [
-            {
-              value: "",
-              label: `Without a thread  ${tasks.filter((t) => !t.thread).length}`,
-            },
-          ]
-        : []),
-    ];
-  }
-  function openFilter() {
-    if (steps.dirty || steps.editor || previewHasUnsavedWork()) return;
-    state.overlay = "filter";
-    const value = state.focusProject ? state.threadFilter : state.projectView;
-    state.filterI = Math.max(
-      0,
-      filterOptions().findIndex((o) => o.value === value),
-    );
-  }
-  function chooseFilter(index) {
-    const option = filterOptions()[index];
-    if (!option) return;
-    clearMarks();
-    if (state.focusProject) state.threadFilter = option.value;
-    else {
-      state.projectView = option.value;
-      state.searchQuery = "";
-      state.searchPinned = false;
-    }
-    state.overlay = null;
-    state.peekId = null;
-    state.stage = "board";
-    if (state.tab === "projects") dropProjectPreview();
-  }
-  function renderFilter() {
-    const title = state.focusProject ? "thread filter" : "projects View";
-    return `<div class="tsk-box" role="dialog" aria-label="${title}"><div class="tsk-box-top"><span class="tsk-box-title">${title}</span><button type="button" class="tsk-box-close" data-close="1">[x]</button></div><div class="tsk-box-body">${filterOptions()
-      .map(
-        (o, i) =>
-          `<div class="tsk-pal-row" data-filter-option="${i}"><span class="${i === state.filterI ? "sel-text" : ""}">${i === state.filterI ? "▸" : " "} ${esc(o.label)}</span></div>`,
-      )
-      .join(
-        "",
-      )}</div><div class="tsk-box-foot">↑↓ move · enter choose · esc close</div></div>`;
-  }
-  const matchesThread = (t) =>
-    state.focusProject
-      ? state.threadFilter === null || (t.thread || "") === state.threadFilter
-      : state.tab !== "projects" ||
-        state.projectView === null ||
-        t.thread === state.projectView;
-  function visibleTasks() {
-    // Hidden (archived) tasks leave every working view. The closed drawer keeps
-    // its unfiltered count; opening it brings done tasks into content search.
-    const open = state.tasks.filter(
-      (t) =>
-        t.status !== "done" &&
-        !t.archived &&
-        matchesThread(t) &&
-        taskMatchesSearch(t, state.searchQuery),
-    );
-    const done = state.tasks
-      .filter(
-        (t) =>
-          t.status === "done" &&
-          !t.archived &&
-          matchesThread(t) &&
-          (!state.drawer || taskMatchesSearch(t, state.searchQuery)),
-      )
-      .sort(byStatusChange);
-    const inScope = (task) =>
-      !state.focusProject ||
-      (state.focusProject === "desk"
-        ? !task.project
-        : task.project === state.focusProject);
-    if (state.focusProject || isProjectsThreadView()) {
-      return {
-        doing: open
-          .filter((task) => inScope(task) && task.status === "doing")
-          .sort(byStatusChange),
-        todo: open
-          .filter((task) => inScope(task) && task.status === "todo")
-          .sort(byCreated),
-        done: done.filter(inScope),
-      };
-    }
-    if (state.tab === "desk") {
-      return {
-        doing: open
-          .filter((task) => task.status === "doing")
-          .sort(byStatusChange),
-        todo: open
-          .filter((task) => !task.project && task.status === "todo")
-          .sort(byCreated),
-        done,
-      };
-    }
-    return { open, done };
-  }
-
   function buildRows() {
     const rows = [];
-    const pushHeader = (kind, label, count, extra = {}) => {
-      rows.push({ kind, label, count, selectable: false, ...extra });
-    };
-    const pushTask = (task, indent = 0) => {
-      rows.push({ kind: "task", task, indent, selectable: true, id: task.id });
-    };
-
-    if (state.tab === "desk" && !state.focusProject) {
-      const v = visibleTasks();
-      if (v.doing.length) pushHeader("section", "DOING", v.doing.length);
-      v.doing.forEach((task) => pushTask(task));
-      if (v.todo.length || !state.searchQuery.trim())
-        pushHeader("section", "TODO · desk", v.todo.length);
-      v.todo.forEach((task) => pushTask(task));
-      if (state.drawer) {
-        if (v.done.length) pushHeader("section", "DONE", v.done.length);
-        v.done.forEach((t) => pushTask(t));
-        const archived = archivedInScope();
-        if (archived.length) {
-          rows.push({
-            kind: "archived",
-            label: "archived",
-            count: archived.length,
-            selectable: true,
-            id: "nav:archived",
-          });
-          if (state.archivedOpen)
-            archived.forEach((t) =>
-              rows.push({
-                kind: "task",
-                task: t,
-                indent: 0,
-                selectable: true,
-                id: t.id,
-                dim: true,
-              }),
-            );
+    const live = state.tasks.filter((t) => !t.archived && inScope(t));
+    const match = (t) => taskMatchesSearch(t, state.searchQuery);
+    const section = (label, tasks, kind) => {
+      if (!tasks.length && state.searchQuery.trim()) return;
+      if (!tasks.length && kind !== "todo") return;
+      rows.push({ kind: "section", label, count: tasks.length });
+      if (state.sort === "project") {
+        const groups = new Map();
+        for (const t of tasks) {
+          const key = projectName(t);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(t);
         }
-      }
-      return rows;
-    }
-
-    if (state.focusProject || isProjectsThreadView()) {
-      const v = visibleTasks();
-      if (v.doing.length) pushHeader("section", "DOING", v.doing.length);
-      v.doing.forEach((task) => pushTask(task));
-      if (v.todo.length || !state.searchQuery.trim())
-        pushHeader("section", "TODO", v.todo.length);
-      v.todo.forEach((task) => pushTask(task));
-      if (state.drawer) {
-        if (v.done.length) pushHeader("section", "DONE", v.done.length);
-        v.done.forEach((t) => pushTask(t));
-        const archived = archivedInScope();
-        if (archived.length) {
-          rows.push({
-            kind: "archived",
-            label: "archived",
-            count: archived.length,
-            selectable: true,
-            id: "nav:archived",
-          });
-          if (state.archivedOpen)
-            archived.forEach((t) =>
-              rows.push({
-                kind: "task",
-                task: t,
-                indent: 0,
-                selectable: true,
-                id: t.id,
-                dim: true,
-              }),
-            );
-        }
-      }
-      return rows;
-    }
-
-    if (state.tab === "projects") {
-      for (const name of matchingProjectNames()) {
-        const group = state.tasks.filter(
-          (t) => (t.project || "desk") === name && !t.archived,
+        const keys = [...groups.keys()].sort((a, b) =>
+          a === "desk" ? -1 : b === "desk" ? 1 : a.localeCompare(b),
         );
-        const open = group.filter((t) => t.status !== "done");
-        const doing = open.filter((task) => task.status === "doing");
-        const onDeck = open.filter((task) => task.status === "todo");
-        const done = group.filter((t) => t.status === "done");
-        rows.push({
-          kind: "project",
-          label: name,
-          project: name,
-          motion: doing.length,
-          onDeck: onDeck.length,
-          done: done.length,
-          selectable: true,
-          id: `project:${name}`,
-        });
-        // Project index rows are navigation, not collapsible task groups.
-      }
-      if (state.drawer) {
-        const done = state.tasks
-          .filter((t) => t.status === "done" && !t.archived && matchesThread(t))
-          .sort(byStatusChange);
-        pushHeader("section", "DONE", done.length);
-        done.forEach((t) => pushTask(t));
-        const archived = archivedInScope();
-        if (archived.length) {
-          rows.push({
-            kind: "archived",
-            label: "archived",
-            count: archived.length,
-            selectable: true,
-            id: "nav:archived",
-          });
-          if (state.archivedOpen)
-            archived.forEach((t) =>
-              rows.push({
-                kind: "task",
-                task: t,
-                indent: 0,
-                selectable: true,
-                id: t.id,
-                dim: true,
-              }),
-            );
+        for (const key of keys) {
+          rows.push({ kind: "sub", label: key });
+          for (const t of groups.get(key).sort(byNumber))
+            rows.push({ kind: "task", task: t, id: t.id, selectable: true });
         }
+      } else {
+        for (const t of tasks.sort(byNumber))
+          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
       }
-      return rows;
-    }
-
+    };
+    section(
+      "DOING",
+      live.filter((t) => t.status === "doing" && match(t)),
+      "doing",
+    );
+    section(
+      state.scope === "desk" ? "TODO · desk" : "TODO",
+      live.filter((t) => t.status === "todo" && match(t)),
+      "todo",
+    );
+    const done = live
+      .filter((t) => t.status === "done" && match(t))
+      .sort(byStatusChange);
+    // Closed, DONE keeps its heading and count with no rows, as in the app.
+    if (!state.drawer && done.length)
+      rows.push({
+        kind: "section",
+        label: "DONE",
+        count: done.length,
+        collapsed: true,
+      });
     if (state.drawer) {
-      const done = state.tasks
-        .filter((t) => t.status === "done" && !t.archived && matchesThread(t))
-        .sort(byStatusChange);
-      pushHeader("section", "DONE", done.length);
-      done.forEach((t) => pushTask(t));
-      const archived = archivedInScope();
+      if (done.length) {
+        rows.push({ kind: "section", label: "DONE", count: done.length });
+        for (const t of done)
+          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
+      }
+      const archived = state.tasks.filter(
+        (t) => t.archived && inScope(t) && match(t),
+      );
       if (archived.length) {
         rows.push({
           kind: "archived",
-          label: "archived",
           count: archived.length,
-          selectable: true,
           id: "nav:archived",
+          selectable: true,
         });
         if (state.archivedOpen)
-          archived.forEach((t) =>
+          for (const t of archived)
             rows.push({
               kind: "task",
               task: t,
-              indent: 0,
-              selectable: true,
               id: t.id,
+              selectable: true,
               dim: true,
-            }),
-          );
+            });
       }
     }
     return rows;
   }
+  const selectableIds = (rows = buildRows()) =>
+    rows.filter((r) => r.selectable).map((r) => r.id);
+  const listTaskIds = () =>
+    buildRows()
+      .filter((r) => r.kind === "task")
+      .map((r) => r.id);
 
-  function selectableIds(rows) {
-    return rows.filter((r) => r.selectable).map((r) => r.id);
-  }
-
-  function nearestVisibleId(previous, previousIds, nextIds) {
-    if (!nextIds.length) return null;
-    if (nextIds.includes(previous)) return previous;
-    const index = previousIds.indexOf(previous);
-    if (index < 0) return nextIds[0];
-    const horizon = Math.max(index, previousIds.length - index - 1);
-    for (let distance = 1; distance <= horizon; distance += 1) {
-      const before = previousIds[index - distance];
-      if (before && nextIds.includes(before)) return before;
-      const after = previousIds[index + distance];
-      if (after && nextIds.includes(after)) return after;
-    }
-    return nextIds[Math.min(index, nextIds.length - 1)];
-  }
-
-  function ensureSelection(rows, previousRows = null) {
+  function ensureSelection(rows = buildRows()) {
     const ids = selectableIds(rows);
-    if (!ids.length) {
-      state.selectedId = null;
-      return;
+    if (!ids.length) state.selectedId = null;
+    else if (!ids.includes(state.selectedId)) state.selectedId = ids[0];
+  }
+
+  // The task the page or detail shows: a related task may sit outside the list.
+  function shownTask() {
+    if (state.quickExpanded) return state.capture;
+    return taskById(state.trail.at(-1) ?? state.selectedId) || null;
+  }
+  const selectedRow = () =>
+    buildRows().find((r) => r.id === state.selectedId) || null;
+  const hasUnsavedWork = () =>
+    Boolean(state.edit || steps.dirty || steps.editor);
+
+  // ── questions ─────────────────────────────────────────────────────────────
+  const questionsLoaded = () => Array.isArray(state.questions);
+  const questionById = (id) =>
+    (state.questions || []).find((q) => q.id === id) || null;
+  const isOpen = (q) => q.answers.length === 0;
+  const currentAnswer = (q) => q.answers.at(-1) || null;
+  const GROUPS = [
+    ["approval", "NEEDS APPROVAL"],
+    ["foryou", "FOR YOU"],
+    ["findings", "FINDINGS"],
+    ["lead", "WITH LEAD"],
+    ["unrouted", "target unknown · route with tsk route"],
+    ["closed", "CLOSED"],
+  ];
+  function groupOf(q) {
+    if (!isOpen(q)) return "closed";
+    if (!q.audience) return "unrouted";
+    if (q.audience === "lead") return "lead";
+    return q.kind === "approval"
+      ? "approval"
+      : q.kind === "finding"
+        ? "findings"
+        : "foryou";
+  }
+  function grouped() {
+    return GROUPS.map(([key, title]) => [
+      key,
+      title,
+      (state.questions || [])
+        .filter((q) => groupOf(q) === key)
+        .sort((a, b) => a.number - b.number),
+    ]).filter(([, , members]) => members.length);
+  }
+  const questionOrder = () =>
+    grouped().flatMap(([, , members]) => members.map((q) => q.id));
+  function waiting() {
+    const out = { approval: 0, question: 0, finding: 0, unrouted: 0 };
+    for (const q of state.questions || []) {
+      const g = groupOf(q);
+      if (g === "approval") out.approval++;
+      else if (g === "foryou") out.question++;
+      else if (g === "findings") out.finding++;
+      else if (g === "unrouted") out.unrouted++;
     }
-    if (!ids.includes(state.selectedId)) {
-      state.selectedId = nearestVisibleId(
-        state.selectedId,
-        previousRows ? selectableIds(previousRows) : [],
-        ids,
+    return out;
+  }
+  const forYou = (w = waiting()) => w.approval + w.question + w.finding;
+  function waitingLine() {
+    if (!questionsLoaded()) return null;
+    const w = waiting();
+    const parts = ["approval", "question", "finding"]
+      .filter((k) => w[k])
+      .map((k) => `${k} ${w[k]}`);
+    if (w.unrouted) parts.push(`target unknown ${w.unrouted}`);
+    return parts.length ? `waiting on you  ${parts.join(" · ")}  → 2` : null;
+  }
+  function taskMarks(task) {
+    let approval = false,
+      n = 0;
+    for (const q of state.questions || []) {
+      if (q.taskId !== task.id) continue;
+      const g = groupOf(q);
+      if (g === "approval") approval = true;
+      else if (g === "foryou" || g === "findings") n++;
+    }
+    if (approval && n) return `! ?${n}`;
+    if (approval) return "!";
+    return n ? `?${n}` : "";
+  }
+  const taskLabel = (id) => {
+    const t = taskById(id);
+    return t ? `T${t.number}` : "a missing task";
+  };
+  function stateLabel(q) {
+    const answer = currentAnswer(q);
+    if (!answer)
+      return !q.audience
+        ? "open · target unknown"
+        : q.audience === "lead"
+          ? "open · with lead"
+          : "open · for you";
+    if (q.kind === "approval") return answer.approved ? "approved" : "rejected";
+    if (q.kind === "finding") {
+      if (q.createdTask) return `→ ${taskLabel(q.createdTask)}`;
+      return answer.action === "close" ? "closed" : "answered";
+    }
+    return "answered";
+  }
+  const FINDING_ACTIONS = [
+    ["create_and_run", "create the task and run it"],
+    ["create_only", "create the task only (todo)"],
+    ["close", "close · no task"],
+  ];
+  const choices = (q) =>
+    q.kind === "finding" ? FINDING_ACTIONS.map(([, l]) => l) : q.options;
+  function choice(q) {
+    const list = choices(q);
+    const fallback =
+      q.kind === "finding"
+        ? 0
+        : Math.max(0, q.options.indexOf(q.recommendation));
+    return Math.min(state.q.options[q.id] ?? fallback, list.length - 1);
+  }
+  const choosing = (q) =>
+    q.kind !== "approval" &&
+    choices(q).length > 0 &&
+    ((isOpen(q) && q.audience) || state.q.correcting === q.id);
+  const checked = (q) =>
+    state.q.check?.id === q.id && state.q.check.revision === q.answers.length;
+  const kindWord = (q) =>
+    q.kind === "finding" ? `finding · ${q.finding?.kind || "issue"}` : q.kind;
+  const audienceWord = (q) =>
+    !q.audience ? "target unknown" : q.audience === "lead" ? "lead" : "you";
+
+  function questionPageRows(q, width) {
+    const rows = [];
+    const push = (text, cls = "", attrs = "") =>
+      rows.push({ text, cls, attrs });
+    const indented = (lead, text, cls = "", attrs = "") => {
+      wrapText(text, Math.max(1, width - lead.length)).forEach((line, i) =>
+        push((i ? " ".repeat(lead.length) : lead) + line, cls, attrs),
       );
-    }
-  }
-
-  function metaFor(task) {
-    const bits = [];
-    if (!state.focusProject && task.project) bits.push(projectName(task));
-    if (state.focusProject && task.thread) bits.push(`#${task.thread}`);
-    return bits.join(" · ");
-  }
-
-  function showCopyNotice(message) {
-    state.copyNotice = message;
-    setTimeout(() => {
-      if (state.copyNotice === message) {
-        state.copyNotice = "";
-        render();
+    };
+    const blank = () => push("");
+    const task = taskById(q.taskId);
+    push(`Q${q.number} · ${kindWord(q)} · ${stateLabel(q)}`, "is-bold");
+    indented(
+      "task    ",
+      task
+        ? `T${task.number} ${task.title} · t opens`
+        : `${q.taskId} not found`,
+    );
+    indented("from    ", `${q.origin} → ${audienceWord(q)}`);
+    if (q.leadRecipient) indented("lead    ", q.leadRecipient, "dim");
+    if (q.finding?.path) indented("file    ", q.finding.path);
+    if (q.blocks) indented("blocks  ", q.blocks);
+    blank();
+    indented("", q.summary, "is-bold");
+    push("sample text · this demo holds no private records", "dim");
+    indented("", q.text);
+    if (q.finding) indented("", q.finding.detail);
+    if (q.approval) {
+      blank();
+      push("hard to undo · check the target, scope, and revision", "is-bold");
+      indented("action    ", q.approval.action);
+      indented("target    ", q.approval.target);
+      indented("scope     ", q.approval.scope);
+      indented("revision  ", q.approval.h);
+      indented("undo      ", q.approval.rollback);
+      if (isOpen(q) && q.audience) {
+        const on = checked(q);
+        push(
+          `${on ? "[x]" : "[ ]"} I checked the target, scope, and revision (space)`,
+          on ? "is-chosen" : "",
+          'data-q-check="1"',
+        );
+        push(
+          on
+            ? "y approves · n rejects · no answer keeps waiting"
+            : "y approves once checked · n rejects · no answer keeps waiting",
+          "dim",
+        );
       }
-    }, 2000);
-    render();
+    }
+    if (choosing(q) && !state.q.answer) {
+      const list = choices(q);
+      const chosen = choice(q);
+      blank();
+      push(q.kind === "finding" ? "decide" : "options", "dim");
+      list.forEach((label, i) => {
+        const text =
+          q.kind !== "finding" && label === q.recommendation
+            ? `${label} · recommended`
+            : label;
+        indented(
+          i === chosen ? "(•) " : "( ) ",
+          text,
+          i === chosen ? "is-chosen" : "",
+          `data-q-option="${i}"`,
+        );
+      });
+      push(
+        q.kind === "finding"
+          ? "enter decides"
+          : state.q.correcting === q.id
+            ? "enter saves the correction · the earlier answer stays in history"
+            : "enter saves the answer",
+        "dim",
+      );
+    } else if (isOpen(q) && !q.audience) {
+      blank();
+      push(
+        "target unknown · route it with tsk route before anyone answers here",
+        "dim",
+      );
+    } else if (isOpen(q) && q.kind === "question" && !state.q.answer) {
+      blank();
+      push("enter writes an answer", "dim");
+    }
+    if (state.q.answer?.id === q.id) {
+      blank();
+      rows.push({ input: true });
+      push("enter saves · esc cancels", "dim");
+    }
+    const answer = currentAnswer(q);
+    if (answer) {
+      blank();
+      indented("answer  ", answer.text);
+      if (q.createdTask) indented("task    ", taskLabel(q.createdTask));
+      if (answer.action === "create_and_run")
+        push(
+          "r resends the run request · it never creates another task",
+          "dim",
+        );
+      if (q.kind !== "approval" && state.q.correcting !== q.id)
+        push("c corrects · the earlier answer stays in history", "dim");
+    }
+    if (state.q.report[q.id]) {
+      blank();
+      indented("", state.q.report[q.id], "is-bold");
+    }
+    blank();
+    push("history", "dim");
+    if (!q.answers.length) push("asked · no answer yet", "dim");
+    q.answers.forEach((a, i) =>
+      indented(
+        "",
+        `${a.actor}${i && q.kind !== "approval" ? " (correction)" : ""} · ${a.text}`,
+      ),
+    );
+    return rows;
   }
 
-  function copyTaskIdentifier(task) {
-    const identifier = `T${task.number}`;
-    if (!navigator.clipboard?.writeText) {
-      showCopyNotice("copy unavailable");
+  function questionFooterHint(wide) {
+    const q = questionById(state.q.page);
+    if (state.q.answer) return "enter save · esc cancel";
+    if (!q)
+      return wide
+        ? "enter/→ open · j/k move · 1 board · ? keys"
+        : "enter open · j/k move · 1 board · ? keys";
+    if (isOpen(q) && !q.audience) return "J/K next · t task · esc back";
+    if (q.kind === "approval" && isOpen(q))
+      return "space check · y approve · n reject · J/K next · esc back";
+    if (choosing(q))
+      return "j/k choose · enter save · J/K next · t task · esc back";
+    if (isOpen(q)) return "enter answer · J/K next · t task · esc back";
+    if (q.kind === "approval") return "t task · J/K next · esc back";
+    return "c correct · t task · J/K next · esc back";
+  }
+
+  // ── question actions (sample only: nothing is stored, sent, or authorized) ──
+  function report(q, text) {
+    state.q.report[q.id] = text;
+  }
+  function saveAnswer(q, text, extra = {}) {
+    const correction = state.q.correcting === q.id;
+    q.answers.push({ actor: "user", text, ...extra });
+    state.q.correcting = null;
+    state.q.answer = null;
+    state.q.check = null;
+    state.message = `Q${q.number} saved · sample`;
+    return correction;
+  }
+  function decideFinding(q) {
+    const [action, label] = FINDING_ACTIONS[choice(q)];
+    const correcting = state.q.correcting === q.id;
+    saveAnswer(q, label, { action });
+    if (action === "close") {
+      report(q, "sample: closed in this demo only · no task");
       return;
     }
-    navigator.clipboard
-      .writeText(identifier)
-      .then(() => showCopyNotice(`copied ${identifier}`))
-      .catch(() => showCopyNotice("copy failed"));
-  }
-
-  function verbItems(task) {
-    if (!task) {
-      // The bar is a prompt, not a keymap: open · status verbs · add · help.
-      if (state.tab === "projects" && !state.focusProject) {
-        return [
-          { id: "open", label: "enter open" },
-          { id: "search", label: "/ search" },
-          { id: "help", label: "? help" },
-        ];
-      }
-      return [
-        { id: "capture", label: "+ add" },
-        { id: "help", label: "? help" },
-      ];
+    if (q.createdTask) {
+      report(
+        q,
+        `sample: the linked task ${taskLabel(q.createdTask)} stays · no second task${correcting ? " is created by a correction" : ""}`,
+      );
+      return;
     }
-    const items = [{ id: "open", label: "enter open" }];
-    if (task.status === "todo") items.push({ id: "start", label: "s doing" });
-    if (task.status !== "todo") items.push({ id: "todo", label: "o todo" });
-    if (task.status !== "done") items.push({ id: "done", label: "d done" });
-    items.push(
-      { id: "capture", label: "+ add" },
-      { id: "help", label: "? help" },
-    );
-    return items;
-  }
-
-  function runVerb(id) {
-    if (id === "search") {
-      searchOwner().searchPinned = false;
-      state.overlay = "search";
-    }
-    if (id === "open" && state.selectedId) {
-      const row = selectedRow();
-      if (row?.kind === "project") openProject(row.project);
-      else openFullPage();
-    }
-    if (id === "capture") openQuickAdd();
-    if (id === "help") {
-      state.overlay = "help";
-      state.helpQ = "";
-    }
-    if (id === "palette") {
-      state.overlay = "palette";
-      state.paletteQ = "";
-      state.paletteI = 0;
-    }
-    if (id === "start") primaryVerb();
-    if (id === "todo") setStatus("todo");
-    if (id === "done") setStatus("done");
-    if (id === "start") primaryVerb();
-    if (id === "todo") setStatus("todo");
-    if (id === "undo") undoDelete();
-    if (id === "file") fileSelected();
-  }
-
-  function paletteCommands() {
-    const q = state.paletteQ.trim().toLowerCase();
-    const all = [
-      { id: "todo", label: "set status: todo", run: () => setStatus("todo") },
-      {
-        id: "doing",
-        label: "set status: doing",
-        run: () => setStatus("doing"),
-      },
-      { id: "done", label: "set status: done", run: () => setStatus("done") },
-      { id: "desk", label: "go desk", run: () => goTab("desk") },
-      { id: "projects", label: "go projects", run: () => goTab("projects") },
-      {
-        id: "project",
-        label: "go selected project",
-        run: () => goTab("project"),
-      },
-      { id: "capture", label: "capture", run: () => openQuickAdd() },
-      {
-        id: "help",
-        label: "help",
-        run: () => {
-          state.overlay = "help";
-          state.helpQ = "";
-        },
-      },
-      { id: "reset", label: "reset demo", run: resetDemo },
-    ];
-    if (!state.focusProject && state.tab === "projects") {
-      all.push({ id: "groups", label: "toggle groups", run: toggleAllGroups });
-    }
-    return all.filter((c) => !q || c.label.includes(q) || c.id.includes(q));
-  }
-
-  function rememberUndo(form, tasks) {
-    form.undo = {
-      items: tasks.map((task) => ({
-        task: { ...task },
-        index: state.tasks.indexOf(task),
-      })),
+    const source = taskById(q.taskId);
+    const task = {
+      id: `n${state.nextId++}`,
+      number: state.nextNumber++,
+      title: q.summary,
+      notes: "",
+      steps: [],
+      status: action === "create_and_run" ? "doing" : "todo",
+      project: source?.project ?? null,
+      parent: null,
+      archived: false,
+      createdAt: clock(),
+      updatedAt: clock(),
     };
+    state.tasks.push(task);
+    q.createdTask = task.id;
+    report(
+      q,
+      action === "create_and_run"
+        ? `sample: created T${task.number} (doing) in this page only · no run request is sent (the app asks ${q.leadRecipient || "the lead"} when exactly one live agent has that name)`
+        : `sample: created T${task.number} (todo) in this page only`,
+    );
+  }
+  function questionEnter() {
+    const q = questionById(state.q.page);
+    if (!q) return;
+    if (state.q.answer) {
+      const text = state.q.answer.text.trim();
+      if (!text) {
+        state.message = "an answer needs text";
+        return;
+      }
+      const correction = saveAnswer(q, text);
+      report(
+        q,
+        `sample: ${correction ? "correction" : "answer"} kept in this page only · nothing is sent (the app hints ${q.origin})`,
+      );
+      return;
+    }
+    if (isOpen(q) && !q.audience) {
+      state.message = "target unknown · route it with tsk route first";
+      return;
+    }
+    if (choosing(q)) {
+      if (q.kind === "finding") decideFinding(q);
+      else {
+        const correction = saveAnswer(q, choices(q)[choice(q)]);
+        report(
+          q,
+          `sample: ${correction ? "correction" : "answer"} kept in this page only · nothing is sent (the app hints ${q.origin})`,
+        );
+      }
+      return;
+    }
+    if (q.kind === "question" && (isOpen(q) || state.q.correcting === q.id)) {
+      state.q.answer = { id: q.id, text: "" };
+    }
+  }
+  function questionApprove(approved) {
+    const q = questionById(state.q.page);
+    if (!q || q.kind !== "approval" || !isOpen(q) || !q.audience) return;
+    if (approved && !checked(q)) {
+      state.message = "check the target, scope, and revision first · space";
+      return;
+    }
+    q.answers.push({
+      actor: "user",
+      text: approved ? "approved" : "rejected",
+      approved,
+    });
+    state.q.check = null;
+    state.message = `Q${q.number} ${approved ? "approved" : "rejected"} · sample`;
+    report(
+      q,
+      approved
+        ? "sample: approved in this demo only · it authorizes nothing"
+        : "sample: rejected in this demo only",
+    );
+  }
+  function questionCorrect() {
+    const q = questionById(state.q.page);
+    if (!q || isOpen(q) || q.kind === "approval") return;
+    state.q.correcting = q.id;
+    if (q.kind === "question" && !q.options.length)
+      state.q.answer = { id: q.id, text: "" };
+  }
+  function questionResend() {
+    const q = questionById(state.q.page);
+    if (currentAnswer(q)?.action !== "create_and_run") return;
+    report(
+      q,
+      `sample: nothing is sent · the app reads the record back, then asks ${q.leadRecipient || "the lead"}`,
+    );
+  }
+  function openQuestion(id, fromTask = null) {
+    if (state.q.page !== id) {
+      state.q.check = null;
+      state.q.correcting = null;
+      state.q.answer = null;
+    }
+    state.tab = "questions";
+    state.q.cursor = id;
+    state.q.page = id;
+    state.q.returnTask = fromTask;
+    clearMarks();
+  }
+  function stepQuestion(delta) {
+    const order = questionOrder();
+    const index = order.indexOf(state.q.page);
+    if (index < 0) {
+      state.message = "this question is not in the list · esc goes back";
+      return;
+    }
+    const next = index + delta;
+    if (next < 0) state.message = "first question";
+    else if (next >= order.length) state.message = "last question";
+    else {
+      openQuestion(order[next]);
+      state.message = `${next + 1} / ${order.length}`;
+    }
   }
 
-  function flashTasks(tasks) {
+  // ── board actions ─────────────────────────────────────────────────────────
+  function targetTasks() {
+    const marked = state.markMode
+      ? [...state.markedIds].map(taskById).filter(Boolean)
+      : [];
+    if (marked.length) return marked;
+    const task = boardFocusOnPage() ? shownTask() : taskById(state.selectedId);
+    return task ? [task] : [];
+  }
+  function clearMarks() {
+    state.markMode = false;
+    state.markedIds.clear();
+  }
+  function toggleMark() {
+    const id = state.selectedId;
+    if (!id || !taskById(id)) return;
+    if (state.markedIds.has(id)) state.markedIds.delete(id);
+    else state.markedIds.add(id);
+  }
+  function markCurrent() {
+    if (state.selectedId && taskById(state.selectedId))
+      state.markedIds.add(state.selectedId);
+  }
+  function flash(tasks) {
     const last = tasks.at(-1);
     if (!last) return;
     state.flashId = last.id;
@@ -1312,11 +902,24 @@ import { parseCapture } from "./capture.js";
       }
     }, 420);
   }
-
+  function rememberUndo(tasks) {
+    state.undo = {
+      items: tasks.map((task) => ({
+        task: structuredClone(task),
+        index: state.tasks.indexOf(task),
+      })),
+    };
+  }
   function setStatus(status) {
+    const bulk = state.markMode && state.markedIds.size > 0;
     const tasks = targetTasks();
-    const changed = tasks.filter((task) => task.status !== status);
-    if (status === "done" && changed.length) rememberUndo(state, changed);
+    let changed;
+    let skipped = 0;
+    if (status === "doing") {
+      changed = tasks.filter((t) => t.status === "todo");
+      skipped = tasks.filter((t) => t.status === "done").length;
+    } else changed = tasks.filter((t) => t.status !== status);
+    if (status === "done" && changed.length) rememberUndo(changed);
     for (const task of changed) {
       task.status = status;
       task.updatedAt = clock();
@@ -1324,429 +927,18 @@ import { parseCapture } from "./capture.js";
     }
     clearMarks();
     state.pendingDelete = null;
-    state.message = "";
-    flashTasks(changed);
+    state.message =
+      bulk && skipped
+        ? `doing ${changed.length} · skipped ${skipped} done (o reopens them)`
+        : "";
+    flash(changed);
   }
-
-  function goTab(tab) {
-    if (steps.dirty || steps.editor || previewHasUnsavedWork()) return;
-    clearMarks();
-    clearMarks(preview);
-    state.threadFilter = null;
-    state.tab = tab;
-    state.focusProject = tab === "project" ? state.selectedProject : null;
-    state.searchQuery = "";
-    state.searchPinned = false;
-    state.peekId = null;
-    state.overlay = null;
-    state.quickOwner = "outer";
-    state.stage = "board";
-    state.stageOrigin = null;
-    dropProjectPreview();
-  }
-
-  function openProject(name) {
-    if (steps.dirty || steps.editor || previewHasUnsavedWork()) return;
-    clearMarks();
-    clearMarks(preview);
-    if (!name || name === "desk") {
-      goTab("desk");
-      return;
-    }
-    state.threadFilter = null;
-    state.selectedProject = name;
-    state.focusProject = name;
-    state.tab = "project";
-    state.searchQuery = "";
-    state.searchPinned = false;
-    state.peekId = null;
-    state.overlay = null;
-    state.quickOwner = "outer";
-    state.stage = "board";
-    state.stageOrigin = null;
-    dropProjectPreview();
-  }
-
-  function selectedRow() {
-    return (
-      buildRows().find(
-        (row) => row.selectable && row.id === state.selectedId,
-      ) || null
-    );
-  }
-
-  function dropProjectPreview() {
-    preview.project = null;
-    preview.selectedId = null;
-    preview.markMode = false;
-    preview.markedIds.clear();
-    preview.pendingDelete = null;
-    preview.pendingDeleteBulk = false;
-    preview.threadFilter = null;
-    preview.peekId = null;
-    preview.drawer = false;
-    preview.archivedOpen = false;
-    preview.page = false;
-    preview.editField = null;
-    preview.editDraft = "";
-    preview.undo = null;
-    preview.lastClick = 0;
-    preview.message = "";
-    preview.searchQuery = "";
-    preview.searchPinned = false;
-    previewSteps.reset();
-  }
-
-  function bindProjectPreview() {
-    if (!projectsOverview()) return false;
-    const row = selectedRow();
-    const project = row?.kind === "project" ? row.project : null;
-    if (!project) {
-      dropProjectPreview();
-      return false;
-    }
-    if (preview.project === project) {
-      ensurePreviewSelection();
-      return true;
-    }
-    if (previewHasUnsavedWork()) {
-      preview.message = "save or cancel edits before switching tasks";
-      return false;
-    }
-    dropProjectPreview();
-    preview.project = project;
-    ensurePreviewSelection();
-    return true;
-  }
-
-  function openProjectPreview() {
-    if (!projectsOverview() || !isWideSplit() || state.stage !== "board")
-      return false;
-    if (!bindProjectPreview()) return false;
-    state.stage = "split";
-    return true;
-  }
-
-  function moveProjectCursor(delta) {
-    const ids = selectableIds(buildRows());
-    if (!ids.length) return;
-    let i = ids.indexOf(state.selectedId);
-    if (i < 0) i = 0;
-    const next = ids[(i + delta + ids.length) % ids.length];
-    const row = buildRows().find((item) => item.id === next);
-    if (row?.kind !== "project") return;
-    if (
-      projectsPreviewActive() &&
-      preview.project !== row.project &&
-      !bindProjectPreviewFor(row.project)
-    )
-      return;
-    state.selectedId = next;
-    if (isWideSplit()) {
-      if (state.stage === "board") openProjectPreview();
-      else if (projectsPreviewActive()) bindProjectPreview();
-    }
-  }
-
-  function bindProjectPreviewFor(project) {
-    if (preview.project === project) return true;
-    if (previewHasUnsavedWork()) {
-      preview.message = "save or cancel edits before switching tasks";
-      return false;
-    }
-    const row = buildRows().find(
-      (item) => item.kind === "project" && item.project === project,
-    );
-    if (!row) return false;
-    dropProjectPreview();
-    preview.project = project;
-    ensurePreviewSelection();
-    return true;
-  }
-
-  function toggleAllGroups() {
-    clearMarks();
-    if (!state.drawer && (state.focusProject || state.tab !== "projects")) {
-      state.inboxOpen = !state.inboxOpen;
-      return;
-    }
-    if (state.focusProject || state.tab !== "projects") return;
-    const groups = buildRows().filter(
-      (row) => row.kind === "group" && !row.indent,
-    );
-    const collapse = groups.some(
-      (row) => !state.collapsed.has(row.collapseKey),
-    );
-    for (const row of groups) {
-      if (collapse) state.collapsed.add(row.collapseKey);
-      else state.collapsed.delete(row.collapseKey);
-    }
-  }
-
-  function resetDemo() {
-    state.tasks = seed();
-    state.threadFilter = null;
-    state.projectView = null;
-    state.filterI = 0;
-    state.tab = "desk";
-    state.selectedProject = "launchpad";
-    state.focusProject = null;
-    state.searchQuery = "";
-    state.searchPinned = false;
-    state.collapsed = new Set();
-    state.selectedId = "t1";
-    state.markMode = false;
-    state.markedIds = new Set();
-    state.pendingDelete = null;
-    state.pendingDeleteBulk = false;
-    state.message = "";
-    state.peekId = null;
-    state.drawer = false;
-    state.archivedOpen = false;
-    state.inboxOpen = true;
-    state.overlay = null;
-    state.draft = "";
-    state.refuse = "";
-    state.quickExpanded = false;
-    state.capture = null;
-    state.quickStage = null;
-    state.quickOwner = "outer";
-    state.copyNotice = "";
-    state.undo = null;
-    state.stage = "board";
-    state.stageOrigin = null;
-    dropProjectPreview();
-  }
-
-  function openQuickAdd(owner = "outer") {
-    state.overlay = "quick";
-    state.quickOwner = owner;
-    state.draft = "";
-    state.refuse = "";
-    state.quickExpanded = false;
-    state.capture = null;
-    state.quickStage = null;
-  }
-
-  function captureDirectives(raw) {
-    const parts = String(raw).trim().split(/\s+/).filter(Boolean);
-    const directives = [];
-    for (let i = 0; i < parts.length; i += 1) {
-      if (parts[i] !== "!p" && parts[i] !== "!t") continue;
-      directives.push(parts[i]);
-      if (parts[i + 1] && !parts[i + 1].startsWith("!")) {
-        directives.push(parts[i + 1]);
-        i += 1;
-      }
-    }
-    return directives;
-  }
-
-  function expandQuickAdd() {
-    const parsed = parseCapture(state.draft, fallbackProject());
-    const now = clock();
-    state.capture = {
-      id: "capture-draft",
-      number: state.nextNumber,
-      title: parsed.title,
-      notes: "",
-      steps: [],
-      thread: parsed.thread === undefined ? null : parsed.thread,
-      project: parsed.project,
-      status: "todo",
-      createdAt: now,
-      updatedAt: now,
-      rawDraft: state.draft,
-    };
-    state.quickExpanded = true;
-    state.refuse = "";
-    if (state.quickOwner === "preview") {
-      preview.page = true;
-      preview.editField = "notes";
-      preview.editDraft = "";
-      previewSteps.bind(state.capture);
-    } else {
-      state.quickStage = state.stage;
-      state.stage = "page";
-      state.editField = "notes";
-      state.editDraft = "";
-      steps.bind(state.capture);
-    }
-  }
-
-  function collapseQuickAdd() {
-    const capture = state.capture;
-    if (capture) {
-      persistPageText(
-        state.quickOwner === "preview" ? preview : state,
-        capture,
-      );
-      state.draft = [capture.title, ...captureDirectives(capture.rawDraft)]
-        .filter(Boolean)
-        .join(" ");
-    }
-    state.quickExpanded = false;
-    state.capture = null;
-    state.refuse = "";
-    if (state.quickOwner === "preview") {
-      preview.page = false;
-      preview.editField = null;
-      preview.editDraft = "";
-      previewSteps.reset();
-    } else {
-      state.stage = state.quickStage || "board";
-      state.editField = null;
-      state.editDraft = "";
-      steps.reset();
-    }
-    state.quickStage = null;
-  }
-
-  function saveExpandedDraft() {
-    const capture = state.capture;
-    if (!capture) return false;
-    persistPageText(state.quickOwner === "preview" ? preview : state, capture);
-    const title = capture.title.trim();
-    if (!title) {
-      state.refuse = "title needed";
-      return false;
-    }
-    const owner = state.quickOwner;
-    const id = `n${state.nextId++}`;
-    const now = clock();
-    const task = {
-      ...capture,
-      id,
-      number: state.nextNumber++,
-      title,
-      steps: structuredClone(capture.steps),
-      createdAt: now,
-      updatedAt: now,
-    };
-    delete task.rawDraft;
-    state.tasks.unshift(task);
-    state.quickExpanded = false;
-    state.capture = null;
-    state.overlay = null;
-    state.quickOwner = "outer";
-    state.quickStage = null;
-    state.refuse = "";
-    if (owner === "preview") {
-      preview.selectedId = id;
-      preview.editField = null;
-      preview.editDraft = "";
-      previewSteps.reset();
-      preview.page = false;
-    } else {
-      state.selectedId = id;
-      state.editField = null;
-      state.editDraft = "";
-      steps.reset();
-      state.stage = "page";
-    }
-    return true;
-  }
-
-  function hintBar(items) {
-    return items
-      .map(
-        (item) =>
-          `<button type="button" class="tsk-verb" data-hint="${esc(item.id)}">${esc(item.label)}</button>`,
-      )
-      .join("<span> · </span>");
-  }
-
-  function runHint(id) {
-    const add = document.getElementById("tsk-add");
-    if (add) state.draft = add.value;
-    if (state.overlay === "quick" && !state.quickExpanded) {
-      if (id === "save") saveDraft(false);
-      else if (id === "details") expandQuickAdd();
-      else if (id === "close") {
-        state.overlay = null;
-        state.quickOwner = "outer";
-        state.refuse = "";
-        frame.focus();
-      } else return false;
-      return true;
-    }
-    if (state.overlay === "quick" && state.quickExpanded) {
-      if (id === "save-expanded") saveExpandedDraft();
-      else if (id === "next-field")
-        movePageFocus(false, state.quickOwner === "preview");
-      else if (id === "collapse") collapseQuickAdd();
-      else return false;
-      return true;
-    }
-    if (state.overlay === "search") {
-      const owner = searchOwner();
-      if (id === "pin") {
-        pinSearch(owner);
-        state.overlay = null;
-      } else if (id === "close") {
-        updateSearchQuery(owner, "");
-        owner.searchPinned = false;
-        state.overlay = null;
-      } else return false;
-      return true;
-    }
-    return false;
-  }
-
-  function saveDraft(stay) {
-    const owner = state.quickOwner === "preview" ? "preview" : "outer";
-    const parsed = parseCapture(state.draft, fallbackProject());
-    if (!parsed.title) {
-      state.refuse = "title needed";
-      return false;
-    }
-    const id = `n${state.nextId++}`;
-    const now = Date.now();
-    const task = {
-      id,
-      number: state.nextNumber++,
-      title: parsed.title,
-      notes: "",
-      status: "todo",
-      project: parsed.project,
-      thread: parsed.thread === undefined ? null : parsed.thread,
-      createdAt: now,
-      updatedAt: now,
-    };
-    state.tasks.unshift(task);
-    if (owner === "preview") {
-      preview.selectedId = id;
-      preview.peekId = null;
-      preview.message = "";
-    } else {
-      state.selectedId = id;
-    }
-    state.flashId = id;
-    state.refuse = "";
-    state.draft = "";
-    if (!stay) {
-      state.overlay = null;
-      state.quickOwner = "outer";
-    }
-    setTimeout(() => {
-      if (state.flashId === id) {
-        state.flashId = null;
-        render();
-      }
-    }, 420);
-    return true;
-  }
-
-  function fileSelected() {
-    const tasks = targetTasks();
-    for (const task of tasks) task.archived = !task.archived;
+  function archiveSelected() {
+    for (const task of targetTasks()) task.archived = !task.archived;
     clearMarks();
     state.pendingDelete = null;
     state.message = "";
-    state.peekId = null;
-    // The file verb has no undo entry: ctrl+u never brings it back.
   }
-
   function deleteSelected() {
     const tasks = state.pendingDelete
       ? state.pendingDelete.map(taskById).filter(Boolean)
@@ -1755,11 +947,10 @@ import { parseCapture } from "./capture.js";
     const bulk = state.pendingDelete
       ? state.pendingDeleteBulk
       : state.markedIds.size > 0;
-    const ids = tasks.map((task) => task.id).sort();
-    const signature = ids.join("\n");
+    const ids = tasks.map((t) => t.id).sort();
     if (
       !state.pendingDelete ||
-      state.pendingDelete.slice().sort().join("\n") !== signature
+      state.pendingDelete.slice().sort().join("\n") !== ids.join("\n")
     ) {
       state.pendingDelete = ids;
       state.pendingDeleteBulk = bulk;
@@ -1769,19 +960,19 @@ import { parseCapture } from "./capture.js";
         : "press x again to delete";
       return;
     }
-    rememberUndo(state, tasks);
+    rememberUndo(tasks);
     const idSet = new Set(ids);
-    state.tasks = state.tasks.filter((task) => !idSet.has(task.id));
+    state.tasks = state.tasks.filter((t) => !idSet.has(t.id));
     state.pendingDelete = null;
     state.pendingDeleteBulk = false;
     clearMarks();
+    state.trail = state.trail.filter((id) => !idSet.has(id));
+    if (state.page && !shownTask()) state.page = false;
     state.message = bulk
       ? `deleted ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} · u restores`
       : `Deleted "${tasks[0].title}" · u undo`;
-    state.peekId = null;
   }
-
-  function undoDelete() {
+  function undo() {
     clearMarks();
     state.pendingDelete = null;
     if (!state.undo) return;
@@ -1796,218 +987,1004 @@ import { parseCapture } from "./capture.js";
     state.undo = null;
     state.message = "";
   }
-
-  function primaryVerb() {
-    const bulk = state.markMode && state.markedIds.size > 0;
-    const tasks = targetTasks();
-    const changed = tasks.filter((task) => task.status === "todo");
-    const skippedDone = tasks.filter((task) => task.status === "done").length;
-    for (const task of changed) {
-      task.status = "doing";
-      task.updatedAt = clock();
-      task.statusAt = task.updatedAt;
-    }
+  function setScope(scope) {
+    if (hasUnsavedWork()) return;
     clearMarks();
-    state.pendingDelete = null;
-    state.message =
-      bulk && skippedDone
-        ? `doing ${changed.length} · skipped ${skippedDone} done (o reopens them)`
-        : "";
-    flashTasks(changed);
+    state.scope = scope;
+    state.searchQuery = "";
+    state.searchPinned = false;
+    state.trail = [];
+    state.page = false;
+    state.message = "";
+    ensureSelection();
   }
-
-  function previewSetStatus(status) {
-    const tasks = targetTasks(preview);
-    const changed = tasks.filter((task) => task.status !== status);
-    if (status === "done" && changed.length) rememberUndo(preview, changed);
-    for (const task of changed) {
-      task.status = status;
-      task.updatedAt = clock();
-      task.statusAt = task.updatedAt;
-    }
-    clearMarks(preview);
-    preview.pendingDelete = null;
-    preview.message = "";
-    flashTasks(changed);
-  }
-
-  function previewPrimaryVerb() {
-    const bulk = preview.markMode && preview.markedIds.size > 0;
-    const tasks = targetTasks(preview);
-    const changed = tasks.filter((task) => task.status === "todo");
-    const skippedDone = tasks.filter((task) => task.status === "done").length;
-    for (const task of changed) {
-      task.status = "doing";
-      task.updatedAt = clock();
-      task.statusAt = task.updatedAt;
-    }
-    clearMarks(preview);
-    preview.pendingDelete = null;
-    preview.message =
-      bulk && skippedDone
-        ? `doing ${changed.length} · skipped ${skippedDone} done (o reopens them)`
-        : "";
-    flashTasks(changed);
-  }
-
-  function previewFileSelected() {
-    for (const task of targetTasks(preview)) task.archived = !task.archived;
-    clearMarks(preview);
-    preview.pendingDelete = null;
-    preview.message = "";
-    preview.peekId = null;
-  }
-
-  function previewDeleteSelected() {
-    const tasks = preview.pendingDelete
-      ? preview.pendingDelete.map(taskById).filter(Boolean)
-      : targetTasks(preview);
-    if (!tasks.length) return;
-    const bulk = preview.pendingDelete
-      ? preview.pendingDeleteBulk
-      : preview.markedIds.size > 0;
-    const ids = tasks.map((task) => task.id).sort();
-    if (!preview.pendingDelete) {
-      preview.pendingDelete = ids;
-      preview.pendingDeleteBulk = bulk;
-      clearMarks(preview);
-      preview.message = bulk
-        ? `press x again to delete ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`
-        : "press x again to delete";
+  function selectTab(tab) {
+    if (tab === state.tab) {
+      if (tab === "board") {
+        state.page = false;
+        state.trail = [];
+      }
       return;
     }
-    rememberUndo(preview, tasks);
-    const idSet = new Set(ids);
-    state.tasks = state.tasks.filter((task) => !idSet.has(task.id));
-    preview.pendingDelete = null;
-    preview.pendingDeleteBulk = false;
-    clearMarks(preview);
-    preview.message = bulk
-      ? `deleted ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} · u restores`
-      : `Deleted "${tasks[0].title}" · u undo`;
-    preview.peekId = null;
-  }
-
-  function previewUndoDelete() {
-    clearMarks(preview);
-    preview.pendingDelete = null;
-    if (!preview.undo) return;
-    for (const { task, index } of preview.undo.items
-      .slice()
-      .sort((a, b) => a.index - b.index)) {
-      const live = taskById(task.id);
-      if (live) Object.assign(live, task);
-      else state.tasks.splice(Math.min(index, state.tasks.length), 0, task);
+    if (tab === "questions" && hasUnsavedWork()) {
+      state.message = "save or cancel the edit first";
+      return;
     }
-    preview.selectedId = preview.undo.items[0]?.task.id || preview.selectedId;
-    preview.undo = null;
-    preview.message = "";
-  }
-
-  function movePreview(delta) {
-    if (previewHasUnsavedWork()) return;
-    preview.pendingDelete = null;
-    preview.message = "";
-    const ids = previewSelectableIds();
-    if (!ids.length) return;
-    let i = ids.indexOf(preview.selectedId);
-    if (i < 0) i = 0;
-    preview.selectedId = ids[(i + delta + ids.length) % ids.length];
-    preview.peekId = null;
-  }
-
-  function openPreviewTaskPage(editField = null) {
-    const task = previewTask();
-    if (!task) return;
-    preview.page = true;
-    preview.editField = editField;
-    preview.editDraft =
-      editField === "title"
-        ? task.title
-        : editField === "notes"
-          ? task.notes || ""
-          : "";
-    previewSteps.bind(task);
-  }
-
-  function leavePreviewTaskPage() {
-    previewSteps.reset();
-    preview.page = false;
-    preview.editField = null;
-    preview.editDraft = "";
-  }
-
-  function commitPreviewEdit() {
-    const task = previewTask();
-    if (!task || !preview.editField) return;
-    if (preview.editField === "title") {
-      const title = preview.editDraft.trim();
-      if (title) task.title = title;
+    clearMarks();
+    state.overlay = null;
+    state.tab = tab;
+    if (tab === "questions") {
+      const order = questionOrder();
+      if (!order.includes(state.q.cursor)) state.q.cursor = order[0] ?? null;
+      state.q.page = null;
     } else {
-      task.notes = preview.editDraft;
+      state.page = false;
+      state.trail = [];
     }
+  }
+  function move(delta) {
+    state.pendingDelete = null;
+    state.message = "";
+    const ids = selectableIds();
+    if (!ids.length) return;
+    let i = ids.indexOf(state.selectedId);
+    if (i < 0) i = 0;
+    state.selectedId = ids[Math.min(ids.length - 1, Math.max(0, i + delta))];
+    state.trail = [];
+    state.q.returnQuestion = null;
+  }
+  function openPage() {
+    const row = selectedRow();
+    if (row?.kind === "archived") {
+      state.archivedOpen = !state.archivedOpen;
+      return;
+    }
+    if (!taskById(state.selectedId)) return;
+    clearMarks();
+    state.page = true;
+    state.trail = [];
+    steps.reset();
+  }
+  function closePage() {
+    if (hasUnsavedWork()) {
+      state.message = "save or cancel edits first";
+      return;
+    }
+    const backToQuestion =
+      state.q.returnQuestion &&
+      questionById(state.q.returnQuestion) &&
+      state.trail.length <= state.q.returnDepth;
+    if (state.trail.length && !backToQuestion) {
+      state.trail.pop();
+      while (state.trail.length && !taskById(state.trail.at(-1)))
+        state.trail.pop();
+      steps.reset();
+      return;
+    }
+    if (backToQuestion) {
+      const id = state.q.returnQuestion;
+      state.trail = [];
+      state.q.returnQuestion = null;
+      state.page = false;
+      openQuestion(id, state.q.returnTask);
+      return;
+    }
+    state.page = false;
+    steps.reset();
+  }
+  // The page or wide detail owns the keys when it is open or focused.
+  const boardFocusOnPage = () => state.tab === "board" && state.page;
+  function openRelated(id) {
+    if (hasUnsavedWork()) {
+      state.message = "save or cancel edits before opening another task";
+      return;
+    }
+    if (!taskById(id)) {
+      state.message = `${id} not found · link kept`;
+      return;
+    }
+    state.trail.push(id);
+    state.page = true;
+    steps.reset();
+  }
+  function stepTask(delta) {
+    if (hasUnsavedWork()) {
+      state.message = "save or cancel edits before switching tasks";
+      return;
+    }
+    const ids = listTaskIds();
+    const current = state.trail.at(-1) ?? state.selectedId;
+    const index = ids.indexOf(current);
+    if (index < 0) {
+      state.message = "this task is not in the list · esc back";
+      return;
+    }
+    const next = index + delta;
+    if (next < 0) state.message = "first task in this list";
+    else if (next >= ids.length) state.message = "last task in this list";
+    else {
+      state.selectedId = ids[next];
+      state.trail = [];
+      state.q.returnQuestion = null;
+      steps.reset();
+    }
+  }
+
+  // The task page ring: parent line, steps, + step, children, questions, links.
+  function linksOf(task) {
+    const notes = task.notes || "";
+    const threadLines = notes
+      .split("\n")
+      .filter((l) => l.trim().startsWith("Thread:")).length;
+    const links = [];
+    for (const raw of notes.split("\n")) {
+      const line = raw.trim();
+      const rest = (prefix) => line.slice(prefix.length).trim().split(/\s+/);
+      if (line.startsWith("Linear:")) {
+        const [id, url, extra] = rest("Linear:");
+        if (id && url && !extra)
+          links.push({ label: "issue", text: `${id} ${url}`, url });
+      } else if (line.startsWith("PR:") || line.startsWith("CI:")) {
+        const prefix = line.startsWith("PR:") ? "PR:" : "CI:";
+        const [url, extra] = rest(prefix);
+        if (url && !extra)
+          links.push({ label: prefix === "PR:" ? "pr" : "ci", text: url, url });
+      } else if (line.startsWith("Thread:")) {
+        const tokens = rest("Thread:").filter(Boolean);
+        if (!tokens.length) continue;
+        const ok = threadLines === 1 && tokens.length === 4;
+        const reason =
+          threadLines > 1
+            ? "several Thread lines"
+            : tokens.length === 1
+              ? "name only"
+              : "needs name workspace tab pane";
+        links.push({
+          label: "thread",
+          text: ok
+            ? `${tokens[0]} · enter focuses`
+            : `${tokens.join(" ")} · cannot verify (${reason})`,
+          thread: ok ? tokens[0] : null,
+          unverifiable: !ok,
+          reason,
+        });
+      }
+    }
+    return links;
+  }
+  const pageQuestions = (task) =>
+    (state.questions || [])
+      .filter((q) => q.taskId === task.id)
+      .sort(
+        (a, b) =>
+          (a.kind === "finding") - (b.kind === "finding") ||
+          a.number - b.number,
+      );
+  function ring(task) {
+    if (state.quickExpanded) return [...task.steps.map((s) => s.id), "add"];
+    return [
+      "parent",
+      ...steps.rows(task).map((s) => s.id),
+      "add",
+      ...children(task).map((c) => `child:${c.id}`),
+      ...pageQuestions(task).map((q) => `q:${q.id}`),
+      ...linksOf(task).map((_, i) => `link:${i}`),
+    ];
+  }
+  function moveRing(task, delta) {
+    const items = ring(task);
+    let i = items.indexOf(steps.selected);
+    if (i < 0) {
+      // The first move lands on the first step (or + step), as in the app.
+      const first = items.findIndex((k) => k !== "parent");
+      i = delta > 0 ? first - 1 : first + 1;
+    }
+    steps.selected = items[(i + delta + items.length) % items.length];
+    steps.marked = null;
+  }
+  function activateRing(task) {
+    const key = steps.selected;
+    if (!key) return;
+    if (key === "add") steps.begin(task);
+    else if (key === "parent") {
+      if (!task.parent) openParentPicker();
+      else openRelated(task.parent);
+    } else if (key.startsWith("child:")) openRelated(key.slice(6));
+    else if (key.startsWith("q:")) {
+      if (hasUnsavedWork()) return;
+      state.q.returnQuestion = null;
+      openQuestion(key.slice(2), task.id);
+    } else if (key.startsWith("link:")) {
+      const link = linksOf(task)[Number(key.slice(5))];
+      if (!link) return;
+      state.message = link.unverifiable
+        ? `this Thread line cannot be verified (${link.reason}) · nothing focused`
+        : link.thread
+          ? `${link.thread} · sample: the demo has no Herdr · nothing focused`
+          : link.url;
+    } else {
+      steps.toggle(task);
+      task.updatedAt = clock();
+    }
+  }
+
+  // ── parent picker ─────────────────────────────────────────────────────────
+  function isUnder(candidate, task) {
+    let cursor = candidate;
+    const seen = new Set();
+    while (cursor?.parent && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      if (cursor.parent === task.id) return true;
+      cursor = taskById(cursor.parent);
+    }
+    return false;
+  }
+  function parentOptions() {
+    const task = shownTask();
+    if (!task) return [];
+    const q = state.parentQ.trim().toLowerCase();
+    const options = [{ id: null, label: "no parent" }];
+    for (const t of [...state.tasks].sort(byNumber)) {
+      if (t.id === task.id) continue;
+      const label = `T${t.number} ${t.title}${t.id === task.parent ? " · current" : ""}${t.archived ? " · archived" : ""}${isUnder(t, task) ? " · under this task" : ""}`;
+      if (q && !label.toLowerCase().includes(q)) continue;
+      options.push({ id: t.id, label, cycle: isUnder(t, task) });
+    }
+    return options;
+  }
+  function openParentPicker() {
+    if (hasUnsavedWork()) {
+      state.message = "save or cancel edits first";
+      return;
+    }
+    state.overlay = "parent";
+    state.parentQ = "";
+    state.parentI = 0;
+  }
+  function chooseParent(index) {
+    const option = parentOptions()[index];
+    const task = shownTask();
+    if (!option || !task) return;
+    if (option.cycle) {
+      state.message = "that task is under this one · choose another";
+      return;
+    }
+    task.parent = option.id;
     task.updatedAt = clock();
-    preview.editField = null;
-    preview.editDraft = "";
+    state.overlay = null;
+    state.message = option.id
+      ? `parent ${taskLabel(option.id)}`
+      : "parent cleared";
+  }
+
+  // ── editing ───────────────────────────────────────────────────────────────
+  function beginEdit(task, field = "title") {
+    if (!task) return;
+    clearMarks();
+    state.edit = {
+      field,
+      title: task.title,
+      notes: task.notes || "",
+      scope: task.project ?? null,
+    };
+  }
+  function editStops(task) {
+    return [
+      "title",
+      "notes",
+      ...steps.rows(task).map((s) => `step:${s.id}`),
+      "step:add",
+      "scope",
+    ];
+  }
+  function syncEditInput() {
+    const input = document.getElementById("tsk-edit");
+    if (input && state.edit) state.edit[state.edit.field] = input.value;
+  }
+  function moveEdit(task, reverse) {
+    syncEditInput();
+    const stops = editStops(task);
+    let i = stops.indexOf(state.edit.field);
+    if (i < 0) i = 0;
+    state.edit.field =
+      stops[(i + (reverse ? -1 : 1) + stops.length) % stops.length];
+    if (state.edit.field.startsWith("step:"))
+      steps.selected = state.edit.field.slice(5);
+  }
+  function saveEdit(task) {
+    syncEditInput();
+    if (!state.edit) return true;
+    const title = state.edit.title.trim();
+    if (!title) {
+      state.message = "title needed";
+      return false;
+    }
+    task.title = title;
+    task.notes = state.edit.notes;
+    task.project = state.edit.scope;
+    task.updatedAt = clock();
+    if (steps.dirty) steps.save(task, true);
+    state.edit = null;
+    return true;
+  }
+  function cycleScope(reverse) {
+    const names = [null, ...projectNames()];
+    const i = names.indexOf(state.edit.scope);
+    state.edit.scope =
+      names[(i + (reverse ? -1 : 1) + names.length) % names.length];
+  }
+
+  // ── quick-add ─────────────────────────────────────────────────────────────
+  const fallbackProject = () =>
+    state.scope === "all" || state.scope === "desk" ? null : state.scope;
+  function openQuickAdd() {
+    if (hasUnsavedWork()) return;
+    state.overlay = "quick";
+    state.draft = "";
+    state.refuse = "";
+  }
+  function saveDraft(stay) {
+    const parsed = parseCapture(state.draft, fallbackProject());
+    if (!parsed.title) {
+      state.refuse = "title needed";
+      return false;
+    }
+    const task = {
+      id: `n${state.nextId++}`,
+      number: state.nextNumber++,
+      title: parsed.title,
+      notes: "",
+      steps: [],
+      status: "todo",
+      project: parsed.project,
+      parent: null,
+      archived: false,
+      createdAt: clock(),
+      updatedAt: clock(),
+    };
+    state.tasks.push(task);
+    if (inScope(task)) state.selectedId = task.id;
+    flash([task]);
+    state.draft = "";
+    state.refuse = "";
+    if (!stay) state.overlay = null;
+    return true;
+  }
+  function expandQuickAdd() {
+    const parsed = parseCapture(state.draft, fallbackProject());
+    state.capture = {
+      id: "capture-draft",
+      number: state.nextNumber,
+      title: parsed.title,
+      notes: "",
+      steps: [],
+      status: "todo",
+      project: parsed.project,
+      parent: null,
+      createdAt: clock(),
+      updatedAt: clock(),
+      rawDraft: state.draft,
+    };
+    state.quickExpanded = true;
+    state.refuse = "";
+    steps.reset();
+    steps.bind(state.capture);
+    beginEdit(state.capture, "notes");
+  }
+  function collapseQuickAdd() {
+    syncEditInput();
+    const capture = state.capture;
+    if (capture && state.edit) {
+      const project = /(^|\s)!p(\s|$)/.test(capture.rawDraft)
+        ? capture.rawDraft.match(/!p(\s+[^!\s]\S*)?/)[0]
+        : "";
+      state.draft = [state.edit.title, project].filter(Boolean).join(" ");
+    }
+    state.quickExpanded = false;
+    state.capture = null;
+    state.edit = null;
+    state.refuse = "";
+    steps.reset();
+  }
+  function saveExpanded() {
+    syncEditInput();
+    const capture = state.capture;
+    if (!capture) return;
+    const title = state.edit.title.trim();
+    if (!title) {
+      state.refuse = "title needed";
+      return;
+    }
+    const task = {
+      ...capture,
+      id: `n${state.nextId++}`,
+      number: state.nextNumber++,
+      title,
+      notes: state.edit.notes,
+      project: state.edit.scope,
+      steps: structuredClone(capture.steps),
+    };
+    delete task.rawDraft;
+    state.tasks.push(task);
+    state.quickExpanded = false;
+    state.capture = null;
+    state.edit = null;
+    state.overlay = null;
+    steps.reset();
+    if (inScope(task)) state.selectedId = task.id;
+    flash([task]);
+  }
+
+  // ── search, palette, help ─────────────────────────────────────────────────
+  function updateSearch(value) {
+    state.searchQuery = value;
+    ensureSelection();
+  }
+  function paletteCommands() {
+    const q = state.paletteQ.trim().toLowerCase();
+    const task = taskById(state.selectedId);
+    const all = [
+      { id: "new", label: "new task", run: openQuickAdd },
+      { id: "undo", label: "undo", run: undo },
+      {
+        id: "drawer",
+        label: "done drawer",
+        run: () => (state.drawer = !state.drawer),
+      },
+      {
+        id: "help",
+        label: "help",
+        run: () => {
+          state.overlay = "help";
+          state.helpQ = "";
+        },
+      },
+      { id: "reset", label: "reset demo", run: resetDemo },
+    ];
+    if (task)
+      all.splice(
+        1,
+        0,
+        { id: "todo", label: "set status: todo", run: () => setStatus("todo") },
+        {
+          id: "doing",
+          label: "set status: doing",
+          run: () => setStatus("doing"),
+        },
+        { id: "done", label: "set status: done", run: () => setStatus("done") },
+      );
+    // Letters in order, as in the app: `ssd` finds `set status: doing`.
+    const fuzzy = (label) => {
+      let i = 0;
+      for (const c of label) if (c === q[i]) i++;
+      return i === q.length;
+    };
+    return all.filter((c) => !q || fuzzy(c.label));
+  }
+  function resetDemo() {
+    state.tasks = fixture ? structuredClone(fixture.tasks) : seed();
+    state.questions = fixture ? (fixture.questions ?? null) : seedQuestions();
+    Object.assign(state, {
+      tab: "board",
+      scope: fixture?.scope ?? launchProject(),
+      sort: "number",
+      searchQuery: "",
+      searchPinned: false,
+      selectedId: null,
+      message: "",
+      drawer: false,
+      archivedOpen: false,
+      page: false,
+      trail: [],
+      edit: null,
+      undo: null,
+    });
+    clearMarks();
+    state.q = {
+      cursor: null,
+      page: null,
+      options: {},
+      check: null,
+      answer: null,
+      correcting: null,
+      report: {},
+      returnTask: null,
+      returnQuestion: null,
+      returnDepth: 0,
+    };
+    steps.reset();
+  }
+
+  const HELP = [
+    ["navigation", "↑↓ / jk", "move", "select"],
+    ["navigation", "enter", "open task (focus the detail at 110+)", "detail"],
+    ["navigation", "→/l · ←/h", "detail or list at 110+ columns", "wide"],
+    ["navigation", "J / K", "next / previous task or question", "step"],
+    ["navigation", "shift+M", "multi-select", "select multiple"],
+    ["navigation", "space", "toggle mark (multi-select)", "select multiple"],
+    ["navigation", "shift+↑↓", "mark and move (multi-select)", "select"],
+    ["task actions", "s", "doing (ctrl+s in the app)", "status"],
+    ["task actions", "o", "todo (ctrl+o in the app)", "status reopen"],
+    ["task actions", "d", "done (ctrl+d in the app)", "status finish"],
+    ["task actions", "x", "delete, press twice", "remove"],
+    ["task actions", "u", "undo", "restore"],
+    ["task actions", "f", "archive / restore", "file hide"],
+    ["create & edit", "+", "quick-add", "capture new task"],
+    ["create & edit", "e", "edit title (task page)", "rename"],
+    ["create & edit", "a", "add a step (task page)", "checklist"],
+    ["create & edit", "alt+↑ / alt+↓", "move selected step", "reorder"],
+    ["create & edit", "P / U", "choose / clear the parent", "relation"],
+    ["views & find", "1", "board tab", "switch"],
+    ["views & find", "2", "questions tab", "agent answer approve"],
+    ["views & find", "p", "scope: all, desk, or a project", "project"],
+    ["views & find", "S", "sort by number / by project", "order"],
+    ["views & find", "z / D", "done drawer", "completed"],
+    ["views & find", "g", "fold / unfold archived", "drawer"],
+    ["views & find", "/", "search board", "find filter"],
+    ["views & find", ":", "command palette", "find actions"],
+    ["questions", "enter", "open · save the chosen answer", "answer"],
+    ["questions", "j / k", "choose an option", "answer"],
+    ["questions", "space", "check an approval's terms", "approve"],
+    ["questions", "y / n", "approve once checked / reject", "approve"],
+    ["questions", "c", "correct an answer", "answer"],
+    ["questions", "t", "open the question's task", "task"],
+    ["questions", "r", "resend a lead request", "finding"],
+    ["app controls", "?", "help", "shortcuts keys"],
+    ["app controls", "esc", "clear / close / back", "cancel"],
+  ];
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+  function renderTabs(width) {
+    const count = questionsLoaded() && forYou() ? ` ·${forYou()}` : "";
+    const scope = `${state.scope} ▾`;
+    const sort = `sort ${state.sort} ▾`;
+    const variants = [
+      ["questions", sort],
+      ["questions", sort.replace("sort ", "")],
+      ["", sort.replace("sort ", "")],
+    ];
+    const sep = "  ·  ";
+    const onBoard = state.tab === "board";
+    let chosen = variants[variants.length - 1];
+    for (const v of variants) {
+      const label = `2${v[0] ? ` ${v[0]}` : ""}${count}`;
+      const parts = onBoard
+        ? ["1 board", label, scope, v[1]]
+        : ["1 board", label];
+      if ((" " + parts.join(sep)).length <= width) {
+        chosen = v;
+        break;
+      }
+    }
+    const qLabel = `2${chosen[0] ? ` ${chosen[0]}` : ""}${count}`;
+    const tab = (name, text) =>
+      `<span class="tsk-tab-group ${state.tab === name ? "is-on" : ""}"><button type="button" class="tsk-tab ${state.tab === name ? "is-on" : ""}" data-tab="${name}">${esc(text)}</button></span>`;
+    const dot = `<span class="dim">${sep}</span>`;
+    let html = ` ${tab("board", "1 board")}${dot}${tab("questions", qLabel)}`;
+    if (onBoard)
+      html += `${dot}<button type="button" class="tsk-selector dim" data-scope="1">${esc(scope)}</button>${dot}<button type="button" class="tsk-selector dim" data-sort="1">${esc(chosen[1])}</button>`;
+    return `<div class="tsk-tabs">${html}</div>`;
+  }
+
+  function renderTaskRow(row, width) {
+    const task = row.task;
+    const selected = task.id === state.selectedId;
+    const marked = state.markedIds.has(task.id);
+    const prefix = `${selected ? "▸" : " "}${marked ? "▪" : " "} `;
+    const id = `T${task.number}`;
+    const kids = children(task);
+    const badge = kids.length
+      ? `⊂${kids.filter((c) => c.status === "done").length}/${kids.length}`
+      : "";
+    const alert = taskMarks(task);
+    const tailWidth = alert.length + badge.length + (alert && badge ? 1 : 0);
+    const room = Math.max(
+      8,
+      width -
+        2 -
+        prefix.length -
+        id.length -
+        1 -
+        (tailWidth ? tailWidth + 1 : 0),
+    );
+    const title = wrapText(task.title, room)
+      .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
+      .join("");
+    const tail = tailWidth
+      ? `<span class="tsk-row-tail">${alert ? `<b class="tsk-alert">${esc(alert)}</b>` : ""}${alert && badge ? " " : ""}${badge ? `<span class="dim">${esc(badge)}</span>` : ""}</span>`
+      : "";
+    return `<button type="button" class="tsk-row ${row.dim ? "dim" : ""} ${selected ? "is-sel" : ""} ${task.id === state.flashId ? "is-flash" : ""}" data-task="${esc(task.id)}"><span class="tsk-row-main"><span class="tsk-row-prefix">${prefix}<span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy ${id}">${id}</span> </span><span class="tsk-row-title">${title}</span>${tail}</span></button>`;
+  }
+
+  function renderBoardList(width) {
+    const rows = buildRows();
+    ensureSelection(rows);
+    const body = rows
+      .map((row) => {
+        if (row.kind === "section" && row.collapsed)
+          return `<button type="button" class="tsk-sec" data-drawer="1"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count} · z to open</span></button>`;
+        if (row.kind === "section")
+          return `<div class="tsk-sec"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count}</span></div>`;
+        if (row.kind === "sub")
+          return `<div class="tsk-sub-label dim">   ${esc(row.label)}</div>`;
+        if (row.kind === "archived") {
+          const selected = row.id === state.selectedId;
+          return `<button type="button" class="tsk-group" data-archived-header="1"><span class="dim"> ${state.archivedOpen ? "▾" : "▸"}</span> <span class="sec">${selected ? "<strong>archived</strong>" : "archived"}</span><span class="rule" aria-hidden="true"></span><span class="count dim">${row.count}</span></button>`;
+        }
+        return renderTaskRow(row, width);
+      })
+      .join("");
+    const line = waitingLine();
+    const waitingRow = line
+      ? `<button type="button" class="tsk-waiting" data-waiting="1">${wrapText(
+          ` ${line}`,
+          width - 1,
+        )
+          .map((l) => `<span>${esc(l)}</span>`)
+          .join("")}</button>`
+      : "";
+    const empty = state.searchQuery.trim()
+      ? `no tasks match &quot;${esc(state.searchQuery.trim())}&quot;`
+      : "no open tasks here — p rescope or + add";
+    return `${renderTabs(width)}${waitingRow}<div class="tsk-list">${body || `<div class="dim">    ${empty}</div>`}</div>`;
+  }
+
+  function relationRow(key, lead, text, { dim = false, width }) {
+    const selected = steps.selected === key && !state.edit;
+    const lines = wrapText(text, Math.max(8, width - 6 - lead.length));
+    return `<div class="tsk-relation ${dim && !selected ? "dim" : ""}" ${key ? `data-ring="${esc(key)}"` : ""} ${key ? `aria-selected="${selected}"` : ""}><span class="tsk-step-glyph">${selected ? "▸ " : "  "}</span><span class="tsk-relation-text">${lines
+      .map(
+        (line, i) =>
+          `<span>${esc((i ? " ".repeat(lead.length) : lead) + line)}</span>`,
+      )
+      .join("")}</span></div>`;
+  }
+
+  function renderTaskPage(task, { embedded, focused }) {
+    const narrow = !isWide();
+    const width = detailColumns();
+    if (!task)
+      return `<div class="tsk-task-column tsk-surface"><div class="tsk-task-header dim"><span class="sec">no task</span></div><div class="tsk-task-rule" aria-hidden="true"></div><div class="tsk-task-surface"><div class="dim">  select a task to see it here</div></div></div>`;
+    steps.bind(task);
+    const edit = state.edit;
+    const field = edit?.field;
+    const scopeName = edit ? (edit.scope ?? "desk") : projectName(task);
+    const stateSlot = steps.editor
+      ? "editing step"
+      : steps.dirty
+        ? "unsaved"
+        : edit
+          ? `editing ${field.startsWith("step:") ? "steps" : field}`
+          : narrow
+            ? task.status
+            : `${task.status} · ${scopeName}`;
+    const glyph = GLYPH[task.status] || "○";
+    const titleText = edit ? edit.title : task.title;
+    let header;
+    if (field === "title") {
+      header = `<div class="tsk-task-header is-bold"><span class="glyph">${glyph}</span> <span class="tsk-task-id">T${task.number}</span> <input class="tsk-field" id="tsk-edit" value="${esc(edit.title)}" /><span class="tsk-state-slot">${esc(stateSlot)}</span></div><div class="tsk-task-rule" aria-hidden="true"></div>`;
+    } else if (narrow) {
+      const room = terminalColumns() - 11 - stateSlot.length;
+      const titleRows = wrapText(titleText, room);
+      const status =
+        titleRows[0].length + 8 + stateSlot.length <= terminalColumns() - 2
+          ? stateSlot
+          : "";
+      header = `<div class="tsk-task-header tsk-narrow-header"><span class="tsk-page-prefix">${glyph} <span class="tsk-task-id" data-copy-task="${esc(task.id)}">T${task.number}</span> </span><span class="tsk-page-title">${titleRows.map((l) => `<span>${esc(l)}</span>`).join("")}</span><span class="tsk-state-slot">${esc(status)}</span></div><div class="tsk-task-rule"></div>`;
+    } else {
+      header = `<div class="tsk-task-header ${focused ? "is-bold" : "dim"}"><span class="glyph">${glyph}</span> <span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy T${task.number}">T${task.number}</span> <span class="sec">${esc(titleText)}</span><span class="tsk-state-slot">${esc(stateSlot)}</span></div><div class="tsk-task-rule" aria-hidden="true"></div>`;
+    }
+    const notesText = edit ? edit.notes : task.notes;
+    const notes =
+      field === "notes"
+        ? `<textarea class="tsk-field tsk-notes" id="tsk-edit">${esc(edit.notes)}</textarea>`
+        : `<div class="tsk-page-notes">${wrapText(
+            notesText || "no notes yet",
+            width - 6,
+          )
+            .map((l) => `<span>${esc(l) || " "}</span>`)
+            .join("")}</div>`;
+    const relations = [];
+    if (!state.quickExpanded) {
+      const parent = task.parent ? taskById(task.parent) : null;
+      const parentText = !task.parent
+        ? "none · P to set"
+        : parent
+          ? `↑ T${parent.number} ${parent.title} · ${parent.archived ? "archived" : parent.status}`
+          : `↑ ${task.parent} not found · link kept`;
+      relations.push(
+        relationRow("parent", "parent  ", parentText, {
+          dim: !parent,
+          width,
+        }),
+      );
+    }
+    const stepRows = steps.rows(task);
+    // wrapText counts a line's trailing space, so 8 here matches the app's step rows.
+    const stepWidth = Math.max(8, width - 8);
+    const editor = `<textarea id="tsk-step-edit" class="tsk-field" aria-label="Step text" rows="${wrapText(steps.editor?.text ?? "", stepWidth).length}">${esc(steps.editor?.text ?? "")}</textarea><span class="tsk-step-refusal">${esc(steps.refusal)}</span>`;
+    const stepSelected = (id) =>
+      edit ? field === `step:${id}` : steps.selected === id;
+    const stepList = `<div class="tsk-steps"><div class="tsk-steps-heading dim">steps ${stepRows.filter((s) => s.done).length}/${stepRows.length}</div>${stepRows
+      .map(
+        (step) =>
+          `<div class="tsk-step" data-step="${esc(step.id)}" role="option" aria-selected="${stepSelected(step.id)}"><span class="tsk-step-glyph">${stepSelected(step.id) ? "▸ " : "  "}${steps.marked === step.id ? "✗" : step.done ? "✓" : "▪"} </span>${
+            steps.editor?.id === step.id
+              ? editor
+              : `<span class="tsk-step-text">${wrapText(step.text, stepWidth)
+                  .map((l) => `<span>${esc(l)}</span>`)
+                  .join("")}</span>`
+          }</div>${steps.editor && !steps.editor.id && steps.editor.after === step.id ? `<div class="tsk-step-new">${editor}</div>` : ""}`,
+      )
+      .join(
+        "",
+      )}${steps.editor && !steps.editor.id && !steps.editor.after ? `<div class="tsk-step-new">${editor}</div>` : `<button type="button" class="tsk-step-add dim" data-step-add="1" aria-selected="${stepSelected("add")}">${stepSelected("add") ? "▸" : " "}  + step</button>`}</div>`;
+    const after = [];
+    if (!state.quickExpanded) {
+      const kids = children(task);
+      if (kids.length) {
+        const done = kids.filter((c) => c.status === "done").length;
+        after.push(
+          relationRow(null, "", `children ${done}/${kids.length} done`, {
+            dim: true,
+            width,
+          }),
+        );
+        for (const c of kids)
+          after.push(
+            relationRow(
+              `child:${c.id}`,
+              `${GLYPH[c.status]} `,
+              `T${c.number} ${c.title}${c.archived ? " · archived" : ""}`,
+              { dim: c.archived, width },
+            ),
+          );
+        if (done === kids.length && task.status !== "done")
+          after.push(
+            relationRow(null, "", "all children done · d completes this task", {
+              dim: true,
+              width,
+            }),
+          );
+      }
+      const records = pageQuestions(task);
+      const asks = records.filter((q) => q.kind !== "finding");
+      const findings = records.filter((q) => q.kind === "finding");
+      if (asks.length) {
+        after.push(
+          relationRow(
+            null,
+            "",
+            `questions ${asks.filter(isOpen).length} open`,
+            { dim: true, width },
+          ),
+        );
+        for (const q of asks)
+          after.push(
+            relationRow(
+              `q:${q.id}`,
+              q.kind === "approval" ? "! " : "? ",
+              `Q${q.number} ${q.summary} · ${stateLabel(q)}`,
+              { dim: !isOpen(q), width },
+            ),
+          );
+      }
+      if (findings.length) {
+        after.push(relationRow(null, "", "findings", { dim: true, width }));
+        for (const q of findings)
+          after.push(
+            relationRow(
+              `q:${q.id}`,
+              "◇ ",
+              `Q${q.number} ${q.finding?.kind || "issue"} · ${q.summary} · ${stateLabel(q)}`,
+              { dim: !isOpen(q), width },
+            ),
+          );
+      }
+      const links = linksOf(task);
+      if (links.length) {
+        after.push(relationRow(null, "", "links", { dim: true, width }));
+        links.forEach((link, i) =>
+          after.push(
+            relationRow(`link:${i}`, link.label.padEnd(7), link.text, {
+              dim: link.unverifiable,
+              width,
+            }),
+          ),
+        );
+      }
+    }
+    const scopeField =
+      field === "scope"
+        ? `<span class="tsk-meta-selected" data-page-field="scope">${esc(scopeName)}</span>`
+        : esc(scopeName);
+    const meta = [
+      narrow || edit ? scopeField : "",
+      `created ${esc(age(task.createdAt))} ago`,
+      `updated ${esc(age(task.updatedAt))} ago`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const editField = field?.startsWith("step:") ? "steps" : field || "";
+    const editTarget = field?.startsWith("step:") ? field.slice(5) : "";
+    return `<div class="tsk-task-column tsk-surface ${narrow ? "is-narrow" : ""}" aria-label="T${task.number} task column" data-status="${esc(task.status)}" data-edit-state="${steps.editor ? "editing" : steps.dirty ? "unsaved" : edit ? "editing" : "view"}" data-edit-field="${esc(editField)}" data-edit-target="${esc(editTarget)}">${header}<div class="tsk-task-surface tsk-page">${notes}${relations.length ? `<div class="tsk-relations">${relations.join("")}</div>` : ""}${stepList}${after.length ? `<div class="tsk-relations tsk-after-steps">${after.join("")}</div>` : ""}</div><div class="tsk-page-meta dim">${meta}</div></div>`;
+  }
+
+  function renderQuestionList(width, wide) {
+    if (!questionsLoaded())
+      return wrapText(
+        "  questions live on an Agent board · this sample board has no Agent questions, findings, or Threads",
+        width,
+      )
+        .map((l) => `<div class="dim">${esc(l)}</div>`)
+        .join("");
+    const groups = grouped();
+    if (!groups.length) return `<div class="dim">  no questions</div>`;
+    return groups
+      .map(([key, title, members]) => {
+        const rows = members
+          .map((q) => {
+            const selected = state.q.cursor === q.id;
+            const meta =
+              key === "closed"
+                ? ` · ${stateLabel(q)}`
+                : key === "unrouted"
+                  ? " · target unknown"
+                  : "";
+            const lead = `${selected ? " ▸ " : "   "}Q${q.number} `;
+            const lines = wrapText(
+              `${q.summary}${meta}`,
+              Math.max(8, width - lead.length),
+            );
+            const bold = selected && (!state.q.page || !wide);
+            return `<button type="button" class="tsk-q-row ${bold ? "is-bold" : ""}" data-question="${esc(q.id)}">${lines
+              .map(
+                (l, i) =>
+                  `<span>${esc((i ? " ".repeat(lead.length) : lead) + l)}</span>`,
+              )
+              .join("")}</button>`;
+          })
+          .join("");
+        return `<div class="tsk-q-group ${key === "unrouted" ? "dim" : "is-bold"}"> ${esc(title)} ${members.length}</div>${rows}`;
+      })
+      .join("");
+  }
+
+  function renderQuestionPage(q, width) {
+    return `<div class="tsk-q-page" data-q-page="${esc(q.id)}">${questionPageRows(
+      q,
+      width,
+    )
+      .map((row) => {
+        if (row.input)
+          return `<div class="tsk-q-line is-chosen"><span>answer  </span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="Answer" /></div>`;
+        return `<div class="tsk-q-line ${row.cls}" ${row.attrs}>${esc(row.text) || " "}</div>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function renderQuestionsTab() {
+    const wide = isWide();
+    const width = wide ? listColumns() : terminalColumns();
+    const list = `<div class="tsk-list tsk-q-list">${renderQuestionList(width - 1, wide)}</div>`;
+    const shown = questionById(state.q.page ?? (wide ? state.q.cursor : null));
+    if (wide) {
+      const detail = shown
+        ? renderQuestionPage(shown, detailColumns() - 2)
+        : `<div class="dim">  pick a question on the left</div>`;
+      return `${renderTabs(terminalColumns())}<div class="tsk-wide-split is-split" style="grid-template-columns:${listColumns()}ch 2ch minmax(0,1fr)"><div class="tsk-board-surface tsk-surface">${list}</div><div class="tsk-rule-column dim" aria-hidden="true"></div><div class="tsk-surface tsk-q-detail ${state.q.page ? "is-focused" : ""}">${detail}</div></div>`;
+    }
+    return `${renderTabs(width)}${shown ? `<div class="tsk-list">${renderQuestionPage(shown, width - 2)}</div>` : list}`;
+  }
+
+  function contextLine() {
+    if (state.tab === "questions") {
+      if (!questionsLoaded()) return "questions · no Agent board here";
+      return `questions · ${forYou()} waiting on you · ${(state.questions || []).length} total · sample, nothing is sent`;
+    }
+    const base =
+      state.searchPinned && state.searchQuery.trim()
+        ? `${state.scope} · /${state.searchQuery.trim()}`
+        : state.scope;
+    if (state.markMode)
+      return state.markedIds.size
+        ? `multi-select · ${state.markedIds.size} selected · esc clears`
+        : "multi-select · space/click marks · esc exits";
+    return base;
+  }
+
+  function verbButtons(items) {
+    return items
+      .map(
+        (v) =>
+          `<button type="button" class="tsk-verb" data-verb="${esc(v.id)}">${esc(v.label)}</button>`,
+      )
+      .join("<span> · </span>");
+  }
+  function hintBar(items) {
+    return items
+      .map(
+        (item) =>
+          `<button type="button" class="tsk-verb" data-hint="${esc(item.id)}">${esc(item.label)}</button>`,
+      )
+      .join("<span> · </span>");
+  }
+
+  function renderFooter() {
+    const wide = isWide();
+    let hint = "";
+    let verbs;
+    if (state.tab === "questions") {
+      verbs = esc(questionFooterHint(wide));
+    } else if (state.edit || steps.editor || steps.dirty) {
+      verbs = "shift+enter save · tab next field · esc cancel";
+    } else if (state.page) {
+      const task = shownTask();
+      verbs = verbButtons([
+        { id: "edit", label: "e edit" },
+        task?.status === "todo"
+          ? { id: "doing", label: "s doing" }
+          : { id: "todo", label: "o todo" },
+        task?.status === "done"
+          ? { id: "undo", label: "u undo" }
+          : { id: "done", label: "d done" },
+        { id: "close", label: wide ? "esc list" : "esc close" },
+      ]);
+      if (wide) hint = "← list";
+    } else {
+      const task = taskById(state.selectedId);
+      const items = [{ id: "open", label: "enter open" }];
+      if (task) {
+        if (task.status === "todo")
+          items.push({ id: "doing", label: "s doing" });
+        else items.push({ id: "todo", label: "o todo" });
+        if (task.status !== "done") items.push({ id: "done", label: "d done" });
+      }
+      items.push(
+        { id: "capture", label: "+ add" },
+        { id: "help", label: "? help" },
+      );
+      verbs = verbButtons(items);
+      if (wide && task) hint = "→ detail";
+    }
+    let body;
+    if (state.overlay === "quick" && !state.quickExpanded) {
+      body = `<div class="tsk-input-row"><span class="tsk-prompt">+</span><input class="tsk-field" id="tsk-add" value="${esc(state.draft)}" placeholder="title  ·  !p project" autocomplete="off" /><span class="cursor">█</span></div><div class="foot dim tsk-verbs">${
+        state.refuse
+          ? esc(state.refuse)
+          : hintBar([
+              { id: "save", label: "enter save" },
+              { id: "details", label: "tab details" },
+              { id: "close", label: "esc close" },
+            ])
+      }</div>`;
+    } else if (state.quickExpanded) {
+      body = `<div class="tsk-status-row"><span class="foot">new task · sample, saved in this page only</span></div><div class="foot dim tsk-verbs">${
+        state.refuse
+          ? esc(state.refuse)
+          : hintBar([
+              { id: "save-expanded", label: "shift+enter save" },
+              { id: "next-field", label: "tab next field" },
+              { id: "collapse", label: "esc one-line draft" },
+            ])
+      }</div>`;
+    } else if (state.overlay === "search") {
+      body = `<div class="tsk-input-row"><span class="tsk-prompt">/</span><input class="tsk-field" id="tsk-search" value="${esc(state.searchQuery)}" placeholder="search tasks" autocomplete="off" /><span class="cursor">█</span></div><div class="foot dim tsk-verbs">${hintBar(
+        [
+          { id: "pin", label: "enter pin" },
+          { id: "clear", label: "esc clear" },
+        ],
+      )}</div>`;
+    } else {
+      const context = state.message || contextLine();
+      body = `<div class="tsk-status-row"><button type="button" class="tsk-done-count foot" data-drawer="1">${esc(context)}</button><span class="foot dim tsk-stage-hint">${esc(hint)}</span></div><div class="foot dim tsk-verbs">${verbs}</div>${state.copyNotice ? `<div class="foot dim">${esc(state.copyNotice)}</div>` : ""}`;
+    }
+    return `<div class="tsk-foot"><div class="foot-rule" aria-hidden="true"></div>${body}</div>`;
   }
 
   function renderHelp() {
-    const rows = [
-      ["navigation", "↑↓ / jk", "move", "select"],
-      ["navigation", "shift+M", "multi-select", "select multiple"],
-      [
-        "navigation",
-        "shift+↑↓",
-        "mark and move (multi-select)",
-        "select multiple",
-      ],
-      ["navigation", "space", "toggle mark (multi-select)", "select multiple"],
-      ["navigation", "enter", "open task", "detail"],
-      ["navigation", "←/h · →/l", "close or peek / slide", "wide view"],
-      ["task actions", "s", "doing", "status todo"],
-      ["task actions", "d", "done", "status finish complete"],
-      ["task actions", "o", "todo", "status reopen"],
-      ["task actions", "x", "delete", "remove"],
-      ["task actions", "u", "undo", "restore"],
-      [
-        "task actions",
-        "f",
-        "archive / restore (archived: z drawer)",
-        "file hide restore",
-      ],
-      ["create & edit", "+", "quick-add", "capture new task"],
-      ["create & edit", "e", "edit title", "rename"],
-      [
-        "create & edit",
-        "a",
-        "add step below selected (task page)",
-        "checklist insert",
-      ],
-      [
-        "task actions",
-        "alt+↑ / alt+↓",
-        "move selected step (task page)",
-        "checklist reorder",
-      ],
-      ["views & find", "1", "desk", "switch view"],
-      ["views & find", "2", "selected project", "switch view"],
-      ["views & find", "3", "projects", "switch view"],
-      ["views & find", "p", "project picker", "switch find"],
-      ["views & find", "z / D", "done drawer", "completed tasks"],
-      [
-        "views & find",
-        "g",
-        "fold / unfold group",
-        "collapse expand inbox archived",
-      ],
-      ["views & find", "/", "search board", "find filter tasks projects"],
-      ["views & find", ":", "command palette", "find actions"],
-      ["app controls", "?", "help", "shortcuts keys"],
-      ["app controls", "esc", "clear / close", "cancel"],
-      ["app controls", "q", "quit", "exit"],
-    ];
     const query = state.helpQ.trim().toLowerCase();
-    const visible = rows.filter(
+    const visible = HELP.filter(
       (row) => !query || row.join(" ").toLowerCase().includes(query),
     );
     let previous = "";
@@ -2021,752 +1998,112 @@ import { parseCapture } from "./capture.js";
         return `${heading}<div class="tsk-help-row"><span>${esc(row[1])}</span><span>${esc(row[2])}</span></div>`;
       })
       .join("");
-    return `
-      <div class="tsk-box tsk-help" role="dialog" aria-label="help">
-        <div class="tsk-box-top"><span class="tsk-box-title">help</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div>
-        <div class="tsk-help-search"><span>/ </span><span>${state.helpQ ? esc(state.helpQ) : '<span class="dim">search keys or actions…</span>'}</span><span class="cursor">█</span></div>
-        <div class="tsk-help-divider" aria-hidden="true"></div>
-        <div class="tsk-box-body tsk-help-body">${list || '<div class="dim">no shortcuts match</div>'}</div>
-        <div class="tsk-box-foot">type search · ↑/↓ scroll · esc clear/close</div>
-      </div>`;
+    return `<div class="tsk-box tsk-help" role="dialog" aria-label="help"><div class="tsk-box-top"><span class="tsk-box-title">help</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-help-search"><span>/ </span><span>${state.helpQ ? esc(state.helpQ) : '<span class="dim">search keys or actions…</span>'}</span><span class="cursor">█</span></div><div class="tsk-help-divider" aria-hidden="true"></div><div class="tsk-box-body tsk-help-body">${list || '<div class="dim">no shortcuts match</div>'}</div><div class="tsk-box-foot">type search · ↑/↓ scroll · esc clear/close · the demo takes bare s o d for ctrl chords</div></div>`;
   }
-
   function renderPalette() {
     const cmds = paletteCommands();
     if (state.paletteI >= cmds.length)
       state.paletteI = Math.max(0, cmds.length - 1);
     const list = cmds
-      .map((c, i) => {
-        const mark = i === state.paletteI ? "▸" : " ";
-        const cls = i === state.paletteI ? "sel-text" : "";
-        return `<div class="tsk-pal-row ${cls}" data-cmd="${esc(c.id)}">${mark} ${esc(c.label)}</div>`;
-      })
+      .map(
+        (c, i) =>
+          `<div class="tsk-pal-row ${i === state.paletteI ? "sel-text" : ""}" data-cmd="${esc(c.id)}">${i === state.paletteI ? "▸" : " "} ${esc(c.label)}</div>`,
+      )
       .join("");
-    return `
-      <div class="tsk-box tsk-palette" role="dialog" aria-label="command">
-        <div class="tsk-box-top"><span class="tsk-box-title">command</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div>
-        <div class="tsk-box-body">${list || `<div class="dim">  no matches</div>`}</div>
-        <div class="tsk-box-foot">↑/↓ move · enter run · esc close · type to filter</div>
-      </div>
-      <div class="tsk-input-row"><span class="tsk-prompt">:</span><span class="tsk-draft">${esc(state.paletteQ)}</span><span class="cursor">█</span></div>`;
+    return `<div class="tsk-box tsk-palette" role="dialog" aria-label="command"><div class="tsk-box-top"><span class="tsk-box-title">command</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-box-body">${list || `<div class="dim">  no matches</div>`}</div><div class="tsk-box-foot">↑/↓ move · enter run · esc close · type to filter</div></div><div class="tsk-input-row"><span class="tsk-prompt">:</span><span class="tsk-draft">${esc(state.paletteQ)}</span><span class="cursor">█</span></div>`;
   }
-
-  function renderPicker() {
-    const opts = pickerOptions();
-    if (state.pickerI >= opts.length)
-      state.pickerI = Math.max(0, opts.length - 1);
+  function renderScopePicker() {
+    const opts = scopeOptions();
     const list = opts
-      .map((name, i) => {
-        const mark = i === state.pickerI ? "▸" : " ";
-        const cls = i === state.pickerI ? "sel-text" : "";
-        return `<div class="tsk-pal-row" data-pick="${esc(name)}"><span class="${cls}">${mark} ${esc(name)}</span></div>`;
-      })
-      .join("");
-    return `
-      <div class="tsk-box tsk-palette" role="dialog" aria-label="project">
-        <div class="tsk-box-top"><span class="tsk-box-title">project</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div>
-        <div class="tsk-box-body">${list}</div>
-        <div class="tsk-box-foot">↑/↓ move · enter choose · esc close</div>
-      </div>`;
-  }
-
-  function runPageVerb(id) {
-    if (id === "close") {
-      state.overlay = null;
-      state.editField = null;
-      state.editDraft = "";
-      leaveTaskPage();
-      return;
-    }
-    clearMarks();
-    enterTaskStage();
-    const task = selectedTask();
-    if (!task) return;
-    if (id === "edit" && steps.selected && steps.selected !== "add") {
-      steps.begin(task, steps.selected);
-      return;
-    }
-    if (id === "edit") {
-      state.editField = "title";
-      state.editDraft = task.title;
-    }
-    if (id === "notes") {
-      state.editField = "notes";
-      state.editDraft = task.notes || "";
-    }
-    if (id === "done") setStatus("done");
-    if (id === "start") primaryVerb();
-    if (id === "todo") setStatus("todo");
-    if (id === "undo") undoDelete();
-    if (id === "file") fileSelected();
-  }
-
-  function runPreviewPageVerb(id) {
-    if (id === "close") {
-      leavePreviewTaskPage();
-      return;
-    }
-    clearMarks(preview);
-    const task = previewTask();
-    if (!task) return;
-    if (
-      id === "edit" &&
-      previewSteps.selected &&
-      previewSteps.selected !== "add"
-    ) {
-      previewSteps.begin(task, previewSteps.selected);
-      return;
-    }
-    if (id === "edit") openPreviewTaskPage("title");
-    if (id === "start") previewPrimaryVerb();
-    if (id === "done") previewSetStatus("done");
-    if (id === "todo") previewSetStatus("todo");
-    if (id === "undo") previewUndoDelete();
-  }
-
-  function runPreviewVerb(id) {
-    if (id === "open") openPreviewTaskPage();
-    if (id === "capture") openQuickAdd("preview");
-    if (id === "start") previewPrimaryVerb();
-    if (id === "done") previewSetStatus("done");
-    if (id === "todo") previewSetStatus("todo");
-    if (id === "undo") previewUndoDelete();
-    if (id === "reopen" && previewTask()?.status === "done")
-      previewSetStatus("todo");
-    if (id === "file") previewFileSelected();
-    if (id === "delete") previewDeleteSelected();
-    if (id === "help") {
-      state.overlay = "help";
-      state.helpQ = "";
-    }
-  }
-
-  // The wide task column: a header rule on the selector row (dim in split, bold when the task
-  // owns focus) and the page body under it. Narrow: the same page fills the frame.
-  function taskColumnWidth() {
-    const cols = terminalColumns();
-    return state.stage === "split"
-      ? cols - Math.floor(cols * 0.4) - 2
-      : state.stage === "rail"
-        ? cols - 34
-        : cols;
-  }
-
-  function renderTaskPage(task, { preview: previewMode, embedded }) {
-    const pageSteps = previewMode ? previewSteps : steps;
-    const editing = previewMode ? preview.editField : state.editField;
-    const editDraft = previewMode ? preview.editDraft : state.editDraft;
-    const focused = previewMode || taskFocus();
-    const narrow = !previewMode && !isWideSplit();
-    const editId = previewMode ? "tsk-preview-edit" : "tsk-edit";
-    const stepEditId = previewMode ? "tsk-preview-step-edit" : "tsk-step-edit";
-    const stepAttribute = previewMode ? "data-preview-step" : "data-step";
-    const addAttribute = previewMode
-      ? "data-preview-step-add"
-      : "data-step-add";
-    const project = previewMode
-      ? preview.project || "project"
-      : task
-        ? projectName(task)
-        : "desk";
-    if (!task) {
-      if (embedded) {
-        return `<div class="tsk-task-column tsk-surface" aria-label="${previewMode ? "project " : ""}task column"><div class="tsk-task-header dim"><span class="sec">no task</span></div><div class="tsk-task-rule" aria-hidden="true"></div><div class="tsk-task-surface"><div class="dim">  select a task to preview it here</div></div></div>`;
-      }
-      return `<div class="tsk-overlay"><div class="dim">no task</div><div class="dim">  select a task to preview it here</div></div>`;
-    }
-    pageSteps.bind(task);
-    const stateSlot = pageSteps.editor
-      ? "editing step"
-      : pageSteps.dirty
-        ? "unsaved"
-        : editing
-          ? `editing ${editing}`
-          : narrow
-            ? task.status
-            : `${task.status} · ${project}`;
-    const headTitle =
-      editing === "title"
-        ? `<input class="tsk-field" id="${editId}" value="${esc(editDraft)}" />`
-        : esc(task.title);
-    const glyph = GLYPH[task.status] || "○";
-    let header = `<div class="tsk-task-header ${focused ? "is-bold" : "dim"}"><span class="glyph">${glyph}</span> <span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy T${task.number}">T${task.number}</span> <span class="sec">${headTitle}</span><span class="tsk-state-slot">${esc(stateSlot)}</span></div><div class="tsk-task-rule" aria-hidden="true"></div>`;
-    if (narrow && !editing) {
-      // Reserve 4 padding cells, a 6-cell glyph/ID prefix, and a cell before status.
-      const room = terminalColumns() - 11 - stateSlot.length;
-      const titleRows = wrapText(task.title, room);
-      const headerStatus =
-        titleRows[0].length + 8 + stateSlot.length <= terminalColumns() - 2
-          ? stateSlot
-          : "";
-      header = `<div class="tsk-task-header tsk-narrow-header"><span class="tsk-page-prefix">${glyph} <span class="tsk-task-id" data-copy-task="${esc(task.id)}">T${task.number}</span> </span><span class="tsk-page-title">${titleRows.map((line) => `<span>${esc(line)}</span>`).join("")}</span><span class="tsk-state-slot">${esc(headerStatus)}</span></div><div class="tsk-task-rule"></div>`;
-    }
-    const notes =
-      editing === "notes"
-        ? `<textarea class="tsk-field tsk-notes" id="${editId}">${esc(editDraft)}</textarea>`
-        : `<div class="tsk-page-notes">${wrapText(
-            task.notes || "no notes yet",
-            taskColumnWidth() - 6,
-          )
-            .map((line) => `<span>${esc(line) || " "}</span>`)
-            .join("")}</div>`;
-    const stepRows = pageSteps.rows(task);
-    const inlineEditor = `<textarea id="${stepEditId}" class="tsk-field" aria-label="Step text" rows="${wrapText(pageSteps.editor?.text ?? "", taskColumnWidth() - 8).length}">${esc(pageSteps.editor?.text ?? "")}</textarea><span class="tsk-step-refusal">${esc(pageSteps.refusal)}</span>`;
-    const stepList = `<div class="tsk-steps"><div class="tsk-steps-heading dim">steps ${stepRows.filter((step) => step.done).length}/${stepRows.length}</div>${stepRows
       .map(
-        (step) =>
-          `<div class="tsk-step" ${stepAttribute}="${esc(step.id)}" role="option" aria-selected="${pageSteps.selected === step.id}"><span class="tsk-step-glyph">${pageSteps.selected === step.id ? "▸ " : "  "}${pageSteps.marked === step.id ? "✗" : step.done ? "✓" : "▪"} </span>${
-            pageSteps.editor?.id === step.id
-              ? inlineEditor
-              : `<span class="tsk-step-text">${wrapText(
-                  step.text,
-                  narrow
-                    ? terminalColumns() - 8
-                    : Math.max(8, taskColumnWidth() - 8),
-                )
-                  .map((line) => `<span>${esc(line)}</span>`)
-                  .join("")}</span>`
-          }</div>${
-            pageSteps.editor &&
-            !pageSteps.editor.id &&
-            pageSteps.editor.after === step.id
-              ? `<div class="tsk-step-new">${inlineEditor}</div>`
-              : ""
-          }`,
+        (name, i) =>
+          `<div class="tsk-pal-row" data-pick="${esc(name)}"><span class="${i === state.pickerI ? "sel-text" : ""}">${i === state.pickerI ? "▸" : " "} ${esc(name)}${name === state.scope ? " · current" : ""}</span></div>`,
       )
-      .join(
-        "",
-      )}${pageSteps.editor && !pageSteps.editor.id && !pageSteps.editor.after ? `<div class="tsk-step-new">${inlineEditor}</div>` : `<button type="button" class="tsk-step-add dim" ${addAttribute}="1">   + step</button>`}</div>`;
-    const metaField = (field, text) =>
-      editing === field
-        ? `<span class="tsk-meta-selected" data-page-field="${field}">${text}</span>`
-        : text;
-    const thread = task.thread
-      ? `#${esc(task.thread)}`
-      : editing === "thread"
-        ? "thread"
-        : "";
-    const scope = previewMode || narrow || editing ? esc(project) : "";
-    const parts = [
-      thread && metaField("thread", thread),
-      scope && metaField("scope", scope),
-      `created ${esc(age(task.createdAt))} ago`,
-      `updated ${esc(age(task.updatedAt))} ago`,
-    ].filter(Boolean);
-    const meta = `<div class="tsk-page-meta dim">${parts.join(" · ")}</div>`;
-    const editField = editing?.startsWith("step:") ? "steps" : editing || "";
-    const editTarget = editing?.startsWith("step:")
-      ? editing.slice("step:".length)
-      : "";
-    return `<div class="tsk-task-column tsk-surface ${narrow ? "is-narrow" : ""}" aria-label="T${task.number}${previewMode ? " project" : ""} task column" data-status="${esc(task.status)}" data-edit-state="${pageSteps.editor ? "editing" : pageSteps.dirty ? "unsaved" : "view"}" data-edit-field="${esc(editField)}" data-edit-target="${esc(editTarget)}">${header}<div class="tsk-task-surface tsk-page">${notes}${stepList}</div>${meta}</div>`;
-  }
-
-  function renderPage(embedded = false) {
-    return renderTaskPage(selectedTask(), { preview: false, embedded });
-  }
-
-  function previewPageVerbBar() {
-    if (previewSteps.editor || previewSteps.dirty || preview.editField)
-      return "shift+enter save · esc cancel";
-    return pageVerbs(previewTask())
-      .map(
-        (verb) =>
-          `<button type="button" class="tsk-verb" data-preview-page-verb="${verb.id}">${verb.label}</button>`,
-      )
-      .join("<span> · </span>");
-  }
-
-  function previewBoardWidth() {
-    const columns = terminalColumns();
-    return Math.max(
-      8,
-      (state.stage === "split"
-        ? columns - Math.floor(columns * 0.4) - 3
-        : columns - 34) - 4,
-    );
-  }
-
-  function renderPreviewPage() {
-    return renderTaskPage(previewTask(), { preview: true, embedded: true });
-  }
-
-  function renderPreviewBoard(rail) {
-    ensurePreviewSelection();
-    const width = previewBoardWidth();
-    const previewRowsNow = previewRows();
-    const body = previewRowsNow
-      .map((row) => {
-        if (row.kind === "section")
-          return `<div class="tsk-sec"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count}</span></div>`;
-        if (row.kind === "archived") {
-          const mark = preview.archivedOpen ? "▾" : "▸";
-          const selected = row.id === preview.selectedId;
-          return `<button type="button" class="tsk-group" data-preview-archived="1"><span class="dim">${mark}</span> <span class="sec">${selected ? "<strong>archived</strong>" : "archived"}</span><span class="rule" aria-hidden="true"></span><span class="count dim">${row.count}</span></button>`;
-        }
-        const task = row.task;
-        const selected = task.id === preview.selectedId;
-        const marked = preview.markedIds.has(task.id);
-        const rowMark = selected
-          ? marked
-            ? "▸▪"
-            : "▸ "
-          : marked
-            ? "▪ "
-            : "  ";
-        const flash = task.id === state.flashId;
-        const glyph = GLYPH[task.status] || "○";
-        const titleLines = wrapText(
-          task.title,
-          Math.max(8, width - 2 - 4 - `T${task.number} `.length),
-        );
-        const title = titleLines
-          .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
-          .join("");
-        const noteLines = wrapText(
-          (task.notes || "").trim() || "no notes yet",
-          Math.max(8, width - 7),
-        );
-        const peek =
-          rail && preview.peekId === task.id
-            ? [
-                ...noteLines
-                  .slice(0, 5)
-                  .map(
-                    (line) =>
-                      `<div class="tsk-peek dim">    │ ${esc(line)}</div>`,
-                  ),
-                ...(noteLines.length > 5
-                  ? [
-                      `<div class="tsk-peek dim">    │ … ${noteLines.length - 5} more lines</div>`,
-                    ]
-                  : []),
-                ...(task.thread
-                  ? [
-                      `<div class="tsk-attribution dim">    └─ #${esc(task.thread)}</div>`,
-                    ]
-                  : [`<div class="tsk-peek dim">    └</div>`]),
-              ].join("")
-            : "";
-        return `<button type="button" class="tsk-row ${row.dim ? "dim" : ""} ${selected ? "is-sel" : ""} ${flash ? "is-flash" : ""}" data-preview-task="${esc(task.id)}"><span class="tsk-row-main"><span class="tsk-row-prefix">${rowMark}<span class="tsk-row-glyph">${glyph}</span> <span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy T${task.number}">T${task.number}</span> </span><span class="tsk-row-title">${title}</span></span></button>${peek}`;
-      })
       .join("");
-    const project = esc(preview.project || "project");
-    const filter = `<button type="button" class="tsk-view-control dim" data-preview-filter="1">${esc(previewFilterLabel())} ▾</button>`;
-    const empty = preview.searchQuery.trim()
-      ? `no tasks match &quot;${esc(preview.searchQuery.trim())}&quot;`
-      : "nothing here";
-    return `<div class="tsk-project-preview tsk-surface ${rail ? "is-live" : "is-preview"}" aria-label="${project} project preview"><div class="tsk-project-preview-header ${rail ? "is-bold" : "dim"}"><span class="sec">${project}</span>${rail ? filter : ""}</div><div class="tsk-task-rule" aria-hidden="true"></div><div class="tsk-list">${body || `<div class="dim">  ${empty}</div>`}</div></div>`;
+    return `<div class="tsk-box tsk-palette" role="dialog" aria-label="scope"><div class="tsk-box-top"><span class="tsk-box-title">scope</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-box-body">${list}</div><div class="tsk-box-foot">↑/↓ move · enter open · esc close</div></div>`;
   }
-
-  function stageHint() {
-    if (!isWideSplit()) return "";
-    if (projectsOverview()) {
-      if (state.stage === "board") return "→ project pane";
-      if (state.stage === "split")
-        return "index ▸ project    → project · ← close";
-      if (projectsPreviewPage()) return "project task page    ← close";
-      return previewHasUnsavedWork()
-        ? "index ◂ project"
-        : "index ◂ project    ← index";
-    }
-    if (state.editField) return "shift+enter save · esc cancel";
-    if (state.stage === "board") return "→ task pane";
-    if (state.stage === "split")
-      return "board ▸ task    → task · ← close · enter open";
-    if (state.stage === "rail") return "board ◂ task    ← board · → full page";
-    return "← rail";
-  }
-
-  // Same overflow rule as the native threads_cell: reserve room for hidden names.
-  function threadCell(threads, width) {
-    let out = "",
-      shown = 0;
-    for (const thread of threads) {
-      const candidate = out ? out + " #" + thread : "#" + thread;
-      const remaining = threads.length - shown - 1;
-      const suffix = remaining ? "  +" + remaining : "";
-      if (candidate.length + suffix.length > width) break;
-      out = candidate;
-      shown++;
-    }
-    if (!shown)
-      return threads.length ? ("+" + threads.length).slice(0, width) : "";
-    return (
-      out + (shown < threads.length ? "  +" + (threads.length - shown) : "")
-    );
-  }
-
-  function renderBoard(rows, rail = false, bare = false) {
-    const tabs = TABS.map(([tab, label]) => {
-      const on = state.tab === tab;
-      const text = tab === "project" ? state.selectedProject : label;
-      return `<span class="tsk-tab-group ${on ? "is-on" : ""}"><button type="button" class="tsk-tab ${on ? "is-on" : ""}" data-tab="${tab}">${esc(text)}</button>${tab === "project" ? `<button class="tsk-tab-arrow" data-chip="1" aria-label="choose project">▾</button>` : ""}</span>`;
-    }).join(`<span class="dim"> · </span>`);
-    const filter = state.focusProject
-      ? state.threadFilter === null
-        ? "all"
-        : state.threadFilter === ""
-          ? "without a thread"
-          : `#${state.threadFilter}`
-      : state.tab === "projects"
-        ? state.projectView === null
-          ? "Overview"
-          : `#${state.projectView}`
-        : null;
-    const control =
-      filter === null
-        ? ""
-        : `<button class="tsk-view-control dim" data-filter="1">${esc(filter)} ▾</button>`;
-    const index =
-      state.tab === "projects" &&
-      state.projectView === null &&
-      !state.focusProject;
-    const boardColumns =
-      index && isWideSplit() && state.stage === "split"
-        ? Math.floor(terminalColumns() * 0.4)
-        : index && rail
-          ? 32
-          : terminalColumns();
-    const showThreads = index && boardColumns >= 100;
-    const available = boardColumns - (showThreads ? 34 : 0);
-    const nameWidth = Math.max(24, Math.floor(available * 0.4));
-    const threadWidth = Math.max(0, available - nameWidth - 2);
-    const count = (n) => n || "·";
-    const body = rows
-      .map((row) => {
-        if (row.kind === "section" || row.kind === "sub") {
-          const cls = row.kind === "sub" ? "tsk-sub" : "tsk-sec";
-          return `<div class="${cls}"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count}</span></div>`;
-        }
-        if (row.kind === "project") {
-          const selected = row.id === state.selectedId;
-          if (rail) {
-            return `<button type="button" class="tsk-row tsk-rail-project-row ${selected ? "is-sel" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-row-main"><span class="tsk-rail-project-name">${selected ? "▸" : " "} ${esc(row.label)}</span><span class="dim tsk-rail-project-counts">${count(row.motion)} ${count(row.onDeck)} ${count(row.done)}</span></span></button>`;
-          }
-          const threads = [
-            ...new Set(
-              state.tasks
-                .filter(
-                  (t) =>
-                    t.project === row.project &&
-                    !t.archived &&
-                    t.status !== "done",
-                )
-                .map((t) => t.thread)
-                .filter(Boolean),
-            ),
-          ].sort();
-          return `<button type="button" class="tsk-project-row ${selected ? "is-selected" : ""}" data-project-row="${esc(row.project)}" data-nav-id="${esc(row.id)}"><span class="tsk-project-name">${selected ? "▸" : " "} <span>${esc(row.label)}</span>${row.project === launchProject() ? `<span class="dim"> · here</span>` : ""}</span>${showThreads ? `<span class="dim tsk-project-threads">${esc(threadCell(threads, threadWidth))}</span>` : ""}<span>${count(row.motion)}</span><span class="dim">${count(row.onDeck)}</span><span class="dim">${count(row.done)}</span></button>`;
-        }
-        if (row.kind === "group") {
-          const mark = row.collapsed ? "▸" : "▾";
-          const pad = row.indent ? "  " : "";
-          return `<button type="button" class="tsk-group" data-collapse="${esc(row.collapseKey)}" data-project="${esc(row.project || "")}">${pad}<span class="dim">${mark}</span> <span class="sec">${esc(row.label)}</span> <span class="count">${row.count}</span></button>`;
-        }
-        if (row.kind === "inbox") {
-          const mark = state.inboxOpen ? "▾" : "▸";
-          const selected = row.id === state.selectedId;
-          return `<button type="button" class="tsk-group tsk-inbox" data-inbox-header="1"><span>${mark}</span> <span class="sec">${selected ? "<strong>inbox</strong>" : "inbox"}</span> · <span class="count">${row.count}</span></button>`;
-        }
-        if (row.kind === "archived") {
-          const mark = state.archivedOpen ? "▾" : "▸";
-          const selected = row.id === state.selectedId;
-          return `<button type="button" class="tsk-group" data-archived-header="1"><span class="dim">${mark}</span> <span class="sec">${selected ? "<strong>archived</strong>" : "archived"}</span><span class="rule" aria-hidden="true"></span><span class="count dim">${row.count}</span></button>`;
-        }
-        const task = row.task;
-        const selected = task.id === state.selectedId;
-        const marked = state.markedIds.has(task.id);
-        const rowMark = selected
-          ? marked
-            ? "▸▪"
-            : "▸ "
-          : marked
-            ? "▪ "
-            : "  ";
-        const flash = task.id === state.flashId;
-        const glyph = GLYPH[task.status] || "○";
-        const indent = "  ".repeat(row.indent || 0);
-        if (rail) {
-          const prefix = `${rowMark}${glyph} `;
-          const lines = wrapText(
-            task.title,
-            32 - 1 - 4 - `T${task.number} `.length,
-          );
-          return `<button type="button" class="tsk-row tsk-rail-row" data-task="${task.id}"><span class="tsk-row-main">${prefix}<span class="tsk-task-id" data-copy-task="${esc(task.id)}">T${task.number}</span> ${esc(lines[0])}${lines
-            .slice(1)
-            .map(
-              (line) =>
-                `<span class="tsk-rail-continuation">    ${esc(line)}</span>`,
-            )
-            .join("")}</span></button>`;
-        }
-        const columns =
-          isWideSplit() && state.stage === "split"
-            ? Math.floor(terminalColumns() * 0.4)
-            : terminalColumns();
-        const titleLines = wrapText(
-          task.title,
-          columns - 2 - 4 - `T${task.number} `.length,
-        );
-        const title = titleLines
-          .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
-          .join("");
-        const noteLines = wrapText(
-          (task.notes || "").trim() || "no notes yet",
-          columns - 7,
-        );
-        const label = metaFor(task);
-        const peek =
-          state.peekId === task.id && !isWideSplit()
-            ? [
-                ...noteLines
-                  .slice(0, 5)
-                  .map(
-                    (line) =>
-                      `<div class="tsk-peek dim">    │ ${esc(line)}</div>`,
-                  ),
-                ...(noteLines.length > 5
-                  ? [
-                      `<div class="tsk-peek dim">    │ … ${noteLines.length - 5} more lines</div>`,
-                    ]
-                  : []),
-                ...(label
-                  ? wrapText(label, columns - 9).map(
-                      (line, i) =>
-                        `<div class="tsk-attribution dim">${i ? "       " : "    └─ "}${esc(line)}</div>`,
-                    )
-                  : [`<div class="tsk-peek dim">    └</div>`]),
-              ].join("")
-            : "";
-        const dimRow = row.dim ? "dim" : "";
-        return `<button type="button" class="tsk-row ${dimRow} ${selected ? "is-sel" : ""} ${flash ? "is-flash" : ""}" data-task="${task.id}"><span class="tsk-row-main"><span class="tsk-row-prefix">${indent}${rowMark}<span class="tsk-row-glyph">${glyph}</span> <span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy T${task.number}">T${task.number}</span> </span><span class="tsk-row-title">${title}</span></span></button>${peek}`;
-      })
-      .join("");
-
-    const empty = index
-      ? "no projects match"
-      : state.searchQuery.trim()
-        ? `no tasks match &quot;${esc(state.searchQuery.trim())}&quot;`
-        : "nothing here";
-    const column = `
-      <div class="tsk-tabs">${tabs}${control}</div>
-      <div class="tsk-list ${index ? "tsk-project-table" : ""} ${showThreads ? "with-threads" : ""}" style="--project-name-width:${nameWidth + 2}ch;--project-thread-width:${threadWidth + 2}ch">${index ? `<div class="tsk-project-legend"><span>  PROJECT</span>${showThreads ? "<span>THREADS</span>" : ""}<span>DOING</span><span>TODO</span><span>DONE</span></div>` : ""}${body || `<div class="dim">  ${empty}</div>`}</div>`;
-    // Wide stages paint one shared footer under both columns, so a column omits its own.
-    return rail || bare ? column : column + renderFooter();
-  }
-
-  function pageVerbs(task) {
-    const verbs = [{ id: "edit", label: "e edit" }];
-    if (task?.status === "todo") verbs.push({ id: "start", label: "s doing" });
-    else verbs.push({ id: "todo", label: "o todo" });
-    if (task?.status !== "done") verbs.push({ id: "done", label: "d done" });
-    else verbs.push({ id: "undo", label: "u undo" });
-    verbs.push({ id: "close", label: "esc close" });
-    return verbs;
-  }
-
-  function pageVerbBar() {
-    // Same guard as previewPageVerbBar: a title or notes editor owns the footer, so the
-    // verbs are not clickable while typing.
-    if (steps.editor || steps.dirty || state.editField)
-      return "shift+enter save · esc cancel";
-    return pageVerbs(selectedTask())
+  function renderParentPicker() {
+    const opts = parentOptions();
+    if (state.parentI >= opts.length)
+      state.parentI = Math.max(0, opts.length - 1);
+    const list = opts
       .map(
-        (v) =>
-          `<button type="button" class="tsk-verb" data-page-verb="${v.id}">${v.label}</button>`,
+        (o, i) =>
+          `<div class="tsk-pal-row ${o.cycle ? "dim" : ""}" data-parent-option="${i}"><span class="${i === state.parentI ? "sel-text" : ""}">${i === state.parentI ? "▸" : " "} ${esc(o.label)}</span></div>`,
       )
-      .join("<span> · </span>");
-  }
-
-  // One footer for the frame: a rule, the status row (active lens · stage crumb), and the verb
-  // bar for whichever side owns focus. Wide stages paint it under both columns, as the app does.
-  function renderFooter() {
-    const previewOwnsFooter = projectsPreviewFocused() || projectsPreviewPage();
-    const owner = previewOwnsFooter ? preview : state;
-    const selectedCount = owner.markedIds.size;
-    const selectionMessage = owner.markMode
-      ? selectedCount
-        ? `multi-select · ${selectedCount} selected · esc clears`
-        : "multi-select · space/click marks · esc exits"
-      : "";
-    const baseContext = previewOwnsFooter
-      ? preview.project || "project"
-      : state.tab === "projects" && state.projectView === null
-        ? projectsPreviewActive() && preview.message
-          ? preview.message
-          : selectedRow()?.project
-            ? projectPath(selectedRow().project)
-            : "projects"
-        : state.tab === "desk"
-          ? "desk"
-          : state.focusProject
-            ? `${state.focusProject}${state.threadFilter ? ` · #${state.threadFilter}` : ""}`
-            : state.tab;
-    const scopedContext =
-      owner.searchPinned && owner.searchQuery.trim()
-        ? `${baseContext} · /${owner.searchQuery.trim()}`
-        : baseContext;
-    const context = owner.message || selectionMessage || scopedContext;
-    const task = previewOwnsFooter ? previewTask() : selectedTask();
-    const previewVerbs = task
-      ? verbItems(task)
-      : [
-          { id: "capture", label: "+ add" },
-          { id: "help", label: "? help" },
-        ];
-    const verbs = projectsPreviewPage()
-      ? previewPageVerbBar()
-      : taskFocus()
-        ? pageVerbBar()
-        : (previewOwnsFooter ? previewVerbs : verbItems(task))
-            .map(
-              (v) =>
-                `<button type="button" class="tsk-verb" data-${previewOwnsFooter ? "preview-" : ""}verb="${esc(v.id)}">${esc(v.label)}</button>`,
-            )
-            .join("<span> · </span>");
-    const footer =
-      state.overlay === "quick" && !state.quickExpanded
-        ? `<div class="tsk-input-row"><span class="tsk-prompt">+</span><input class="tsk-field" id="tsk-add" value="${esc(state.draft)}" placeholder="title  ·  !p project  ·  !t thread" autocomplete="off" /><span class="cursor">█</span></div>
-           <div class="foot dim tsk-verbs">${
-             state.refuse
-               ? esc(state.refuse)
-               : hintBar([
-                   { id: "save", label: "enter save" },
-                   { id: "details", label: "tab details" },
-                   { id: "close", label: "esc close" },
-                 ])
-           }</div>`
-        : state.overlay === "quick"
-          ? `<div class="tsk-status-row"><span class="foot">expanded quick-add</span></div><div class="foot dim tsk-verbs">${
-              state.refuse
-                ? esc(state.refuse)
-                : hintBar([
-                    { id: "save-expanded", label: "ctrl+enter save" },
-                    { id: "next-field", label: "tab next field" },
-                    { id: "collapse", label: "esc one-line draft" },
-                  ])
-            }</div>`
-          : state.overlay === "search"
-            ? `<div class="tsk-input-row"><span class="tsk-prompt">/</span><input class="tsk-field" id="tsk-project-search" value="${esc(searchOwner().searchQuery)}" placeholder="${projectsOverview() && !projectsPreviewFocused() ? "search projects" : "search tasks"}" autocomplete="off" /><span class="cursor">█</span></div>
-             <div class="foot dim tsk-verbs">${hintBar([
-               { id: "pin", label: "enter pin" },
-               { id: "close", label: "esc clear" },
-             ])}</div>`
-            : `<div class="tsk-status-row"><button type="button" class="tsk-done-count foot" data-${previewOwnsFooter ? "preview-" : ""}drawer="1">${esc(context)}</button><span class="foot dim tsk-stage-hint">${esc(stageHint())}</span></div>
-           <div class="foot dim tsk-verbs">${verbs}</div>
-           ${state.copyNotice ? `<div class="foot dim">${esc(state.copyNotice)}</div>` : ""}`;
-    return `
-      <div class="tsk-foot">
-        <div class="foot-rule" aria-hidden="true"></div>
-        ${footer}
-      </div>`;
+      .join("");
+    return `<div class="tsk-box tsk-palette" role="dialog" aria-label="parent"><div class="tsk-box-top"><span class="tsk-box-title">parent</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-help-search"><span>/ </span><span>${state.parentQ ? esc(state.parentQ) : '<span class="dim">type a number or title…</span>'}</span><span class="cursor">█</span></div><div class="tsk-box-body">${list}</div><div class="tsk-box-foot">↑/↓ move · enter save · esc close</div></div>`;
   }
 
   function render() {
     renderColumns = terminalColumns();
     try {
-      const rows = buildRows();
-      ensureSelection(rows);
-      // Preview refusals belong to unresolved work, not the retained seat.
-      if (!previewHasUnsavedWork()) preview.message = "";
-      const wide = isWideSplit();
+      const wide = isWide();
       let html;
-      if (wide && projectsOverview() && state.stage === "split") {
-        html = `<div class="tsk-wide-split is-split" style="grid-template-columns:${Math.floor(terminalColumns() * 0.4)}ch 2ch minmax(0,1fr)">
-           <div class="tsk-board-surface tsk-surface">${renderBoard(rows, false, true)}</div>
-           <div class="tsk-rule-column dim" aria-hidden="true"></div>
-           ${renderPreviewBoard(false)}
-         </div>${renderFooter()}`;
-      } else if (wide && projectsOverview() && state.stage === "rail") {
-        html = `<div class="tsk-wide-split is-rail">
-           <div class="tsk-board-surface tsk-rail tsk-surface dim">${renderBoard(rows, true, true)}</div>
-           <div class="tsk-rule-column dim" aria-hidden="true"></div>
-           ${preview.page ? renderPreviewPage() : renderPreviewBoard(true)}
-         </div>${renderFooter()}`;
-      } else if (wide && state.stage === "split") {
-        html = `<div class="tsk-wide-split is-split" style="grid-template-columns:${Math.floor(terminalColumns() * 0.4)}ch 2ch minmax(0,1fr)">
-           <div class="tsk-board-surface tsk-surface">${renderBoard(rows, false, true)}</div>
-           <div class="tsk-rule-column dim" aria-hidden="true"></div>
-           ${renderPage(true)}
-         </div>${renderFooter()}`;
-      } else if (wide && state.stage === "rail") {
-        html = `<div class="tsk-wide-split is-rail">
-           <div class="tsk-board-surface tsk-rail tsk-surface dim">${renderBoard(rows, true)}</div>
-           <div class="tsk-rule-column dim" aria-hidden="true"></div>
-           ${renderPage(true)}
-         </div>${renderFooter()}`;
-      } else if (wide && state.stage === "page") {
-        html = `<div class="tsk-wide-split is-page">${renderPage(true)}</div>${renderFooter()}`;
-      } else if (taskFocus()) {
-        html = `<div class="tsk-single-task">${renderPage(true)}</div>${renderFooter()}`;
+      if (state.tab === "questions") {
+        html = renderQuestionsTab() + renderFooter();
+      } else if (state.quickExpanded) {
+        html = `<div class="tsk-single-task">${renderTaskPage(state.capture, { focused: true })}</div>${renderFooter()}`;
+      } else if (wide) {
+        const list = renderBoardList(listColumns());
+        html = `<div class="tsk-wide-split is-split" style="grid-template-columns:${listColumns()}ch 2ch minmax(0,1fr)"><div class="tsk-board-surface tsk-surface">${list}</div><div class="tsk-rule-column dim" aria-hidden="true"></div>${renderTaskPage(shownTask(), { focused: state.page })}</div>${renderFooter()}`;
+      } else if (state.page) {
+        html = `<div class="tsk-single-task">${renderTaskPage(shownTask(), { focused: true })}</div>${renderFooter()}`;
       } else {
-        html = renderBoard(rows);
+        html = renderBoardList(terminalColumns()) + renderFooter();
       }
       if (state.overlay === "help") html += renderHelp();
       if (state.overlay === "palette") html += renderPalette();
-      if (state.overlay === "picker") html += renderPicker();
-      if (state.overlay === "filter") html += renderFilter();
-      if (state.overlay === "preview-filter") html += renderPreviewFilter();
+      if (state.overlay === "picker") html += renderScopePicker();
+      if (state.overlay === "parent") html += renderParentPicker();
       const oldScroll = root.querySelector(".tsk-task-surface")?.scrollTop ?? 0;
-      const activeSearch = document.activeElement?.id === "tsk-project-search";
       const keepKeys =
         document.activeElement === frame ||
         frame.contains(document.activeElement);
       root.innerHTML = html;
       const content = root.querySelector(".tsk-task-surface");
       if (content) content.scrollTop = oldScroll;
-      const stepInput = root.querySelector("#tsk-step-edit");
-      const previewStepInput = root.querySelector("#tsk-preview-step-edit");
-      if (stepInput || previewStepInput) {
-        const input = stepInput || previewStepInput;
-        const stepState = stepInput ? steps : previewSteps;
-        input.addEventListener("input", () => {
-          stepState.editor.text = input.value;
-          stepState.refusal = "";
-          root.querySelector(".tsk-step-refusal").textContent = "";
-          input.rows = wrapText(input.value, taskColumnWidth() - 8).length;
-        });
+      const focusInput = (input, onInput) => {
+        input.addEventListener("input", () => onInput(input.value));
         input.focus({ preventScroll: true });
-        input.setSelectionRange(input.value.length, input.value.length);
-        input.scrollIntoView({ block: "nearest" });
-      }
-      const add = document.getElementById("tsk-add");
-      const edit = document.getElementById("tsk-edit");
-      const previewEdit = document.getElementById("tsk-preview-edit");
-      const search = document.getElementById("tsk-project-search");
-      if (search) {
-        search.addEventListener("input", () => {
-          const owner = searchOwner();
-          updateSearchQuery(owner, search.value);
+        const end = input.value.length;
+        input.setSelectionRange?.(end, end);
+      };
+      const stepInput = root.querySelector("#tsk-step-edit");
+      const answer = root.querySelector("#tsk-answer");
+      const add = root.querySelector("#tsk-add");
+      const edit = root.querySelector("#tsk-edit");
+      const search = root.querySelector("#tsk-search");
+      if (stepInput) {
+        focusInput(stepInput, (value) => {
+          steps.editor.text = value;
+          steps.refusal = "";
+          root.querySelector(".tsk-step-refusal").textContent = "";
+        });
+        if (keepKeys) stepInput.scrollIntoView({ block: "nearest" });
+      } else if (answer)
+        focusInput(answer, (value) => (state.q.answer.text = value));
+      else if (add)
+        focusInput(add, (value) => {
+          state.draft = value;
+          state.refuse = "";
+        });
+      else if (edit)
+        focusInput(edit, (value) => (state.edit[state.edit.field] = value));
+      else if (search)
+        focusInput(search, (value) => {
+          updateSearch(value);
           render();
         });
-      }
-      if (!stepInput && !previewStepInput) {
-        if (add) {
-          add.focus();
-          add.selectionStart = add.value.length;
-          add.addEventListener("input", () => {
-            state.draft = add.value;
-            state.refuse = "";
-          });
-        } else if (edit) {
-          edit.focus();
-          edit.addEventListener("input", () => {
-            state.editDraft = edit.value;
-          });
-        } else if (previewEdit) {
-          previewEdit.focus();
-          previewEdit.addEventListener("input", () => {
-            preview.editDraft = previewEdit.value;
-          });
-        } else if (search && activeSearch) {
-          search.focus();
-          search.selectionStart = search.value.length;
-          search.selectionEnd = search.value.length;
-        } else if (keepKeys) {
-          frame.focus({ preventScroll: true });
-        }
-      }
+      else if (keepKeys) frame.focus({ preventScroll: true });
+      // Keep the cursor row in view inside the board, only while the board has the keys,
+      // so a resize never scrolls the landing page.
+      if (keepKeys)
+        root
+          .querySelector(
+            '[data-ring][aria-selected="true"], [data-q-check], .tsk-q-line.is-chosen',
+          )
+          ?.scrollIntoView({ block: "nearest" });
       frame.classList.toggle(
         "is-focused",
         document.activeElement === frame ||
@@ -2777,1472 +2114,695 @@ import { parseCapture } from "./capture.js";
     }
   }
 
-  function move(delta) {
-    state.pendingDelete = null;
-    state.message = "";
-    if (projectsOverview()) {
-      moveProjectCursor(delta);
-      return;
-    }
-    if (steps.dirty || steps.editor) return;
-    const ids = selectableIds(buildRows());
-    if (!ids.length) return;
-    let i = ids.indexOf(state.selectedId);
-    if (i < 0) i = 0;
-    i = (i + delta + ids.length) % ids.length;
-    state.selectedId = ids[i];
-    state.peekId =
-      state.peekId && state.peekId === state.selectedId ? state.peekId : null;
-  }
+  // ── keyboard ──────────────────────────────────────────────────────────────
+  const plain = (e) => !e.ctrlKey && !e.metaKey && !e.altKey;
+  const STATUS_KEYS = ["s", "o", "d", "x", "u", "f"];
 
-  function commitEdit() {
-    const task = selectedTask();
-    if (!task || !state.editField) return;
-    if (state.editField === "title") {
-      const title = state.editDraft.trim();
-      if (title) task.title = title;
-    } else if (state.editField === "notes") {
-      task.notes = state.editDraft;
-    }
-    task.updatedAt = clock();
-    state.editField = null;
-    state.editDraft = "";
-  }
-
-  function persistPageText(form, task) {
-    if (!task) return;
-    if (form.editField === "title") {
-      const title = form.editDraft.trim();
-      if (title) task.title = title;
-    }
-    if (form.editField === "notes") task.notes = form.editDraft;
-  }
-
-  // The same reversible ring drives full pages, preview pages, and expanded capture:
-  // Title → Notes → each step → + step → Thread → Scope → Title.
-  function movePageFocus(reverse = false, previewMode = false) {
-    const form = previewMode ? preview : state;
-    const task = previewMode ? previewTask() : selectedTask();
-    const pageSteps = previewMode ? previewSteps : steps;
-    if (!task || !form.editField) return;
-    persistPageText(form, task);
-    const stops = [
-      "title",
-      "notes",
-      ...pageSteps.rows(task).map((step) => `step:${step.id}`),
-      "step:add",
-      "thread",
-      "scope",
-    ];
-    let index = stops.indexOf(form.editField);
-    if (index < 0) index = 0;
-    index = (index + (reverse ? -1 : 1) + stops.length) % stops.length;
-    form.editField = stops[index];
-    form.editDraft =
-      form.editField === "title"
-        ? task.title
-        : form.editField === "notes"
-          ? task.notes || ""
-          : "";
-    if (form.editField.startsWith("step:")) {
-      pageSteps.selected = form.editField.slice("step:".length);
-      pageSteps.marked = null;
-    }
-  }
-
-  function handlePreviewPageKey(e) {
-    if (!projectsPreviewPage()) return false;
-    const task = previewTask();
-    const bare = !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (preview.editField) {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        movePageFocus(e.shiftKey, true);
-        render();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        preview.editField = null;
-        preview.editDraft = "";
-        render();
-      } else if (e.key === "Enter" && preview.editField === "title" && bare) {
-        e.preventDefault();
-        commitPreviewEdit();
-        render();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        commitPreviewEdit();
-        render();
-      }
-      return true;
-    }
-    if (!task) return true;
-    if (["s", "n", "o", "d", "b", "r", "x", "f"].includes(e.key)) {
-      clearMarks(preview);
-    }
-    if (previewSteps.editor) {
+  function handleTextField(e) {
+    const el = e.target;
+    if (el.id === "tsk-search") {
       if (e.key === "Escape") {
         e.preventDefault();
-        previewSteps.cancel();
-        render();
-      } else if (e.key === "Enter" && bare) {
+        updateSearch("");
+        state.searchPinned = false;
+        state.overlay = null;
+      } else if (e.key === "Enter" && plain(e)) {
         e.preventDefault();
-        const persists = !previewSteps.editor.id || e.shiftKey;
-        if (previewSteps.save(task, e.shiftKey) && persists)
+        state.searchPinned = Boolean(state.searchQuery.trim());
+        if (!state.searchPinned) updateSearch("");
+        state.overlay = null;
+      } else return true;
+      render();
+      frame.focus({ preventScroll: true });
+      return true;
+    }
+    if (el.id === "tsk-answer") {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        state.q.answer = null;
+        if (state.q.correcting) state.q.correcting = null;
+      } else if (e.key === "Enter" && plain(e)) {
+        e.preventDefault();
+        state.q.answer.text = el.value;
+        questionEnter();
+      } else return true;
+      render();
+      return true;
+    }
+    if (el.id === "tsk-add") {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        state.overlay = null;
+        state.refuse = "";
+      } else if (e.key === "Enter" && plain(e)) {
+        e.preventDefault();
+        state.draft = el.value;
+        saveDraft(e.shiftKey);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        state.draft = el.value;
+        expandQuickAdd();
+      } else return true;
+      render();
+      if (!state.overlay) frame.focus({ preventScroll: true });
+      return true;
+    }
+    if (el.id === "tsk-edit") {
+      const task = shownTask();
+      if (e.key === "Tab") {
+        e.preventDefault();
+        moveEdit(task, e.shiftKey);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        if (state.quickExpanded) collapseQuickAdd();
+        else {
+          state.edit = null;
+          steps.cancel();
+          steps.reset();
+        }
+      } else if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (state.quickExpanded) saveExpanded();
+        else saveEdit(task);
+      } else if (e.key === "Enter" && state.edit.field === "title") {
+        e.preventDefault();
+        moveEdit(task, false);
+      } else return true;
+      render();
+      if (!state.edit) frame.focus({ preventScroll: true });
+      return true;
+    }
+    if (el.id === "tsk-step-edit") {
+      const task = shownTask();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        steps.cancel();
+      } else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const persists = !steps.editor.id || e.shiftKey;
+        if (steps.save(task, e.shiftKey && !state.edit) && persists)
           task.updatedAt = clock();
-        render();
-      }
-      return true;
-    }
-    if (previewSteps.dirty && e.key === "Escape") {
-      e.preventDefault();
-      previewSteps.cancel();
+      } else return true;
       render();
+      if (!steps.editor) frame.focus({ preventScroll: true });
       return true;
     }
-    if (previewSteps.dirty && e.key === "Enter" && e.shiftKey && bare) {
-      e.preventDefault();
-      previewSteps.save(task, true);
-      task.updatedAt = clock();
-      render();
-      return true;
-    }
-    if (
-      e.altKey &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      ["ArrowUp", "ArrowDown"].includes(e.key)
-    ) {
-      e.preventDefault();
-      if (previewSteps.shift(task, e.key === "ArrowUp" ? -1 : 1)) {
-        task.updatedAt = clock();
-        render();
-      }
-      return true;
-    }
-    if (bare && ["Tab", "ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
-      e.preventDefault();
-      previewSteps.move(
-        task,
-        e.shiftKey || ["ArrowUp", "k"].includes(e.key) ? -1 : 1,
-      );
-      render();
-      root
-        .querySelector(`[data-preview-step="${previewSteps.selected}"]`)
-        ?.scrollIntoView({ block: "nearest" });
-      return true;
-    }
-    if (bare && e.key === "Enter" && previewSteps.selected) {
-      e.preventDefault();
-      if (previewSteps.selected === "add") previewSteps.begin(task);
-      else {
-        previewSteps.toggle(task);
-        task.updatedAt = clock();
-      }
-      render();
-      return true;
-    }
-    if (bare && e.key === "a") {
-      e.preventDefault();
-      previewSteps.begin(task);
-      render();
-      return true;
-    }
-    if (bare && e.key === "e") {
-      e.preventDefault();
-      clearMarks(preview);
-      if (previewSteps.selected && previewSteps.selected !== "add")
-        previewSteps.begin(task, previewSteps.selected);
-      else openPreviewTaskPage("title");
-      render();
-      return true;
-    }
-    if (
-      bare &&
-      e.key === "x" &&
-      previewSteps.selected &&
-      previewSteps.selected !== "add"
-    ) {
-      e.preventDefault();
-      if (previewSteps.remove(task)) task.updatedAt = clock();
-      render();
-      return true;
-    }
-    if (bare && ["ArrowLeft", "h"].includes(e.key)) {
-      e.preventDefault();
-      // Like the native parked task form, leaving the page keeps an unfinished preview
-      // draft available when the right seat is focused again.
-      preview.page = false;
-      render();
-      return true;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      leavePreviewTaskPage();
-      render();
-      return true;
-    }
-    if (bare && e.key === "o") {
-      e.preventDefault();
-      previewSetStatus("todo");
-      render();
-      return true;
-    }
-    if (bare && e.key === "s") {
-      e.preventDefault();
-      previewPrimaryVerb();
-      render();
-      return true;
-    }
-    if (bare && e.key === "d") {
-      e.preventDefault();
-      previewSetStatus("done");
-      render();
-      return true;
-    }
-    if (bare && e.key === "n") {
-      e.preventDefault();
-      openPreviewTaskPage("notes");
-      render();
-      return true;
-    }
-    if (bare && e.key === "?") {
-      e.preventDefault();
-      state.overlay = "help";
-      state.helpQ = "";
-      render();
-      return true;
-    }
-    return true;
+    return false;
   }
 
-  function handlePreviewBoardKey(e) {
-    if (!projectsPreviewFocused() || preview.page || state.overlay)
-      return false;
-    const bare = !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (e.key === "Escape") {
+  function handleOverlay(e) {
+    const o = state.overlay;
+    if (o === "help") {
       e.preventDefault();
-      if (preview.searchPinned) {
-        preview.searchQuery = "";
-        preview.searchPinned = false;
-        ensurePreviewSelection();
-      } else if (preview.peekId) preview.peekId = null;
-      else state.stage = "split";
+      if (e.key === "Escape") {
+        if (state.helpQ) state.helpQ = "";
+        else state.overlay = null;
+      } else if (e.key === "Backspace") state.helpQ = state.helpQ.slice(0, -1);
+      else if (["ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(e.key)) {
+        const body = frame.querySelector(".tsk-help-body");
+        const dir = e.key === "ArrowUp" || e.key === "PageUp" ? -1 : 1;
+        body?.scrollBy({
+          top: dir * (e.key.startsWith("Page") ? body.clientHeight : 24),
+        });
+        return true;
+      } else if (e.key.length === 1 && plain(e)) state.helpQ += e.key;
       render();
       return true;
     }
-    if (bare && e.shiftKey && e.key === "M") {
+    if (o === "palette") {
       e.preventDefault();
-      toggleMarkMode(preview);
-      preview.message = "";
+      if (e.key === "Escape") state.overlay = null;
+      else if (e.key === "Enter") {
+        const cmd = paletteCommands()[state.paletteI];
+        state.overlay = null;
+        cmd?.run();
+      } else if (e.key === "ArrowDown" || e.key === "Tab") state.paletteI++;
+      else if (e.key === "ArrowUp")
+        state.paletteI = Math.max(0, state.paletteI - 1);
+      else if (e.key === "Backspace") {
+        state.paletteQ = state.paletteQ.slice(0, -1);
+        state.paletteI = 0;
+      } else if (e.key.length === 1 && plain(e)) {
+        state.paletteQ += e.key;
+        state.paletteI = 0;
+      }
       render();
       return true;
     }
-    if (bare && (e.key === "j" || e.key === "ArrowDown")) {
+    if (o === "picker") {
       e.preventDefault();
-      if (e.shiftKey && !preview.markMode) return true;
-      if (e.shiftKey) markCurrent(preview);
-      movePreview(1);
+      const opts = scopeOptions();
+      if (e.key === "Escape" || e.key === "q") state.overlay = null;
+      else if (e.key === "Enter") {
+        state.overlay = null;
+        setScope(opts[state.pickerI]);
+      } else if (e.key === "ArrowDown" || e.key === "j")
+        state.pickerI = Math.min(opts.length - 1, state.pickerI + 1);
+      else if (e.key === "ArrowUp" || e.key === "k")
+        state.pickerI = Math.max(0, state.pickerI - 1);
       render();
       return true;
     }
-    if (bare && (e.key === "k" || e.key === "ArrowUp")) {
+    if (o === "parent") {
       e.preventDefault();
-      if (e.shiftKey && !preview.markMode) return true;
-      if (e.shiftKey) markCurrent(preview);
-      movePreview(-1);
-      render();
-      return true;
-    }
-    if (bare && ["ArrowRight", "l"].includes(e.key)) {
-      e.preventDefault();
-      preview.peekId = preview.selectedId;
-      render();
-      return true;
-    }
-    if (bare && ["ArrowLeft", "h"].includes(e.key)) {
-      e.preventDefault();
-      if (preview.peekId) preview.peekId = null;
-      else state.stage = "split";
-      render();
-      return true;
-    }
-    if (bare && e.key === " ") {
-      e.preventDefault();
-      if (preview.markMode) toggleMark(preview);
-      render();
-      return true;
-    }
-    if (bare && e.key === "Enter") {
-      e.preventDefault();
-      if (previewTask()) openPreviewTaskPage();
-      render();
-      return true;
-    }
-    if (bare && e.key === "+") {
-      e.preventDefault();
-      openQuickAdd("preview");
-      render();
-      return true;
-    }
-    if (bare && e.key === "s") {
-      e.preventDefault();
-      previewPrimaryVerb();
-      render();
-      return true;
-    }
-    if (bare && e.key === "d") {
-      e.preventDefault();
-      previewSetStatus("done");
-      render();
-      return true;
-    }
-    if (bare && e.key === "o") {
-      e.preventDefault();
-      previewSetStatus("todo");
-      render();
-      return true;
-    }
-    if (bare && e.key === "f") {
-      e.preventDefault();
-      previewFileSelected();
-      render();
-      return true;
-    }
-    if (bare && e.key === "x") {
-      e.preventDefault();
-      previewDeleteSelected();
-      render();
-      return true;
-    }
-    if (bare && e.key === "u") {
-      e.preventDefault();
-      previewUndoDelete();
-      render();
-      return true;
-    }
-    if (bare && e.key === "z") {
-      e.preventDefault();
-      clearMarks(preview);
-      preview.drawer = !preview.drawer;
-      ensurePreviewSelection();
-      render();
-      return true;
-    }
-    if (bare && e.key === "g") {
-      e.preventDefault();
-      clearMarks(preview);
-      preview.archivedOpen = !preview.archivedOpen;
-      render();
-      return true;
-    }
-    if (bare && e.key === "e") {
-      e.preventDefault();
-      if (previewTask()) openPreviewTaskPage("title");
-      render();
-      return true;
-    }
-    if (bare && e.key === "t") {
-      e.preventDefault();
-      openPreviewFilter();
-      render();
-      return true;
-    }
-    if (bare && e.key === "?") {
-      e.preventDefault();
-      state.overlay = "help";
-      state.helpQ = "";
+      const opts = parentOptions();
+      if (e.key === "Escape") state.overlay = null;
+      else if (e.key === "Enter") chooseParent(state.parentI);
+      else if (e.key === "ArrowDown" || e.key === "Tab")
+        state.parentI = Math.min(opts.length - 1, state.parentI + 1);
+      else if (e.key === "ArrowUp")
+        state.parentI = Math.max(0, state.parentI - 1);
+      else if (e.key === "Backspace") {
+        state.parentQ = state.parentQ.slice(0, -1);
+        state.parentI = 0;
+      } else if (e.key.length === 1 && plain(e)) {
+        state.parentQ += e.key;
+        state.parentI = 0;
+      }
       render();
       return true;
     }
     return false;
   }
 
-  function onKey(e) {
-    // Never swallow keys pressed on the landing chrome inside the pane
-    // (pane bar, layout toggle, divider): those keep their own keyboard
-    // behavior. Buttons inside the board canvas (rows, tabs, chips, verbs,
-    // close boxes) also keep native activation, except while the quick-add
-    // overlay is open and borrowing the frame's keys for its input.
-    const el = e.target;
-    if (el !== frame) {
-      if (el.closest(".pane-bar, .layout-toggle, [data-divider]")) return;
-      if (state.overlay !== "quick" && el.closest("button")) return;
-    }
-    if (e.key.toLowerCase() !== "x") {
-      state.pendingDelete = null;
-      preview.pendingDelete = null;
-    }
-    const markOwner =
-      projectsPreviewFocused() || projectsPreviewPage() ? preview : state;
-    const textEntryOwnsCapitalM =
-      [
-        "quick",
-        "help",
-        "palette",
-        "search",
-        "filter",
-        "preview-filter",
-      ].includes(state.overlay) ||
-      Boolean(
-        state.editField ||
-        preview.editField ||
-        steps.editor ||
-        previewSteps.editor,
-      );
-    if (
-      !textEntryOwnsCapitalM &&
-      e.key === "M" &&
-      e.shiftKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      markOwner.markMode
-    ) {
+  function handleQuestionsKey(e) {
+    const wide = isWide();
+    const page = questionById(state.q.page);
+    if (!plain(e)) return false;
+    if (e.key === "1" || e.key === "2") {
       e.preventDefault();
-      clearMarks(markOwner);
-      markOwner.message = "";
-      render();
-      return;
-    }
-    if (
-      e.key === "Escape" &&
-      !e.shiftKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      markOwner.markMode
-    ) {
-      e.preventDefault();
-      clearMarks(markOwner);
-      markOwner.message = "";
-      render();
-      return;
-    }
-    if (el.id === "tsk-project-search") {
-      const owner = searchOwner();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        updateSearchQuery(owner, "");
-        owner.searchPinned = false;
-        state.overlay = null;
-        render();
-        frame.focus({ preventScroll: true });
-        return;
-      }
-      if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        pinSearch(owner);
-        state.overlay = null;
-        render();
-        frame.focus({ preventScroll: true });
-        return;
-      }
-      return;
-    }
-    const wide = isWideSplit();
-    const taskPageActive = taskFocus();
-    if (state.overlay === "quick") {
-      if (state.quickExpanded) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          collapseQuickAdd();
-          render();
-          return;
-        }
-        if (e.key === "Tab") {
-          e.preventDefault();
-          movePageFocus(e.shiftKey, state.quickOwner === "preview");
-          render();
-          return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          e.preventDefault();
-          saveExpandedDraft();
-          render();
-          return;
-        }
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        state.overlay = null;
-        state.quickOwner = "outer";
-        state.refuse = "";
-        frame.focus();
-        render();
-        return;
-      }
-      if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        saveDraft(e.shiftKey);
-        if (!e.shiftKey) frame.focus();
-        render();
-        return;
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        expandQuickAdd();
-        render();
-      }
-      return;
-    }
-
-    if (handlePreviewPageKey(e) || handlePreviewBoardKey(e)) return;
-
-    if (taskPageActive && !state.overlay && !state.editField) {
-      const task = selectedTask();
-      const bare = !e.ctrlKey && !e.metaKey && !e.altKey;
-      if (steps.editor) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          steps.cancel();
-          render();
-        } else if (e.key === "Enter" && bare) {
-          e.preventDefault();
-          const persists = !steps.editor.id || e.shiftKey;
-          if (steps.save(task, e.shiftKey) && persists)
-            task.updatedAt = clock();
-          render();
-        }
-        return;
-      }
-      if (steps.dirty && e.key === "Escape") {
-        e.preventDefault();
-        steps.cancel();
-        render();
-        return;
-      }
-      if (steps.dirty && e.key === "Enter" && e.shiftKey && bare) {
-        e.preventDefault();
-        steps.save(task, true);
-        task.updatedAt = clock();
-        render();
-        return;
-      }
-      if (
-        e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        ["ArrowUp", "ArrowDown"].includes(e.key)
-      ) {
-        e.preventDefault();
-        if (steps.shift(task, e.key === "ArrowUp" ? -1 : 1)) {
-          task.updatedAt = clock();
-          render();
-        }
-        return;
-      }
-      if (bare && ["Tab", "ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
-        e.preventDefault();
-        steps.move(
-          task,
-          e.shiftKey || ["ArrowUp", "k"].includes(e.key) ? -1 : 1,
-        );
-        render();
-        root
-          .querySelector(`[data-step="${steps.selected}"]`)
-          ?.scrollIntoView({ block: "nearest" });
-        return;
-      }
-      if (bare && e.key === "Enter" && steps.selected) {
-        e.preventDefault();
-        if (steps.selected === "add") steps.begin(task);
-        else {
-          steps.toggle(task);
-          task.updatedAt = clock();
-        }
-        render();
-        return;
-      }
-      if (bare && e.key === "a") {
-        e.preventDefault();
-        steps.begin(task);
-        render();
-        return;
-      }
-      if (bare && e.key === "e" && steps.selected && steps.selected !== "add") {
-        e.preventDefault();
-        steps.begin(task, steps.selected);
-        render();
-        return;
-      }
-      if (bare && e.key === "x" && steps.selected && steps.selected !== "add") {
-        e.preventDefault();
-        if (steps.remove(task)) task.updatedAt = clock();
-        render();
-        return;
-      }
-      steps.marked = null;
-      if (steps.dirty && ["e", "n", "f", "p"].includes(e.key)) {
-        e.preventDefault();
-        return;
-      }
-    }
-    if (taskPageActive && state.editField) {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        movePageFocus(e.shiftKey);
-        render();
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        state.editField = null;
-        frame.focus();
-        render();
-        return;
-      }
-      if (e.key === "Enter" && state.editField === "title") {
-        e.preventDefault();
-        commitEdit();
-        render();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        commitEdit();
-        render();
-      }
-      return;
-    }
-
-    if (state.overlay === "help") {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (state.helpQ) state.helpQ = "";
-        else state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "Backspace") {
-        e.preventDefault();
-        state.helpQ = state.helpQ.slice(0, -1);
-        render();
-        return;
-      }
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(e.key)) {
-        e.preventDefault();
-        const body = frame.querySelector(".tsk-help-body");
-        const direction = e.key === "ArrowUp" || e.key === "PageUp" ? -1 : 1;
-        body?.scrollBy({
-          top: direction * (e.key.startsWith("Page") ? body.clientHeight : 24),
-        });
-        return;
-      }
-      if (e.key.length === 1 && !e.altKey && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        state.helpQ += e.key;
-        render();
-      }
-      return;
-    }
-
-    if (state.overlay === "palette") {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const cmds = paletteCommands();
-        const cmd = cmds[state.paletteI];
-        state.overlay = null;
-        if (cmd) cmd.run();
-        render();
-        return;
-      }
-      if (e.key === "ArrowDown" || e.key === "j") {
-        e.preventDefault();
-        state.paletteI += 1;
-        render();
-        return;
-      }
-      if (e.key === "ArrowUp" || e.key === "k") {
-        e.preventDefault();
-        state.paletteI = Math.max(0, state.paletteI - 1);
-        render();
-        return;
-      }
-      if (e.key === "Backspace") {
-        e.preventDefault();
-        state.paletteQ = state.paletteQ.slice(0, -1);
-        state.paletteI = 0;
-        render();
-        return;
-      }
-      if (e.key.length === 1 && !e.altKey && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        state.paletteQ += e.key;
-        state.paletteI = 0;
-        render();
-      }
-      return;
-    }
-
-    if (state.overlay === "search") {
-      const owner = searchOwner();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        updateSearchQuery(owner, "");
-        owner.searchPinned = false;
-        state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        pinSearch(owner);
-        state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "Backspace") {
-        e.preventDefault();
-        updateSearchQuery(owner, owner.searchQuery.slice(0, -1));
-        render();
-        return;
-      }
-      if (e.key.length === 1 && !e.altKey && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        updateSearchQuery(owner, owner.searchQuery + e.key);
-        render();
-      }
-      return;
-    }
-
-    if (state.overlay === "preview-filter") {
-      e.preventDefault();
-      if (e.key === "Escape") state.overlay = null;
-      else if (e.key === "Enter") choosePreviewFilter(state.filterI);
-      else if (["ArrowDown", "j"].includes(e.key))
-        state.filterI = Math.min(
-          previewFilterOptions().length - 1,
-          state.filterI + 1,
-        );
-      else if (["ArrowUp", "k"].includes(e.key))
-        state.filterI = Math.max(0, state.filterI - 1);
-      render();
-      return;
-    }
-    if (state.overlay === "filter") {
-      e.preventDefault();
-      if (e.key === "Escape") state.overlay = null;
-      else if (e.key === "Enter") chooseFilter(state.filterI);
-      else if (["ArrowDown", "j"].includes(e.key))
-        state.filterI = Math.min(filterOptions().length - 1, state.filterI + 1);
-      else if (["ArrowUp", "k"].includes(e.key))
-        state.filterI = Math.max(0, state.filterI - 1);
-      render();
-      return;
-    }
-    if (
-      !state.overlay &&
-      !taskPageActive &&
-      ((e.key === "t" && state.focusProject) ||
-        (e.key === "v" && state.tab === "projects"))
-    ) {
-      e.preventDefault();
-      openFilter();
-      render();
-      return;
-    }
-    if (state.overlay === "picker") {
-      const opts = pickerOptions();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const name = opts[state.pickerI];
-        if (name === "desk") goTab("desk");
-        else openProject(name);
-        state.overlay = null;
-        render();
-        return;
-      }
-      if (e.key === "ArrowDown" || e.key === "j") {
-        e.preventDefault();
-        state.pickerI = Math.min(opts.length - 1, state.pickerI + 1);
-        render();
-        return;
-      }
-      if (e.key === "ArrowUp" || e.key === "k") {
-        e.preventDefault();
-        state.pickerI = Math.max(0, state.pickerI - 1);
-        render();
-      }
-      return;
-    }
-
-    const alt = e.altKey || e.ctrlKey || e.metaKey;
-    if (
-      taskPageActive &&
-      !e.altKey &&
-      !e.ctrlKey &&
-      [
-        "j",
-        "k",
-        "ArrowDown",
-        "ArrowUp",
-        "1",
-        "2",
-        "3",
-        "+",
-        "z",
-        "D",
-        ":",
-      ].includes(e.key)
-    ) {
-      e.preventDefault();
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      if (state.searchPinned) {
-        state.searchQuery = "";
-        state.searchPinned = false;
-        ensureSelection(buildRows());
-      } else if (taskPageActive) {
-        state.overlay = null;
-        leaveTaskPage();
-      } else if (state.peekId) state.peekId = null;
-      else if (wide && state.stage === "split") {
-        if (projectsOverview() && previewHasUnsavedWork())
-          preview.message = "save or cancel edits before switching tasks";
-        else stageLeft();
-      }
-      // The terminal exits at the full-board root on any tab. A browser demo has no
-      // process to exit, so release keyboard focus without changing the selected tab.
-      else frame.blur();
-      render();
-      return;
-    }
-    if (e.key === "/" && !taskPageActive) {
-      e.preventDefault();
-      searchOwner().searchPinned = false;
-      state.overlay = "search";
-      render();
-      return;
+      selectTab(e.key === "1" ? "board" : "questions");
+      return true;
     }
     if (e.key === "?") {
       e.preventDefault();
       state.overlay = "help";
       state.helpQ = "";
-      render();
-      return;
+      return true;
     }
-    if (e.key === ":") {
+    if (!page) {
+      const order = questionOrder();
+      const i = order.indexOf(state.q.cursor);
+      if (e.key === "ArrowDown" || e.key === "j") {
+        if (order.length)
+          state.q.cursor = order[Math.min(order.length - 1, i + 1)];
+      } else if (e.key === "ArrowUp" || e.key === "k") {
+        if (order.length) state.q.cursor = order[Math.max(0, i - 1)];
+      } else if (
+        e.key === "Enter" ||
+        (wide && (e.key === "ArrowRight" || e.key === "l"))
+      ) {
+        if (state.q.cursor) openQuestion(state.q.cursor);
+      } else if (e.key === "Escape") {
+        // The terminal quits at the list; the browser releases keyboard focus.
+        frame.blur();
+      } else return false;
       e.preventDefault();
+      return true;
+    }
+    state.message = "";
+    switch (e.key) {
+      case "Escape":
+      case "ArrowLeft":
+      case "h":
+        if (e.key !== "Escape" && !wide) return false;
+        if (state.q.returnTask && taskById(state.q.returnTask)) {
+          const task = taskById(state.q.returnTask);
+          state.q.returnTask = null;
+          state.q.page = null;
+          state.tab = "board";
+          if (listTaskIds().includes(task.id)) {
+            state.selectedId = task.id;
+            state.trail = [];
+          } else state.trail = [task.id];
+          state.page = true;
+          steps.reset();
+        } else state.q.page = null;
+        break;
+      case "ArrowDown":
+      case "j":
+      case "ArrowUp":
+      case "k": {
+        const forward = e.key === "ArrowDown" || e.key === "j";
+        if (choosing(page) && !state.q.answer) {
+          const n = choices(page).length;
+          state.q.options[page.id] = Math.min(
+            n - 1,
+            Math.max(0, choice(page) + (forward ? 1 : -1)),
+          );
+        } else
+          frame
+            .querySelector(".tsk-q-detail, .tsk-list")
+            ?.scrollBy({ top: forward ? 24 : -24 });
+        break;
+      }
+      case "J":
+        stepQuestion(1);
+        break;
+      case "K":
+        stepQuestion(-1);
+        break;
+      case "Enter":
+        questionEnter();
+        break;
+      case " ":
+        if (page.kind === "approval" && isOpen(page) && page.audience) {
+          if (checked(page)) {
+            state.q.check = null;
+            state.message = "check cleared";
+          } else {
+            state.q.check = { id: page.id, revision: page.answers.length };
+            state.message = "checked · y approves this exact revision";
+          }
+        }
+        break;
+      case "y":
+        questionApprove(true);
+        break;
+      case "n":
+        questionApprove(false);
+        break;
+      case "c":
+        questionCorrect();
+        break;
+      case "r":
+        questionResend();
+        break;
+      case "t": {
+        const task = taskById(page.taskId);
+        if (!task) {
+          state.message = `${page.taskId} not found`;
+          break;
+        }
+        state.q.returnQuestion = page.id;
+        state.q.returnDepth = listTaskIds().includes(task.id) ? 0 : 1;
+        state.q.page = null;
+        state.tab = "board";
+        if (listTaskIds().includes(task.id)) {
+          state.selectedId = task.id;
+          state.trail = [];
+        } else state.trail = [task.id];
+        state.page = true;
+        steps.reset();
+        break;
+      }
+      default:
+        return false;
+    }
+    e.preventDefault();
+    return true;
+  }
+
+  function handlePageKey(e) {
+    const task = shownTask();
+    if (!task) return false;
+    const bare = plain(e);
+    if (state.edit) {
+      // Edit mode without a text field focused: a step stop or the scope stop.
+      if (e.key === "Tab") moveEdit(task, e.shiftKey);
+      else if (e.key === "Escape") {
+        if (state.quickExpanded) collapseQuickAdd();
+        else {
+          state.edit = null;
+          steps.cancel();
+          steps.reset();
+        }
+      } else if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        if (state.quickExpanded) saveExpanded();
+        else saveEdit(task);
+      } else if (
+        state.edit.field === "scope" &&
+        [" ", "ArrowLeft", "ArrowRight"].includes(e.key)
+      )
+        cycleScope(e.key === "ArrowLeft");
+      else if (e.key === "Enter" && state.edit.field.startsWith("step:")) {
+        const id = state.edit.field.slice(5);
+        if (id === "add") steps.begin(task);
+        else steps.begin(task, id);
+      } else return true;
+      e.preventDefault();
+      return true;
+    }
+    if (steps.dirty && e.key === "Escape") {
+      steps.cancel();
+    } else if (steps.dirty && e.key === "Enter" && e.shiftKey) {
+      steps.save(task, true);
+      task.updatedAt = clock();
+    } else if (
+      e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      ["ArrowUp", "ArrowDown"].includes(e.key)
+    ) {
+      if (steps.shift(task, e.key === "ArrowUp" ? -1 : 1))
+        task.updatedAt = clock();
+    } else if (
+      bare &&
+      ["Tab", "ArrowDown", "ArrowUp", "j", "k"].includes(e.key)
+    ) {
+      moveRing(task, e.shiftKey || ["ArrowUp", "k"].includes(e.key) ? -1 : 1);
+    } else if (bare && e.key === "Enter" && steps.selected) {
+      activateRing(task);
+    } else if (bare && e.key === "Enter" && isWide()) {
+      state.page = false;
+    } else if (bare && e.key === "a") {
+      steps.begin(task);
+    } else if (bare && e.key === "e") {
+      if (steps.rows(task).some((s) => s.id === steps.selected))
+        steps.begin(task, steps.selected);
+      else beginEdit(task, "title");
+    } else if (
+      bare &&
+      e.key === "x" &&
+      steps.rows(task).some((s) => s.id === steps.selected)
+    ) {
+      if (steps.remove(task)) task.updatedAt = clock();
+    } else if (bare && (e.key === "J" || e.key === "K")) {
+      stepTask(e.key === "J" ? 1 : -1);
+    } else if (bare && e.key === "P") {
+      openParentPicker();
+    } else if (bare && e.key === "U") {
+      if (hasUnsavedWork()) state.message = "save or cancel edits first";
+      else {
+        task.parent = null;
+        state.message = "parent cleared";
+      }
+    } else if (
+      bare &&
+      (e.key === "Escape" ||
+        ((e.key === "ArrowLeft" || e.key === "h") && isWide()))
+    ) {
+      if (e.key === "Escape") closePage();
+      else if (!hasUnsavedWork()) state.page = false;
+    } else if (bare && STATUS_KEYS.includes(e.key)) {
+      clearMarks();
+      if (e.key === "s") setStatus("doing");
+      else if (e.key === "o") setStatus("todo");
+      else if (e.key === "d") setStatus("done");
+      else if (e.key === "x") deleteSelected();
+      else if (e.key === "u") undo();
+      else if (e.key === "f") archiveSelected();
+    } else if (bare && e.key === "2") {
+      selectTab("questions");
+    } else if (bare && e.key === "1") {
+      if (!hasUnsavedWork()) {
+        state.page = false;
+        state.trail = [];
+      }
+    } else if (bare && e.key === "?") {
+      state.overlay = "help";
+      state.helpQ = "";
+    } else if (bare && e.key === ":") {
       state.overlay = "palette";
       state.paletteQ = "";
       state.paletteI = 0;
-      render();
-      return;
+    } else {
+      if (bare) steps.marked = null;
+      return true;
     }
-    if (e.key === "+") {
-      e.preventDefault();
-      openQuickAdd();
-      render();
-      return;
-    }
-    if (e.key === "1" || e.key === "2" || e.key === "3") {
-      e.preventDefault();
-      goTab(TABS[Number(e.key) - 1][0]);
-      render();
-      return;
-    }
-    if (e.key === "p" || e.key === "P") {
-      e.preventDefault();
+    e.preventDefault();
+    return true;
+  }
+
+  function handleBoardKey(e) {
+    const bare = plain(e);
+    const wide = isWide();
+    if (e.key === "Escape") {
+      if (state.searchPinned) {
+        updateSearch("");
+        state.searchPinned = false;
+      } else frame.blur();
+    } else if (bare && e.key === "/") {
+      state.searchPinned = false;
+      state.overlay = "search";
+    } else if (bare && e.key === "?") {
+      state.overlay = "help";
+      state.helpQ = "";
+    } else if (bare && e.key === ":") {
+      state.overlay = "palette";
+      state.paletteQ = "";
+      state.paletteI = 0;
+    } else if (bare && e.key === "+") openQuickAdd();
+    else if (bare && (e.key === "1" || e.key === "2"))
+      selectTab(e.key === "1" ? "board" : "questions");
+    else if (bare && e.key === "p") {
       state.overlay = "picker";
-      state.pickerI = Math.max(
-        0,
-        pickerOptions().indexOf(state.selectedProject),
-      );
-      render();
-      return;
-    }
-    if (e.key === "z" || e.key === "D") {
-      e.preventDefault();
+      state.pickerI = Math.max(0, scopeOptions().indexOf(state.scope));
+    } else if (bare && e.key === "S") {
+      clearMarks();
+      state.sort = state.sort === "number" ? "project" : "number";
+    } else if (bare && (e.key === "z" || e.key === "D")) {
       clearMarks();
       state.drawer = !state.drawer;
-      render();
-      return;
+    } else if (bare && e.key === "g" && state.drawer) {
+      clearMarks();
+      state.archivedOpen = !state.archivedOpen;
+    } else if (
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      e.shiftKey &&
+      e.key === "M"
+    ) {
+      if (state.markMode) clearMarks();
+      else state.markMode = true;
+      state.message = "";
+    } else if (
+      ["j", "ArrowDown", "k", "ArrowUp"].includes(e.key) &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      const down = e.key === "j" || e.key === "ArrowDown";
+      if (e.shiftKey && !state.markMode) return true;
+      if (e.shiftKey) markCurrent();
+      move(down ? 1 : -1);
+    } else if (bare && e.key === " ") {
+      if (state.markMode) toggleMark();
+    } else if (bare && e.key === "Enter") {
+      openPage();
+    } else if (bare && wide && (e.key === "ArrowRight" || e.key === "l")) {
+      if (taskById(state.selectedId)) openPage();
+    } else if (bare && STATUS_KEYS.includes(e.key)) {
+      if (!state.markedIds.size && selectedRow()?.kind !== "task") return true;
+      if (e.key === "s") setStatus("doing");
+      else if (e.key === "o") setStatus("todo");
+      else if (e.key === "d") setStatus("done");
+      else if (e.key === "x") deleteSelected();
+      else if (e.key === "u") undo();
+      else if (e.key === "f") archiveSelected();
+    } else if (bare && e.key === "e") {
+      const task = taskById(state.selectedId);
+      if (task) {
+        openPage();
+        beginEdit(task, "title");
+      }
+    } else return false;
+    e.preventDefault();
+    return true;
+  }
+
+  function onKey(e) {
+    const el = e.target;
+    if (el !== frame) {
+      if (el.closest(".pane-bar, .layout-toggle, [data-divider]")) return;
+      // Text entry: every key but its own Enter/Escape/Tab is text.
+      if (el.matches("input, textarea")) {
+        handleTextField(e);
+        return;
+      }
+      // A focused canvas button keeps its native Space/Enter activation.
+      if (el.closest("button") && (e.key === " " || e.key === "Enter")) return;
     }
-    if (e.key === "g" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    if (e.key.toLowerCase() !== "x") state.pendingDelete = null;
+    if (state.overlay && handleOverlay(e)) return;
+    if (
+      e.key === "Escape" &&
+      state.markMode &&
+      plain(e) &&
+      !e.shiftKey &&
+      state.tab === "board"
+    ) {
       e.preventDefault();
-      toggleAllGroups();
-      render();
-      return;
-    }
-    if (!taskPageActive && !alt && e.shiftKey && e.key === "M") {
-      e.preventDefault();
-      toggleMarkMode();
+      clearMarks();
       state.message = "";
       render();
       return;
     }
-    if (e.key === "j" || e.key === "ArrowDown") {
-      e.preventDefault();
-      if (e.shiftKey && !state.markMode) return;
-      if (e.shiftKey) markCurrent();
-      move(1);
+    let handled;
+    if (state.tab === "questions") handled = handleQuestionsKey(e);
+    else if (state.quickExpanded || state.page) handled = handlePageKey(e);
+    else {
+      if (!["Escape"].includes(e.key)) state.message = "";
+      handled = handleBoardKey(e);
+    }
+    if (handled) render();
+  }
+
+  // ── mouse ─────────────────────────────────────────────────────────────────
+  let lastClick = { id: null, at: 0 };
+  function copyTaskIdentifier(task) {
+    const identifier = `T${task.number}`;
+    const notice = (message) => {
+      state.copyNotice = message;
+      setTimeout(() => {
+        if (state.copyNotice === message) {
+          state.copyNotice = "";
+          render();
+        }
+      }, 2000);
       render();
-      return;
-    }
-    if (e.key === "k" || e.key === "ArrowUp") {
-      e.preventDefault();
-      if (e.shiftKey && !state.markMode) return;
-      if (e.shiftKey) markCurrent();
-      move(-1);
-      render();
-      return;
-    }
-    if (!alt && ["ArrowRight", "l"].includes(e.key)) {
-      e.preventDefault();
-      if (wide) {
-        stageRight();
-        state.peekId = null;
-      } else if (!taskPageActive) {
-        state.peekId = state.selectedId;
-      }
-      render();
-      return;
-    }
-    if (!alt && ["ArrowLeft", "h"].includes(e.key)) {
-      e.preventDefault();
-      if (wide) stageLeft();
-      else state.peekId = null;
-      render();
-      return;
-    }
-    if (!taskPageActive && e.key === " ") {
-      e.preventDefault();
-      if (state.markMode) toggleMark();
-      render();
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (taskPageActive && state.stage === "page") leaveTaskPage();
-      else {
-        const row = selectedRow();
-        if (row?.kind === "project") openProject(row.project);
-        else if (row?.kind === "inbox") {
-          clearMarks();
-          state.inboxOpen = !state.inboxOpen;
-        } else if (row?.kind === "archived") {
-          clearMarks();
-          state.archivedOpen = !state.archivedOpen;
-        } else openFullPage();
-      }
-      render();
-      return;
-    }
-    if (
-      taskPageActive &&
-      ["s", "n", "o", "d", "b", "r", "x", "f"].includes(e.key)
-    ) {
-      clearMarks();
-    }
-    if (
-      !state.markedIds.size &&
-      ["s", "n", "o", "d", "b", "r", "x", "f"].includes(e.key) &&
-      selectedRow()?.kind !== "task"
-    ) {
-      clearMarks();
-      return;
-    }
-    if (e.key === "s") {
-      e.preventDefault();
-      primaryVerb();
-      render();
-      return;
-    }
-    if (e.key === "d") {
-      e.preventDefault();
-      setStatus("done");
-      render();
-      return;
-    }
-    if (e.key === "o") {
-      e.preventDefault();
-      setStatus("todo");
-      render();
-      return;
-    }
-    if (e.key === "f") {
-      e.preventDefault();
-      fileSelected();
-      render();
-      return;
-    }
-    if (e.key === "x") {
-      e.preventDefault();
-      deleteSelected();
-      render();
-      return;
-    }
-    if (e.key === "u") {
-      e.preventDefault();
-      undoDelete();
-      render();
-      return;
-    }
-    if (e.key === "e") {
-      e.preventDefault();
-      clearMarks();
-      state.pendingDelete = null;
-      const task = selectedTask();
-      if (task) {
-        enterTaskStage();
-        state.editField = "title";
-        state.editDraft = task.title;
-      }
-      render();
-      return;
-    }
-    if (e.key === "q" && alt) {
-      e.preventDefault();
-      frame.blur();
-      render();
+    };
+    if (!navigator.clipboard?.writeText) return notice("copy unavailable");
+    navigator.clipboard
+      .writeText(identifier)
+      .then(() => notice(`copied ${identifier}`))
+      .catch(() => notice("copy failed"));
+  }
+  function runVerb(id) {
+    if (id === "open") openPage();
+    else if (id === "doing") setStatus("doing");
+    else if (id === "todo") setStatus("todo");
+    else if (id === "done") setStatus("done");
+    else if (id === "undo") undo();
+    else if (id === "capture") openQuickAdd();
+    else if (id === "help") {
+      state.overlay = "help";
+      state.helpQ = "";
+    } else if (id === "edit" && shownTask()) {
+      state.page = true;
+      beginEdit(shownTask(), "title");
+    } else if (id === "close") closePage();
+  }
+  function runHint(id) {
+    if (id === "save") saveDraft(false);
+    else if (id === "details") expandQuickAdd();
+    else if (id === "close") state.overlay = null;
+    else if (id === "save-expanded") saveExpanded();
+    else if (id === "next-field") moveEdit(state.capture, false);
+    else if (id === "collapse") collapseQuickAdd();
+    else if (id === "pin") {
+      state.searchPinned = Boolean(state.searchQuery.trim());
+      state.overlay = null;
+    } else if (id === "clear") {
+      updateSearch("");
+      state.searchPinned = false;
+      state.overlay = null;
     }
   }
 
-  let lastClick = { id: null, at: 0 };
-  const cancelReflowClick = () => {
-    delete lastClick.reflow;
-  };
-  frame.addEventListener(
-    "keydown",
-    () => {
-      cancelReflowClick();
-      lastClick = { id: null, at: 0 };
-    },
-    true,
-  );
-  root.addEventListener("wheel", cancelReflowClick, { passive: true });
-  root.addEventListener("pointermove", (e) => {
-    if (e.buttons) cancelReflowClick();
-  });
-  root.addEventListener("pointerdown", (e) => {
-    const previous = lastClick.reflow;
-    if (
-      e.button !== 0 ||
-      (previous && (e.clientX !== previous.x || e.clientY !== previous.y))
-    )
-      cancelReflowClick();
-  });
-  root.addEventListener("pointercancel", cancelReflowClick);
-  window.addEventListener("resize", cancelReflowClick);
-  window.addEventListener("scroll", cancelReflowClick, true);
-
   root.addEventListener("click", (e) => {
-    const deleteControl = e.target.closest(
-      '[data-verb="delete"], [data-page-verb="delete"], [data-preview-page-verb="delete"]',
-    );
-    if (!deleteControl) {
-      state.pendingDelete = null;
-      preview.pendingDelete = null;
-    }
-    const previous = lastClick.reflow;
-    cancelReflowClick();
-    // Reflow must not turn the second click into a newly exposed task control.
-    if (
-      previous &&
-      e.detail > 0 &&
-      state.stage === "split" &&
-      state.selectedId === lastClick.id &&
-      Date.now() - lastClick.at < 350 &&
-      e.clientX === previous.x &&
-      e.clientY === previous.y &&
-      frame.clientWidth === previous.width &&
-      !state.editField &&
-      !steps.editor &&
-      !steps.dirty
+    const t = e.target;
+    const hit = (selector) => t.closest(selector);
+    if (!hit('[data-verb="delete"]')) state.pendingDelete = null;
+    let node;
+    if ((node = hit("[data-close]"))) {
+      state.overlay = null;
+      frame.focus();
+    } else if ((node = hit("[data-cmd]")) && state.overlay === "palette") {
+      const cmd = paletteCommands().find((c) => c.id === node.dataset.cmd);
+      state.overlay = null;
+      cmd?.run();
+    } else if ((node = hit("[data-pick]"))) {
+      state.overlay = null;
+      setScope(node.dataset.pick);
+    } else if ((node = hit("[data-parent-option]"))) {
+      chooseParent(Number(node.dataset.parentOption));
+    } else if ((node = hit("[data-tab]"))) {
+      selectTab(node.dataset.tab);
+    } else if (hit("[data-scope]")) {
+      state.overlay = "picker";
+      state.pickerI = Math.max(0, scopeOptions().indexOf(state.scope));
+    } else if (hit("[data-sort]")) {
+      state.sort = state.sort === "number" ? "project" : "number";
+    } else if (hit("[data-waiting]")) {
+      selectTab("questions");
+    } else if ((node = hit("[data-q-option]"))) {
+      const q = questionById(state.q.page);
+      if (q) state.q.options[q.id] = Number(node.dataset.qOption);
+    } else if (hit("[data-q-check]")) {
+      handleQuestionsKey({
+        key: " ",
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        preventDefault() {},
+      });
+    } else if ((node = hit("[data-question]"))) {
+      openQuestion(node.dataset.question);
+    } else if ((node = hit("[data-copy-task]")) && !state.markMode) {
+      const task = taskById(node.dataset.copyTask);
+      if (task) copyTaskIdentifier(task);
+      return;
+    } else if ((node = hit("[data-ring]"))) {
+      const task = shownTask();
+      if (!task || hasUnsavedWork()) return;
+      state.page = true;
+      steps.selected = node.dataset.ring;
+      activateRing(task);
+    } else if (
+      (node = hit("[data-step], [data-step-add]")) &&
+      t.id !== "tsk-step-edit"
     ) {
-      lastClick = { id: null, at: 0 };
-      openFullPage();
-      render();
-      return;
-    }
-    // A stage A click inside the task column slides to G first, then the control runs.
-    const previewFilterControl = e.target.closest("[data-preview-filter]");
-    if (previewFilterControl && projectsPreviewActive()) {
-      if (state.stage === "split") stageRight();
-      openPreviewFilter();
-      render();
-      return;
-    }
-    const previewFilterOption = e.target.closest(
-      "[data-preview-filter-option]",
-    );
-    if (previewFilterOption && state.overlay === "preview-filter") {
-      choosePreviewFilter(
-        Number(previewFilterOption.dataset.previewFilterOption),
-      );
-      render();
-      return;
-    }
-    const filterControl = e.target.closest("[data-filter]");
-    if (filterControl) {
-      openFilter();
-      render();
-      return;
-    }
-    const filterOption = e.target.closest("[data-filter-option]");
-    if (filterOption) {
-      chooseFilter(Number(filterOption.dataset.filterOption));
-      render();
-      return;
-    }
-    const previewStepTarget = e.target.closest(
-      "[data-preview-step], [data-preview-step-add]",
-    );
-    if (
-      projectsPreviewPage() &&
-      previewStepTarget &&
-      e.target.id !== "tsk-preview-step-edit"
-    ) {
-      const task = previewTask();
-      if (
-        previewSteps.editor &&
-        !previewSteps.editor.text.trim() &&
-        !previewSteps.editor.id
-      )
-        previewSteps.cancel();
-      else if (previewSteps.editor && !previewSteps.save(task, false)) {
-        render();
-        return;
-      }
-      if (previewStepTarget.hasAttribute("data-preview-step-add"))
-        previewSteps.begin(task);
-      else previewSteps.selected = previewStepTarget.dataset.previewStep;
-      render();
-      return;
-    }
-    const stepTarget = e.target.closest("[data-step], [data-step-add]");
-    if (stepTarget && e.target.id !== "tsk-step-edit") {
-      const task = selectedTask();
+      const task = shownTask();
+      if (!task) return;
       if (steps.editor && !steps.editor.text.trim() && !steps.editor.id)
         steps.cancel();
       else if (steps.editor && !steps.save(task, false)) {
         render();
         return;
       }
-      enterTaskStage();
-      if (stepTarget.hasAttribute("data-step-add")) steps.begin(task);
+      if (!state.quickExpanded) state.page = true;
+      if (node.hasAttribute("data-step-add")) steps.begin(task);
       else {
-        steps.selected = stepTarget.dataset.step;
+        steps.selected = node.dataset.step;
         steps.marked = null;
       }
-      render();
-      return;
-    }
-    const previewArchivedHeader = e.target.closest("[data-preview-archived]");
-    if (previewArchivedHeader && projectsPreviewActive()) {
-      clearMarks(preview);
-      preview.archivedOpen = !preview.archivedOpen;
-      ensurePreviewSelection();
-      render();
-      return;
-    }
-    const previewTaskRow = e.target.closest("[data-preview-task]");
-    if (previewTaskRow && projectsPreviewActive()) {
-      const copyTarget = e.target.closest("[data-copy-task]");
-      if (
-        copyTarget &&
-        (!preview.markMode || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)
-      ) {
-        const task = state.tasks.find(
-          (item) => item.id === copyTarget.getAttribute("data-copy-task"),
-        );
-        if (task) copyTaskIdentifier(task);
-        render();
-        return;
-      }
-      const id = previewTaskRow.getAttribute("data-preview-task");
-      if (previewHasUnsavedWork() && id !== preview.selectedId) return;
-      const now = Date.now();
-      if (state.stage === "split") stageRight();
-      const markClick =
-        preview.markMode &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey;
-      if (markClick) {
-        preview.selectedId = id;
-        toggleMark(preview);
-        preview.peekId = null;
-        frame.focus({ preventScroll: true });
-      } else if (
-        preview.selectedId === id &&
-        now - (preview.lastClick || 0) < 350
-      ) {
-        openPreviewTaskPage();
-      } else {
-        preview.selectedId = id;
-        preview.peekId = null;
-      }
-      preview.lastClick = markClick ? 0 : now;
-      render();
-      return;
-    }
-    const taskColumn = e.target.closest(
-      ".tsk-task-column, .tsk-project-preview",
-    );
-    if (taskColumn && isWideSplit() && state.stage === "split") {
-      stageRight();
-      render();
-      return;
-    }
-    const close = e.target.closest("[data-close]");
-    if (close) {
-      state.overlay = null;
-      state.quickOwner = "outer";
-      state.paletteQ = "";
-      state.helpQ = "";
-      frame.focus();
-      render();
-      return;
-    }
-    const copy = e.target.closest("[data-copy-task]");
-    if (
-      copy &&
-      (!state.markMode || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)
-    ) {
-      const task = state.tasks.find(
-        (item) => item.id === copy.getAttribute("data-copy-task"),
-      );
-      if (task) copyTaskIdentifier(task);
-      render();
-      return;
-    }
-    const tab = e.target.closest("[data-tab]");
-    if (tab) {
-      goTab(tab.getAttribute("data-tab"));
-      render();
-      return;
-    }
-    const chip = e.target.closest("[data-chip]");
-    if (chip) {
-      state.overlay = "picker";
-      state.pickerI = Math.max(
-        0,
-        pickerOptions().indexOf(state.selectedProject),
-      );
-      render();
-      return;
-    }
-    const inboxHeader = e.target.closest("[data-inbox-header]");
-    if (inboxHeader) {
-      clearMarks();
-      state.inboxOpen = !state.inboxOpen;
-      render();
-      return;
-    }
-    const archivedHeader = e.target.closest("[data-archived-header]");
-    if (archivedHeader) {
+    } else if (hit("[data-archived-header]")) {
       clearMarks();
       state.archivedOpen = !state.archivedOpen;
-      render();
-      return;
-    }
-    const projectRow = e.target.closest("[data-project-row]");
-    if (projectRow) {
-      const id = projectRow.dataset.navId;
-      const project = projectRow.dataset.projectRow;
-      const now = Date.now();
-      if (lastClick.id === id && now - lastClick.at < 350) {
-        if (
-          projectsOverview() &&
-          projectsPreviewActive() &&
-          previewHasUnsavedWork()
-        ) {
-          preview.message = "save or cancel edits before switching tasks";
-          render();
-          return;
-        }
-        openProject(project);
-      } else {
-        if (
-          projectsOverview() &&
-          projectsPreviewActive() &&
-          preview.project !== project &&
-          !bindProjectPreviewFor(project)
-        ) {
-          render();
-          return;
-        }
-        state.selectedId = id;
-        if (projectsOverview() && isWideSplit()) {
-          if (state.stage === "board") openProjectPreview();
-          else if (state.stage === "rail") {
-            bindProjectPreview();
-            state.stage = "split";
-          } else bindProjectPreview();
-        }
-      }
-      lastClick = { id, at: now };
-      render();
-      return;
-    }
-    const group = e.target.closest("[data-collapse]");
-    if (group) {
-      clearMarks();
-      const now = Date.now();
-      const key = group.getAttribute("data-collapse");
-      const project = group.getAttribute("data-project");
-      if (lastClick.id === key && now - lastClick.at < 350 && project) {
-        if (project === "desk") goTab("desk");
-        else openProject(project);
-      } else if (state.collapsed.has(key)) state.collapsed.delete(key);
-      else state.collapsed.add(key);
-      lastClick = { id: key, at: now };
-      render();
-      return;
-    }
-    const row = e.target.closest("[data-task]");
-    if (row) {
-      const id = row.getAttribute("data-task");
-      if ((steps.dirty || steps.editor) && id !== state.selectedId) return;
-      if (
-        state.markMode &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey
-      ) {
+    } else if ((node = hit("[data-task]"))) {
+      const id = node.dataset.task;
+      if (hasUnsavedWork() && id !== state.selectedId) return;
+      if (state.markMode && plain(e) && !e.shiftKey) {
         state.selectedId = id;
         toggleMark();
-        state.peekId = null;
         lastClick = { id: null, at: 0 };
-        frame.focus({ preventScroll: true });
-        render();
-        return;
-      }
-      const now = Date.now();
-      const reflow =
-        e.detail > 0 &&
-        isWideSplit() &&
-        (state.stage === "board" || state.stage === "rail") &&
-        !state.editField &&
-        !steps.editor &&
-        !steps.dirty
-          ? { x: e.clientX, y: e.clientY, width: frame.clientWidth }
-          : null;
-      if (lastClick.id === id && now - lastClick.at < 350) {
-        state.selectedId = id;
-        state.peekId = null;
-        openFullPage();
-      } else if (isWideSplit()) {
-        if (state.stage === "board" || state.stage === "rail")
-          state.stage = "split";
-        state.selectedId = id;
-        state.peekId = null;
-        state.overlay = null;
       } else {
+        const now = Date.now();
+        const double = lastClick.id === id && now - lastClick.at < 350;
         state.selectedId = id;
-        state.peekId = state.peekId === id ? null : id;
+        state.trail = [];
+        state.q.returnQuestion = null;
+        if (double) openPage();
+        else if (isWide()) state.page = false;
+        lastClick = { id, at: now };
       }
-      lastClick = { id, at: now, reflow };
-      render();
-      return;
-    }
-    const previewDrawer = e.target.closest("[data-preview-drawer]");
-    if (previewDrawer) {
-      clearMarks(preview);
-      preview.drawer = !preview.drawer;
-      ensurePreviewSelection();
-      render();
-      return;
-    }
-    const previewPageVerb = e.target.closest("[data-preview-page-verb]");
-    if (previewPageVerb) {
-      runPreviewPageVerb(
-        previewPageVerb.getAttribute("data-preview-page-verb"),
-      );
-      render();
-      return;
-    }
-    const previewVerb = e.target.closest("[data-preview-verb]");
-    if (previewVerb) {
-      runPreviewVerb(previewVerb.getAttribute("data-preview-verb"));
-      render();
-      return;
-    }
-    const drawer = e.target.closest("[data-drawer]");
-    if (drawer) {
+      frame.focus({ preventScroll: true });
+    } else if (hit(".tsk-task-column") && isWide() && state.tab === "board") {
+      if (shownTask()) state.page = true;
+    } else if (hit(".tsk-q-detail") && state.q.cursor && !state.q.page) {
+      openQuestion(state.q.cursor);
+    } else if (hit("[data-drawer]") && state.tab === "board") {
       clearMarks();
       state.drawer = !state.drawer;
-      render();
-      return;
-    }
-    const cmd = e.target.closest("[data-cmd]");
-    if (cmd && state.overlay === "palette") {
-      const hit = paletteCommands().find(
-        (c) => c.id === cmd.getAttribute("data-cmd"),
-      );
-      state.overlay = null;
-      if (hit) hit.run();
-      render();
-      return;
-    }
-    const hint = e.target.closest("[data-hint]");
-    if (hint && runHint(hint.getAttribute("data-hint"))) {
-      render();
-      return;
-    }
-    const pageVerb = e.target.closest("[data-page-verb]");
-    if (pageVerb) {
-      runPageVerb(pageVerb.getAttribute("data-page-verb"));
-      render();
-      return;
-    }
-    const verb = e.target.closest("[data-verb]");
-    if (verb) {
-      runVerb(verb.getAttribute("data-verb"));
-      render();
-      return;
-    }
-    const pick = e.target.closest("[data-pick]");
-    if (pick) {
-      const name = pick.getAttribute("data-pick");
-      if (name === "desk") goTab("desk");
-      else openProject(name);
-      state.overlay = null;
-      render();
-    }
+    } else if ((node = hit("[data-hint]"))) {
+      const add = document.getElementById("tsk-add");
+      if (add) state.draft = add.value;
+      runHint(node.dataset.hint);
+    } else if ((node = hit("[data-verb]"))) {
+      runVerb(node.dataset.verb);
+    } else return;
+    render();
   });
 
   frame.addEventListener("keydown", onKey);
-  // The landing page's layout toggle asks for a stage directly (full terminal opens in split).
-  frame.addEventListener("tsk:set-stage", (e) => {
-    const stage = e.detail;
-    if (!["board", "split", "rail", "page"].includes(stage)) return;
-    if (projectsOverview()) {
-      if (stage === "page" || (stage === "board" && previewHasUnsavedWork()))
-        return;
-      if (stage === "board") dropProjectPreview();
-      else {
-        if (!bindProjectPreview()) return;
-        leavePreviewTaskPage();
-      }
-      state.stage = stage;
-      state.stageOrigin = null;
-      state.peekId = null;
-      if (state.overlay !== "quick") state.overlay = null;
-      render();
-      return;
+  // The landing page's layout toggle resizes the pane; the board returns focus to the list.
+  frame.addEventListener("tsk:set-stage", () => {
+    if (!hasUnsavedWork() && state.tab === "board") {
+      state.page = false;
+      state.trail = [];
     }
-    if (stage !== "board" && !state.selectedId) return;
-    state.stage = stage;
-    state.stageOrigin = null;
-    state.peekId = null;
     if (state.overlay !== "quick") state.overlay = null;
     render();
   });

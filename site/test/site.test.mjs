@@ -60,11 +60,10 @@ test("Vercel ignores unchanged files relative to the site root", async () => {
   assert.equal(config.ignoreCommand, "git diff --quiet HEAD^ HEAD -- . ../skills");
 });
 
-test("demo capture keeps an absolute project path verbatim", () => {
+test("demo capture keeps an absolute project path verbatim and has no thread token", () => {
   assert.deepEqual(parseCapture("Ship it !p /workspace/herdr-tsk !t Site-Docs", null), {
-    title: "Ship it",
+    title: "Ship it !t Site-Docs",
     project: "/workspace/herdr-tsk",
-    thread: "site-docs",
   });
 });
 
@@ -85,94 +84,100 @@ test("demo rows lead with copyable T task identifiers", async () => {
   assert.doesNotMatch(demo, /#\$\{task\.number\}/);
 });
 
-test("docs and demo describe the wide stage slider and threshold", async () => {
+test("docs and demo share the 110-column list + detail layout with no slider", async () => {
   const board = await read("../src/content/docs/docs/board.md");
   const keys = await read("../src/content/docs/docs/keys.md");
   const taskPage = await read("../src/content/docs/docs/task-page.md");
   const demo = await read("../public/board-demo.js");
-  const styles = await read("../src/styles/landing.css");
 
   assert.match(board, /110 usable columns/);
-  assert.match(board, /four-stage slider/);
-  assert.match(board, /\| Task \| Task details beside a narrow board rail \|/);
+  assert.match(board, /## Wide layout/);
+  assert.doesNotMatch(board, /four-stage slider|peek/i);
   assert.doesNotMatch(board, /bordered|cyan/);
-  assert.match(keys, /Wide stage slider/);
-  assert.match(keys, /\| Full screen \| No change \| Task with rail \|/);
-  assert.doesNotMatch(keys, /cyan/);
+  assert.match(keys, /## Wide layout/);
+  assert.match(keys, /\| Detail \| No change \| List \| List \| List \|/);
+  assert.doesNotMatch(keys, /Wide stage slider|cyan/);
   assert.match(taskPage, /110 usable columns/);
+  assert.doesNotMatch(taskPage, /wide-stage-slider|peek/i);
   assert.match(taskPage, /Click the task's `T` number to copy it/);
   assert.doesNotMatch(taskPage, /bordered panel/);
   assert.match(demo, /const WIDE_SPLIT_MIN_COLUMNS = 110;/);
-  assert.match(demo, /function stageRight\(\)/);
-  assert.match(demo, /function stageLeft\(\)/);
-  assert.match(demo, /state\.stageOrigin = state\.stage;/);
-  assert.match(demo, /class="tsk-wide-split is-rail"/);
+  assert.match(demo, /class="tsk-wide-split is-split"/);
   assert.match(demo, /tsk-rule-column/);
-  assert.match(demo, /board ▸ task    → task · ← close · enter open/);
-  assert.match(styles, /\.tsk-wide-split\.is-split \{\s*grid-template-columns: minmax\(0, 2fr\) 1px minmax\(0, 3fr\);/);
-  assert.match(styles, /\.tsk-wide-split\.is-rail \{\s*grid-template-columns: 32ch 1px/);
+  for (const gone of [/stageRight|stageLeft|is-rail|is-page|peekId|tsk-peek|tsk-attribution/, /projectView|tsk-project-row|tsk-project-preview|"projects"/, /threadFilter|task\.thread\b|!t /]) {
+    assert.doesNotMatch(demo, gone);
+  }
 });
 
-test("demo keeps project navigation, attribution, and search contracts", async () => {
+test("demo keeps the one board tab with scope, sort, search, archive, and the done drawer", async () => {
   const demo = await read("../public/board-demo.js");
-  assert.match(demo, /doing: open\s*\.filter\(\(task\) => task\.status === "doing"\)/);
+  assert.match(demo, /data-tab="\$\{name\}"/);
+  assert.match(demo, /tab\("board", "1 board"\)/);
+  assert.match(demo, /tab\("questions", qLabel\)/);
+  assert.match(demo, /data-scope="1"/);
+  assert.match(demo, /data-sort="1"/);
+  assert.match(demo, /const scopeOptions = \(\) => \["all", "desk", \.\.\.projectNames\(\)\]/);
+  assert.match(demo, /state\.scope === "desk" \? "TODO · desk" : "TODO"/);
   assert.doesNotMatch(demo, /status === "(?:open|ready|started|blocked|review)"/);
-  assert.match(demo, /state\.selectedProject = name;/);
-  assert.match(demo, /const text = tab === "project" \? state\.selectedProject : label/);
-  assert.match(demo, /state\.tasks\.filter\(\(t\) => t\.project && !t\.archived\)/);
-  assert.match(demo, /id: `project:\${name}`/);
   assert.match(demo, /id: "nav:archived"/);
-  assert.match(demo, /const row = selectedRow\(\);/);
-  assert.match(demo, /row\?\.kind === "project"/);
   assert.match(demo, /selectedRow\(\)\?\.kind !== "task"/);
-  assert.match(demo, /id="tsk-project-search"/);
-  assert.ok(demo.includes('e.key === "/"'));
-  assert.match(demo, /state\.searchQuery/);
+  assert.match(demo, /id="tsk-search"/);
   assert.match(demo, /taskMatchesSearch/);
   assert.match(demo, /searchPinned/);
-  assert.match(
-    demo,
-    /if \(e\.key === "Escape"\) \{\s*e\.preventDefault\(\);\s*if \(state\.searchPinned\) \{[\s\S]*?\} else if \(taskPageActive\) \{/,
-    "pinned search must clear before normal task-page Escape behavior resumes",
-  );
-  assert.match(demo, /data-project-row=/);
+  assert.match(demo, /e\.key === "z" \|\| e\.key === "D"/);
+  // A closed drawer keeps the DONE heading and count, with the done rows hidden.
+  assert.match(demo, /if \(!state\.drawer && done\.length\)/);
+  assert.match(demo, /data-drawer="1"><span class="sec">/);
 });
 
-test("demo matches the quick-add, peek, and group-toggle contracts", async () => {
+test("demo rows show number, title, question marks, and the child count only", async () => {
+  const demo = await read("../public/board-demo.js");
+  const styles = await read("../src/styles/landing.css");
+  assert.match(demo, /const prefix = `\$\{selected \? "▸" : " "\}\$\{marked \? "▪" : " "\} `;/);
+  assert.doesNotMatch(demo, /tsk-row-glyph/);
+  assert.match(demo, /if \(approval && n\) return `! \?\$\{n\}`;/);
+  assert.match(demo, /`⊂\$\{kids\.filter/);
+  assert.match(demo, /waiting on you  \$\{parts\.join\(" · "\)\}  → 2/);
+  assert.match(styles, /\.tsk-row-tail \{/);
+});
+
+test("demo questions tab follows the app's groups, actions, and sample boundary", async () => {
+  const demo = await read("../public/board-demo.js");
+  for (const title of ["NEEDS APPROVAL", "FOR YOU", "FINDINGS", "WITH LEAD", "target unknown · route with tsk route", "CLOSED"]) {
+    assert.ok(demo.includes(`"${title}"`), title);
+  }
+  for (const label of ["create the task and run it", "create the task only (todo)", "close · no task"]) {
+    assert.ok(demo.includes(label), label);
+  }
+  assert.match(demo, /check the target, scope, and revision first · space/);
+  assert.match(demo, /sample: approved in this demo only · it authorizes nothing/);
+  assert.match(demo, /no run request is sent/);
+  assert.match(demo, /sample text · this demo holds no private records/);
+  assert.doesNotMatch(demo, /local original · never shared/);
+  assert.match(demo, /case "J":\s*stepQuestion\(1\);/);
+});
+
+test("demo quick-add, help, and text entry keep their contracts", async () => {
   const demo = await read("../public/board-demo.js");
   const landing = await read("../src/styles/landing.css");
-  assert.match(demo, /if \(e\.key === "Enter" && !e\.ctrlKey && !e\.altKey && !e\.metaKey\)/);
   assert.match(demo, /saveDraft\(e\.shiftKey\)/);
   assert.match(demo, /id: "save", label: "enter save"/);
   assert.match(demo, /id: "details", label: "tab details"/);
   assert.match(demo, /id: "close", label: "esc close"/);
-  // Closing the page by click must drop any open title/notes draft, or the next task
-  // opens in edit mode carrying it; the verbs hide while an editor owns the footer.
-  assert.match(
-    demo,
-    /if \(id === "close"\) \{\s*state\.overlay = null;\s*state\.editField = null;\s*state\.editDraft = "";\s*leaveTaskPage/,
-  );
-  assert.match(
-    demo,
-    /function pageVerbBar\(\)[\s\S]{0,240}?steps\.editor \|\| steps\.dirty \|\| state\.editField/,
-  );
   assert.match(demo, /function runHint/);
   assert.match(demo, /data-hint=/);
-  assert.match(demo, /"inbox"\}<\/span> · <span class="count">\$\{row\.count\}<\/span>/);
+  assert.match(demo, /placeholder="title  ·  !p project"/);
+  // Text entry: every key but its own Enter/Escape/Tab is text.
+  assert.match(demo, /if \(el\.matches\("input, textarea"\)\) \{\s*handleTextField\(e\);\s*return;/);
   assert.match(demo, /\["views & find", "z \/ D", "done drawer"/);
+  assert.match(demo, /\["views & find", "2", "questions tab"/);
   assert.match(demo, /state\.helpQ/);
   assert.match(demo, /search keys or actions/);
   assert.match(demo, /tsk-help-divider/);
   assert.match(demo, /tsk-help-row/);
   assert.match(landing, /\.tsk-help-row span:last-child/);
   assert.match(landing, /overflow-wrap: anywhere/);
-  assert.match(demo, /e\.key === "z" \|\| e\.key === "D"/);
   assert.doesNotMatch(demo, /saveDraft\(e\.ctrlKey \|\| e\.metaKey\)/);
-  assert.doesNotMatch(demo, /thread #\$\{task\.thread\}|scope \$\{projectName\(task\)\}|created \$\{age\(/);
-  assert.match(demo, /function toggleAllGroups\(\)/);
-  assert.match(demo, /id: "groups", label: "toggle groups"/);
-  assert.match(demo, /if \(e\.key === "g" && !e\.altKey && !e\.ctrlKey && !e\.metaKey\)/);
-  assert.doesNotMatch(demo, /pushTask\(t, 1\)/);
   assert.match(landing, /\.demo-invitation p \{[^}]*max-width: none/);
 });
 
@@ -212,16 +217,16 @@ test("docs keep the phone layout until the right TOC fits", async () => {
   assert.doesNotMatch(links, /install/);
 });
 
-test("attribution is peek-only in demo and static anatomy", async () => {
+test("attribution stays off board rows in the demo and the static anatomy", async () => {
   const demo = await read("../public/board-demo.js");
   const page = await read("../src/pages/index.astro");
   const styles = await read("../src/styles/landing.css");
   const guide = await read("../src/content/docs/docs/board.md");
-  assert.doesNotMatch(demo, /<span class="meta">/);
-  assert.match(styles, /\.tsk-attribution\s*\{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+  assert.doesNotMatch(demo, /<span class="meta">|tsk-attribution/);
   assert.match(styles, /\.tsk-row-main\s*\{[^}]*padding-right: 2ch;/);
   assert.doesNotMatch(page, /class="r meta"/);
-  assert.match(page, /└─ tsk/);
+  assert.doesNotMatch(page, /└─|s-peek/, "the static anatomy paints rows with the title only");
+  assert.doesNotMatch(page, /class="glyph"/, "rows carry no status glyph");
   assert.doesNotMatch(guide, /section headers, row meta/);
 });
 
@@ -282,7 +287,9 @@ test("hero board pins reveal callout copy", async () => {
   assert.match(css, /\.hero-side \.screen \{[^}]*white-space: pre-wrap/);
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);
   assert.doesNotMatch(css, /\.goto-label \{\s*display: none/);
-  assert.match(page, /Three tabs, always on screen/);
+  assert.match(page, /One board, scope and sort/);
+  assert.match(page, /<span class="on">1 board<\/span>[\s\S]*?2 questions[\s\S]*?desk ▾[\s\S]*?sort number ▾/);
+  assert.match(page, /waiting on you  approval 1 · question 2  → 2/);
   assert.match(page, /title: 'A task\.'/);
   assert.doesNotMatch(page, /title: 'A row\.'/);
   assert.match(page, /aria-label=\{pinLabel\(1\)\}/);

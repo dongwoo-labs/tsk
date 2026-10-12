@@ -10,6 +10,7 @@ pub mod delivery;
 pub mod domain;
 pub(crate) mod fsperm;
 pub mod guides;
+pub mod question_actions;
 pub mod save_recovery;
 pub mod scope;
 pub mod setup;

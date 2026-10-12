@@ -72,7 +72,7 @@ pub fn route<S: AsRef<str>>(
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
             "import" => Surface::Import,
-            "ask" | "answer" | "questions" => Surface::Questions,
+            "ask" | "answer" | "route" | "questions" => Surface::Questions,
             "setup" => Surface::Setup,
             "update" => Surface::Update,
             "guide" => Surface::Guide,

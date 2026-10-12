@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use tsk_tui::app::{apply_board_intent_with_save_recovery, BoardSaveContext};
 use tsk_tui::context::InvocationSnapshot;
-use tsk_tui::domain::{DomainState, ProvenanceOrigin, TaskEventKind, TaskScope};
+use tsk_tui::domain::{DomainState, ProvenanceOrigin, TaskScope};
 use tsk_tui::save_recovery::SaveRecovery;
 use tsk_tui::ui::board::{
     apply_intent, board_hit_map, draw_board, BoardInputMode, BoardModel, IntentOutcome,
@@ -36,6 +36,13 @@ fn apply(
     snapshot: Option<&InvocationSnapshot>,
 ) -> IntentOutcome {
     apply_intent(domain, model, intent, snapshot).expect("apply capture-bar intent")
+}
+
+/// A board scoped to the invocation project, so quick-add defaults there.
+fn invocation_board(domain: &DomainState) -> BoardModel {
+    let mut model = BoardModel::from_domain(domain, None);
+    model.set_selected_project(Some(PathBuf::from("/repos/invocation")));
+    model
 }
 
 fn open(domain: &mut DomainState, model: &mut BoardModel, snapshot: &InvocationSnapshot) {
@@ -320,7 +327,6 @@ fn quick_add_save_selects_the_new_task_and_navigation_stays_relative_to_it() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("desk fixture");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -375,7 +381,6 @@ fn create_project_fixture(domain: &mut DomainState, path: &str) {
             None,
             TaskScope::Project { path: path.into() },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("fixture project task");
 }
@@ -455,7 +460,7 @@ fn invocation_default_scope_and_this_repo_are_project_candidates() {
 #[test]
 fn unmatched_project_basename_refuses_and_keeps_the_last_good_destination() {
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
     let snap = snapshot();
 
     open(&mut domain, &mut model, &snap);
@@ -518,7 +523,7 @@ fn relative_project_path_refuses_without_saving() {
 fn shift_enter_uses_the_same_project_basename_resolution() {
     let mut domain = DomainState::new();
     create_project_fixture(&mut domain, "/work/ctrl-target");
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snapshot());
     type_title(&mut domain, &mut model, "keep open !p ctrl-target");
@@ -538,7 +543,7 @@ fn shift_enter_uses_the_same_project_basename_resolution() {
     assert_eq!(
         model.selected_id(),
         None,
-        "saved project task is outside the desk lens"
+        "saved task is outside the invocation project's lens"
     );
     assert_eq!(model.message(), None);
 }
@@ -547,7 +552,7 @@ fn shift_enter_uses_the_same_project_basename_resolution() {
 fn capture_bar_strips_bare_project_token_as_global_and_project_scope_tokens() {
     let snap = snapshot();
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snap);
     type_title(&mut domain, &mut model, "global task !p");
@@ -620,7 +625,7 @@ fn bare_project_token_requires_a_title_and_preselects_global_when_expanded() {
 fn empty_enter_stays_open_esc_discards_and_tab_expands_the_seeded_task_page() {
     let snap = snapshot();
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snap);
     assert_eq!(
@@ -734,12 +739,6 @@ fn expanded_page_stashes_notes_and_scope_across_esc_and_saves_like_quick_add() {
         "Tab from Notes selects the trailing step target"
     );
     apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-    assert_eq!(
-        model.form_focus(),
-        Some(tsk_tui::ui::capture::CaptureField::Thread)
-    );
-    apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
     assert_eq!(model.form_scope(), Some(&TaskScope::Global));
     apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
@@ -771,25 +770,6 @@ fn expanded_page_stashes_notes_and_scope_across_esc_and_saves_like_quick_add() {
 }
 
 #[test]
-fn t_token_threads_while_hash_words_stay_title_text() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-
-    open(&mut domain, &mut model, &snap);
-    type_title(&mut domain, &mut model, "ship #urgent !t Release-2026");
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::QuickAddSave, None),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-
-    let task = domain.tasks().last().expect("saved task");
-    assert_eq!(task.title, "ship #urgent");
-    assert_eq!(task.thread.as_deref(), Some("release-2026"));
-}
-
-#[test]
 fn p_token_consumes_one_argument_and_leaves_later_words_in_the_title() {
     let mut domain = DomainState::new();
     create_project_fixture(&mut domain, "/repos/one");
@@ -805,87 +785,6 @@ fn p_token_consumes_one_argument_and_leaves_later_words_in_the_title() {
             path: "/repos/one".into()
         }
     );
-}
-
-#[test]
-fn bare_t_token_saves_unthreaded_and_strips() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-
-    open(&mut domain, &mut model, &snap);
-    type_title(&mut domain, &mut model, "unthread this !t");
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::QuickAddSave, None),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-
-    let task = domain.tasks().last().expect("saved task");
-    assert_eq!(task.title, "unthread this");
-    assert_eq!(task.thread, None);
-}
-
-#[test]
-fn t_and_p_tokens_combine_in_either_order() {
-    let mut domain = DomainState::new();
-    create_project_fixture(&mut domain, "/repos/one");
-    create_project_fixture(&mut domain, "/repos/two");
-    let mut model = BoardModel::from_domain(&domain, None);
-
-    save_quick_add(&mut domain, &mut model, "first !p one !t Release-2026");
-    save_quick_add(&mut domain, &mut model, "second !t Other !p two");
-
-    for (task, title, path, thread) in [
-        (&domain.tasks()[2], "first", "/repos/one", "release-2026"),
-        (&domain.tasks()[3], "second", "/repos/two", "other"),
-    ] {
-        assert_eq!(task.title, title);
-        assert_eq!(task.scope, TaskScope::Project { path: path.into() });
-        assert_eq!(task.thread.as_deref(), Some(thread));
-    }
-}
-
-#[test]
-fn malformed_t_token_refuses_on_open_line_and_clears_on_close() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-
-    open(&mut domain, &mut model, &snap);
-    type_title(
-        &mut domain,
-        &mut model,
-        "bad !t release_name !p /repos/other",
-    );
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::QuickAddSave, None),
-        IntentOutcome::None
-    );
-    assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
-    assert!(model
-        .message()
-        .is_some_and(|message| message.contains("thread")));
-    assert!(
-        domain.tasks().is_empty(),
-        "a malformed token persists nothing"
-    );
-
-    apply(&mut domain, &mut model, BoardIntent::CancelQuickAdd, None);
-    assert_eq!(model.input_mode(), BoardInputMode::Normal);
-    assert_eq!(model.message(), None);
-}
-
-#[test]
-fn quick_add_without_t_does_not_inherit_a_prior_thread() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-
-    save_quick_add(&mut domain, &mut model, "threaded !t release-2026");
-    save_quick_add(&mut domain, &mut model, "unthreaded follow-up");
-
-    assert_eq!(domain.tasks()[0].thread.as_deref(), Some("release-2026"));
-    assert_eq!(domain.tasks()[1].thread, None);
 }
 
 #[test]
@@ -908,103 +807,6 @@ fn over_length_t_token_refuses_without_applying_scope() {
     assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
     assert!(model.message().is_some());
     assert!(domain.tasks().is_empty());
-}
-
-#[test]
-fn malformed_t_token_keeps_quick_add_open_when_expanding() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-
-    open(&mut domain, &mut model, &snap);
-    type_title(&mut domain, &mut model, "bad !t release_name");
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::ExpandQuickAdd, None),
-        IntentOutcome::None
-    );
-    assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
-    assert_eq!(model.quick_add_title_value(), "bad !t release_name");
-    assert!(model.message().is_some());
-    assert!(domain.tasks().is_empty());
-}
-
-#[test]
-fn draft_stash_round_trips_thread_through_tab_and_esc() {
-    let mut domain = DomainState::new();
-    create_project_fixture(&mut domain, "/repos/draft");
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-
-    open(&mut domain, &mut model, &snap);
-    type_title(
-        &mut domain,
-        &mut model,
-        "threaded details !p draft !t Release-2026",
-    );
-    apply(&mut domain, &mut model, BoardIntent::ExpandQuickAdd, None);
-    for character in "preserved note".chars() {
-        apply(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        );
-    }
-    apply(&mut domain, &mut model, BoardIntent::CancelEdit, None);
-    assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
-    assert_eq!(
-        model.quick_add_title_value(),
-        "threaded details !p draft !t Release-2026"
-    );
-
-    apply(&mut domain, &mut model, BoardIntent::ExpandQuickAdd, None);
-    assert_eq!(model.edit_buffer(), "preserved note");
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::ConfirmEdit, None),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-
-    let task = domain.tasks().last().expect("saved task");
-    assert_eq!(task.title, "threaded details");
-    assert_eq!(task.notes.as_deref(), Some("preserved note"));
-    assert_eq!(
-        task.scope,
-        TaskScope::Project {
-            path: "/repos/draft".into()
-        }
-    );
-    assert_eq!(task.thread.as_deref(), Some("release-2026"));
-}
-
-#[test]
-fn threaded_quick_add_produces_only_created_event_and_no_edited_event() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-
-    save_quick_add(&mut domain, &mut model, "ship it !t Release-2026");
-
-    let task = domain.tasks().last().expect("threaded task");
-    assert_eq!(task.thread.as_deref(), Some("release-2026"));
-    assert_eq!(
-        task.history
-            .iter()
-            .map(|event| event.kind)
-            .collect::<Vec<_>>(),
-        vec![TaskEventKind::Created]
-    );
-}
-
-#[test]
-fn bare_t_before_hash_word_unthreads_and_keeps_hash_word_in_title() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-
-    save_quick_add(&mut domain, &mut model, "ship !t #urgent");
-
-    let task = domain.tasks().last().expect("unthreaded task");
-    assert_eq!(task.title, "ship #urgent");
-    assert_eq!(task.thread, None);
 }
 
 #[test]
@@ -1132,7 +934,6 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("fixture task");
     let mut model = BoardModel::from_domain(&domain, None);
@@ -1141,8 +942,8 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     let standard = render_text(&model, 80, 24);
     for text in [
         "visible task",
-        "title…   !p = desk · !p name = project · !t name = thread",
-        "add to invocation",
+        "title…   !p = desk · !p name = project",
+        "add to desk",
         "enter save · tab details · esc close",
     ] {
         assert!(standard.contains(text), "missing {text:?}: {standard}");
@@ -1150,7 +951,7 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     let standard_rows = render_rows(&model, 80, 24);
     assert_eq!(
         standard_rows[20].trim(),
-        "add to invocation",
+        "add to desk",
         "the row above the input names the destination"
     );
     assert!(standard_rows[21].contains("title…"), "input row");
@@ -1212,7 +1013,6 @@ fn p_token_naming_an_archived_project_refuses_on_the_open_line_and_clears_on_clo
                 path: archived_path.into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create anchor");
     domain.archive_project(archived_path).expect("archive");
@@ -1299,7 +1099,6 @@ fn expanded_quick_add_scope_omits_archived_projects() {
                 path: "/repos/other".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create live");
     domain
@@ -1310,7 +1109,6 @@ fn expanded_quick_add_scope_omits_archived_projects() {
                 path: "/repos/filed".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create filed");
     domain.archive_project("/repos/filed").expect("archive");
@@ -1336,60 +1134,6 @@ fn expanded_quick_add_scope_omits_archived_projects() {
         options.contains(&TaskScope::Global),
         "desk stays on offer: {options:?}"
     );
-}
-
-#[test]
-fn expanded_quick_add_sets_thread_and_steps() {
-    let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
-    let snap = snapshot();
-    open(&mut domain, &mut model, &snap);
-    type_title(&mut domain, &mut model, "capture with extras");
-    apply(&mut domain, &mut model, BoardIntent::ExpandQuickAdd, None);
-    let page = render_text(&model, 80, 24);
-    assert!(
-        page.contains("thread"),
-        "expanded capture paints a thread slot:\n{page}"
-    );
-    assert!(
-        page.contains("+ step"),
-        "expanded capture paints + step:\n{page}"
-    );
-    apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert!(
-        render_text(&model, 80, 24).contains("▸ + step"),
-        "Tab from Notes selects the trailing step target"
-    );
-    apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
-    for character in "V0.0.6".chars() {
-        apply(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        );
-    }
-    apply(&mut domain, &mut model, BoardIntent::BeginAddStep, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditStep);
-    for character in "first step".chars() {
-        apply(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        );
-    }
-    assert_eq!(
-        apply(&mut domain, &mut model, BoardIntent::ConfirmEditNext, None),
-        IntentOutcome::Persist
-    );
-    model.sync_from_domain(&domain);
-    let task = domain.tasks().last().expect("created");
-    assert_eq!(task.title, "capture with extras");
-    assert_eq!(task.thread.as_deref(), Some("v0.0.6"));
-    assert_eq!(task.steps.len(), 1);
-    assert_eq!(task.steps[0].text, "first step");
 }
 
 #[test]
@@ -1431,11 +1175,11 @@ fn expanded_quick_add_tabs_through_staged_steps_and_the_add_target() {
         "Tab reaches the trailing add target after staged steps"
     );
     apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditThread);
+    assert_eq!(model.input_mode(), BoardInputMode::EditScope);
     apply(&mut domain, &mut model, BoardIntent::FormFocusPrev, None);
     assert!(
         render_text(&model, 80, 24).contains("▸ + step"),
-        "Shift+Tab from Thread returns to the add target"
+        "Shift+Tab from Scope returns to the add target"
     );
     apply(&mut domain, &mut model, BoardIntent::FormFocusPrev, None);
     assert!(
@@ -1463,7 +1207,6 @@ fn wrapped_draft_refusal_paints_on_the_verb_row_and_a_click_there_keeps_the_draf
                 path: "/repos/other".into(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create anchor");
     domain.archive_project("/repos/other").expect("archive");

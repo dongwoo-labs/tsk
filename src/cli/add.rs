@@ -6,9 +6,7 @@ use uuid::Uuid;
 
 use crate::cli::parser::{parse_task_address, FlagAdd, TaskAddress};
 use crate::context::snapshot_from_env;
-use crate::domain::{
-    normalize_thread, thread_refusal_message, DomainState, ProvenanceOrigin, TaskScope,
-};
+use crate::domain::{DomainState, ProvenanceOrigin, TaskScope};
 use crate::scope::{resolve_flag_scope, resolve_project_path};
 use crate::store::{default_state_dir, TaskStore};
 
@@ -84,8 +82,6 @@ struct PlanItem {
     notes: Option<String>,
     /// `None` is omitted, `Some(None)` is JSON null/global.
     project: Option<Option<String>>,
-    /// Missing and JSON null both leave the item unthreaded.
-    thread: Option<String>,
 }
 
 struct ResolvedPlanItem {
@@ -94,7 +90,6 @@ struct ResolvedPlanItem {
     title: String,
     notes: Option<String>,
     scope: TaskScope,
-    thread: Option<String>,
 }
 
 /// Result of one accepted flag add.
@@ -131,7 +126,6 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
     let project = input.project;
     let global = input.global;
     let notes = input.notes.filter(|notes| !notes.trim().is_empty());
-    let thread = input.thread;
     store
         .locked_transition_if_changed(|domain| {
             let scope = match resolve_flag_scope(project.as_deref(), global, domain, &snapshot) {
@@ -151,47 +145,45 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     return Ok((Err(AddError::ProjectArchived(short)), false));
                 }
             }
-            let outcome =
-                if let Some(task) = existing_task(domain, &title, &scope, thread.as_deref()) {
-                    Ok(FlagAddResult::Existing {
-                        id: task.id,
-                        number: task
-                            .number
-                            .expect("loaded tasks receive a number before CLI presentation"),
-                        title: task.title.clone(),
-                        project: scope_project(&task.scope),
-                    })
-                } else {
-                    let project = scope_project(&scope);
-                    let parent = match resolve_parent(domain, input.parent) {
-                        Ok(parent) => parent,
-                        Err(error) => return Ok((Err(error), false)),
-                    };
-                    let id = match domain.create_with_parent(
-                        &title,
-                        notes,
-                        scope,
-                        ProvenanceOrigin::Capture,
-                        thread,
-                        parent,
-                    ) {
-                        Ok(id) => id,
-                        Err(error) => {
-                            return Ok((Err(AddError::Store(error.to_string())), false));
-                        }
-                    };
-                    domain.assign_numbers_for_persistence();
-                    let number = domain
-                        .get(id)
-                        .and_then(|task| task.number)
-                        .expect("new tasks receive a number while the store lock is held");
-                    Ok(FlagAddResult::Created {
-                        id,
-                        number,
-                        title,
-                        project,
-                    })
+            let outcome = if let Some(task) = existing_task(domain, &title, &scope) {
+                Ok(FlagAddResult::Existing {
+                    id: task.id,
+                    number: task
+                        .number
+                        .expect("loaded tasks receive a number before CLI presentation"),
+                    title: task.title.clone(),
+                    project: scope_project(&task.scope),
+                })
+            } else {
+                let project = scope_project(&scope);
+                let parent = match resolve_parent(domain, input.parent) {
+                    Ok(parent) => parent,
+                    Err(error) => return Ok((Err(error), false)),
                 };
+                let id = match domain.create_with_parent(
+                    &title,
+                    notes,
+                    scope,
+                    ProvenanceOrigin::Capture,
+                    parent,
+                ) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        return Ok((Err(AddError::Store(error.to_string())), false));
+                    }
+                };
+                domain.assign_numbers_for_persistence();
+                let number = domain
+                    .get(id)
+                    .and_then(|task| task.number)
+                    .expect("new tasks receive a number while the store lock is held");
+                Ok(FlagAddResult::Created {
+                    id,
+                    number,
+                    title,
+                    project,
+                })
+            };
             let changed = matches!(outcome, Ok(FlagAddResult::Created { .. }));
             Ok((outcome, changed))
         })
@@ -241,9 +233,7 @@ pub fn run_plan(
                         continue;
                     }
                 }
-                if let Some(task) =
-                    existing_task(domain, &item.title, &item.scope, item.thread.as_deref())
-                {
+                if let Some(task) = existing_task(domain, &item.title, &item.scope) {
                     existing.push(Existing {
                         i: item.i,
                         id: task.id,
@@ -272,7 +262,6 @@ pub fn run_plan(
                         item.notes,
                         item.scope,
                         ProvenanceOrigin::Capture,
-                        item.thread,
                         parent,
                     )
                     .map_err(|error| error.to_string())?;
@@ -334,7 +323,6 @@ fn resolve_plan_items(
             title: item.title,
             notes: item.notes,
             scope,
-            thread: item.thread,
         });
     }
     (resolved, failed)
@@ -367,17 +355,12 @@ fn existing_task<'a>(
     domain: &'a DomainState,
     title: &str,
     scope: &TaskScope,
-    thread: Option<&str>,
 ) -> Option<&'a crate::domain::Task> {
     // Notice rows are board-only (no CLI address reaches them, not even their UUID) and
     // deliberately carry no T number, so a title collision with a seeded guide or the
     // announcement must never resolve as existing: the add creates an ordinary task.
     domain.tasks().iter().find(|task| {
-        !task.soft_deleted
-            && !task.is_notice()
-            && task.title == title
-            && &task.scope == scope
-            && task.thread.as_deref() == thread
+        !task.soft_deleted && !task.is_notice() && task.title == title && &task.scope == scope
     })
 }
 
@@ -434,25 +417,15 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
             ));
         }
     };
-    let thread = match object.get("thread") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(thread)) => normalize_thread(thread).map(Some).map_err(|error| {
-            fail_item(
-                i,
-                Some(trimmed_title.clone()),
-                "invalid-thread",
-                thread_refusal_message(error),
-            )
-        })?,
-        Some(_) => {
-            return Err(fail_item(
-                i,
-                Some(trimmed_title),
-                "invalid-thread",
-                "thread must be a string or null",
-            ));
-        }
-    };
+    // Thread labels left the store in v8. Refuse a value rather than drop it silently.
+    if object.get("thread").is_some_and(|thread| !thread.is_null()) {
+        return Err(fail_item(
+            i,
+            Some(trimmed_title),
+            "invalid-item",
+            "thread labels were removed; drop the thread field",
+        ));
+    }
 
     let parent =
         match object.get("parent") {
@@ -475,7 +448,6 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
         title: trimmed_title,
         notes,
         project,
-        thread,
     })
 }
 
@@ -509,7 +481,6 @@ mod tests {
             title: Some("hello\n".into()),
             notes: None,
             project: None,
-            thread: None,
             global: false,
             json: false,
             state_dir: None,

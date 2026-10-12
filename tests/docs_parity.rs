@@ -76,7 +76,6 @@ fn selected_model() -> BoardModel {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     let model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
@@ -93,7 +92,6 @@ fn step_selected_model() -> BoardModel {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed task");
     domain.add_step(id, "a step").expect("seed step");

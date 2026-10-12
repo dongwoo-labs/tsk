@@ -21,8 +21,8 @@ const PAGE_JUMPS = [
 const BOARD_PINS = [
   {
     n: 1,
-    title: 'Three tabs, always on screen.',
-    body: '<b>desk</b> gathers work across every project. The middle tab is your selected project; <kbd>p</kbd> picks a different one. <b>projects</b> is the index of them all. <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> jump between them; the active tab is underlined.',
+    title: 'One board, scope and sort.',
+    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you. <kbd>p</kbd> picks the scope: <b>all</b>, <b>desk</b>, or one project. <kbd>S</kbd> flips the sort between task number and project groups. The line below the tabs says what waits on you.',
   },
   {
     n: 2,
@@ -32,17 +32,17 @@ const BOARD_PINS = [
   {
     n: 3,
     title: 'A task.',
-    body: 'A selection arrow without a filled highlight, status glyph, a dim <code>T</code>-number you can click to copy, and the wrapped title. Project or thread attribution appears only at the bottom of an open peek.',
+    body: 'A selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the wrapped title. A bold <code>!</code> or <code>?n</code> says an agent waits on you; the project lives in the task detail.',
   },
   {
     n: 4,
-    title: 'Peek.',
-    body: 'Below 110 columns, <kbd>→</kbd>, <kbd>l</kbd>, or a click shows up to five wrapped note lines under the task. Wide, those keys or a click open the task page beside the board instead. <kbd>←</kbd> or <kbd>h</kbd> closes it; <kbd>Enter</kbd> opens the full page.',
+    title: 'Number order.',
+    body: 'Rows follow task numbers, so a task keeps its place while you work on it. At 110 columns or wider the selected task always shows beside the list; <kbd>→</kbd> or <kbd>l</kbd> moves into it and <kbd>J</kbd> / <kbd>K</kbd> walk the list from there.',
   },
   {
     n: 5,
     title: 'Your loose backlog.',
-    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards, with thread filters across every status.",
+    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards.",
   },
 ];
 const pinLabel = (n) => {
@@ -224,8 +224,11 @@ const softwareApplication = {
           <div class="hero-side" data-board-pins>
             <div class="screen" role="group" aria-label="A tsk board at 78 columns. Hover or click a number for its callout.">
               <div class="s-row s-tabs is-on">
-                <span class="l"><span class="on">desk</span><span class="dim">  ·  </span>tsk ▾<span class="dim">  ·  </span>projects</span>
+                <span class="l"><span class="on">1 board</span><span class="dim">  ·  </span>2 questions ·3<span class="dim">  ·  </span>desk ▾<span class="dim">  ·  </span>sort number ▾</span>
                 <button type="button" class="pin is-on" data-pin="1" aria-label={pinLabel(1)} aria-controls="pin-card" aria-expanded="true">1</button>
+              </div>
+              <div class="s-row s-task">
+                <span class="l">waiting on you  approval 1 · question 2  → 2</span>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
@@ -233,19 +236,16 @@ const softwareApplication = {
                 <button type="button" class="pin" data-pin="2" aria-label={pinLabel(2)} aria-controls="pin-card" aria-expanded="false">2</button>
               </div>
               <div class="s-gap"></div>
-              <div class="s-row s-task is-sel">
-                <span class="l">▸ <span class="glyph">●</span> <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span>
-                <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
-              </div>
-              <div class="s-row s-peek"><span class="l dim">  │ Steps live on the task page. Notes wrap, never truncate.</span></div>
-              <div class="s-row s-peek"><span class="l dim">  └─ tsk</span>
+              <div class="s-row s-task">
+                <span class="l">   <span class="tid">T27</span> Proof the landing copy once more</span>
                 <button type="button" class="pin" data-pin="4" aria-label={pinLabel(4)} aria-controls="pin-card" aria-expanded="false">4</button>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">●</span> <span class="tid">T29</span> Waiting on the pane label</span>
+                <span class="l">   <span class="tid">T29</span> Waiting on the pane label</span><span class="r"><b>?2</b></span>
               </div>
-              <div class="s-row s-task">
-                <span class="l"><span class="glyph">●</span> <span class="tid">T27</span> Proof the landing copy once more</span>
+              <div class="s-row s-task is-sel">
+                <span class="l">▸  <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span><span class="r"><b>!</b> <span class="dim">⊂1/3</span></span>
+                <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
@@ -253,16 +253,16 @@ const softwareApplication = {
                 <button type="button" class="pin" data-pin="5" aria-label={pinLabel(5)} aria-controls="pin-card" aria-expanded="false">5</button>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T25</span> Draft the announcement</span>
+                <span class="l">   <span class="tid">T18</span> Global backlog note</span>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T18</span> Global backlog note</span>
+                <span class="l">   <span class="tid">T24</span> Capture the loose idea</span>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T24</span> Capture the loose idea</span>
+                <span class="l">   <span class="tid">T25</span> Draft the announcement</span>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T30</span> Triage the new report</span>
+                <span class="l">   <span class="tid">T30</span> Triage the new report</span>
               </div>
               <div class="s-fill"></div>
               <div class="s-row s-footrule"><span class="rule"></span></div>
@@ -307,9 +307,9 @@ const softwareApplication = {
               <p>
                 <kbd>+</kbd> opens one line on the status row. <kbd>Enter</kbd> saves,
                 <kbd>Shift+Enter</kbd> keeps the line open, <kbd>Tab</kbd> expands onto the task
-                page. Two tokens set project and thread from inside the title.
+                page. A <code>!p</code> token sets the project from inside the title.
               </p>
-              <pre class="mini" aria-label="Quick-add example"><span class="prompt">+</span> Fix the flaky bench <span class="tok">!p</span> tsk <span class="tok">!t</span> ci<span class="cursor" aria-hidden="true">█</span>
+              <pre class="mini" aria-label="Quick-add example"><span class="prompt">+</span> Fix the flaky bench <span class="tok">!p</span> tsk<span class="cursor" aria-hidden="true">█</span>
 <span class="dim">enter save · shift+enter stay · tab page · esc close</span></pre>
             </article>
 
@@ -343,7 +343,7 @@ const softwareApplication = {
       <section class="stage" id="demo" aria-labelledby="demo-heading">
 
         <div class="stage-inner">
-          <div class="demo-invitation"><h2 id="demo-heading">Try it. This board is yours to play with.</h2><p>Double-click a task to open it, check off a step, or press + to add your own. Switch to Projects at a wide width, then move to a project to preview its board. Explore auth, API, and reliability work with threads and checklists. Press Shift+M to mark several tasks and act on them at once. Changes stay in this demo; refresh to start over.</p></div>
+          <div class="demo-invitation"><h2 id="demo-heading">Try it. This board is yours to play with.</h2><p>Double-click a task to open it, check off a step, or press + to add your own. Press 2 for the questions an agent left for you: approve one, answer one, or turn a finding into a task. Press Shift+M to mark several tasks and act on them at once. Everything here is sample data: nothing is saved, sent, or approved, and refresh starts over.</p></div>
           <div
             class="pane"
             id="board-demo"
@@ -369,7 +369,7 @@ const softwareApplication = {
                 <div class="agent-body">
                   <p class="agent-line you">webhook retries are applying the same event twice. investigate and add a task.</p>
                   <p class="agent-line say">The handler applies side effects before recording the event ID. Concurrent retries can both get through.</p>
-                  <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk add -t "Make webhook delivery idempotent" -p launchpad --thread api --json</span><span class="tool-out" data-cli-add-output>&#123;"outcome":"created","id":"00000000-0000-4000-8000-000000000013","number":13,"title":"Make webhook delivery idempotent","project":"/home/agent/work/launchpad"&#125;</span></div>
+                  <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk add -t "Make webhook delivery idempotent" -p launchpad --json</span><span class="tool-out" data-cli-add-output>&#123;"outcome":"created","id":"00000000-0000-4000-8000-000000000013","number":13,"title":"Make webhook delivery idempotent","project":"/home/agent/work/launchpad"&#125;</span></div>
                   <div class="agent-tool"><span class="tool-name">Bash</span><span class="tool-arg">tsk steps T13 add "Reproduce duplicate delivery"</span><span class="tool-out" data-cli-step-output>added 3f Reproduce duplicate delivery</span></div>
                   <p class="agent-line say">T13 is Todo with a checklist to reproduce duplicate delivery, persist processed event IDs, and test concurrent retries. Pick it when you are ready to work.</p>
                 </div>
@@ -387,16 +387,17 @@ const softwareApplication = {
             </div>
           </div>
           <p class="stage-note">
-            Two real layouts. Beside an agent, tsk is the 78-column board herdr opens by default,
-            and <kbd>→</kbd> or <kbd>l</kbd> peeks. Give it the whole terminal, or drag the divider past 110
-            columns, and the same board becomes the four-stage slider: <kbd>→</kbd> or <kbd>l</kbd> slides the
-            task page in. On the Projects tab, moving to a project opens its preview at Split,
-            and <kbd>→</kbd> or <kbd>l</kbd> makes that project board live at Rail. The demo takes bare
+            Two real layouts. Beside an agent, tsk is the 78-column board herdr opens by default:
+            one screen, and <kbd>Enter</kbd> opens a task page. Give it the whole terminal, or drag the
+            divider past 110 columns, and the list and the selected task sit side by side;
+            <kbd>→</kbd> or <kbd>l</kbd> moves into the detail and <kbd>←</kbd> or <kbd>h</kbd> moves back.
+            The questions tab works the same way. The demo takes bare
             <kbd>s</kbd> <kbd>o</kbd> <kbd>d</kbd>
             because browsers keep the control chords. In the app, every mutating verb needs
-            <kbd>Ctrl</kbd>. <kbd>Esc</kbd> closes either split after its editors and overlays.
-            At the full-board root, <kbd>Esc</kbd> exits the terminal app;
-            here it only releases keyboard focus, keeping the current tab. This demo covers marking and updating task sets, browsing, opening tasks, plus adding, checking, renaming and removing steps. Full task editing and save recovery remain unfinished.
+            <kbd>Ctrl</kbd>; bare <kbd>e</kbd> and <kbd>a</kbd> on the task page only open an editor, and the
+            questions tab answers with bare keys after you open a question.
+            At the board root, <kbd>Esc</kbd> exits the terminal app; here it only releases keyboard focus.
+            The questions, Threads, and Lead here are samples: a finding never starts real work and an approval authorizes nothing.
           </p>
         </div>
       </section>
@@ -408,47 +409,35 @@ const softwareApplication = {
             <span class="index">02 <span class="index-label">board</span></span>
             <h2 id="board-heading">One list, ordered by urgency.</h2>
             <p class="band-lede">
-              Inside Git, start on the repo’s project board. Outside Git, start on <b>desk</b> with the current directory one tab away. <b>desk</b> shows what
-              needs you across projects, active work, and your loose backlog. The selected
-              <b>project</b> stays one key away; <b>projects</b> is a searchable index with
-              a View selector for cross-project threads. Filter threads within a project
-              with <kbd>t</kbd>, or across projects with <kbd>v</kbd> on the index.
-              Give the board 110 columns and it becomes a slider.
+              Inside Git, start on the repo’s project board. Outside Git, start on <b>all</b>. <kbd>p</kbd> picks the
+              scope: <b>all</b> tasks, your <b>desk</b> (what needs you across projects, active work,
+              and your loose backlog), or one project. Rows follow task numbers; <kbd>S</kbd> groups
+              them by project. Press <kbd>2</kbd> for the questions agents left for you.
+              Give the board 110 columns and the selected task sits beside the list.
             </p>
           </header>
 
           <div class="stages">
             <div class="stages-head">
-              <h3>Wide: the four-stage slider.</h3>
-              <p>At 110 columns and up, focus and geometry are the same thing. One rule, one footer, no colour.</p>
+              <h3>Wide: list and detail, always.</h3>
+              <p>At 110 columns and up the geometry never changes; only focus moves. One rule, one footer, no colour.</p>
             </div>
-            <ol class="stage-strip" aria-label="The four stages: board, split, rail, page">
-              <li>
-                <div class="frame f-0" aria-hidden="true"><i class="b is-focus"></i></div>
-                <div class="stage-name"><b>Board</b></div>
-                <div class="stage-focus">full width · board has focus</div>
-              </li>
+            <ol class="stage-strip" aria-label="Two focus states: list, detail">
               <li>
                 <div class="frame f-a" aria-hidden="true"><i class="b is-focus"></i><i class="r"></i><i class="t"></i></div>
-                <div class="stage-name"><b>Split</b></div>
-                <div class="stage-focus">board 40%, task page beside it · board has focus</div>
+                <div class="stage-name"><b>List</b></div>
+                <div class="stage-focus">list 40%, detail beside it · list has focus</div>
               </li>
               <li>
-                <div class="frame f-g" aria-hidden="true"><i class="b is-dim"></i><i class="r"></i><i class="t is-focus"></i></div>
-                <div class="stage-name"><b>Rail</b></div>
-                <div class="stage-focus">dim 32-column rail, task page · task has focus</div>
-              </li>
-              <li>
-                <div class="frame f-f" aria-hidden="true"><i class="t is-focus"></i></div>
-                <div class="stage-name"><b>Page</b></div>
-                <div class="stage-focus">full width · task has focus</div>
+                <div class="frame f-a" aria-hidden="true"><i class="b"></i><i class="r"></i><i class="t is-focus"></i></div>
+                <div class="stage-name"><b>Detail</b></div>
+                <div class="stage-focus">same columns · detail has focus</div>
               </li>
             </ol>
             <p class="stages-keys">
-              <span><kbd>→</kbd> / <kbd>l</kbd> one stage right</span>
-              <span><kbd>←</kbd> / <kbd>h</kbd> one stage left</span>
-              <span><kbd>Enter</kbd> jump to the page and remember where you were</span>
-              <span><kbd>Esc</kbd> go back there</span>
+              <span><kbd>→</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> focus the detail</span>
+              <span><kbd>←</kbd> / <kbd>h</kbd> / <kbd>Esc</kbd> back to the list</span>
+              <span><kbd>J</kbd> / <kbd>K</kbd> next / previous task</span>
             </p>
           </div>
         </div>
@@ -476,7 +465,6 @@ const softwareApplication = {
           <div class="cycle" data-cycle aria-live="off">
             <div class="cycle-row">
               <span class="cycle-sec" data-cycle-sec>TODO</span>
-              <span class="cycle-glyph" data-cycle-glyph aria-hidden="true">○</span>
               <span class="tid">T14</span>
               <span class="cycle-title">Ship the landing page</span>
               <span class="cycle-meta">tsk</span>
@@ -506,7 +494,7 @@ const softwareApplication = {
 
           <div class="cli-grid">
             <div class="cli-main">
-              <pre class="shell" aria-label="CLI session"><span class="prompt">$</span> tsk add -t "Draft release notes" -p tsk --thread release --json
+              <pre class="shell" aria-label="CLI session"><span class="prompt">$</span> tsk add -t "Draft release notes" -p tsk --json
 <span class="dim">&#123;"outcome":"created","id":"5c1e…","number":32,"title":"Draft release notes","project":"tsk"&#125;</span>
 <span class="prompt">$</span> tsk steps T32 add "Write the failing test"
 <span class="dim">added 9f Write the failing test</span>
@@ -514,7 +502,7 @@ const softwareApplication = {
 <span class="dim">status T32 doing Draft release notes</span>
 <span class="prompt">$</span> tsk list T32
 <span class="dim">DOING
- - 32 Draft release notes #release
+ - 32 Draft release notes
    [ ] 9f Write the failing test</span>
 <span class="prompt">$</span> cat plan.json | tsk add
 <span class="dim">&#123; "created": [...], "existing": [...], "failed": [] &#125;</span></pre>
@@ -557,7 +545,7 @@ const softwareApplication = {
                 </li>
               </ul>
               <p class="side-note">
-                Adds are idempotent on title, project, and thread. <code>--json</code> is flat
+                Adds are idempotent on title and project. <code>--json</code> is flat
                 and stable. <a href="/docs/cli/">CLI reference →</a>
               </p>
             </div>

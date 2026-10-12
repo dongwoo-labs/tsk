@@ -45,6 +45,7 @@ for (const width of [40, 78, 109, 110])
     await page
       .locator("#tsk-demo")
       .screenshot({ path: info.outputPath("page.png") });
+    // The first Tab selects the first step; the parent line comes before it in the ring.
     await page.keyboard.press("Tab");
     await expect(page.locator("[data-step]").first()).toHaveAttribute(
       "aria-selected",

@@ -7,7 +7,6 @@ use tsk_tui::{
     ui::{
         apply_intent, draw_board,
         input::{map_key, route_responsive_key, ResponsiveKeyRoute},
-        queue::NavTab,
         BoardIntent, BoardModel,
     },
 };
@@ -59,15 +58,24 @@ fn export_reference(text: &str, width: u16, name: &str) {
         let dir = PathBuf::from(dir);
         fs::write(dir.join(format!("app-{width}-{name}.txt")), text).unwrap();
         if name == "page" {
+            // Wide frames carry the task page right of the `│` rule; narrow frames end in a
+            // scrollbar column. Keep only the step text.
             let lines: Vec<_> = text
                 .lines()
+                .map(|line| line.split_once('│').map_or(line, |(_, detail)| detail))
                 .skip_while(|line| !line.contains("✓ Check"))
                 .take_while(|line| !line.contains("+ step"))
                 .map(|line| {
+                    let gutter = line.chars().take_while(|c| *c == ' ').count() + 2;
+                    let gutter = if line.contains('✓') {
+                        gutter
+                    } else {
+                        gutter - 2
+                    };
                     line.chars()
-                        .skip(4)
+                        .skip(gutter)
                         .collect::<String>()
-                        .trim_end()
+                        .trim_end_matches(['▌', ' '])
                         .to_string()
                 })
                 .collect();
@@ -80,16 +88,17 @@ fn export_reference(text: &str, width: u16, name: &str) {
         if name == "initial" {
             let lines: Vec<_> = text
                 .lines()
+                .map(|line| line.split_once('│').map_or(line, |(list, _)| list))
                 .skip_while(|line| !line.contains("T13 "))
+                // Rows have no status glyph: a 3-cell gutter, then `T13 `. Continuation
+                // rows indent 7 cells under the title; the next task row does not.
                 .take_while(|line| {
-                    let body = line.trim_start();
-                    !body.is_empty()
-                        && (line.contains("T13")
-                            || (!body.starts_with('○') && !body.starts_with('▸')))
+                    !line.trim_start().is_empty()
+                        && (line.contains("T13") || line.starts_with("       "))
                 })
                 .map(|line| {
                     line.chars()
-                        .skip(8)
+                        .skip(7)
                         .collect::<String>()
                         .trim_end()
                         .to_string()
@@ -105,7 +114,7 @@ fn export_reference(text: &str, width: u16, name: &str) {
 }
 
 #[test]
-fn shared_fixture_first_flow_and_peek_references() {
+fn shared_fixture_first_flow_and_detail_references() {
     fixture_flow(false);
 }
 
@@ -127,32 +136,37 @@ fn fixture_flow(export: bool) {
         let mut state: DomainState =
             serde_json::from_str(include_str!("fixtures/demo-parity/store.json")).unwrap();
         let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
-        apply_intent(
-            &mut state,
-            &mut model,
-            BoardIntent::SelectNavTab(NavTab::Desk),
-            None,
-        )
-        .unwrap();
-        assert!(capture(&model, width, "initial").contains("DOING"));
-        key(
-            &mut state,
-            &mut model,
-            KeyCode::Right,
-            KeyModifiers::NONE,
-            width,
-        );
-        let peek = capture(&model, width, "project-peek-or-split");
-        if width < 110 {
-            assert!(peek.contains("└─ tsk-parity"));
+        model.set_selected_project(None);
+        let initial = capture(&model, width, "initial");
+        // The v7 fixture already holds a doing task; ctrl+s below adds T13 to it.
+        assert!(initial.contains("DOING"));
+        if width >= 110 {
+            // Wide frames always pair the list with the selected task's detail.
+            assert!(initial.contains("Confirm the wording before release."));
+            key(
+                &mut state,
+                &mut model,
+                KeyCode::Right,
+                KeyModifiers::NONE,
+                width,
+            );
+            assert_eq!(
+                model.input_mode(),
+                tsk_tui::ui::board::BoardInputMode::TaskPage
+            );
+            capture(&model, width, "detail-focus");
+            key(
+                &mut state,
+                &mut model,
+                KeyCode::Left,
+                KeyModifiers::NONE,
+                width,
+            );
+            assert_eq!(
+                model.input_mode(),
+                tsk_tui::ui::board::BoardInputMode::Normal
+            );
         }
-        key(
-            &mut state,
-            &mut model,
-            KeyCode::Left,
-            KeyModifiers::NONE,
-            width,
-        );
         key(
             &mut state,
             &mut model,
@@ -225,45 +239,16 @@ fn fixture_flow(export: bool) {
             width,
         );
         assert!(capture(&model, width, "back").contains("DOING"));
-        if width < 110 {
-            apply_intent(
-                &mut state,
-                &mut model,
-                BoardIntent::SelectNavTab(NavTab::ProjectBoard),
-                None,
-            )
-            .unwrap();
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Down,
-                KeyModifiers::NONE,
-                width,
-            );
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Right,
-                KeyModifiers::NONE,
-                width,
-            );
-            assert!(capture(&model, width, "thread-peek").contains("└─ #release"));
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Down,
-                KeyModifiers::NONE,
-                width,
-            );
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Right,
-                KeyModifiers::NONE,
-                width,
-            );
-            assert!(!capture(&model, width, "unlabeled-peek").contains("└─"));
-        }
+        // `S` regroups the same rows by project without changing any task.
+        key(
+            &mut state,
+            &mut model,
+            KeyCode::Char('S'),
+            KeyModifiers::NONE,
+            width,
+        );
+        let grouped = capture(&model, width, "project-order");
+        assert!(grouped.contains("tsk-parity"), "{grouped}");
     }
 }
 
@@ -273,13 +258,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
     let mut state: DomainState =
         serde_json::from_str(include_str!("fixtures/demo-parity/store.json")).unwrap();
     let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
-    apply_intent(
-        &mut state,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Desk),
-        None,
-    )
-    .unwrap();
+    model.set_selected_project(None);
     let mut terminal = Terminal::new(TestBackend::new(78, 24)).unwrap();
     terminal
         .draw(|f| {
@@ -298,13 +277,13 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
         buffer
             .content
             .iter()
-            .any(|cell| cell.symbol() == "d" && cell.modifier.contains(Modifier::UNDERLINED)),
-        "active desk tab must be underlined"
+            .any(|cell| cell.symbol() == "b" && cell.modifier.contains(Modifier::UNDERLINED)),
+        "active board tab must be underlined"
     );
     let frame = capture(&model, 78, "selection-style");
     assert!(
-        frame.contains("▸ ● T12"),
-        "selection arrow must retain status and number: {frame}"
+        frame.contains("▸  T12"),
+        "selection arrow must retain the number: {frame}"
     );
     let tab_row = buffer
         .content
@@ -313,11 +292,11 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
             row.iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains("desk")
+                .contains("board")
         })
         .unwrap();
     let text = tab_row.iter().map(|cell| cell.symbol()).collect::<String>();
-    for (label, active) in [("desk", true), ("tsk-parity", false), ("projects", false)] {
+    for (label, active) in [("board", true), ("desk", false), ("sort number", false)] {
         let start = text[..text.find(label).unwrap()].chars().count();
         for cell in &tab_row[start..start + label.len()] {
             assert_eq!(
@@ -341,7 +320,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
             draw_board(f, &model);
         })
         .unwrap();
-    assert!(capture(&model, 78, "wrapped-selection").contains("▸ ○ T13"));
+    assert!(capture(&model, 78, "wrapped-selection").contains("▸  T13"));
     assert!(
         terminal
             .backend()

@@ -65,6 +65,25 @@ pub enum FindingKind {
     Opportunity,
 }
 
+/// Who is expected to act on an open question. A routing label only: it grants no
+/// approval or execution authority. A record without it reads as unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Audience {
+    User,
+    Lead,
+}
+
+/// The user's intent when deciding a finding. Intent only: it never proves that a
+/// task ran or a thread started. A record without it reads as unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingAction {
+    CreateAndRun,
+    CreateOnly,
+    Close,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionDraft {
@@ -82,6 +101,13 @@ pub struct QuestionDraft {
     pub approval: Option<ApprovalTerms>,
     pub finding: Option<FindingDetails>,
     pub source: Option<QuestionSource>,
+    /// Routing label; absent means unknown, never guessed from names or status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Audience>,
+    /// Explicit Herdr agent name that receives a finding's run request. Absent means
+    /// not set; `recipient` and `origin_thread` are never used in its place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_recipient: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +146,9 @@ pub struct AnswerDraft {
     pub approval: Option<ApprovalTerms>,
     pub user_chat: Option<UserChatEvidence>,
     pub source: Option<QuestionSource>,
+    /// Finding decision intent. Only findings accept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<FindingAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +167,28 @@ pub struct QuestionAnswer {
     pub approval: Option<ApprovalTerms>,
     pub user_chat: Option<UserChatEvidence>,
     pub source: Option<QuestionSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<FindingAction>,
+}
+
+/// One audience change: same Q-ID, new immutable revision, nothing else moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteDraft {
+    pub expected_revision: Uuid,
+    pub audience: Audience,
+    /// Absent or null keeps the stored address.
+    #[serde(default)]
+    pub lead_recipient: Option<String>,
+}
+
+/// What a finding's answer history says about its created task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingLink {
+    None,
+    One(Uuid),
+    /// Several distinct created tasks: never pick one, never create another.
+    Ambiguous,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +199,22 @@ pub struct QuestionRecord {
     #[serde(with = "super::time_serde")]
     pub created_at: std::time::SystemTime,
     pub answers: Vec<QuestionAnswer>,
+    /// Audience changes, oldest first. Never rewrites an answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<QuestionRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionRoute {
+    pub revision: Uuid,
+    /// How many answers existed when the route was written; orders it in history.
+    pub after_answers: usize,
+    pub audience: Audience,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_recipient: Option<String>,
+    #[serde(with = "super::time_serde")]
+    pub at: std::time::SystemTime,
 }
 
 impl QuestionRecord {
@@ -156,8 +223,33 @@ impl QuestionRecord {
         self.answers.last()
     }
 
+    /// The revision of the newest history event (answer or route), if any. The
+    /// shared reference must point at it.
+    pub fn head_revision(&self) -> Option<Uuid> {
+        match self.routes.last() {
+            Some(route) if route.after_answers >= self.answers.len() => Some(route.revision),
+            _ => self.answers.last().map(|answer| answer.revision),
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.answers.is_empty()
+    }
+
+    /// The created task across the whole preserved history, not just the current
+    /// answer: a correction or close must never lose or duplicate the link.
+    pub fn finding_link(&self) -> FindingLink {
+        let ids: std::collections::BTreeSet<Uuid> = self
+            .answers
+            .iter()
+            .filter_map(|answer| answer.created_task_id)
+            .collect();
+        let mut ids = ids.into_iter();
+        match (ids.next(), ids.next()) {
+            (None, _) => FindingLink::None,
+            (Some(id), None) => FindingLink::One(id),
+            _ => FindingLink::Ambiguous,
+        }
     }
 
     /// Check authority against the action about to run, not just a saved yes/no label.

@@ -19,48 +19,46 @@ pub const CATALOG: [Guide; 4] = [
         title: "Welcome to tsk, start here",
         notes: "Hi. This is your board. Every task you make lives here. Take a minute with this one.\n\
                 \n\
-                **Three tabs, always**\n\
-                - `1` is your desk. It shows Doing tasks from every project, plus Todo tasks that belong to no project.\n\
-                - `2` is one project. Press `p` to pick it.\n\
-                - `3` lists every project. `Enter` on a row opens that project's board. On a terminal 110 columns or wider, moving the cursor previews the project beside the list and `→` makes that preview live.\n\
+                **One board, three scopes**\n\
+                - `p` picks the scope. `all` shows every task from every project and your desk. `desk` shows Doing tasks from every project, plus Todo tasks that belong to no project. A project name shows only that project.\n\
+                - Rows follow task numbers. `S` groups them by project instead, and `S` again goes back.\n\
                 \n\
                 **Three human statuses**\n\
-                - **DOING** holds `doing` tasks, newest status change first. This task is Doing. Questions and agent execution status are separate.\n\
+                - **DOING** holds `doing` tasks. This task is Doing. Questions and agent execution status are separate.\n\
                 - Questions never turn a Task into a waiting status.\n\
-                - **TODO** holds `todo` tasks, oldest capture first. New tasks land here.\n\
+                - **TODO** holds `todo` tasks. New tasks land here.\n\
                 - `done` tasks leave the board for the drawer. Press `d` to open it, `d` again to close it.\n\
                 \n\
                 **Moving around**\n\
                 - `j` and `k` or the arrows move the selection. `Enter` opens a task, `Esc` comes back.\n\
-                - `/` searches whatever the tab shows. `Enter` pins the filter, `Esc` clears it.\n\
+                - `/` searches whatever the board shows. `Enter` pins the filter, `Esc` clears it.\n\
                 - Status keys use Ctrl, so a stray letter never changes anything. `ctrl+s` sets Doing from Todo, `ctrl+o` sets Todo (including reopening Done), and `ctrl+d` finishes.\n\
                 - `ctrl+u` undoes the last change.",
         status: HumanStatus::Doing,
         steps: &[
             ("Open this task with Enter", true),
-            ("Press Esc, then 1, 2, and 3 to visit each tab", false),
+            ("Press Esc, then p to try each scope", false),
             ("Press ctrl+o and watch this task move to TODO", false),
         ],
     },
     Guide {
         catalog_id: "guide.tasks",
         title: "Make a task, open it, check off steps",
-        notes: "A task holds a title, notes (the description), and steps. You set its status yourself. Optionally put it on a thread to group related work inside a project, and file it under a project (or leave it on your desk).\n\
+        notes: "A task holds a title, notes (the description), and steps. You set its status yourself, and file it under a project (or leave it on your desk).\n\
                 \n\
                 **Make one**\n\
                 - Press `+`, type a title, press `Enter`. It lands in TODO as `todo`.\n\
                 - Press `ctrl+s` when work begins.\n\
-                - Press `Tab` instead of `Enter` to open the full page first, where you can add notes, steps, a thread, and a project before you save.\n\
+                - Press `Tab` instead of `Enter` to open the full page first, where you can add notes, steps, and a project before you save.\n\
                 - Type `!p name` in the title to file it under a project the board already knows, by its folder name. A full path to an existing folder, like `!p ~/code/widget`, adds a new one. Bare `!p` keeps it on your desk.\n\
-                - Type `!t release` in the title to tag it with the thread `release`. Threads group related work inside one project, and the project board can filter by them.\n\
                 \n\
                 **Read one**\n\
-                - `→` peeks at the notes under the task. `←` or `Esc` closes the peek.\n\
                 - `Enter` opens the full page. `Esc` comes back.\n\
-                - On a terminal 110 columns or wider there is no peek. `→` slides the task page open beside the board, `→` again gives it more room, and `←` slides it back.\n\
+                - On a terminal 110 columns or wider the selected task always shows beside the list. `→` or `l` moves into it, and `←` or `h` moves back.\n\
+                - On the page, `J` and `K` open the next and previous task in the list.\n\
                 \n\
                 **Change one**\n\
-                - On the page, `ctrl+e` edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
+                - On the page, `e` (or `ctrl+e`) edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
                 - `Enter` on a step checks it. The `+ step` row at the bottom adds one.\n\
                 - Steps never finish a task. Check every step below and this task stays `doing` until you press `ctrl+d`. You decide when work is done.",
         status: HumanStatus::Doing,
@@ -102,7 +100,7 @@ pub const CATALOG: [Guide; 4] = [
     Guide {
         catalog_id: "guide.wrap-up",
         title: "That's the tour, clear these when you're ready",
-        notes: "You know the tabs, the sections, and how a task moves between them. That is most of tsk.\n\
+        notes: "You know the scopes, the sections, and how a task moves between them. That is most of tsk.\n\
                 \n\
                 **Clear these starter tasks**\n\
                 Any of these works. A cleared starter task never comes back.\n\
@@ -227,7 +225,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("task");
         store.save(&forgetting).expect("save");
@@ -272,13 +269,7 @@ mod tests {
         let mut state = DomainState::new();
         for title in ["first", "second"] {
             state
-                .create(
-                    title,
-                    None,
-                    TaskScope::Global,
-                    ProvenanceOrigin::Manual,
-                    None,
-                )
+                .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
                 .expect("task");
         }
         store.save(&state).expect("save");

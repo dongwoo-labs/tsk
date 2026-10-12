@@ -49,7 +49,7 @@ impl EditError {
     }
 }
 
-/// Replace the supplied title and/or notes, keeping scope and thread.
+/// Replace the supplied title and/or notes, keeping scope.
 ///
 /// Whitespace-only notes clear the field. Repeating the stored values writes nothing.
 pub fn run(
@@ -79,7 +79,6 @@ pub fn run(
                     title: task.title.clone(),
                     notes: task.notes.clone(),
                     scope: task.scope.clone(),
-                    thread: task.thread.clone(),
                     soft_deleted: task.soft_deleted,
                     parent_task_id: task.parent_task_id,
                 });
@@ -94,7 +93,6 @@ struct Found {
     title: String,
     notes: Option<String>,
     scope: TaskScope,
-    thread: Option<String>,
     soft_deleted: bool,
     parent_task_id: Option<Uuid>,
 }
@@ -149,7 +147,6 @@ fn apply(
         &next_title,
         next_notes,
         found.scope,
-        found.thread,
         parent_task_id,
     ) {
         Ok(()) => (

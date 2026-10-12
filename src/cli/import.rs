@@ -645,15 +645,14 @@ fn apply(
         if let Some(task) = find_existing(domain, &issue.identifier) {
             let (id, number, current_title, current_status) =
                 (task.id, task.number, task.title.clone(), task.status);
-            let (notes, task_scope, thread) =
-                (task.notes.clone(), task.scope.clone(), task.thread.clone());
+            let (notes, task_scope) = (task.notes.clone(), task.scope.clone());
             let title_differs = current_title != title;
             let status_differs = current_status != status;
             if input.update && (title_differs || status_differs) {
                 if !input.dry_run {
                     if title_differs {
                         domain
-                            .edit(id, &title, notes, task_scope, thread)
+                            .edit(id, &title, notes, task_scope)
                             .expect("an existing task accepts a non-empty title");
                     }
                     if status_differs {
@@ -723,7 +722,7 @@ fn create(
     status: HumanStatus,
 ) -> u64 {
     let id: Uuid = domain
-        .create(title, Some(notes), scope, ProvenanceOrigin::Capture, None)
+        .create(title, Some(notes), scope, ProvenanceOrigin::Capture)
         .expect("imported titles always carry the identifier");
     if status != HumanStatus::Todo {
         domain

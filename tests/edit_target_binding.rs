@@ -107,7 +107,6 @@ fn attention_cycle_adds_a_task_ahead_of_the_bound_task_and_confirm_still_lands_o
             Some("z notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create zebra");
     domain.complete(zebra).expect("complete zebra");
@@ -117,7 +116,6 @@ fn attention_cycle_adds_a_task_ahead_of_the_bound_task_and_confirm_still_lands_o
             Some("a notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create alpha");
     store.save(&domain).expect("save initial snapshot");
@@ -208,7 +206,6 @@ fn attention_cycle_removes_the_bound_task_and_confirm_still_lands_on_it_not_the_
             Some("a notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create alpha");
     let bravo = domain
@@ -217,7 +214,6 @@ fn attention_cycle_removes_the_bound_task_and_confirm_still_lands_on_it_not_the_
             Some("b notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create bravo");
     store.save(&domain).expect("save initial snapshot");
@@ -341,7 +337,6 @@ fn board_with_an_open_edit_and_a_bystander(
             Some("a notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create Alpha");
     let bravo = domain
@@ -350,7 +345,6 @@ fn board_with_an_open_edit_and_a_bystander(
             Some("b notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create Bravo");
     store.save(&domain).expect("seed the store");
@@ -671,7 +665,6 @@ fn a_concurrent_edit_to_the_bound_task_still_reaches_the_save_conflict() {
             "Alpha from the other actor",
             current.notes.clone(),
             current.scope.clone(),
-            current.thread.clone(),
         )
         .expect("second actor edits the same task");
     store
@@ -757,7 +750,6 @@ fn a_soft_deleted_bind_opened_through_the_real_key_map_refuses_then_confirms_aft
             Some("a notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create alpha");
     let bravo = domain
@@ -766,7 +758,6 @@ fn a_soft_deleted_bind_opened_through_the_real_key_map_refuses_then_confirms_aft
             Some("b notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create bravo");
     store.save(&domain).expect("seed the store");
@@ -947,76 +938,6 @@ fn a_soft_deleted_bind_opened_through_the_real_key_map_refuses_then_confirms_aft
     );
 }
 
-/// /: a scope dropdown belongs to the same immutable task form as title and Notes.
-/// A background sync may reorder the queue, but it cannot redirect the pending dropdown choice
-/// or the later atomic form save to the newly selected task.
-#[test]
-fn board_edit_preserves_existing_thread() {
-    let dir = temp_state_dir("thread-preserved");
-    let _guard = TempDirGuard(dir.clone());
-    let store = TaskStore::new(&dir);
-
-    let mut seeded = DomainState::new();
-    let id = seeded
-        .create(
-            "Threaded task",
-            Some("original notes".into()),
-            scope(),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create threaded task");
-    seeded
-        .edit(
-            id,
-            "Threaded task",
-            Some("original notes".into()),
-            scope(),
-            Some("release-2026".into()),
-        )
-        .expect("attach thread");
-    store.save(&seeded).expect("persist threaded task");
-
-    let mut domain = store.load().expect("load threaded task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    let index = model
-        .visible_ids()
-        .iter()
-        .position(|&visible_id| visible_id == id)
-        .expect("threaded task visible");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectIndex(index),
-        None,
-    )
-    .expect("select threaded task");
-    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None)
-        .expect("open board title edit");
-    for _ in 0.."Threaded task".len() {
-        apply_intent(&mut domain, &mut model, BoardIntent::EditBackspace, None)
-            .expect("clear title draft");
-    }
-    for character in "Renamed threaded task".chars() {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::EditInsert(character),
-            None,
-        )
-        .expect("type title draft");
-    }
-
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::ConfirmEdit, None,)
-            .expect("confirm board title edit"),
-        IntentOutcome::Persist
-    );
-    let task = domain.get(id).expect("threaded task after board edit");
-    assert_eq!(task.title, "Renamed threaded task");
-    assert_eq!(task.thread.as_deref(), Some("release-2026"));
-}
-
 #[test]
 fn background_sync_cannot_redirect_a_bound_task_form_while_its_scope_dropdown_is_open() {
     let mut domain = DomainState::new();
@@ -1026,7 +947,6 @@ fn background_sync_cannot_redirect_a_bound_task_form_while_its_scope_dropdown_is
             Some("alpha notes".into()),
             scope(),
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create Alpha");
     let bravo = domain
@@ -1035,7 +955,6 @@ fn background_sync_cannot_redirect_a_bound_task_form_while_its_scope_dropdown_is
             Some("bravo notes".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("create Bravo");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));

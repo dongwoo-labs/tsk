@@ -170,7 +170,6 @@ mod tests {
                     None,
                     TaskScope::Project { path: path.into() },
                     crate::domain::ProvenanceOrigin::Manual,
-                    None,
                 )
                 .expect("create project fixture");
         }
@@ -263,7 +262,6 @@ mod tests {
                     path: stored.clone(),
                 },
                 crate::domain::ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create stored project fixture");
         let snapshot = InvocationSnapshot {
@@ -285,7 +283,6 @@ mod tests {
                 None,
                 TaskScope::Project { path: invocation },
                 crate::domain::ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create second stored project fixture");
         assert_eq!(
@@ -323,7 +320,6 @@ mod tests {
                     path: stored.clone(),
                 },
                 crate::domain::ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create stored project fixture");
         let snapshot = InvocationSnapshot {

@@ -269,7 +269,6 @@ mod tests {
                 None,
                 TaskScope::Global,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("task");
         state.soft_delete(id).expect("soft delete");

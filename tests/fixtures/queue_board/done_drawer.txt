@@ -1,22 +1,22 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ desk  ·  tsk ▾  ·  projects                                              all ▾ │
+│ 1 board  ·  2 questions  ·  desk ▾  ·  sort number ▾                           │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸ ● T1 Smoke-test worktree dispatch                                             │
-│  ● T2 Edit target binding pin                                                  │
-│  ● T5 Wire dispatch cleanup receipts                                           │
-│  ● T6 Docs refresh pass after F9 ships                                         │
+│▸  T1 Smoke-test worktree dispatch                                              │
+│   T2 Edit target binding pin                                                   │
+│   T5 Wire dispatch cleanup receipts                                            │
+│   T6 Docs refresh pass after F9 ships                                          │
 │                                                                                │
 │ TODO · desk ─────────────────────────────────────────────────────────────────1 │
 │                                                                                │
-│  ○ T7 Global backlog note                                                      │
+│   T7 Global backlog note                                                       │
 │                                                                                │
 │ DONE ────────────────────────────────────────────────────────────────────────2 │
 │                                                                                │
-│  ✓ T8 Ship the queue board milestone                                           │
-│  ✓ T9 Retire classic board chrome                                              │
+│   T8 Ship the queue board milestone                                            │
+│   T9 Retire classic board chrome                                               │
 │                                                                                │
 │                                                                                │
 │                                                                                │

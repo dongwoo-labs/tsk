@@ -102,7 +102,7 @@ fn edit_title_and_notes_and_repeat_is_idempotent() {
 }
 
 #[test]
-fn edit_clears_notes_and_keeps_scope_and_thread() {
+fn edit_clears_notes_and_keeps_scope() {
     let dir = temp_state_dir("preserve");
     let _guard = TempDirGuard(dir.clone());
     let mut state = DomainState::new();
@@ -114,7 +114,6 @@ fn edit_clears_notes_and_keeps_scope_and_thread() {
                 path: "/tmp/edit-cli-project".into(),
             },
             ProvenanceOrigin::Manual,
-            Some("v6".into()),
         )
         .expect("seed");
     TaskStore::new(&dir).save(&state).expect("save seed");
@@ -139,7 +138,6 @@ fn edit_clears_notes_and_keeps_scope_and_thread() {
             path: "/tmp/edit-cli-project".into(),
         }
     );
-    assert_eq!(task.thread.as_deref(), Some("v6"));
     assert_eq!(task.title, "keep scope");
 }
 

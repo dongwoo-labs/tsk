@@ -28,25 +28,17 @@
   const cycle = document.querySelector("[data-cycle]");
   if (cycle) {
     const steps = [
-      { sec: "TODO", glyph: "○", status: "todo", key: "ctrl+s", next: "doing" },
-      {
-        sec: "DOING",
-        glyph: "●",
-        status: "doing",
-        key: "ctrl+d",
-        next: "done",
-      },
-      { sec: "DONE", glyph: "✓", status: "done", key: "ctrl+o", next: "todo" },
+      { sec: "TODO", status: "todo", key: "ctrl+s", next: "doing" },
+      { sec: "DOING", status: "doing", key: "ctrl+d", next: "done" },
+      { sec: "DONE", status: "done", key: "ctrl+o", next: "todo" },
     ];
     const sec = cycle.querySelector("[data-cycle-sec]");
-    const glyph = cycle.querySelector("[data-cycle-glyph]");
     const key = cycle.querySelector("[data-cycle-key]");
     const next = cycle.querySelector("[data-cycle-next]");
     let i = 0;
     const paint = () => {
       const s = steps[i];
       sec.textContent = s.sec;
-      glyph.textContent = s.glyph;
       key.textContent = s.key;
       next.textContent = s.next;
       cycle.classList.remove("is-tick");
@@ -167,8 +159,8 @@
       );
       if (beside) setAgent(agentForBoardColumns(BESIDE_COLUMNS));
       readout();
-      // Full terminal opens straight into the split (stage A); beside an agent the board is
-      // narrow, so it returns to the plain board. The demo module registers this listener
+      // At 110+ columns the board is always list + detail; below it is one screen. The demo
+      // returns focus to the list on a layout change. The demo module registers this listener
       // after the first call here; tsk:ready replays the selected layout through this event.
       frame.dispatchEvent(
         new CustomEvent("tsk:set-stage", {
@@ -181,7 +173,7 @@
       if (!cols) return;
       const n = columns();
       const wide = n >= 110;
-      cols.innerHTML = `<b>${n}</b> cols · ${wide ? "stage slider" : "peek"}`;
+      cols.innerHTML = `<b>${n}</b> cols · ${wide ? "list + detail" : "one screen"}`;
     };
 
     toggles.forEach((t) =>

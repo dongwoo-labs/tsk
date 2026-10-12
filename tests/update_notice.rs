@@ -11,7 +11,6 @@ use ratatui::style::Modifier;
 use ratatui::Terminal;
 use tsk_tui::app::load_board_model;
 use tsk_tui::domain::DomainState;
-use tsk_tui::ui::queue::NavTab;
 use tsk_tui::ui::{apply_intent, draw_board, BoardIntent, BoardModel};
 use tsk_tui::update::{
     apply_fetch, is_stale, mark_check_started, notice_for, plan, read_cache,
@@ -215,13 +214,7 @@ fn footer_paints_dim_notice_from_a_seeded_cache_and_hides_for_a_message() {
     apply_intent(&mut domain, &mut model, BoardIntent::CancelQuickAdd, None)
         .expect("close quick-add");
     model.set_update_notice(Some(notice.clone()));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
-        None,
-    )
-    .expect("open projects");
+    model.set_selected_project(None);
     terminal
         .draw(|frame| {
             let _ = draw_board(frame, &model);
@@ -239,7 +232,7 @@ fn footer_paints_dim_notice_from_a_seeded_cache_and_hides_for_a_message() {
     }
     assert!(
         on_projects,
-        "Projects Overview idle status shows the update notice"
+        "the desk scope's idle status shows the update notice"
     );
 }
 

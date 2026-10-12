@@ -17,7 +17,6 @@ use tsk_tui::guides::CATALOG;
 use tsk_tui::store::TaskStore;
 use tsk_tui::ui::board::{apply_intent, IntentOutcome};
 use tsk_tui::ui::input::BoardIntent;
-use tsk_tui::ui::queue::NavTab;
 use tsk_tui::update::suppress_background_fetch;
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -101,7 +100,6 @@ fn full_board_open_seeds_the_guides_once_beside_existing_tasks() {
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("task");
     store.save(&seeded).expect("save");
@@ -171,7 +169,11 @@ fn non_git_full_board_open_keeps_the_directory_in_slot_two_and_captures_on_desk(
     let _context = ContextEnv::set(&outside);
 
     let (_store, mut state, mut model) = load_board().expect("full board open");
-    assert_eq!(model.nav_tab(), NavTab::Desk);
+    assert_eq!(
+        model.active_project(),
+        None,
+        "the board opens on every scope"
+    );
     assert_eq!(model.selected_project(), Some(outside.as_path()));
 
     let snapshot = build_snapshot(
@@ -233,13 +235,7 @@ fn seed_pty_task(root: &std::path::Path, cwd: &std::path::Path, title: &str) {
     let store = TaskStore::new(root.join("state"));
     let mut state = DomainState::new();
     state
-        .create(
-            title,
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-            None,
-        )
+        .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
         .expect("seed PTY desk task");
     let project_id = state
         .create(
@@ -249,7 +245,6 @@ fn seed_pty_task(root: &std::path::Path, cwd: &std::path::Path, title: &str) {
                 path: cwd.to_string_lossy().into_owned(),
             },
             ProvenanceOrigin::Manual,
-            None,
         )
         .expect("seed PTY project task");
     state
@@ -267,6 +262,10 @@ fn t64_real_board_ctrl_q_exits_from_a_stored_task_page() {
 
     let mut session = pty::Session::spawn(root, &cwd, &[], &[], 24, 78);
     session.output_until("target");
+    // Number order puts T1 target above T2 at the bottom: `k` wraps from the first
+    // guide to T2, a second `k` lands on the target.
+    session.send(b"k");
+    std::thread::sleep(Duration::from_millis(100));
     session.send(b"k");
     std::thread::sleep(Duration::from_millis(100));
     session.send(b"\r");

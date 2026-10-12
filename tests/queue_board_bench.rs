@@ -84,7 +84,6 @@ fn build_domain_with_n_tasks(n: usize) -> DomainState {
                 None,
                 scope,
                 ProvenanceOrigin::Manual,
-                None,
             )
             .expect("create bench fixture task");
         let status = statuses[i % statuses.len()];

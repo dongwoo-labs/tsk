@@ -171,6 +171,10 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 ### Store and state
 
 - Human status is source of truth. Never auto-complete tasks from agent status.
+- Tasks carry no thread label since store v8. A Thread is named only by a `Thread:` notes
+  line and focused only on an exact four-token single live match; never infer it from a
+  question's `origin_thread`. A question without `audience` is target unknown: never guess
+  it, count it, or offer an answer on it.
 - The projectless scope displays as `desk` but serializes as `global` and is
   `TaskScope::Global` internally. Do not rename either without a store migration.
 - Existing task scopes never move when scope resolution rules change.
@@ -199,11 +203,19 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 
 - Mutating verbs always take Ctrl. Bare letters do nothing unless they carry a bare
   route; the keymap resolves one letter by modifier class (`d` drawer vs `ctrl+d` done).
-  The one exception is `alt+↑`/`alt+↓` (move the selected step on the task page): macOS
-  takes ctrl+arrows for Mission Control. Do not add another non-Ctrl mutating chord.
+  The exceptions are `alt+↑`/`alt+↓` (move the selected step on the task page), because
+  macOS takes ctrl+arrows for Mission Control, and the task page's bare `P`/`U` (choose or
+  clear the open task's parent), a user-confirmed key contract. `P`/`U` act on the open
+  task only, never a marked set, refuse a dirty draft, and stay text in every input. Two
+  more user-confirmed exceptions: the task page's bare `e`/`a` only open the title editor
+  or a new step row (the same as `ctrl+e`/`ctrl+a`; nothing saves until the editor does),
+  and the questions tab (`2`) owns the keyboard, so its bare `Enter`, `Space`, `y`, `n`,
+  `c`, `t`, `r` answer, check, approve, reject, correct, open the task, and resend. `y`
+  refuses until `Space` checked the exact target, scope, and revision on screen. Do not
+  add another non-Ctrl mutating chord.
 - Mono modifiers only, no colour, at every width. There is no theme module.
 - Text wraps, never truncates. One wrap engine (`edit::wrap_text`) feeds every surface;
-  `escaped_draft_rows` remains only for single-line Title/Thread editors.
+  `escaped_draft_rows` remains only for the single-line Title editor.
 - `src/ui/capture.rs` is unreachable from the binary and stays that way; creation
   detail lives on the task page and the expanded quick-add draft owns the whole frame.
 - `Enter` on a stored step is `ToggleStep`, resolved at the keyboard boundary in
@@ -227,9 +239,16 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   multi-select set is session-only, lives beside the cursor, and clears at every verb and
   lens boundary rather than pinning hidden rows. Status verbs act on the set when it is
   non-empty; `Enter`, `ctrl+e`, and task-page actions stay cursor-only.
+- A focused task page may show a task the list does not (a relation open). Cursor verbs
+  then target `BoardModel::action_target_id`, the page's task; `selected_id` keeps its
+  list meaning and the page never pins the selection to an unpainted row. The `Esc`
+  trail (`page_back`) is session-only. It clears on an explicit list retarget (a list
+  selection, or a successful `J`/`K`), a scope or board-tab change, or a page close; a
+  disk sync or reanchor never clears it.
 - Board search is a per-lens filter applied in `queue_view` after `queue::query_board`,
   never a second row source. Overview rows filter by project name; everything else by task
-  content. `Enter` pins the query and hands keys back to the board; `Esc` clears it first.
+  content. `Enter` pins the query and hands keys back to the board; `Esc` clears it first,
+  except on a clean task page with a relation trail, where `Esc` goes back first.
 - `sync_from_domain` never moves the user's tab or selection for tasks merged from disk;
   the one exception is an otherwise-empty view surfacing the first arriving task. A
   pinned save pins the selection only when the current lens renders the saved task.

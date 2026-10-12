@@ -1,19 +1,19 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ desk  ·  tsk ▾  ·  projects                                              all ▾ │
+│ 1 board  ·  2 questions  ·  desk ▾  ·  sort number ▾                           │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸ ● T1 Smoke-test worktree dispatch                                             │
-│  ● T2 Ed┌─ help ▼ ────────────────────────────────────────────── [x]─┐         │
-│  ● T5 Wi│                                                            │         │
-│  ● T6 Do│  / search keys or actions…                                 │         │
+│▸  T1 Smoke-test worktree dispatch                                              │
+│   T2 Edi┌─ help ▼ ────────────────────────────────────────────── [x]─┐         │
+│   T5 Wir│                                                            │         │
+│   T6 Doc│  / search keys or actions…                                 │         │
 │         │ ────────────────────────────────────────────────────────── │         │
 │ TODO · d│  NAVIGATION                                                │───────1 │
 │         │  ↑↓ / jk            move                                   │         │
-│  ○ T7 Gl│  shift+M            multi-select                           │         │
+│   T7 Glo│  shift+M            multi-select                           │         │
 │         │  shift+↑↓           mark and move (multi-select)           │         │
-│         │                                                            │         │
+│ DONE ───│                                                            │ to open │
 │         ├────────────────────────────────────────────────────────────┤         │
 │         │ type search · ↑↓ scroll · esc clear/close                  │         │
 │         └────────────────────────────────────────────────────────────┘         │

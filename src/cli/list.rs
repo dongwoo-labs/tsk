@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::cli::parser::{parse_task_address, TaskAddress};
 use crate::context::snapshot_from_env;
-use crate::domain::{normalize_thread, thread_refusal_message, HumanStatus, TaskScope};
+use crate::domain::{HumanStatus, TaskScope};
 use crate::scope::resolve_permissive_project_path;
 use crate::store::{default_state_dir, TaskStore};
 
@@ -23,8 +23,6 @@ pub struct ListInput {
     pub archived: bool,
     pub todo: bool,
     pub doing: bool,
-    /// Normalized at the argv boundary so filtering only compares valid names.
-    pub thread: Option<String>,
     /// One task addressed by UUID or human number: single-task listing with full detail.
     pub task: Option<TaskAddress>,
     pub state_dir: Option<PathBuf>,
@@ -56,7 +54,6 @@ pub(crate) struct ListRow {
     pub(crate) title: String,
     pub(crate) status: HumanStatus,
     pub(crate) project: Option<String>,
-    pub(crate) thread: Option<String>,
     pub(crate) parent_task_id: Option<Uuid>,
     pub(crate) children_done: usize,
     pub(crate) children_total: usize,
@@ -108,7 +105,6 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         archived: false,
         todo: false,
         doing: false,
-        thread: None,
         task: None,
         state_dir: None,
         help: false,
@@ -124,24 +120,12 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
                 input.project = Some(flag["--project=".len()..].to_owned());
                 index += 1;
             }
-            flag if flag.starts_with("--thread=") => {
-                input.thread = Some(normalize_thread(&flag["--thread=".len()..]).map_err(
-                    |error| format!("invalid thread name · {}", thread_refusal_message(error)),
-                )?);
-                index += 1;
-            }
             "--json" => {
                 input.json = true;
                 index += 1;
             }
             "-p" | "--project" => {
                 input.project = Some(value(flag)?);
-                index += 2;
-            }
-            "--thread" => {
-                input.thread = Some(normalize_thread(&value(flag)?).map_err(|error| {
-                    format!("invalid thread name · {}", thread_refusal_message(error))
-                })?);
                 index += 2;
             }
             "--desk" => {
@@ -195,12 +179,8 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         }
     }
 
-    if input.task.is_some()
-        && (input.all || input.global || input.project.is_some() || input.thread.is_some())
-    {
-        return Err(
-            "task operand cannot be used with --project, --desk, --all, or --thread".into(),
-        );
+    if input.task.is_some() && (input.all || input.global || input.project.is_some()) {
+        return Err("task operand cannot be used with --project, --desk, or --all".into());
     }
     if input.task.is_some() && (input.done || input.deleted) {
         return Err("task operand cannot be used with --done or --deleted".into());
@@ -300,19 +280,13 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
         ListView::Open
     };
     if view == ListView::Deleted {
-        return deleted_rows(&store, &domain, &scope, input.thread.as_deref(), input.all);
+        return deleted_rows(&store, &domain, &scope, input.all);
     }
     let mut tasks = domain
         .tasks()
         .iter()
         .filter(|task| !task.is_notice())
         .filter(|task| scope.as_ref().is_none_or(|scope| task.scope == *scope))
-        .filter(|task| {
-            input
-                .thread
-                .as_deref()
-                .is_none_or(|thread| task.thread.as_deref() == Some(thread))
-        })
         .filter(|task| match view {
             ListView::Open => {
                 !task.soft_deleted
@@ -376,16 +350,13 @@ fn deleted_rows(
     store: &TaskStore,
     domain: &crate::domain::DomainState,
     scope: &Option<TaskScope>,
-    thread: Option<&str>,
     include_scope: bool,
 ) -> Result<ListResult, ListError> {
     let trash = store
         .load_trash()
         .map_err(|error| ListError::Store(error.to_string()))?;
     let in_scope = |task: &crate::domain::Task| {
-        !task.is_notice()
-            && scope.as_ref().is_none_or(|scope| task.scope == *scope)
-            && thread.is_none_or(|thread| task.thread.as_deref() == Some(thread))
+        !task.is_notice() && scope.as_ref().is_none_or(|scope| task.scope == *scope)
     };
     let mut dated: Vec<(std::time::SystemTime, ListRow)> = domain
         .tasks()
@@ -432,7 +403,6 @@ fn row_for(task: &crate::domain::Task, domain: &crate::domain::DomainState) -> L
             TaskScope::Global => None,
             TaskScope::Project { path } => Some(path.clone()),
         },
-        thread: task.thread.clone(),
         archived: None,
     }
 }
