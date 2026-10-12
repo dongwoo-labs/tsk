@@ -1,4 +1,4 @@
-import { readReference } from "./reference.mjs";
+import { readReference, referencePath } from "./reference.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -25,7 +25,7 @@ test.beforeAll(async ({ browser }) => {
     ),
   );
   await writeFile(
-    new URL("../parity-reference/browser-provenance.json", import.meta.url),
+    referencePath("browser-provenance.json"),
     JSON.stringify(
       {
         kind: "actual Chrome screenshots cropped to board root; not approved baselines",
