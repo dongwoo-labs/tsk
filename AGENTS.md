@@ -233,10 +233,13 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 - A focused task page may show a task the list does not (a relation open). Cursor verbs
   then target `BoardModel::action_target_id`, the page's task; `selected_id` keeps its
   list meaning and the page never pins the selection to an unpainted row. The `Esc`
-  trail (`page_back`) is session-only and clears at every list retarget, scope, or close.
+  trail (`page_back`) is session-only. It clears on an explicit list retarget (a list
+  selection, or a successful `J`/`K`), a scope or board-tab change, or a page close; a
+  disk sync or reanchor never clears it.
 - Board search is a per-lens filter applied in `queue_view` after `queue::query_board`,
   never a second row source. Overview rows filter by project name; everything else by task
-  content. `Enter` pins the query and hands keys back to the board; `Esc` clears it first.
+  content. `Enter` pins the query and hands keys back to the board; `Esc` clears it first,
+  except on a clean task page with a relation trail, where `Esc` goes back first.
 - `sync_from_domain` never moves the user's tab or selection for tasks merged from disk;
   the one exception is an otherwise-empty view surfacing the first arriving task. A
   pinned save pins the selection only when the current lens renders the saved task.
