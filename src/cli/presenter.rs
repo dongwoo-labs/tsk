@@ -119,7 +119,7 @@ pub fn top_level_help() -> String {
         "  add      create one task or apply a JSON plan\n",
         "  list     inspect tasks\n",
         "  status   set a task's human status\n",
-        "  edit     update a task's title or notes\n",
+        "  edit     update a task's title, notes, or parent\n",
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
         "  import   import Linear issues as tasks (one way)\n\n",
         "Board\n",
@@ -158,19 +158,20 @@ pub fn help_usage(reason: &str) -> CliOutput {
 pub fn add_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--json] [--state-dir <dir>]".into(),
+            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--parent <task>] [--json] [--state-dir <dir>]".into(),
             "tsk add [--file <path|->] [--state-dir <dir>]".into(),
         ],
         purpose: "Create one task or apply a JSON plan.".into(),
         groups: vec![
             group("Scope", &[("-p, --project <project>", "create in a project"), ("--desk", "create on your desk")]),
             group("Output", &[("--json", "print one result object for a flag add")]),
-            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--thread <name>", "optional normalized thread"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
+            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--thread <name>", "optional normalized thread"), ("--parent <task>", "optional direct parent task number or UUID"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
         ],
         examples: vec!["tsk add -t \"Draft release notes\"".into(), "tsk add -t \"Buy milk\" --desk".into(), "tsk add -t \"Fix widget\" --project widget --thread release-2026".into(), "tsk add --file plan.json".into(), "cat plan.json | tsk add".into()],
         refusals: vec![
             "empty-title".into(),
             "invalid-title".into(),
+            "invalid-parent".into(),
             "invalid-thread (JSON plan)".into(),
             "invalid-item (JSON plan)".into(),
             "unknown-project".into(),
@@ -254,7 +255,7 @@ pub fn usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--json] [--state-dir <dir>]\n",
+            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--thread <name>] [--parent <task>] [--json] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,
@@ -292,6 +293,11 @@ fn list_json(result: &ListResult) -> String {
             notes: &'a Option<String>,
             steps: &'a [StepLine],
             thread: &'a Option<String>,
+            parent_task_id: Option<uuid::Uuid>,
+            parent: &'a Option<crate::cli::list::ParentRow>,
+            children_done: usize,
+            children_total: usize,
+            children: &'a [ListRow],
         }
         let direct_row = DirectRow {
             id: row.id,
@@ -302,6 +308,11 @@ fn list_json(result: &ListResult) -> String {
             notes: &direct.notes,
             steps: &direct.steps,
             thread: &row.thread,
+            parent_task_id: row.parent_task_id,
+            parent: &direct.parent,
+            children_done: row.children_done,
+            children_total: row.children_total,
+            children: &direct.children,
         };
         return format!(
             "{}\n",
@@ -366,6 +377,46 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
                     " ",
                     output_width,
                 );
+                if let Some(parent) = &direct.parent {
+                    output.push('\n');
+                    let text = if parent.resolved {
+                        format!(
+                            "Parent: T{} {}",
+                            parent.number.unwrap_or_default(),
+                            terminal_text(parent.title.as_deref().unwrap_or_default())
+                        )
+                    } else {
+                        format!("Parent: {} (unresolved; relationship retained)", parent.id)
+                    };
+                    append_wrapped(&mut output, "   ", "   ", &text, output_width);
+                }
+                if !direct.children.is_empty() {
+                    output.push('\n');
+                    append_wrapped(
+                        &mut output,
+                        "   ",
+                        "   ",
+                        &format!(
+                            "Children: {}/{} done",
+                            rows[0].children_done, rows[0].children_total
+                        ),
+                        output_width,
+                    );
+                    for child in &direct.children {
+                        append_wrapped(
+                            &mut output,
+                            "   ",
+                            "   ",
+                            &format!(
+                                "T{} [{}] {}",
+                                child.number,
+                                status_name(child.status),
+                                terminal_text(&child.title)
+                            ),
+                            output_width,
+                        );
+                    }
+                }
             }
         }
     }
@@ -884,6 +935,8 @@ fn task_refusal_message(code: &str, task: TaskAddress) -> String {
     let message = match code {
         "unknown-task" => format!("{display} is not on the board"),
         "soft-deleted-task" => format!("{display} is deleted"),
+        "invalid-parent" => "parent is missing, deleted, or a notice".into(),
+        "parent-cycle" => "parent relationship would form a cycle".into(),
         "empty-title" => "the title is empty".to_string(),
         "invalid-title" => "the title contains control characters".to_string(),
         "empty-step-text" => "the step text is empty".to_string(),
@@ -986,15 +1039,17 @@ pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
 pub fn edit_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk edit <task> [--title <title>] [--notes <notes>] [--state-dir <dir>]".into(),
+            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--state-dir <dir>]".into(),
         ],
-        purpose: "Update a task's title or notes without changing its scope or thread.".into(),
+        purpose: "Update a task's title, notes, or direct parent without changing its scope or thread.".into(),
         groups: vec![group(
             "Values",
             &[
                 ("<task>", "a task number or UUID"),
                 ("--title <title>", "replace the title"),
                 ("--notes <notes>", "replace notes, or clear them when blank"),
+                ("--parent <task>", "replace the direct parent by task number or UUID"),
+                ("--no-parent", "clear the direct parent"),
                 ("--state-dir <dir>", "use another board store"),
                 (
                     "--flag=<value>",
@@ -1011,6 +1066,8 @@ pub fn edit_help() -> CliOutput {
             "soft-deleted-task".into(),
             "empty-title".into(),
             "invalid-title".into(),
+            "invalid-parent".into(),
+            "parent-cycle".into(),
         ],
         exit: exit_line(
             "fields written, or already had the values",
@@ -1036,7 +1093,7 @@ pub fn edit_usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--state-dir <dir>]\n",
+            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,

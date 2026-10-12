@@ -26,6 +26,13 @@ In a wide pane, click a task or press `→` / `l` to open its details beside the
 Press `Enter` for a full-screen task and `Esc` to return. For a standalone board,
 run `tsk` in your terminal.
 
+### Related tasks
+
+Use `tsk add -t "Implement parser" --parent T10` to create a child task, and
+`tsk edit T12 --parent T11` or `--no-parent` to change or clear its parent.
+`tsk list T10` shows direct children and their calculated Done/total count.
+Relationships never complete or delete other tasks. See the [CLI guide](https://gettsk.sh/docs/cli/#edit).
+
 ### Coming soon
 
 **From task to implementation.** The next phase brings agent execution into the
