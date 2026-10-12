@@ -58,15 +58,24 @@ fn export_reference(text: &str, width: u16, name: &str) {
         let dir = PathBuf::from(dir);
         fs::write(dir.join(format!("app-{width}-{name}.txt")), text).unwrap();
         if name == "page" {
+            // Wide frames carry the task page right of the `│` rule; narrow frames end in a
+            // scrollbar column. Keep only the step text.
             let lines: Vec<_> = text
                 .lines()
+                .map(|line| line.split_once('│').map_or(line, |(_, detail)| detail))
                 .skip_while(|line| !line.contains("✓ Check"))
                 .take_while(|line| !line.contains("+ step"))
                 .map(|line| {
+                    let gutter = line.chars().take_while(|c| *c == ' ').count() + 2;
+                    let gutter = if line.contains('✓') {
+                        gutter
+                    } else {
+                        gutter - 2
+                    };
                     line.chars()
-                        .skip(4)
+                        .skip(gutter)
                         .collect::<String>()
-                        .trim_end()
+                        .trim_end_matches(['▌', ' '])
                         .to_string()
                 })
                 .collect();
@@ -79,16 +88,17 @@ fn export_reference(text: &str, width: u16, name: &str) {
         if name == "initial" {
             let lines: Vec<_> = text
                 .lines()
+                .map(|line| line.split_once('│').map_or(line, |(list, _)| list))
                 .skip_while(|line| !line.contains("T13 "))
+                // Rows have no status glyph: a 3-cell gutter, then `T13 `. Continuation
+                // rows indent 7 cells under the title; the next task row does not.
                 .take_while(|line| {
-                    let body = line.trim_start();
-                    !body.is_empty()
-                        && (line.contains("T13")
-                            || (!body.starts_with('○') && !body.starts_with('▸')))
+                    !line.trim_start().is_empty()
+                        && (line.contains("T13") || line.starts_with("       "))
                 })
                 .map(|line| {
                     line.chars()
-                        .skip(8)
+                        .skip(7)
                         .collect::<String>()
                         .trim_end()
                         .to_string()

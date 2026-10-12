@@ -1,17 +1,8 @@
-export function normalizeThread(raw) {
-  const normalized = String(raw)
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32);
-  if (!normalized || !/^[a-z0-9]/.test(normalized)) return null;
-  return normalized;
-}
-
+// Quick-add title tokens. Only `!p` remains: tasks carry no thread label since store v8,
+// so `!t` is ordinary title text, as in the app.
 export function parseCapture(raw, fallbackProject) {
   const parts = raw.trim().split(/\s+/).filter(Boolean);
   let project = fallbackProject;
-  let thread;
   const title = [];
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i];
@@ -25,17 +16,7 @@ export function parseCapture(raw, fallbackProject) {
       }
       continue;
     }
-    if (part === "!t") {
-      const argument = parts[i + 1];
-      if (!argument || argument.startsWith("!")) {
-        thread = null;
-      } else {
-        i += 1;
-        thread = normalizeThread(argument);
-      }
-      continue;
-    }
     title.push(part);
   }
-  return { title: title.join(" "), project, thread };
+  return { title: title.join(" "), project };
 }

@@ -1,8 +1,9 @@
 # Demo parity harness
 
 The harness compares the browser demo with Rust-rendered reference frames.
-It also exercises the built homepage, project/thread navigation, task steps,
-selection styling, and the sample CLI output using a disposable store.
+It also exercises the built homepage: scope and sort, the questions tab on the
+sample questions, related tasks and links, task steps, selection styling, and
+the sample CLI output using a disposable store.
 
 ## Run
 
@@ -32,5 +33,6 @@ python3 scripts/parity-pty-smoke.py
 ```
 
 The harness does not establish complete visual parity. Full field editing,
-project archive, save recovery, and complete Unicode/emoji wrapping are outside
-its coverage. Browser status shortcuts intentionally use bare keys.
+project archive, save recovery, question durability recovery, and complete
+Unicode/emoji wrapping are outside its coverage. The demo's questions, Threads,
+and Lead are samples: nothing is stored, sent, or approved. Browser status shortcuts intentionally use bare keys.

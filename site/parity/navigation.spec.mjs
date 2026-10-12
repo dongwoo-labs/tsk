@@ -1,9 +1,14 @@
 import { test, expect } from "@playwright/test";
-test("project navigation, counted views and selection match the app", async ({
+// The built landing page (port 4180) runs the demo on its sample data: launchpad scope and
+// sample Agent questions. Nothing in it is stored, sent, or approved.
+const LANDING = "http://127.0.0.1:4180/";
+const row = (page, n) => page.locator(`[data-task="t${n}"]`);
+
+test("selection uses an arrow and an underlined tab without reverse fill", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(page.locator("[data-task]").first()).toContainText("▸ ● T12");
+  await expect(page.locator("[data-task]").first()).toContainText("▸  T12");
   await expect(page.locator("[data-task]").first()).toHaveCSS(
     "background-color",
     "rgba(0, 0, 0, 0)",
@@ -12,59 +17,18 @@ test("project navigation, counted views and selection match the app", async ({
     "text-decoration-line",
     "underline",
   );
-  await expect(page.locator(".tsk-tab-group.is-on")).toHaveCSS(
-    "text-decoration-line",
-    "none",
-  );
-  for (const inactive of await page
-    .locator(".tsk-tab-group:not(.is-on)")
-    .all()) {
-    await expect(inactive).toHaveCSS("text-decoration-line", "none");
-    const colors = await inactive.evaluate((el) => [
-      getComputedStyle(el).color,
-      getComputedStyle(document.querySelector(".tsk-tab-group.is-on")).color,
-    ]);
-    expect(colors[0]).not.toBe(colors[1]);
-  }
-  await page.locator('[data-tab="project"]').click();
-  await expect(page.locator(".tsk-tab-group.is-on .tsk-tab")).toHaveCSS(
-    "text-decoration-line",
-    "underline",
-  );
-  await expect(page.locator(".tsk-tab-group.is-on .tsk-tab-arrow")).toHaveCSS(
-    "text-decoration-line",
-    "none",
-  );
-  await expect(page.locator("[data-filter]")).toHaveText("all ▾");
-  await page.locator("[data-filter]").click();
-  await expect(
-    page.getByRole("dialog", { name: "thread filter" }),
-  ).toBeVisible();
-  await page.getByText("Without a thread 4", { exact: false }).click();
-  await expect(page.locator("[data-task]")).toHaveCount(4);
-  await page.locator('[data-tab="projects"]').click();
-  await expect(page.locator(".tsk-project-legend")).toContainText("DOING");
-  await expect(page.locator("[data-filter]")).toHaveText("Overview ▾");
-  await page.locator("[data-project-row]").first().click();
-  await expect(page.locator(".tsk-project-legend")).toBeVisible();
-  await page.locator("[data-filter]").click();
-  await page.getByText("#release 2", { exact: false }).click();
-  await expect(page.locator("[data-task]")).toHaveCount(2);
-  await page.locator("[data-chip]").click();
-  await expect(
-    page.getByRole("dialog", { name: "project", exact: true }),
-  ).toBeVisible();
+  const inactive = page.locator(".tsk-tab-group:not(.is-on)");
+  await expect(inactive).toHaveCount(1);
+  await expect(inactive).toHaveCSS("text-decoration-line", "none");
+  await page.locator('[data-tab="questions"]').click();
+  await expect(page.locator('[data-tab="questions"]')).toHaveClass(/is-on/);
 });
 
-test("full terminal opens with board and task side by side", async ({
+test("full terminal opens with the list and the selected task side by side", async ({
   page,
 }) => {
-  await page.goto("http://127.0.0.1:4180/");
+  await page.goto(LANDING);
   await expect(page.locator("[data-split]")).toHaveClass(/is-full/);
-  await expect(page.locator("[data-layout]").first()).toHaveAttribute(
-    "data-layout",
-    "full",
-  );
   await expect(page.locator('[data-layout="full"]')).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -76,68 +40,153 @@ test("full terminal opens with board and task side by side", async ({
   await expect(page.locator(".tsk-task-header")).toBeVisible();
 });
 
-for (const scope of ["project", "projects"])
-  test(`done drawer keeps the thread in ${scope}`, async ({ page }) => {
-    await page.goto("http://127.0.0.1:4180/");
-    await page.locator(`[data-tab="${scope}"]`).click();
-    await page.locator("[data-filter]").click();
-    await page
-      .locator("[data-filter-option]")
-      .filter({ hasText: "#auth" })
-      .click();
-    await page.locator("#board-demo").focus();
-    await page.keyboard.press("z");
-    await expect(page.locator("[data-task]")).toHaveCount(3);
-    await expect(
-      page.getByRole("button", { name: /Add a health check/ }),
-    ).toHaveCount(0);
-  });
-
-test("landing seeds keep Todo rows visible on desk and launchpad", async ({
+test("the sample board opens on launchpad and p reaches desk and all", async ({
   page,
 }) => {
-  await page.goto("http://127.0.0.1:4180/");
+  await page.goto(LANDING);
+  await expect(page.locator("[data-scope]")).toHaveText("launchpad ▾");
   for (const title of [
-    "Plan the support handoff",
-    "Clean up stale local branches",
-    "Sort feedback from the pilot",
-    "Record the retry runbook",
-  ])
-    await expect(
-      page.locator("[data-task]").filter({ hasText: title }),
-    ).toHaveCount(1);
-  await page.locator('[data-tab="project"]').click();
-  for (const title of [
-    "Add audit events for admin changes",
+    "Make webhook delivery idempotent",
     "Trace worker queue saturation",
-    "Document regional failover checks",
   ])
     await expect(
       page.locator("[data-task]").filter({ hasText: title }),
     ).toHaveCount(1);
+  await page.locator("[data-scope]").click();
+  await page.locator('[data-pick="desk"]').click();
+  await expect(page.locator(".tsk-sec").nth(1)).toContainText("TODO · desk");
+  for (const title of ["Plan the support handoff", "Record the retry runbook"])
+    await expect(
+      page.locator("[data-task]").filter({ hasText: title }),
+    ).toHaveCount(1);
+  await page.locator("[data-scope]").click();
+  await page.locator('[data-pick="all"]').click();
+  await expect(
+    page.locator("[data-task]").filter({ hasText: "Review error states" }),
+  ).toHaveCount(1);
 });
 
-test("project counts, thread labels and counted menu order match the app", async ({
+test("rows carry question marks and the child count; the waiting line opens tab 2", async ({
   page,
 }) => {
-  await page.goto("http://127.0.0.1:4180/");
-  await page.locator('[data-tab="projects"]').click();
-  const project = page.locator('[data-project-row="launchpad"]');
-  await expect(project.locator(":scope > span").nth(1)).toHaveText(
-    "#api #auth #ops",
+  await page.goto(LANDING);
+  await expect(row(page, 12).locator(".tsk-row-tail")).toHaveText("! ?1 ⊂1/2");
+  await expect(row(page, 13).locator(".tsk-row-tail")).toHaveText("?2");
+  await expect(page.locator("[data-waiting]")).toContainText(
+    "waiting on you  approval 1 · question 2 · finding 1 · target unknown 1  → 2",
   );
-  await expect(project.locator(":scope > span").nth(2)).toHaveText("3");
-  await expect(project.locator(":scope > span").nth(3)).toHaveText("5");
-  await expect(project.locator(":scope > span").nth(4)).toHaveText("1");
-  await page.locator('[data-tab="project"]').click();
-  await page.locator("[data-filter]").click();
-  await expect(page.locator("[data-filter-option]").nth(1)).toContainText(
-    "#auth  3",
+  await expect(page.locator('[data-tab="questions"]')).toHaveText(
+    /^2( questions)? ·4$/,
   );
-  await expect(page.locator("[data-filter-option]").nth(2)).toContainText(
-    "#ops  3",
+  await page.locator("[data-waiting]").click();
+  await expect(page.locator('[data-tab="questions"]')).toHaveClass(/is-on/);
+  await expect(page.locator(".tsk-q-group")).toHaveText([
+    " NEEDS APPROVAL 1",
+    " FOR YOU 2",
+    " FINDINGS 1",
+    " WITH LEAD 1",
+    " target unknown · route with tsk route 1",
+    " CLOSED 1",
+  ]);
+});
+
+test("an approval needs the check before y, and is sample only", async ({
+  page,
+}) => {
+  await page.goto(LANDING);
+  await page.locator("#board-demo").focus();
+  await page.keyboard.press("2");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("y");
+  await expect(page.locator("#tsk-demo")).toContainText(
+    "check the target, scope, and revision first · space",
   );
-  await expect(page.locator("[data-filter-option]").nth(3)).toContainText(
-    "#api  2",
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-q-check]")).toContainText("[x]");
+  await page.keyboard.press("y");
+  await expect(page.locator("#tsk-demo")).toContainText(
+    "sample: approved in this demo only · it authorizes nothing",
   );
+  await expect(page.locator(".tsk-q-group").last()).toContainText("CLOSED 2");
+});
+
+test("answers, a finding, J/K, t, and the unrouted refusal", async ({
+  page,
+}) => {
+  await page.goto(LANDING);
+  await page.locator("#board-demo").focus();
+  await page.keyboard.press("2");
+  await page.locator('[data-question="q2"]').click();
+  await expect(page.locator(".tsk-q-line.is-chosen")).toContainText(
+    "postgres table · recommended",
+  );
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tsk-q-page")).toContainText(
+    "answer  postgres table",
+  );
+  await page.locator('[data-question="q3"]').click();
+  await page.keyboard.press("Enter");
+  const answer = page.locator("#tsk-answer");
+  await answer.press("y");
+  await answer.press("n");
+  await answer.press("c");
+  await expect(answer).toHaveValue("ync");
+  await answer.press("Enter");
+  await expect(page.locator(".tsk-q-page")).toContainText("answer  ync");
+
+  await page.locator('[data-question="q4"]').click();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tsk-q-page")).toContainText(
+    "no run request is sent",
+  );
+  const created = await page.locator(".tsk-q-page").textContent();
+  const number = created.match(/created (T\d+) \(doing\)/)[1];
+  await page.keyboard.press("c");
+  await page.keyboard.press("j");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tsk-q-page")).toContainText(
+    `the linked task ${number} stays · no second task`,
+  );
+
+  await page.locator('[data-question="q6"]').click();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#tsk-demo")).toContainText(
+    "target unknown · route it with tsk route first",
+  );
+  await page.keyboard.press("K");
+  await expect(page.locator(".tsk-q-page")).toContainText("Q5 · question");
+  await page.keyboard.press("t");
+  await expect(page.locator('[data-tab="board"]')).toHaveClass(/is-on/);
+  await expect(page.locator(".tsk-task-column")).toContainText(
+    "Add cursor pagination",
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-tab="questions"]')).toHaveClass(/is-on/);
+  await expect(page.locator(".tsk-q-page")).toContainText("Q5 · question");
+});
+
+test("the task page lists children, questions, and links, and Esc walks back", async ({
+  page,
+}) => {
+  await page.goto(LANDING);
+  await page.locator('[data-layout="beside"]').click();
+  await page.locator("#board-demo").focus();
+  await page.keyboard.press("Enter");
+  const column = page.locator(".tsk-task-column");
+  await expect(column).toContainText("children 1/2 done");
+  await expect(column).toContainText("questions 2 open");
+  await expect(column).toContainText("thread thr-launch-12 · enter focuses");
+  await page.locator('[data-ring="child:t15"]').click();
+  await expect(column).toContainText("Unblock OIDC login in staging");
+  await expect(column).toContainText("↑ T12 Rotate refresh tokens");
+  await page.keyboard.press("Escape");
+  await expect(column).toContainText("Rotate refresh tokens on every use");
+  await page.locator('[data-ring="link:1"]').click();
+  await expect(page.locator("#tsk-demo")).toContainText(
+    "sample: the demo has no Herdr · nothing focused",
+  );
+  await page.locator('[data-ring="q:q1"]').click();
+  await expect(page.locator(".tsk-q-page")).toContainText("Q1 · approval");
+  await page.keyboard.press("Escape");
+  await expect(column).toContainText("Rotate refresh tokens on every use");
 });
