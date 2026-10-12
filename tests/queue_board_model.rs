@@ -11,12 +11,11 @@ use tsk_tui::context::InvocationSnapshot;
 use tsk_tui::domain::{
     DomainState, HumanStatus, ProvenanceOrigin, Task, TaskEvent, TaskEventKind, TaskScope,
 };
-use tsk_tui::scope::paths_equivalent;
 use tsk_tui::store::TaskStore;
 use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel, ProjectScopeOption};
 use tsk_tui::ui::input::BoardIntent;
 use tsk_tui::ui::queue::{
-    query_board, query_lens, BoardLens, ProjectRow, QueueView, SectionKind, ThreadFilter,
+    query_board, query_lens, BoardLens, BoardSort, QueueView, SectionKind, ThreadFilter,
     INBOX_HEADER_ROW_ID,
 };
 use uuid::Uuid;
@@ -93,15 +92,6 @@ fn section_ids(view: &QueueView, kind: SectionKind) -> Vec<Uuid> {
         .collect()
 }
 
-#[allow(unused)]
-fn project_row(view: &QueueView, path: &str) -> ProjectRow {
-    view.projects
-        .iter()
-        .find(|row| paths_equivalent(&row.path, path))
-        .expect("index row")
-        .clone()
-}
-
 fn temp_dir(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -166,13 +156,21 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
     let deck = task(3, "deck", HumanStatus::Ready, project(THIS_REPO), 200);
     let tasks = vec![motion_newer.clone(), motion_older.clone(), deck.clone()];
     let model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from(THIS_REPO)));
-    let view = query_lens(&tasks, Some(Path::new(THIS_REPO)), BoardLens::Desk, false);
+    // The board orders unnumbered rows by capture order: the older motion task leads.
+    let view = query_board(
+        &tasks,
+        &BTreeSet::new(),
+        BoardLens::All,
+        false,
+        &ThreadFilter::All,
+        BoardSort::Number,
+    );
     let first_motion = view
         .sections
         .iter()
         .find(|s| s.kind == SectionKind::InMotion)
         .and_then(|s| s.task_ids.first().copied());
-    assert_eq!(first_motion, Some(Uuid::from_u128(1)));
+    assert_eq!(first_motion, Some(Uuid::from_u128(2)));
     assert_eq!(
         model.selected_id(),
         first_motion,
@@ -223,12 +221,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
     let deck_a = task(10, "a", HumanStatus::Ready, project("/repos/a"), 30);
     let deck_b = task(11, "b", HumanStatus::Ready, project(THIS_REPO), 40);
     let deck_tasks = vec![deck_a.clone(), deck_b.clone()];
-    let view = query_lens(
-        &deck_tasks,
-        Some(Path::new(THIS_REPO)),
-        BoardLens::Project(Path::new(THIS_REPO)),
-        false,
-    );
+    let view = query_lens(&deck_tasks, BoardLens::Project(Path::new(THIS_REPO)), false);
     let first_deck = view
         .sections
         .iter()
@@ -248,7 +241,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
         )
         .unwrap();
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::ProjectBoard);
+    assert_eq!(model.active_project(), Some(Path::new(THIS_REPO)));
     assert_eq!(
         model.selected_id(),
         Some(deck_id),
@@ -291,7 +284,7 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
         "launch inside a repo opens that project's board"
     );
     assert_eq!(model.visible_ids(), vec![INBOX_HEADER_ROW_ID, live_id]);
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::ProjectBoard);
+    assert_eq!(model.active_project(), Some(Path::new(THIS_REPO)));
 
     // Empty project: same destination, useful empty state (no fallback lens).
     let empty_repo = format!("{THIS_REPO}-empty");
@@ -323,10 +316,10 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
     domain.archive_project(THIS_REPO).expect("archive project");
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
     assert_eq!(model.selected_project(), None);
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::Desk);
+    assert_eq!(model.active_project(), None, "every scope opens instead");
     assert!(!model.visible_ids().contains(&archived_id));
 
-    // A non-Git invocation keeps its directory in project slot 2 but opens Desk.
+    // A non-Git invocation remembers its directory but opens every scope.
     let mut domain = DomainState::new();
     let desk_id = domain
         .create(
@@ -345,7 +338,7 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
         provenance: ProvenanceOrigin::Manual,
     };
     let model = BoardModel::from_domain_for_snapshot(&domain, &snapshot);
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::Desk);
+    assert_eq!(model.active_project(), None);
     assert_eq!(model.selected_project(), Some(outside.as_path()));
     assert_eq!(model.selected_id(), Some(desk_id));
 }
@@ -569,10 +562,10 @@ fn project_deck_lists_tasks_flat_with_thread_filter_across_statuses() {
     let view = query_board(
         &tasks,
         &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
         BoardLens::Project(Path::new(THIS_REPO)),
         true,
         &ThreadFilter::All,
+        BoardSort::Number,
     );
     let deck = on_deck(&view);
     assert_eq!(
@@ -585,10 +578,10 @@ fn project_deck_lists_tasks_flat_with_thread_filter_across_statuses() {
     let filtered = query_board(
         &tasks,
         &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
         BoardLens::Project(Path::new(THIS_REPO)),
         true,
         &ThreadFilter::Named("release".to_string()),
+        BoardSort::Number,
     );
     assert_eq!(
         section_ids(&filtered, SectionKind::InMotion),
@@ -626,10 +619,10 @@ fn project_deck_orders_ready_tasks_oldest_first_across_threads() {
     let view = query_board(
         &tasks,
         &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
         BoardLens::Project(Path::new(THIS_REPO)),
         false,
         &ThreadFilter::All,
+        BoardSort::Number,
     );
     let deck = on_deck(&view);
     assert_eq!(
@@ -662,10 +655,10 @@ fn without_a_thread_filter_keeps_only_unthreaded_tasks() {
     let view = query_board(
         &tasks,
         &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
         BoardLens::Project(Path::new(THIS_REPO)),
         false,
         &ThreadFilter::Without,
+        BoardSort::Number,
     );
     assert_eq!(
         section_ids(&view, SectionKind::OnDeck),
@@ -674,7 +667,7 @@ fn without_a_thread_filter_keeps_only_unthreaded_tasks() {
 }
 
 #[test]
-fn same_thread_name_joins_only_in_the_global_view_not_the_local_filter() {
+fn the_local_thread_filter_never_reaches_another_scope() {
     let tasks = vec![
         threaded_task(
             1,
@@ -698,166 +691,20 @@ fn same_thread_name_joins_only_in_the_global_view_not_the_local_filter() {
     let local = query_board(
         &tasks,
         &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
         BoardLens::Project(Path::new(THIS_REPO)),
         false,
         &ThreadFilter::Named("release".to_string()),
+        BoardSort::Number,
     );
     assert_eq!(
         section_ids(&local, SectionKind::OnDeck),
         vec![Uuid::from_u128(1)]
     );
-
-    // Global View: both scopes join under one thread name.
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        None,
-        BoardLens::ThreadView("release"),
-        false,
-        &ThreadFilter::All,
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::OnDeck),
-        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
-        "both scopes join under one thread name, oldest created first"
-    );
-}
-
-#[test]
-fn thread_view_covers_needs_you_motion_deck_and_drawer() {
-    let tasks = vec![
-        threaded_task(
-            1,
-            "blocked",
-            HumanStatus::Blocked,
-            project(THIS_REPO),
-            10,
-            "release",
-        ),
-        threaded_task(
-            2,
-            "review",
-            HumanStatus::Review,
-            project(THIS_REPO),
-            15,
-            "release",
-        ),
-        threaded_task(
-            3,
-            "motion",
-            HumanStatus::Started,
-            project(THIS_REPO),
-            20,
-            "release",
-        ),
-        threaded_task(
-            4,
-            "deck",
-            HumanStatus::Ready,
-            project(THIS_REPO),
-            25,
-            "release",
-        ),
-        threaded_task(
-            5,
-            "done",
-            HumanStatus::Done,
-            project(THIS_REPO),
-            30,
-            "release",
-        ),
-    ];
-
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        None,
-        BoardLens::ThreadView("release"),
-        true,
-        &ThreadFilter::All,
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::NeedsYou),
-        vec![Uuid::from_u128(2), Uuid::from_u128(1)]
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::InMotion),
-        vec![Uuid::from_u128(3)]
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::OnDeck),
-        vec![Uuid::from_u128(4)]
-    );
-    assert_eq!(
-        section_ids(&view, SectionKind::Done),
-        vec![Uuid::from_u128(5)]
-    );
-}
-
-#[test]
-fn projects_index_rows_carry_open_work_counts() {
-    let tasks = vec![
-        threaded_task(
-            1,
-            "blocked",
-            HumanStatus::Blocked,
-            project(THIS_REPO),
-            10,
-            "release",
-        ),
-        threaded_task(
-            2,
-            "motion",
-            HumanStatus::Started,
-            project(THIS_REPO),
-            20,
-            "release",
-        ),
-        threaded_task(
-            3,
-            "deck",
-            HumanStatus::Ready,
-            project(THIS_REPO),
-            25,
-            "release",
-        ),
-        threaded_task(
-            4,
-            "done",
-            HumanStatus::Done,
-            project(THIS_REPO),
-            30,
-            "release",
-        ),
-    ];
-
-    let view = query_board(
-        &tasks,
-        &BTreeSet::new(),
-        Some(Path::new(THIS_REPO)),
-        BoardLens::Projects,
-        false,
-        &ThreadFilter::All,
-    );
-    assert_eq!(view.sections, Vec::new(), "the index never lists tasks");
-    assert_eq!(view.projects.len(), 1);
-    let row = &view.projects[0];
-    assert_eq!(row.path, THIS_REPO);
-    assert_eq!(row.needs_you, 1);
-    assert_eq!(row.in_motion, 1);
-    assert_eq!(row.on_deck, 1, "ready and open tasks share ON DECK");
-    assert_eq!(row.done, 1, "live done tasks have their own count");
-    assert_eq!(
-        row.threads,
-        vec!["release".to_string()],
-        "one distinct thread across open tasks"
-    );
-    assert!(row.current, "the invocation project is marked current");
 }
 
 #[test]
 fn selection_stays_on_task_id_across_motion_reorder() {
+    // Beta is numbered and alpha is not yet, so beta leads the number order.
     let mut alpha_task = task(1, "alpha", HumanStatus::Started, project(THIS_REPO), 10);
     alpha_task.history.push(TaskEvent {
         kind: TaskEventKind::StatusSet,
@@ -865,10 +712,7 @@ fn selection_stays_on_task_id_across_motion_reorder() {
     });
     let alpha = alpha_task.id;
     let mut beta_task = task(2, "beta", HumanStatus::Started, project(THIS_REPO), 20);
-    beta_task.history.push(TaskEvent {
-        kind: TaskEventKind::StatusSet,
-        at: epoch_plus(200),
-    });
+    beta_task.number = Some(5);
     let beta = beta_task.id;
     let mut domain = domain_with_tasks(vec![alpha_task.clone(), beta_task.clone()]);
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
@@ -892,12 +736,9 @@ fn selection_stays_on_task_id_across_motion_reorder() {
     )
     .unwrap();
 
-    // A fresh status change on alpha moves it above beta; selection stays pinned
-    // to beta's id, not to beta's row position.
-    alpha_task.history.push(TaskEvent {
-        kind: TaskEventKind::StatusSet,
-        at: epoch_plus(300),
-    });
+    // The persistence boundary numbers alpha below beta, which moves it above beta;
+    // selection stays pinned to beta's id, not to beta's row position.
+    alpha_task.number = Some(2);
     alpha_task.updated_at = epoch_plus(300);
     let reordered = domain_with_tasks(vec![alpha_task, beta_task]);
     model.sync_from_domain(&reordered);
@@ -906,7 +747,7 @@ fn selection_stays_on_task_id_across_motion_reorder() {
     assert_eq!(
         section_ids(&after, SectionKind::InMotion),
         vec![alpha, beta],
-        "the newest status change leads IN MOTION"
+        "the lower task number leads IN MOTION"
     );
     assert_eq!(model.selected_id(), Some(beta));
     assert_eq!(

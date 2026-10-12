@@ -20,7 +20,7 @@ Clicking a task while the quick-add line is open discards the draft and selects 
 
 ## Details
 
-Press `Tab` from quick-add to add notes, steps, a thread, or a scope. The draft uses the full pane and opens in Notes. Its forward field ring is Title → Notes → steps → **+ step** → Thread → Scope → Title; `Shift+Tab` reverses it. In a project preview, its title stays in the right-column header while Notes is active.
+Press `Tab` from quick-add to add notes, steps, a thread, or a scope. The draft uses the full pane and opens in Notes. Its forward field ring is Title → Notes → steps → **+ step** → Thread → Scope → Title; `Shift+Tab` reverses it.
 
 - `Shift+Enter` saves.
 - `Esc` returns to the quick-add line.
@@ -33,7 +33,7 @@ Scroll to reach steps below long notes. Typing brings the notes cursor back into
 | Where you add | Default destination |
 | --- | --- |
 | Project board | That project |
-| Desk or Projects | The board's launch repository inside Git; desk outside Git |
+| **all** or **desk** | Desk |
 | Herdr quick-capture popup | The focused pane's repository inside Git; desk outside Git |
 
 Use title tokens or the draft's scope control to change the destination. Archived projects cannot receive new tasks.

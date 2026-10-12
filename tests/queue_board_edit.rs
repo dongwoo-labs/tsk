@@ -472,13 +472,7 @@ fn task_form_unifies_palette_field_routes_scope_dropdown_and_atomic_save() {
 
     // The saved task left this project board for the desk: navigation is the user's
     // move now (no auto-reveal), so go there before the palette routes.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Desk),
-        None,
-    )
-    .expect("move to the desk");
+    model.set_selected_project(None);
     assert!(
         model.visible_ids().contains(&id),
         "the saved desk task is visible from the desk"

@@ -366,7 +366,7 @@ fn hit_at(hits: &QueueHitMap, pos: Position) -> Option<QueueHitTarget> {
 /// Rectangle that currently owns pointer input for this presentation.
 pub fn focused_mouse_area(model: &BoardModel, area: Rect) -> Rect {
     let responsive = model.responsive_geometry(area);
-    if model.project_right_seat_focused() || model.focused_surface() == FocusedSurface::Task {
+    if model.focused_surface() == FocusedSurface::Task {
         responsive.task_content()
     } else {
         responsive.board
@@ -395,9 +395,9 @@ fn wide_footer_contains(hits: &QueueHitMap, pos: Position) -> bool {
     hits.footer.is_some_and(|footer| footer.contains(pos))
 }
 
-/// Stage move that must run before dispatching a stage A click on the task column.
+/// Focus move that must run before dispatching a list-focused click on the detail column.
 ///
-/// Any press inside the preview column (above the shared footer) slides to G first; the
+/// Any press inside the detail column (above the shared footer) moves focus there first; the
 /// caller then dispatches the same click against the frame the user saw (AC-11).
 pub fn wide_mouse_focus_intent(
     model: &BoardModel,
@@ -406,7 +406,7 @@ pub fn wide_mouse_focus_intent(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-        || model.wide_stage() != WideStage::Split
+        || model.wide_stage() != WideStage::Board
         || model.input_mode() != BoardInputMode::Normal
     {
         return None;
@@ -418,12 +418,8 @@ pub fn wide_mouse_focus_intent(
     let pos = point(mouse.column, mouse.row);
     (responsive.task.contains(pos)
         && !wide_footer_contains(hits, pos)
-        && if model.projects_overview() {
-            model.selected_project_row().is_some()
-        } else {
-            model.selected_id().is_some()
-        })
-    .then_some(BoardIntent::StageRight)
+        && model.selected_id().is_some())
+    .then_some(BoardIntent::FocusDetail)
 }
 
 /// Map pointer input only through the live responsive surface and translated renderer hits.
@@ -440,13 +436,6 @@ pub fn map_responsive_board_mouse(
     let pos = point(mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-            if model.project_right_seat_focused() {
-                return responsive.task.contains(pos).then(|| {
-                    model
-                        .right_seat()
-                        .and_then(|right| map_board_mouse(right, hits, mouse))
-                })?;
-            }
             if model.input_mode() == BoardInputMode::Help {
                 return map_board_mouse(model, hits, mouse);
             }
@@ -461,31 +450,7 @@ pub fn map_responsive_board_mouse(
     // The shared footer belongs to whichever surface owns input: its verbs, status controls
     // and inputs route exactly as the single-pane frame's own bottom rows do.
     if wide_footer_contains(hits, pos) {
-        return if model.project_right_seat_focused() {
-            model
-                .right_seat()
-                .and_then(|right| map_board_mouse(right, hits, mouse))
-        } else {
-            map_board_mouse(model, hits, mouse)
-        };
-    }
-
-    // In the projects Rail the left side is still a clickable index, but every other control
-    // in that side only moves the slider back. The project board is a complete narrow board
-    // session, so its own mapper owns the translated hits and wheel behavior.
-    if model.project_right_seat_focused() {
-        if responsive.task.contains(pos) {
-            return model
-                .right_seat()
-                .and_then(|right| map_board_mouse(right, hits, mouse));
-        }
-        if responsive.board.contains(pos) {
-            if let Some(QueueHitTarget::ProjectRow(index)) = hit_at(hits, pos) {
-                return Some(BoardIntent::SelectProjectRow(index));
-            }
-            return Some(BoardIntent::StageLeft);
-        }
-        return None;
+        return map_board_mouse(model, hits, mouse);
     }
 
     let view_mode = matches!(
@@ -501,8 +466,8 @@ pub fn map_responsive_board_mouse(
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
         );
-    // A task-row click opens or retargets the task beside the board in A (the reducer
-    // moves the stage). In mark mode, a plain click stays on the board and toggles that row.
+    // A task-row click retargets the detail column and gives the list focus (the reducer
+    // moves it). In mark mode, a plain click stays on the list and toggles that row.
     if responsive.board.contains(pos)
         && model.input_mode() == BoardInputMode::Normal
         && model.mark_mode_active()
@@ -543,11 +508,8 @@ pub fn map_responsive_board_mouse(
 
     if responsive.board.contains(pos) {
         if model.focused_surface() == FocusedSurface::Task {
-            // The task owns input, so a press on the rail takes focus left.
-            if model.wide_stage() == WideStage::Rail {
-                return Some(BoardIntent::StageLeft);
-            }
-            return None;
+            // The detail owns input, so a press elsewhere on the list takes focus back.
+            return Some(BoardIntent::FocusList);
         }
         return map_board_mouse(model, hits, mouse);
     }
@@ -904,7 +866,6 @@ pub fn map_board_mouse(
         },
         BoardInputMode::Search => match hit_at(hits, pos) {
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
-            Some(QueueHitTarget::ProjectRow(index)) => Some(BoardIntent::SelectProjectRow(index)),
             Some(QueueHitTarget::TaskNumber(id)) => Some(BoardIntent::CopyTaskNumber(id)),
             Some(QueueHitTarget::Task(id)) => model
                 .visible_ids()
@@ -917,17 +878,16 @@ pub fn map_board_mouse(
         },
         BoardInputMode::Normal => match hit_at(hits, pos) {
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
-            Some(QueueHitTarget::NavChip) => match model.nav_chip_kind() {
-                Some(crate::ui::render::NavChipKind::ThreadFilter) => {
-                    Some(BoardIntent::OpenThreadFilterPicker)
-                }
-                Some(crate::ui::render::NavChipKind::ProjectsView) => {
-                    Some(BoardIntent::OpenProjectsViewPicker)
-                }
-                None => None,
-            },
+            Some(QueueHitTarget::ScopeChip) => Some(BoardIntent::OpenProjectSelector),
+            Some(QueueHitTarget::SortChip) => Some(BoardIntent::ToggleSort),
+            Some(QueueHitTarget::NavChip) => {
+                model
+                    .nav_chip_kind()
+                    .map(|crate::ui::render::NavChipKind::ThreadFilter| {
+                        BoardIntent::OpenThreadFilterPicker
+                    })
+            }
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
-            Some(QueueHitTarget::ProjectRow(index)) => Some(BoardIntent::SelectProjectRow(index)),
             Some(QueueHitTarget::Drawer) => Some(BoardIntent::ToggleDoneDrawer),
             Some(QueueHitTarget::ArchivedHeader) => Some(BoardIntent::ToggleArchivedGroup),
             Some(QueueHitTarget::InboxHeader) => Some(BoardIntent::ToggleInboxGroup),

@@ -85,7 +85,7 @@ test("demo rows lead with copyable T task identifiers", async () => {
   assert.doesNotMatch(demo, /#\$\{task\.number\}/);
 });
 
-test("docs and demo describe the wide stage slider and threshold", async () => {
+test("docs describe the wide list + detail layout; the demo keeps its slider until ported", async () => {
   const board = await read("../src/content/docs/docs/board.md");
   const keys = await read("../src/content/docs/docs/keys.md");
   const taskPage = await read("../src/content/docs/docs/task-page.md");
@@ -93,13 +93,14 @@ test("docs and demo describe the wide stage slider and threshold", async () => {
   const styles = await read("../src/styles/landing.css");
 
   assert.match(board, /110 usable columns/);
-  assert.match(board, /four-stage slider/);
-  assert.match(board, /\| Task \| Task details beside a narrow board rail \|/);
+  assert.match(board, /## Wide layout/);
+  assert.doesNotMatch(board, /four-stage slider|peek/i);
   assert.doesNotMatch(board, /bordered|cyan/);
-  assert.match(keys, /Wide stage slider/);
-  assert.match(keys, /\| Full screen \| No change \| Task with rail \|/);
-  assert.doesNotMatch(keys, /cyan/);
+  assert.match(keys, /## Wide layout/);
+  assert.match(keys, /\| Detail \| No change \| List \| List \| List \|/);
+  assert.doesNotMatch(keys, /Wide stage slider|cyan/);
   assert.match(taskPage, /110 usable columns/);
+  assert.doesNotMatch(taskPage, /wide-stage-slider|peek/i);
   assert.match(taskPage, /Click the task's `T` number to copy it/);
   assert.doesNotMatch(taskPage, /bordered panel/);
   assert.match(demo, /const WIDE_SPLIT_MIN_COLUMNS = 110;/);
@@ -212,7 +213,7 @@ test("docs keep the phone layout until the right TOC fits", async () => {
   assert.doesNotMatch(links, /install/);
 });
 
-test("attribution is peek-only in demo and static anatomy", async () => {
+test("attribution stays off board rows in the demo and the static anatomy", async () => {
   const demo = await read("../public/board-demo.js");
   const page = await read("../src/pages/index.astro");
   const styles = await read("../src/styles/landing.css");
@@ -221,7 +222,7 @@ test("attribution is peek-only in demo and static anatomy", async () => {
   assert.match(styles, /\.tsk-attribution\s*\{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tsk-row-main\s*\{[^}]*padding-right: 2ch;/);
   assert.doesNotMatch(page, /class="r meta"/);
-  assert.match(page, /└─ tsk/);
+  assert.doesNotMatch(page, /└─|s-peek/, "the static anatomy paints rows with the title only");
   assert.doesNotMatch(guide, /section headers, row meta/);
 });
 
@@ -282,7 +283,8 @@ test("hero board pins reveal callout copy", async () => {
   assert.match(css, /\.hero-side \.screen \{[^}]*white-space: pre-wrap/);
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);
   assert.doesNotMatch(css, /\.goto-label \{\s*display: none/);
-  assert.match(page, /Three tabs, always on screen/);
+  assert.match(page, /One board, scope and sort/);
+  assert.match(page, /<span class="on">board<\/span>[\s\S]*?desk ▾[\s\S]*?sort number ▾/);
   assert.match(page, /title: 'A task\.'/);
   assert.doesNotMatch(page, /title: 'A row\.'/);
   assert.match(page, /aria-label=\{pinLabel\(1\)\}/);

@@ -15,9 +15,8 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Enter / leave multi-select | `Shift+M` |
 | Mark current task, then move in multi-select | `Shift+↑` / `Shift+↓` |
 | Mark / unmark cursored task in multi-select | `Space` |
-| Open task full screen | `Enter` |
-| Peek / close peek below 110 columns | `→` / `←` or `l` / `h` |
-| Move through wide views | `→` / `←` or `l` / `h` |
+| Open task (focus the detail at 110+ columns) | `Enter` |
+| Focus detail / list at 110+ columns | `→` / `←` or `l` / `h` |
 | Add task | `+` |
 | Edit title | `ctrl+e` |
 | Start open or ready task | `ctrl+s` |
@@ -31,10 +30,10 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Archive / restore selected task (archived tasks live in the done drawer's archived group) | `ctrl+f` |
 | Open / close done drawer | `d` |
 | Fold or unfold the group: the inbox, or archived in the done drawer | `g` |
-| Desk / selected project / projects | `1` / `2` / `3` |
-| Project picker | `p` |
+| Board tab, list focus | `1` |
+| Scope picker: all, desk, or a project | `p` |
+| Sort by number / by project | `S` |
 | Project thread filter | `t` |
-| Cross-project view selector | `v` on Projects |
 | Search current board rows | `/` |
 | Command palette | `:` |
 | All shortcuts | `?` |
@@ -42,11 +41,11 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Quit outside text entry | `ctrl+q` |
 | Quit from board view | `ctrl+c` |
 
-`ctrl+q` quits from task views, Help, and pickers too, including the wide project preview. It does not quit while editing text, using board search, typing a quick-add line, or filtering the palette. Save or cancel any unsaved draft first. During save recovery, resolve the pending save instead.
+`ctrl+q` quits from task views, Help, and pickers too. It does not quit while editing text, using board search, typing a quick-add line, or filtering the palette. Save or cancel any unsaved draft first. During save recovery, resolve the pending save instead.
 
-`Esc` leaves multi-select and clears its marks first, then closes the current layer. At the full-board root on any tab, with multi-select inactive, it quits without confirmation rather than switching back to the desk. In either wide split, `Esc` closes the right column after any editor or overlay is dismissed. A further `Esc` at the full-board root quits. A project preview with unsaved work refuses to close. If narrowing the terminal hides the right column, the visible board/index is already at the root: `Esc` quits without an extra collapse, unless a parked draft blocks quitting.
+`Esc` leaves multi-select and clears its marks first, then closes the current layer. At the board root on any scope, with multi-select inactive, it quits without confirmation rather than switching scope. In the wide layout, `Esc` from the detail returns focus to the list after any editor or overlay is dismissed. A further `Esc` at the list root quits, unless a parked draft blocks quitting.
 
-`Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a lens change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
+`Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a scope change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
 When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` starts each eligible open or ready task and leaves started, blocked, and review tasks unchanged. Marked done tasks are skipped too, and the status row says so: `started N · skipped M done (ctrl+n or ctrl+o reopens them)`. Bulk block and review toggles send every target to blocked or review unless all targets already have that status, in which case they all return to ready. `ctrl+n` and `ctrl+o` can send done tasks directly to ready or open. One `ctrl+u` reverses an entire marked completion or deletion.
 
@@ -63,10 +62,11 @@ These keys apply in **view mode**:
 | Move selected step up or down | `alt+↑` / `alt+↓` |
 | Edit title or selected step | `ctrl+e` |
 | Change task status | Board status shortcuts above |
+| Next / previous task in list order | `J` / `K` |
 | Mark/remove selected step; otherwise confirm/delete task | `ctrl+x` |
 | Command palette | `:` |
 | All shortcuts | `?` |
-| Close task | `Esc` |
+| Close task (back to the list at 110+ columns) | `Esc` |
 | Quit the board | `ctrl+q` |
 
 Click a step to select it. Click **+ step** to add at the end. Field clicks become editable only after task editing starts.
@@ -117,41 +117,29 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 
 | Surface | Controls |
 | --- | --- |
-| Project picker | Arrows or `j`/`k` select; `Tab` or `←`/`→` switch tabs; `Enter` opens; `?` opens Help; `Esc` or `q` closes |
+| Scope picker | Arrows or `j`/`k` select **all**, **desk**, or a project; `Tab` or `←`/`→` switch tabs; `Enter` opens; `?` opens Help; `Esc` or `q` closes |
 | Project archive | `ctrl+f` archives; on archived tab, `ctrl+f` or `ctrl+u` restores |
-| Archived project view | `ctrl+u` restores; `Esc`, `p`, or `1`–`3` leaves |
-| Thread/view selector | Type or paste to filter; arrows or `Tab` select; `Enter` chooses; `Esc` closes |
+| Archived project view | `ctrl+u` restores; `Esc` or `p` leaves |
+| Thread filter | Type or paste to filter; arrows or `Tab` select; `Enter` chooses; `Esc` closes |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
 | Palette | Type to filter; arrows or `Tab` select; `Enter` runs; `Esc` closes |
 | Help | Type or paste to filter by key or action; arrows, page keys, or wheel scroll; `Esc` clears the search, then closes |
 | Archived-project launch prompt | `y` restores; `n` or `Esc` keeps archived; `?` opens Help |
 | Failed save | `r` or `Enter` retries; `c` or `Esc` cancels |
 
-`j` and `k` are text in board search, thread/view filters, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
+`j` and `k` are text in board search, the thread filter, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
 
-## Wide stage slider
+## Wide layout
 
-At 110 usable columns or wider, the arrow keys or `h` / `l` move through these views when you are not editing:
+At 110 usable columns or wider, the list and the selected task's detail always sit side by side. These keys move focus when you are not editing:
 
-| View | `→` / `l` | `←` / `h` | `Esc` |
-| --- | --- | --- | --- |
-| Board | Split | No change | Quit at root |
-| Split, board focused | Task with rail | Board | Board |
-| Task with rail | Full screen | Split | Split |
-| Full screen | No change | Task with rail | Return to the view remembered when opening |
+| Focus | `→` / `l` | `←` / `h` | `Enter` | `Esc` |
+| --- | --- | --- | --- | --- |
+| List | Detail | No change | Detail | Quit at root |
+| Detail | No change | List | List | List |
 
-`Enter` from the board opens full screen and remembers the previous view. `Tab` navigates task fields or steps; it does not switch wide views.
-
-On **Projects Overview** at 110+ columns, clicking a row or moving the index selection opens the Split preview automatically. The project slider is shorter:
-
-| Stage | `→` / `l` | `←` / `h` | `Esc` |
-| --- | --- | --- | --- |
-| Full board | Split preview | No change | Quit at root |
-| Split, index focused | Rail | Full board | Full board |
-| Rail, right board focused | Narrow board keys | Return to index | Return to index |
-
-The right seat keeps its own project-board cursor, multi-select, marked set, and state. Its `→` / `l` and `←` / `h` are peek controls, and `Enter` opens a task page inside the column. `ctrl+d`, `d`, `g`, `+`, and the other board actions apply to the right seat while it is focused.
+On the detail or a task page, `J` / `K` opens the next or previous task in list order. `Tab` navigates task fields or steps; it does not switch focus.
 
 `h` and `l` are navigation aliases only while a board or task view owns input. Text editors, quick-add, search, filters, the palette, and Help continue to insert them as ordinary characters.
 
-[Board views and mouse behavior](/docs/board/#wide-stage-slider).
+[Board views and mouse behavior](/docs/board/#wide-layout).

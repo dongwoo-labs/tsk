@@ -1,6 +1,5 @@
 //! Queue chrome, overlays, verb bar, and frame drawing hooks.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -26,7 +25,7 @@ use super::chrome::{notice_framed, row_width, BULK_DELETE_NOTICE_UNDO, DELETE_NO
 use super::commands::CommandSurface;
 use super::model::{
     project_option_label, project_scope_option_label, BoardForm, BoardInputMode, BoardLocation,
-    BoardModel, PickerTab, ProjectScopeOption, ProjectsView,
+    BoardModel, PickerTab, ProjectScopeOption,
 };
 
 /// Verb bar for the base board list.
@@ -110,19 +109,6 @@ pub fn board_verb_items(model: &BoardModel) -> Vec<VerbEntry<'static>> {
     };
     if let Some(task) = page_task {
         return task_page_verb_items(model, task);
-    }
-
-    if model.nav_tab() == crate::ui::queue::NavTab::Projects
-        && matches!(model.projects_view(), ProjectsView::Overview)
-    {
-        return vec![
-            OPEN,
-            VerbEntry {
-                key: "/",
-                label: "search",
-            },
-            HELP,
-        ];
     }
 
     // Header rows hold the selection: their own verbs only.
@@ -731,8 +717,8 @@ fn status_idle(model: &BoardModel, surface: BoardSurface, has_message: bool) -> 
 
 fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
     match surface {
+        BoardSurface::All => " all".to_string(),
         BoardSurface::Desk => " desk".to_string(),
-        BoardSurface::Projects | BoardSurface::ThreadView => " projects".to_string(),
         BoardSurface::Project => {
             let path = model.archived_focus().or_else(|| model.active_project());
             let name = path
@@ -749,53 +735,48 @@ fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
     }
 }
 
-/// The persistent navigation row's paint for this model: fixed tabs, slot 2's label,
-/// and the active destination's right-side control.
+/// The persistent navigation row's paint for this model: the board tab, the scope and sort
+/// controls, and the project scope's thread filter.
 fn nav_paint(model: &BoardModel) -> NavPaint {
-    let slot2_label = match &model.board_location {
-        // AC-41: the read-only focus says so in its slot.
+    let scope_label = match &model.board_location {
+        // AC-41: the read-only focus says so in its control.
         BoardLocation::ArchivedProject(path) => {
             format!("{} \u{b7} archived", project_option_label(path.as_path()))
         }
         BoardLocation::Project(path) => project_option_label(path.as_path()),
-        // Slot 2 carries the remembered project even while another destination is active.
-        BoardLocation::Desk | BoardLocation::Projects => model
-            .selected_project()
-            .map(project_option_label)
-            .unwrap_or_else(|| "select project".to_string()),
+        BoardLocation::All => "all".to_string(),
+        BoardLocation::Desk => "desk".to_string(),
     };
-    let chip = match (&model.board_location, model.projects_view()) {
-        (BoardLocation::Project(_), _) => Some(NavChipPaint {
+    let chip = match &model.board_location {
+        BoardLocation::Project(_) => Some(NavChipPaint {
             label: model.thread_filter().label(),
             kind: NavChipKind::ThreadFilter,
-        }),
-        (BoardLocation::Projects, ProjectsView::Overview) => Some(NavChipPaint {
-            label: "Overview".to_string(),
-            kind: NavChipKind::ProjectsView,
-        }),
-        (BoardLocation::Projects, ProjectsView::Thread(name)) => Some(NavChipPaint {
-            label: format!("#{name}"),
-            kind: NavChipKind::ProjectsView,
         }),
         _ => None,
     };
     NavPaint {
         active: model.nav_tab(),
-        slot2_label,
-        slot2_project: model.selected_project().is_some() || model.focus_is_archived(),
+        scope_label,
+        sort_label: model.sort().label(),
         chip,
     }
 }
 
-/// Which surface the list paints, from the destination and its View control.
+/// Which surface the list paints, from the scope.
 fn board_surface(model: &BoardModel) -> BoardSurface {
     match model.effective_lens() {
+        crate::ui::queue::BoardLens::All => BoardSurface::All,
         crate::ui::queue::BoardLens::Desk => BoardSurface::Desk,
-        crate::ui::queue::BoardLens::Projects => BoardSurface::Projects,
-        crate::ui::queue::BoardLens::ThreadView(_) => BoardSurface::ThreadView,
         crate::ui::queue::BoardLens::Project(_)
         | crate::ui::queue::BoardLens::ArchivedProject(_) => BoardSurface::Project,
     }
+}
+
+/// Project order paints a project heading wherever the project changes, on the scopes that
+/// mix projects.
+fn project_groups(model: &BoardModel, surface: BoardSurface) -> bool {
+    model.sort() == crate::ui::queue::BoardSort::Project
+        && matches!(surface, BoardSurface::All | BoardSurface::Desk)
 }
 
 /// Draw the board into any ratatui frame (live TTY or [`ratatui::backend::TestBackend`]).
@@ -953,11 +934,7 @@ impl<'a> OverlayPayloads<'a> {
                 input: crate::ui::render::BottomInputSlot {
                     text,
                     cursor_col,
-                    placeholder: if model.projects_overview() {
-                        "search projects…"
-                    } else {
-                        "search tasks…"
-                    },
+                    placeholder: "search tasks…",
                     refusal: None,
                     message: model.message(),
                     above_rows: Vec::new(),
@@ -1036,10 +1013,7 @@ impl<'a> OverlayPayloads<'a> {
             return Some(QueueOverlay::LaunchCard { name });
         }
         if model.input_mode() == BoardInputMode::ListPicker {
-            let title = match model.list_picker_kind() {
-                Some(crate::ui::board::ListPickerKind::ProjectsView) => "projects View",
-                _ => "thread filter",
-            };
+            let title = "thread filter";
             return Some(QueueOverlay::ScopeDropdown {
                 options: &self.list_picker_options,
                 selected: self
@@ -1163,31 +1137,19 @@ fn task_header_state(model: &BoardModel, form: &BoardForm, task: &crate::domain:
     format!("{status} · {project}")
 }
 
-/// The dim stage crumb and key hints for the wide status row.
+/// The dim focus crumb and key hints for the wide status row.
 fn wide_status_hint(model: &BoardModel) -> (Option<&'static str>, &'static str) {
-    if model.projects_overview() {
-        return match model.wide_stage() {
-            tier::WideStage::FullBoard => (None, "→ project pane"),
-            tier::WideStage::Split => (Some("index ▸ project"), "→ project · ← close"),
-            tier::WideStage::Rail if model.has_unsaved_work() => (Some("index ◂ project"), ""),
-            tier::WideStage::Rail => (Some("index ◂ project"), "← index"),
-            tier::WideStage::FullTask => (None, ""),
-        };
-    }
     // Save/cancel keys apply only while a field editor is actually open or the parked draft
-    // is dirty; a clean parked session shows the stage's normal keys again.
+    // is dirty; a clean session shows the focus keys again.
     let field_editor = model.open_field_edit().is_some()
         || model.input_mode() == BoardInputMode::FormScopeDropdown;
     let editing = field_editor || model.task_session_dirty();
-    // Stage navigation only: the verb row already carries the surface's keys, so the hint
+    // Focus navigation only: the verb row already carries the surface's keys, so the hint
     // never repeats them.
     match model.wide_stage() {
-        tier::WideStage::FullBoard => (None, "→ task pane"),
-        tier::WideStage::Split => (Some("board ▸ task"), "→ task · ← close"),
-        tier::WideStage::Rail if editing => (Some("board ◂ task"), ""),
-        tier::WideStage::Rail => (Some("board ◂ task"), "← board · → full page"),
-        tier::WideStage::FullTask if editing => (None, ""),
-        tier::WideStage::FullTask => (None, "← rail"),
+        tier::WideStage::Board => (None, "→ detail"),
+        tier::WideStage::Task if editing => (Some("detail"), ""),
+        tier::WideStage::Task => (Some("detail"), "← list · J/K next/prev"),
     }
 }
 
@@ -1239,13 +1201,7 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         marked_ids: model.marked_ids.clone(),
         nav: nav_paint(model),
         surface,
-        thread_labels: surface == BoardSurface::Project
-            && model.thread_filter() == &ThreadFilter::All,
-        show_project_meta: matches!(surface, BoardSurface::Desk | BoardSurface::ThreadView),
-        projects: &queue_view.projects,
-        projects_index: surface == BoardSurface::Projects
-            && matches!(model.projects_view(), ProjectsView::Overview),
-        projects_cursor: model.projects_cursor(),
+        project_groups: project_groups(model, surface),
         search_query: model.search_query(),
         search_pinned: model.search_pinned(),
         summary: None,
@@ -1257,7 +1213,6 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         verb_items: &verbs,
         now: SystemTime::now(),
         overlay,
-        detail_open: model.detail_open,
         list_scroll: model.list_scroll.get(),
         follow_list: model.follow_list.get(),
         archived_collapsed: model.archived_collapsed,
@@ -1300,26 +1255,17 @@ fn paint_board_form_toast(
     }
 }
 
-/// The wide stage slider: unboxed columns, one rule column, one shared footer.
+/// The wide layout: the list and the task detail side by side, one rule column, one shared
+/// footer.
 ///
-/// Stage 0 is the board at full width, A splits board and task page, G puts the dim rail
-/// beside the page, F is the page at full width. Focus follows the stage, and the footer
-/// (rule, status row with its stage crumb, verb bar) is painted once across the frame.
+/// Focus moves between the two columns; the footer (rule, status row with its focus crumb,
+/// verb bar) is painted once across the frame.
 fn draw_wide_board(
     frame: &mut Frame,
     model: &BoardModel,
     area: ratatui::layout::Rect,
     responsive: tier::ResponsiveGeometry,
 ) -> render::QueueHitMap {
-    if model.projects_overview()
-        && matches!(
-            model.wide_stage(),
-            tier::WideStage::Split | tier::WideStage::Rail
-        )
-    {
-        return draw_projects_wide_board(frame, model, area, responsive);
-    }
-    let stage = model.wide_stage();
     let task_focus = model.focused_surface() == tier::FocusedSurface::Task;
     let density = responsive.density;
     let queue_view = model.queue_view();
@@ -1420,13 +1366,7 @@ fn draw_wide_board(
         marked_ids: model.marked_ids.clone(),
         nav: nav_paint(model),
         surface,
-        thread_labels: surface == BoardSurface::Project
-            && model.thread_filter() == &ThreadFilter::All,
-        show_project_meta: matches!(surface, BoardSurface::Desk | BoardSurface::ThreadView),
-        projects: &queue_view.projects,
-        projects_index: surface == BoardSurface::Projects
-            && matches!(model.projects_view(), ProjectsView::Overview),
-        projects_cursor: model.projects_cursor(),
+        project_groups: project_groups(model, surface),
         search_query: model.search_query(),
         search_pinned: model.search_pinned(),
         summary: None,
@@ -1442,7 +1382,6 @@ fn draw_wide_board(
         } else {
             modal.clone().unwrap_or(QueueOverlay::None)
         },
-        detail_open: None,
         list_scroll: model.list_scroll.get(),
         follow_list: model.follow_list.get(),
         archived_collapsed: model.archived_collapsed,
@@ -1455,8 +1394,6 @@ fn draw_wide_board(
         overlay: task_overlay.clone(),
         list_scroll: 0,
         follow_list: false,
-        projects: &[],
-        projects_index: false,
         ..board_frame.clone()
     };
     let footer_frame = QueueFrameModel {
@@ -1472,25 +1409,14 @@ fn draw_wide_board(
     let board_area = responsive.board;
     if board_area.width > 0 {
         let board_geo = column_geo(board_area.width);
-        if stage == tier::WideStage::Rail {
-            let rail_frame = QueueFrameModel {
-                follow_list: true,
-                ..board_frame.clone()
-            };
-            let mut rail_hits =
-                render::draw_rail_frame(frame, &rail_frame, &board_geo, column_rect(board_area));
-            hits.regions.append(&mut rail_hits.regions);
-            hits.copyable.append(&mut rail_hits.copyable);
-        } else {
-            let (mut board_hits, painted_list_scroll) =
-                render::draw_queue_frame(frame, &board_frame, &board_geo, column_rect(board_area));
-            hits.regions.append(&mut board_hits.regions);
-            hits.copyable.append(&mut board_hits.copyable);
-            hits.help_max_scroll = hits.help_max_scroll.or(board_hits.help_max_scroll);
-            if let Some((scroll, max_scroll)) = painted_list_scroll {
-                model.list_scroll.set(scroll);
-                model.list_max_scroll.set(max_scroll);
-            }
+        let (mut board_hits, painted_list_scroll) =
+            render::draw_queue_frame(frame, &board_frame, &board_geo, column_rect(board_area));
+        hits.regions.append(&mut board_hits.regions);
+        hits.copyable.append(&mut board_hits.copyable);
+        hits.help_max_scroll = hits.help_max_scroll.or(board_hits.help_max_scroll);
+        if let Some((scroll, max_scroll)) = painted_list_scroll {
+            model.list_scroll.set(scroll);
+            model.list_max_scroll.set(max_scroll);
         }
     }
     if responsive.rule.width > 0 {
@@ -1528,308 +1454,5 @@ fn draw_wide_board(
     hits.copyable.append(&mut footer_hits.copyable);
     hits.footer = footer_hits.footer;
     paint_board_form_toast(frame, model, &footer_geo, area);
-    hits
-}
-
-/// Draw the projects overview's two-stage preview. The left seat remains the index, while the
-/// right seat is a nested project-board session whose footer becomes the shared footer in Rail.
-fn draw_projects_wide_board(
-    frame: &mut Frame,
-    model: &BoardModel,
-    area: ratatui::layout::Rect,
-    responsive: tier::ResponsiveGeometry,
-) -> render::QueueHitMap {
-    let stage = model.wide_stage();
-    let density = responsive.density;
-    let frame_geo = tier::resolve_density(area.width, area.height, density);
-    let outer_view = model.queue_view();
-    let outer_status = status_row_content(model);
-    let outer_payloads = OverlayPayloads::collect(model);
-    let outer_modal = if model.project_right_seat_focused() {
-        None
-    } else {
-        outer_payloads.modal(model, &frame_geo)
-    };
-
-    let right = model.right_seat();
-    let right_project_name = right
-        .and_then(BoardModel::active_project)
-        .map(project_option_label);
-    let right_view = right.map(BoardModel::queue_view);
-    let right_payloads = right.map(OverlayPayloads::collect);
-    let right_area = responsive.task_content();
-    // Modal payloads only need the right seat's row width here. The final column height is
-    // resolved below after the shared footer has reserved any bottom input rows.
-    let right_modal_geo = tier::resolve_density(right_area.width, area.height, density);
-    let right_modal = right.and_then(|right| {
-        right_payloads
-            .as_ref()
-            .and_then(|payloads| payloads.modal(right, &right_modal_geo))
-    });
-    let right_focused = stage == tier::WideStage::Rail && right.is_some();
-    let footer_needs_input = if right_focused {
-        right_modal.as_ref().is_some_and(render::has_bottom_input)
-            || right.is_some_and(|right| right.input_mode() == BoardInputMode::EditThread)
-    } else {
-        outer_modal.as_ref().is_some_and(render::has_bottom_input)
-    };
-    let footer_geo = render::bottom_input_geometry(frame_geo, footer_needs_input);
-    let column_height = footer_geo.rule_row.unwrap_or(area.height);
-    let column_geo = |width: u16| tier::resolve_column(width, column_height, area.height, density);
-    let column_rect = |rect: ratatui::layout::Rect| {
-        ratatui::layout::Rect::new(rect.x, rect.y, rect.width, column_height.min(rect.height))
-    };
-
-    let right_geo = (right_area.width > 0).then(|| column_geo(right_area.width));
-    let right_status = right.map(status_row_content);
-    let right_verbs = right.map(board_verb_items);
-    let right_task_overlay = match (right, right_geo.as_ref(), right_payloads.as_ref()) {
-        (Some(right), Some(geo), Some(payloads)) => right
-            .form
-            .as_ref()
-            .filter(|form| {
-                !(right.focused_surface() == tier::FocusedSurface::Board && form.is_task())
-            })
-            .map(|form| payloads.task_page(right, form, geo, true)),
-        _ => None,
-    };
-    let right_overlay = right_modal.clone().or(right_task_overlay.clone());
-
-    // A task page in the preview column uses the same two-row header as the ordinary wide task
-    // column. The page payload deliberately omits that header when `column` is true, so build it
-    // here before the shared footer is painted.
-    let mut right_header_identifier = None;
-    let mut right_header_title = String::new();
-    let mut right_header_state = String::new();
-    let mut right_header_glyph = "○";
-    let mut right_header_task = None;
-    let mut right_header_visible = false;
-    let mut right_header_title_cursor = None;
-    if let (Some(right), Some(geo), Some(_)) =
-        (right, right_geo.as_ref(), right_task_overlay.as_ref())
-    {
-        if let Some(form) = right.form.as_ref() {
-            if let Some(task_id) = form.task_id() {
-                if let Some(task) = right.tasks.iter().find(|task| task.id == task_id) {
-                    right_header_visible = true;
-                    right_header_task = Some(task.id);
-                    right_header_glyph = render::status_glyph(task.status);
-                    right_header_identifier = task.board_identifier();
-                    right_header_state = task_header_state(right, form, task);
-                }
-            } else if !form.is_task() {
-                // Expanded quick-add has no durable task to bind, but it still owns the right
-                // column. Keep its draft title in the same header slot as a saved task instead
-                // of letting draw_task_column replace it with the empty-pane hint.
-                right_header_visible = true;
-                right_header_glyph = render::status_glyph(HumanStatus::Ready);
-                right_header_state = editing_field(right)
-                    .map(|field| format!("editing {field}"))
-                    .unwrap_or_else(|| "ready".to_string());
-            }
-            if right_header_visible {
-                let width = geo.row_width as usize;
-                let glyph_width = render::display_width(right_header_glyph);
-                let identifier_width = right_header_identifier
-                    .as_deref()
-                    .map(render::display_width)
-                    .unwrap_or(0);
-                let state_width = render::display_width(&right_header_state) + 1;
-                let room = render::task_header_title_room(
-                    width,
-                    glyph_width,
-                    identifier_width,
-                    state_width,
-                );
-                if right.input_mode() == BoardInputMode::EditTitle {
-                    let (title, cursor) = escaped_line_window(&form.title, room.max(1));
-                    right_header_title = title;
-                    right_header_title_cursor = Some(cursor);
-                } else {
-                    right_header_title = form.title.value().to_string();
-                }
-            }
-        }
-    }
-    let right_header = right_header_visible.then_some(render::TaskColumnHeader {
-        glyph: right_header_glyph,
-        identifier: right_header_identifier.as_deref(),
-        identifier_task: right_header_task,
-        title: &right_header_title,
-        title_cursor_col: right_header_title_cursor,
-        state: &right_header_state,
-        bold: true,
-    });
-
-    let outer_verbs = board_verb_items(model);
-    let outer_frame = QueueFrameModel {
-        tasks: &model.tasks,
-        view: &outer_view,
-        selection_id: None,
-        marked_ids: BTreeSet::new(),
-        nav: nav_paint(model),
-        surface: BoardSurface::Projects,
-        thread_labels: false,
-        show_project_meta: false,
-        projects: &outer_view.projects,
-        projects_index: true,
-        projects_cursor: model.projects_cursor(),
-        search_query: model.search_query(),
-        search_pinned: model.search_pinned(),
-        summary: None,
-        context: status_idle(model, BoardSurface::Projects, outer_status.0.is_some()),
-        has_update_notice: model.update_notice().is_some(),
-        status_message: outer_status.0.as_deref(),
-        status_undo_offset: outer_status.1,
-        status_undo_width: outer_status.2,
-        verb_items: &outer_verbs,
-        now: SystemTime::now(),
-        overlay: outer_modal.clone().unwrap_or(QueueOverlay::None),
-        detail_open: None,
-        list_scroll: model.list_scroll.get(),
-        follow_list: model.follow_list.get(),
-        archived_collapsed: model.archived_collapsed,
-        archived_header_selected: false,
-        inbox_collapsed: model.inbox_collapsed,
-        inbox_header_selected: false,
-        rows_dim: false,
-    };
-
-    let right_frame = right.and_then(|right| {
-        let view = right_view.as_ref()?;
-        let status = right_status.as_ref()?;
-        let verbs = right_verbs.as_ref()?;
-        Some(QueueFrameModel {
-            tasks: &right.tasks,
-            view,
-            selection_id: right.saved_task.or(right.selection_id),
-            marked_ids: right.marked_ids.clone(),
-            nav: nav_paint(right),
-            surface: BoardSurface::Project,
-            thread_labels: right.thread_filter() == &ThreadFilter::All,
-            show_project_meta: false,
-            projects: &[],
-            projects_index: false,
-            projects_cursor: 0,
-            search_query: right.search_query(),
-            search_pinned: right.search_pinned(),
-            summary: None,
-            context: status_idle(right, BoardSurface::Project, status.0.is_some()),
-            has_update_notice: right.update_notice().is_some(),
-            status_message: status.0.as_deref(),
-            status_undo_offset: status.1,
-            status_undo_width: status.2,
-            verb_items: verbs,
-            now: SystemTime::now(),
-            overlay: right_overlay.clone().unwrap_or(QueueOverlay::None),
-            detail_open: (stage == tier::WideStage::Rail)
-                .then_some(right.detail_open())
-                .flatten(),
-            list_scroll: right.list_scroll.get(),
-            follow_list: right.follow_list.get(),
-            archived_collapsed: right.archived_collapsed,
-            archived_header_selected: right.archived_header_selected(),
-            inbox_collapsed: right.inbox_collapsed,
-            inbox_header_selected: right.inbox_header_selected(),
-            rows_dim: stage == tier::WideStage::Split || right.focus_is_archived(),
-        })
-    });
-    let footer_frame = if right_focused {
-        right_frame
-            .as_ref()
-            .expect("project rail has a right seat")
-            .clone()
-    } else {
-        outer_frame.clone()
-    };
-
-    let mut hits = render::QueueHitMap::default();
-    let board_area = responsive.board;
-    if board_area.width > 0 {
-        let board_geo = column_geo(board_area.width);
-        let mut board_hits = if stage == tier::WideStage::Rail {
-            render::draw_rail_frame(frame, &outer_frame, &board_geo, column_rect(board_area))
-        } else {
-            let (board_hits, painted_list_scroll) =
-                render::draw_queue_frame(frame, &outer_frame, &board_geo, column_rect(board_area));
-            if let Some((scroll, max_scroll)) = painted_list_scroll {
-                model.list_scroll.set(scroll);
-                model.list_max_scroll.set(max_scroll);
-            }
-            board_hits
-        };
-        hits.regions.append(&mut board_hits.regions);
-        hits.copyable.append(&mut board_hits.copyable);
-        hits.help_max_scroll = hits.help_max_scroll.or(board_hits.help_max_scroll);
-    }
-    if responsive.rule.width > 0 {
-        let rule = column_rect(responsive.rule);
-        for y in rule.top()..rule.bottom() {
-            frame.render_widget(
-                Paragraph::new(render::paint_bounded_line("│", 1, render::style_dim())),
-                ratatui::layout::Rect::new(rule.x, y, 1, 1),
-            );
-        }
-    }
-    if let (Some(right_frame), Some(right_geo)) = (right_frame.as_ref(), right_geo.as_ref()) {
-        let (mut right_hits, painted_list_scroll) =
-            if let Some(task_overlay) = right_task_overlay.as_ref() {
-                let task_frame = QueueFrameModel {
-                    overlay: task_overlay.clone(),
-                    ..right_frame.clone()
-                };
-                (
-                    render::draw_task_column(
-                        frame,
-                        &task_frame,
-                        right_geo,
-                        column_rect(right_area),
-                        right_header,
-                        right_modal.as_ref(),
-                    ),
-                    None,
-                )
-            } else if let Some(project_name) = right_project_name.as_deref() {
-                render::draw_project_preview_frame(
-                    frame,
-                    right_frame,
-                    right_geo,
-                    column_rect(right_area),
-                    project_name,
-                    stage == tier::WideStage::Rail,
-                )
-            } else {
-                render::draw_queue_frame_without_selector(
-                    frame,
-                    right_frame,
-                    right_geo,
-                    column_rect(right_area),
-                )
-            };
-        hits.regions.append(&mut right_hits.regions);
-        hits.copyable.append(&mut right_hits.copyable);
-        hits.help_max_scroll = hits.help_max_scroll.or(right_hits.help_max_scroll);
-        if let Some(right) = right {
-            if let Some((scroll, max_scroll)) = painted_list_scroll {
-                right.list_scroll.set(scroll);
-                right.list_max_scroll.set(max_scroll);
-            }
-            if let Some(max_scroll) = right_hits.help_max_scroll {
-                right.help_max_scroll.set(max_scroll);
-            }
-        }
-    }
-
-    let (crumb, keys) = wide_status_hint(model);
-    let mut footer_hits = render::draw_queue_footer(
-        frame,
-        &footer_frame,
-        &footer_geo,
-        area,
-        Some(render::StatusHint { crumb, keys }),
-    );
-    hits.regions.append(&mut footer_hits.regions);
-    hits.copyable.append(&mut footer_hits.copyable);
-    hits.footer = footer_hits.footer;
     hits
 }

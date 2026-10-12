@@ -19,10 +19,9 @@ pub const CATALOG: [Guide; 4] = [
         title: "Welcome to tsk, start here",
         notes: "Hi. This is your board. Every task you make lives here. Take a minute with this one.\n\
                 \n\
-                **Three tabs, always**\n\
-                - `1` is your desk. It shows anything that needs you or is in motion, from every project, plus the ready and open tasks that belong to no project.\n\
-                - `2` is one project. Press `p` to pick it.\n\
-                - `3` lists every project. `Enter` on a row opens that project's board. On a terminal 110 columns or wider, moving the cursor previews the project beside the list and `→` makes that preview live.\n\
+                **One board, three scopes**\n\
+                - `p` picks the scope. `all` shows every task from every project and your desk. `desk` shows anything that needs you or is in motion, from every project, plus the ready and open tasks that belong to no project. A project name shows only that project.\n\
+                - Rows follow task numbers. `S` groups them by project instead, and `S` again goes back.\n\
                 \n\
                 **Three sections, decided by status**\n\
                 - **NEEDS YOU** holds `blocked` and `review` tasks. Something is waiting on you. This task is in review, so it sits here until you act on it.\n\
@@ -32,13 +31,13 @@ pub const CATALOG: [Guide; 4] = [
                 \n\
                 **Moving around**\n\
                 - `j` and `k` or the arrows move the selection. `Enter` opens a task, `Esc` comes back.\n\
-                - `/` searches whatever the tab shows. `Enter` pins the filter, `Esc` clears it.\n\
+                - `/` searches whatever the board shows. `Enter` pins the filter, `Esc` clears it.\n\
                 - Status keys use Ctrl, so a stray letter never changes anything. `ctrl+s` starts, `ctrl+n` picks a task for ready, `ctrl+o` sends it to the inbox, `ctrl+b` blocks, `ctrl+r` marks review or takes it back to ready, and `ctrl+d` finishes.\n\
                 - `ctrl+u` undoes the last change.",
         status: HumanStatus::Review,
         steps: &[
             ("Open this task with Enter", true),
-            ("Press Esc, then 1, 2, and 3 to visit each tab", false),
+            ("Press Esc, then p to try each scope", false),
             ("Press ctrl+r and watch this task move to ON DECK", false),
         ],
     },
@@ -55,9 +54,9 @@ pub const CATALOG: [Guide; 4] = [
                 - Type `!t release` in the title to tag it with the thread `release`. Threads group related work inside one project, and the project board can filter by them.\n\
                 \n\
                 **Read one**\n\
-                - `→` peeks at the notes under the task. `←` or `Esc` closes the peek.\n\
                 - `Enter` opens the full page. `Esc` comes back.\n\
-                - On a terminal 110 columns or wider there is no peek. `→` slides the task page open beside the board, `→` again gives it more room, and `←` slides it back.\n\
+                - On a terminal 110 columns or wider the selected task always shows beside the list. `→` or `l` moves into it, and `←` or `h` moves back.\n\
+                - On the page, `J` and `K` open the next and previous task in the list.\n\
                 \n\
                 **Change one**\n\
                 - On the page, `ctrl+e` edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
@@ -102,7 +101,7 @@ pub const CATALOG: [Guide; 4] = [
     Guide {
         catalog_id: "guide.wrap-up",
         title: "That's the tour, clear these when you're ready",
-        notes: "You know the tabs, the sections, and how a task moves between them. That is most of tsk.\n\
+        notes: "You know the scopes, the sections, and how a task moves between them. That is most of tsk.\n\
                 \n\
                 **Clear these starter tasks**\n\
                 Any of these works. A cleared starter task never comes back.\n\

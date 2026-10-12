@@ -7,9 +7,11 @@ Read notes and steps, then edit the task when you need to change it.
 
 ## Open
 
-Double-click a task or select it and press `Enter`. A double-click follows the task you first clicked, even when the first click resizes the columns.
+Double-click a task or select it and press `Enter`.
 
-At 110 usable columns or wider, click a task or press `→` / `l` to open details beside the board, keeping board focus. Use `→` / `l` and `←` / `h` to move between [board and task views](/docs/board/#wide-stage-slider). From the board-focused split, `Esc` closes the details column, keeping any parked draft. Press `Enter` from the board for full screen; `Esc` or click **esc close** returns. In view mode, `ctrl+q` quits the whole board rather than closing the page; save or cancel unsaved edits first.
+At 110 usable columns or wider, the selected task's details always show beside the list. Press `→` / `l` or `Enter`, or click inside the details, to focus them; `←` / `h` or `Esc` returns focus to the list and keeps any parked draft ([wide layout](/docs/board/#wide-layout)). Below 110 columns the page takes the whole pane; `Esc` or click **esc close** returns. In view mode, `ctrl+q` quits the whole board rather than closing the page; save or cancel unsaved edits first.
+
+Press `J` / `K` on the page to open the next or previous task in the list's order. A draft with unsaved changes refuses to switch.
 
 Click the task's `T` number to copy it. The page shows its status, notes, steps, project, thread, and dates. Its footer puts `#thread` before the project, then the created and updated dates. Long text wraps.
 
@@ -83,5 +85,3 @@ Notes display basic Markdown. Editing shows the original text.
 | Triple-backtick fenced block | Dim block; inline styling disabled |
 
 Unmatched asterisks and underscores inside words stay literal. Markdown checkboxes such as `- [ ]` are text; use [steps](/docs/steps/) for an interactive checklist.
-
-Peeks use the same formatting, dimmed. Narrow-pane peeks show up to five wrapped lines; open the task for the full notes.

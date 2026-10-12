@@ -7,7 +7,6 @@ use tsk_tui::{
     ui::{
         apply_intent, draw_board,
         input::{map_key, route_responsive_key, ResponsiveKeyRoute},
-        queue::NavTab,
         BoardIntent, BoardModel,
     },
 };
@@ -105,7 +104,7 @@ fn export_reference(text: &str, width: u16, name: &str) {
 }
 
 #[test]
-fn shared_fixture_first_flow_and_peek_references() {
+fn shared_fixture_first_flow_and_detail_references() {
     fixture_flow(false);
 }
 
@@ -127,32 +126,36 @@ fn fixture_flow(export: bool) {
         let mut state: DomainState =
             serde_json::from_str(include_str!("fixtures/demo-parity/store.json")).unwrap();
         let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
-        apply_intent(
-            &mut state,
-            &mut model,
-            BoardIntent::SelectNavTab(NavTab::Desk),
-            None,
-        )
-        .unwrap();
-        assert!(!capture(&model, width, "initial").contains("IN MOTION"));
-        key(
-            &mut state,
-            &mut model,
-            KeyCode::Right,
-            KeyModifiers::NONE,
-            width,
-        );
-        let peek = capture(&model, width, "project-peek-or-split");
-        if width < 110 {
-            assert!(peek.contains("└─ tsk-parity"));
+        model.set_selected_project(None);
+        let initial = capture(&model, width, "initial");
+        assert!(!initial.contains("IN MOTION"));
+        if width >= 110 {
+            // Wide frames always pair the list with the selected task's detail.
+            assert!(initial.contains("Confirm the wording before release."));
+            key(
+                &mut state,
+                &mut model,
+                KeyCode::Right,
+                KeyModifiers::NONE,
+                width,
+            );
+            assert_eq!(
+                model.input_mode(),
+                tsk_tui::ui::board::BoardInputMode::TaskPage
+            );
+            capture(&model, width, "detail-focus");
+            key(
+                &mut state,
+                &mut model,
+                KeyCode::Left,
+                KeyModifiers::NONE,
+                width,
+            );
+            assert_eq!(
+                model.input_mode(),
+                tsk_tui::ui::board::BoardInputMode::Normal
+            );
         }
-        key(
-            &mut state,
-            &mut model,
-            KeyCode::Left,
-            KeyModifiers::NONE,
-            width,
-        );
         key(
             &mut state,
             &mut model,
@@ -225,45 +228,16 @@ fn fixture_flow(export: bool) {
             width,
         );
         assert!(capture(&model, width, "back").contains("IN MOTION"));
-        if width < 110 {
-            apply_intent(
-                &mut state,
-                &mut model,
-                BoardIntent::SelectNavTab(NavTab::ProjectBoard),
-                None,
-            )
-            .unwrap();
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Down,
-                KeyModifiers::NONE,
-                width,
-            );
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Right,
-                KeyModifiers::NONE,
-                width,
-            );
-            assert!(capture(&model, width, "thread-peek").contains("└─ #release"));
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Down,
-                KeyModifiers::NONE,
-                width,
-            );
-            key(
-                &mut state,
-                &mut model,
-                KeyCode::Right,
-                KeyModifiers::NONE,
-                width,
-            );
-            assert!(!capture(&model, width, "unlabeled-peek").contains("└─"));
-        }
+        // `S` regroups the same rows by project without changing any task.
+        key(
+            &mut state,
+            &mut model,
+            KeyCode::Char('S'),
+            KeyModifiers::NONE,
+            width,
+        );
+        let grouped = capture(&model, width, "project-order");
+        assert!(grouped.contains("tsk-parity"), "{grouped}");
     }
 }
 
@@ -273,13 +247,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
     let mut state: DomainState =
         serde_json::from_str(include_str!("fixtures/demo-parity/store.json")).unwrap();
     let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
-    apply_intent(
-        &mut state,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Desk),
-        None,
-    )
-    .unwrap();
+    model.set_selected_project(None);
     let mut terminal = Terminal::new(TestBackend::new(78, 24)).unwrap();
     terminal
         .draw(|f| {
@@ -298,8 +266,8 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
         buffer
             .content
             .iter()
-            .any(|cell| cell.symbol() == "d" && cell.modifier.contains(Modifier::UNDERLINED)),
-        "active desk tab must be underlined"
+            .any(|cell| cell.symbol() == "b" && cell.modifier.contains(Modifier::UNDERLINED)),
+        "active board tab must be underlined"
     );
     let frame = capture(&model, 78, "selection-style");
     assert!(
@@ -313,11 +281,11 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
             row.iter()
                 .map(|cell| cell.symbol())
                 .collect::<String>()
-                .contains("desk")
+                .contains("board")
         })
         .unwrap();
     let text = tab_row.iter().map(|cell| cell.symbol()).collect::<String>();
-    for (label, active) in [("desk", true), ("tsk-parity", false), ("projects", false)] {
+    for (label, active) in [("board", true), ("desk", false), ("sort number", false)] {
         let start = text[..text.find(label).unwrap()].chars().count();
         for cell in &tab_row[start..start + label.len()] {
             assert_eq!(

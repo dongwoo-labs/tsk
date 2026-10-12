@@ -142,7 +142,11 @@ fn archived_non_git_directory_opens_desk_with_the_existing_archive_card() {
     };
     let mut model = BoardModel::from_domain_for_snapshot(&state, &snapshot);
 
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::Desk);
+    assert_eq!(
+        model.active_project(),
+        None,
+        "the board opens on every scope"
+    );
     assert_eq!(
         model.selected_project(),
         None,

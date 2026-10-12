@@ -9,10 +9,24 @@ the GitHub release notes verbatim.
 
 ## Unreleased
 
+### Breaking
+
+- The board has one **board** tab with a scope control (`p`: **all**, **desk**, or one project) and a sort control. The **desk** / project / **projects** tabs, `2` and `3`, the Projects overview and its preview, the cross-project thread view (`v`), the narrow-pane peek, and the four-stage wide slider are gone. `1` returns to the board tab and its list. Outside Git the board opens on **all**.
+
 ### Added
+
+- Board rows follow task numbers. `S` (or a click on the sort control) groups them by project instead, desk first, with a dim project name over each group on **all** and **desk**. The sort is session-only and never changes a task; `tsk list` keeps its own order.
+- At 110 columns or wider the board is always a list beside the selected task's detail. `→` / `l` or `Enter` focuses the detail, `←` / `h` or `Esc` returns to the list, and moving the cursor updates the detail.
+- `J` / `K` on the detail or task page opens the next or previous task in list order. A draft with unsaved changes refuses to switch.
 
 - `tsk import linear` imports your Linear issues as tasks, one way. Set `LINEAR_API_KEY`, then filter with `--team`, `--linear-project`, `--assignee me|<email>|any` (default `me`), `--state` (Linear state types, default `backlog,unstarted,started`) and `--limit` (default 100), and choose the destination with `-p` or `--desk`. Each task is titled `<IDENTIFIER> <title>` and its notes start with a `Linear: <IDENTIFIER> <url>` line, which keeps a rerun from adding the same issue twice. Started states map to `started` (or `review` when the state name says review), completed to `done`, and canceled issues are skipped. Existing copies stay as you left them unless you pass `--update`; `--dry-run` shows what would change and `--json` prints a report. macOS and Linux only for now.
 - Reorder steps. On the task page, `alt+↑` / `alt+↓` moves the selected step (also **move step up** / **move step down** in the `:` palette, which now opens on the task page too), and `ctrl+a` with a step selected adds the new step directly below it. From the CLI, `tsk steps T12 move <short-id> --before|--after <short-id>` or `--first`/`--last`, and `tsk steps T12 add "…"` with the same place flags. A moved step keeps its short ID and checked state. Thanks @LukasGold (#159).
+
+### Changed
+
+- Board rows show the status glyph, number, and title only. A task's project and thread appear in its detail.
+- Board sections list rows by task number. A status change moves a task to its new section without putting it on top.
+- Quick-add from **all** or **desk** goes to your desk; from a project board it goes to that project. Restoring an archived launch project with `y` opens its board.
 
 ### Fixed
 

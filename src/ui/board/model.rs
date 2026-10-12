@@ -18,9 +18,8 @@ use crate::ui::input::{
     SAVE_RECOVERY_HELP_LINE,
 };
 use crate::ui::mouse::BoardPopup;
-pub use crate::ui::queue::BoardTab;
 use crate::ui::queue::{
-    self, visible_task_ids, BoardLens, NavTab, ProjectRow, QueueView, SectionKind, ThreadFilter,
+    self, visible_task_ids, BoardLens, BoardSort, NavTab, QueueView, SectionKind, ThreadFilter,
 };
 use crate::ui::selection;
 use crate::ui::terminal_text;
@@ -154,52 +153,43 @@ pub enum PickerTab {
     Archived,
 }
 
-/// One session-only destination offered by the project selector (`P`).
+/// One session-only board scope offered by the scope picker (`p`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectScopeOption {
-    /// Home board on the Desk tab.
+    /// Every live scope, desk included.
+    All,
+    /// Tasks that belong to no project.
     Home,
     Project(PathBuf),
 }
 
-/// Session-only board location: the three persistent destinations plus the read-only
-/// archived focus. Tab digits never shift meaning; slot 2 carries the selected project.
+/// Session-only board scope, plus the read-only archived focus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BoardLocation {
-    /// Tab 1: the global overview plus the desk backlog.
+    /// Every live scope: the desk and every live project.
+    All,
+    /// Tasks that belong to no project.
     Desk,
-    /// Tab 2: the selected project's board (the old project focus).
+    /// One project's tasks.
     Project(PathBuf),
-    /// Tab 3: the projects index, or its cross-project thread View.
-    Projects,
     /// Read-only focus on an archived project, opened with Enter from the picker's
-    /// archived tab (AC-41). Session-only: leaving it hides those tasks again. It
-    /// occupies slot 2 while open.
+    /// archived tab (AC-41). Session-only: leaving it hides those tasks again.
     ArchivedProject(PathBuf),
 }
 
 impl BoardLocation {
     pub(super) fn lens(&self) -> BoardLens<'_> {
         match self {
+            Self::All => BoardLens::All,
             Self::Desk => BoardLens::Desk,
             Self::Project(path) => BoardLens::Project(path.as_path()),
-            Self::Projects => BoardLens::Projects,
             Self::ArchivedProject(path) => BoardLens::ArchivedProject(path.as_path()),
         }
     }
 
     pub(super) fn at_home(&self) -> bool {
-        matches!(self, Self::Desk | Self::Projects)
+        matches!(self, Self::All | Self::Desk)
     }
-}
-
-/// The projects index's View control: the project overview (default) or one
-/// cross-project thread's flat task board.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum ProjectsView {
-    #[default]
-    Overview,
-    Thread(String),
 }
 
 /// Which searchable list picker is open.
@@ -207,8 +197,6 @@ pub enum ProjectsView {
 pub enum ListPickerKind {
     /// The project board's thread filter (bare `t`).
     ThreadFilter,
-    /// The projects index's View selector (bare `v`).
-    ProjectsView,
 }
 
 /// One choice inside a searchable list picker.
@@ -219,17 +207,17 @@ pub struct ListPickerOption {
     pub value: ListPickerValue,
 }
 
-/// What confirming a list-picker option applies.
+/// What confirming a list-picker option applies. The thread filter is the only list picker
+/// left, so every variant names a thread choice.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum ListPickerValue {
     ThreadAll,
     ThreadNamed(String),
     ThreadWithout,
-    ProjectsOverview,
-    ProjectsThread(String),
 }
 
-/// An open searchable list picker (thread filter / projects view). Session-only.
+/// An open searchable list picker (thread filter). Session-only.
 #[derive(Debug, Clone)]
 pub(super) struct ListPickerState {
     pub kind: ListPickerKind,
@@ -719,25 +707,21 @@ pub struct BoardModel {
     pub(super) this_repo: Option<PathBuf>,
     /// Session board location (active surface). Not durable.
     pub(super) board_location: BoardLocation,
-    /// Slot 2 identity, independent from the active surface (for example after switching to
-    /// Desk or the Projects index). Not durable.
+    /// The last project scope picked, kept for quick-add and the picker highlight. Not durable.
     pub(super) selected_project: Option<PathBuf>,
-    /// Wide-slider stage. Focus and single-pane presentation derive from it. Session-only.
+    /// Focus owner: the list or the task detail. Single-pane presentation derives from it
+    /// below 110 columns. Session-only.
     pub(super) wide_stage: WideStage,
-    /// Stage `Enter` (or a row double-click) left for the full task page; `Esc` returns there.
-    pub(super) stage_origin: Option<WideStage>,
+    /// Session-only row order of every section (`S`).
+    pub(super) sort: BoardSort,
     /// The project board's session thread filter. It narrows every status section and
     /// is cleared whenever the selected project changes.
     pub(super) thread_filter: ThreadFilter,
-    /// The projects index's View: the project overview, or one cross-project thread.
-    pub(super) projects_view: ProjectsView,
     /// The active lens's content-search query. Session-only.
     pub(super) search_query: String,
     /// Whether Enter pinned the query and returned input to the board. Session-only.
     pub(super) search_pinned: bool,
-    /// The projects index's selected row cursor. Session-only.
-    pub(super) projects_selected: usize,
-    /// Open searchable list picker (thread filter / projects view). Session-only.
+    /// Open searchable list picker (thread filter). Session-only.
     pub(super) list_picker: Option<ListPickerState>,
     /// Whether the done drawer lists completed tasks. Session-only.
     pub(super) drawer_open: bool,
@@ -751,8 +735,6 @@ pub struct BoardModel {
     pub(super) launch_card_shown: bool,
     /// Session quick-add default override (desk after "keep archived"). Session-only.
     pub(super) session_default_scope: Option<TaskScope>,
-    /// Accordion/takeover detail open on this task id, if any. Session-only.
-    pub(super) detail_open: Option<Uuid>,
     /// Id-pinned selection into the queue-visible row set.
     pub(super) selection_id: Option<Uuid>,
     /// Whether explicit task marking controls own Space, shifted arrows, and row clicks.
@@ -762,13 +744,6 @@ pub struct BoardModel {
     /// The last task-row click (time + id), kept only to detect a double-click that opens
     /// the task page. Presentation-only, never persisted.
     pub(super) last_row_click: Option<(Instant, Uuid)>,
-    /// The last all-projects group-header click (time + project path), kept only to detect
-    /// a double-click that narrows the board to that project. Presentation-only, never
-    /// persisted.
-    pub(super) last_project_header_click: Option<(Instant, PathBuf)>,
-    /// The last projects-index row click (time + row path), kept only to detect a
-    /// double-click that opens the project in slot 2. Presentation-only, never persisted.
-    pub(super) last_project_row_click: Option<(Instant, PathBuf)>,
     /// Focused help-card search query. Session-only, reset on open and close.
     pub(super) help_query: String,
     /// First visible row of the filtered help-card key list. Session-only, reset on query.
@@ -850,13 +825,7 @@ pub struct BoardModel {
     pub(super) command_query: String,
     /// Selection into the currently visible command set.
     pub(super) command_selected: usize,
-    /// The narrow project board that owns the right column while the projects overview is in
-    /// Split or Rail. It is a full board session rather than a second durable state document.
-    pub(super) right_seat: Option<Box<BoardModel>>,
-    /// Marks a nested board so its own FullBoard stage still behaves as a narrow live surface.
-    pub(super) preview_seat: bool,
-    /// Whether the last app-boundary presentation was wide enough to paint a split frame.
-    /// A parked preview keeps its session while input returns to the painted index.
+    /// Whether the last app-boundary presentation was wide enough to paint list and detail.
     pub(super) frame_wide: Cell<bool>,
 }
 
@@ -873,22 +842,20 @@ pub enum SaveResolution {
 }
 
 impl BoardModel {
-    /// Build a board model with queue-local session state only. The desk is the
-    /// default destination; [`Self::from_domain`] applies directory-aware startup.
+    /// Build a board model with queue-local session state only. Every scope is the
+    /// default; [`Self::from_domain`] applies directory-aware startup.
     pub fn from_tasks(tasks: Vec<Task>, this_repo: Option<PathBuf>) -> Self {
         let mut model = Self {
             tasks,
             archived_projects: BTreeSet::new(),
             this_repo: this_repo.clone(),
-            board_location: BoardLocation::Desk,
+            board_location: BoardLocation::All,
             selected_project: this_repo,
-            wide_stage: WideStage::FullBoard,
-            stage_origin: None,
+            wide_stage: WideStage::Board,
+            sort: BoardSort::Number,
             thread_filter: ThreadFilter::All,
-            projects_view: ProjectsView::Overview,
             search_query: String::new(),
             search_pinned: false,
-            projects_selected: 0,
             list_picker: None,
             drawer_open: false,
             archived_collapsed: true,
@@ -896,13 +863,10 @@ impl BoardModel {
             launch_card: None,
             launch_card_shown: false,
             session_default_scope: None,
-            detail_open: None,
             selection_id: None,
             mark_mode: false,
             marked_ids: BTreeSet::new(),
             last_row_click: None,
-            last_project_header_click: None,
-            last_project_row_click: None,
             help_query: String::new(),
             help_scroll: 0,
             help_max_scroll: Cell::new(usize::MAX),
@@ -928,8 +892,6 @@ impl BoardModel {
             surface: CommandSurface::None,
             command_query: String::new(),
             command_selected: 0,
-            right_seat: None,
-            preview_seat: false,
             frame_wide: Cell::new(true),
             mouse_press: None,
             mouse_press_scroll: None,
@@ -1162,36 +1124,17 @@ impl BoardModel {
         // not silently change which preview seat the user is looking at.
         let previous = self.selection_id;
         let previous_visible = self.visible_ids();
-        let previous_project_path = self
-            .projects_overview()
-            .then(|| self.selected_project_row().map(|row| row.path))
-            .flatten();
         let previous_id_set: HashSet<Uuid> = self.tasks.iter().map(|task| task.id).collect();
         self.tasks = state.tasks().to_vec();
         self.archived_projects = state.archived_projects();
-        if let Some(previous_path) = previous_project_path.as_deref() {
-            let projects = self.queue_view().projects;
-            if let Some(index) = projects
-                .iter()
-                .position(|row| paths_equivalent(&row.path, previous_path))
-            {
-                self.projects_selected = index;
-            } else {
-                self.projects_selected =
-                    self.projects_selected.min(projects.len().saturating_sub(1));
-            }
-        }
-        if let Some(right) = self.right_seat.as_mut() {
-            right.sync_from_domain(state);
-        }
         let new_ids: Vec<Uuid> = self
             .tasks
             .iter()
             .filter(|task| !previous_id_set.contains(&task.id))
             .map(|task| task.id)
             .collect();
-        // A merge (or this board's own picker verb) may archive the project slot 2 is
-        // showing: reset the destination to the desk and name the project on the status
+        // A merge (or this board's own picker verb) may archive the project the board is
+        // showing: reset the scope to every project and name the project on the status
         // row. The quick-add default is guarded at `OpenCapture`, which never resolves to
         // an archived project, so the session default is left alone here.
         // A read-only focus whose project came back (picker, CLI, or a sibling process)
@@ -1206,9 +1149,7 @@ impl BoardModel {
             BoardLocation::Project(path) => self.is_archived_project_path(path),
             // A read-only focus is deliberately on an archived project (AC-41): it is
             // not the accident this reset exists for.
-            BoardLocation::ArchivedProject(_) | BoardLocation::Desk | BoardLocation::Projects => {
-                false
-            }
+            BoardLocation::ArchivedProject(_) | BoardLocation::All | BoardLocation::Desk => false,
         };
         if focus_archived {
             let name = match &self.board_location {
@@ -1217,7 +1158,7 @@ impl BoardModel {
                 }
                 _ => String::new(),
             };
-            self.board_location = BoardLocation::Desk;
+            self.board_location = BoardLocation::All;
             self.selected_project = None;
             self.set_message(format!("project {name} is archived"));
         }
@@ -1257,58 +1198,6 @@ impl BoardModel {
             }
             self.reanchor_selection(previous, &previous_visible);
         }
-        if self.projects_preview_active() {
-            // Rebinding clones the complete task snapshot and resets the transient seat. Keep
-            // the same-path seat untouched, both to preserve its session and to avoid turning a
-            // background task sync into a dirty-project switch refusal.
-            let selected_path = self.selected_project_row().map(|row| row.path);
-            let seat_path = self
-                .right_seat
-                .as_ref()
-                .and_then(|right| right.active_project())
-                .map(Path::to_path_buf);
-            let path_changed = match (previous_project_path.as_deref(), selected_path.as_deref()) {
-                (Some(previous), Some(current)) => !paths_equivalent(previous, current),
-                (Some(_), None) => true,
-                _ => false,
-            };
-            let seat_needs_binding = match (selected_path.as_deref(), seat_path.as_deref()) {
-                (Some(selected), Some(seat)) => {
-                    !paths_equivalent(selected, &seat.to_string_lossy())
-                }
-                (None, None) => false,
-                _ => true,
-            };
-            let seat_dirty = self
-                .right_seat
-                .as_ref()
-                .is_some_and(|right| right.has_unsaved_work());
-            let mut bind_refused = false;
-            if path_changed || (seat_needs_binding && !seat_dirty) {
-                if seat_dirty && selected_path.is_none() {
-                    // There is no row for the dirty seat to refuse through bind_project_preview.
-                    // Keep its parked session and report the same guarded switch once.
-                    self.set_message(DIRTY_TASK_SWITCH_REFUSAL);
-                    bind_refused = true;
-                } else {
-                    bind_refused = !self.bind_project_preview();
-                }
-            }
-            if path_changed && bind_refused && seat_dirty {
-                // A dirty seat owns the old project even when the cursor was clamped to a
-                // different row after that project disappeared. Re-anchor the cursor to the
-                // seat when its row still exists; otherwise keep the clamped cursor above.
-                if let Some(seat_path) = seat_path.as_deref() {
-                    let projects = self.queue_view().projects;
-                    if let Some(index) = projects
-                        .iter()
-                        .position(|row| paths_equivalent(&row.path, &seat_path.to_string_lossy()))
-                    {
-                        self.projects_selected = index;
-                    }
-                }
-            }
-        }
         let visible: BTreeSet<Uuid> = self.visible_ids().into_iter().collect();
         self.marked_ids.retain(|id| visible.contains(id));
     }
@@ -1330,57 +1219,28 @@ impl BoardModel {
 
     /// Which navigation tab is active right now.
     pub fn nav_tab(&self) -> NavTab {
-        match &self.board_location {
-            BoardLocation::Desk => NavTab::Desk,
-            BoardLocation::Project(_) | BoardLocation::ArchivedProject(_) => NavTab::ProjectBoard,
-            BoardLocation::Projects => NavTab::Projects,
-        }
+        NavTab::Board
     }
 
-    /// Switch to a navigation tab. `NavTab::ProjectBoard` with no selected project is
-    /// answered by the caller (the project picker opens instead — the slot never
-    /// changes meaning). Returns whether the board moved.
+    /// Switch to a navigation tab. The board is the only tab, so selecting it returns the
+    /// focus to the list. Returns whether anything moved.
     pub(super) fn select_nav_tab(&mut self, tab: NavTab) -> bool {
-        let target = match tab {
-            NavTab::Desk => BoardLocation::Desk,
-            NavTab::Projects => BoardLocation::Projects,
-            NavTab::ProjectBoard => {
-                let Some(path) = self.selected_project.clone() else {
-                    return false;
-                };
-                BoardLocation::Project(path)
-            }
-        };
-        if self.board_location == target {
-            return false;
+        match tab {
+            NavTab::Board => false,
         }
-        // AC-45: `1`/`3` from the read-only archived focus leave it, which hides that
-        // project's tasks again. (`2` stays put: the archived focus already occupies
-        // slot 2.)
-        if self.focus_is_archived() {
-            let previous_visible = self.visible_ids();
-            self.search_query.clear();
-            self.search_pinned = false;
-            self.board_location = target;
-            self.reanchor_selection(None, &previous_visible);
-            self.seed_selection();
-            return true;
-        }
-        self.switch_location(target);
-        true
     }
 
-    /// Whether the projects overview owns the wide slider's project-preview stages.
-    pub fn projects_overview(&self) -> bool {
-        matches!(self.board_location, BoardLocation::Projects)
-            && matches!(self.projects_view, ProjectsView::Overview)
+    /// Session-only row order of every section.
+    pub fn sort(&self) -> BoardSort {
+        self.sort
     }
 
-    /// Whether the projects overview owns a transient preview seat.
-    pub(crate) fn projects_preview_active(&self) -> bool {
-        self.frame_wide()
-            && self.projects_overview()
-            && matches!(self.wide_stage, WideStage::Split | WideStage::Rail)
+    /// Flip the row order (`S`), keeping the selection on the same row.
+    pub(super) fn toggle_sort(&mut self) {
+        let previous_visible = self.visible_ids();
+        let previous = self.selection_id;
+        self.sort = self.sort.toggled();
+        self.reanchor_selection(previous, &previous_visible);
     }
 
     /// Record whether the app's current frame paints a wide split presentation.
@@ -1391,115 +1251,6 @@ impl BoardModel {
 
     pub(crate) fn frame_wide(&self) -> bool {
         self.frame_wide.get()
-    }
-
-    /// Whether the right project board is the active input seat.
-    pub fn project_right_seat_focused(&self) -> bool {
-        self.frame_wide()
-            && self.projects_overview()
-            && matches!(self.wide_stage, WideStage::Rail)
-            && self.right_seat.is_some()
-    }
-
-    /// The project-board session currently painted in the right column, if one is bound.
-    pub fn right_seat(&self) -> Option<&BoardModel> {
-        self.right_seat.as_deref()
-    }
-
-    /// Mutable board session that owns keyboard, mouse, and modal dispatch.
-    pub(crate) fn input_target_mut(&mut self) -> &mut BoardModel {
-        if self.project_right_seat_focused() {
-            self.right_seat
-                .as_deref_mut()
-                .expect("focused project rail has a right seat")
-        } else {
-            self
-        }
-    }
-
-    /// Rebuild the right project board for the index cursor. A same-project seat keeps its
-    /// selection, scroll, drawer, peek, and page session; a changed project refuses when that
-    /// seat owns unsaved work rather than dropping the form behind the cursor.
-    pub(crate) fn bind_project_preview(&mut self) -> bool {
-        if !self.projects_overview() {
-            self.right_seat = None;
-            return false;
-        }
-        let Some(row) = self.selected_project_row() else {
-            self.right_seat = None;
-            return false;
-        };
-        let path = PathBuf::from(row.path);
-        let same = self.right_seat.as_ref().is_some_and(|right| {
-            right.active_project().is_some_and(|active| {
-                paths_equivalent(&active.to_string_lossy(), &path.to_string_lossy())
-            })
-        });
-        if same {
-            return true;
-        }
-        if self
-            .right_seat
-            .as_ref()
-            .is_some_and(|right| right.has_unsaved_work())
-        {
-            self.set_message(DIRTY_TASK_SWITCH_REFUSAL);
-            return false;
-        }
-        // A rebind intentionally clones the current task snapshot, which is O(tasks). The
-        // same-path fast return above is load-bearing: cursor movement and background syncs
-        // should keep the existing seat instead of paying that cost or dropping its session.
-        let mut right = BoardModel::from_tasks(self.tasks.clone(), self.this_repo.clone());
-        right.archived_projects = self.archived_projects.clone();
-        right.board_location = BoardLocation::Project(path.clone());
-        right.selected_project = Some(path);
-        right.preview_seat = true;
-        right.selection_id = None;
-        right.update_notice = self.update_notice.clone();
-        right.seed_selection();
-        self.right_seat = Some(Box::new(right));
-        true
-    }
-
-    /// Open the first project preview when a project row is selected from the full index.
-    pub(crate) fn open_project_preview(&mut self) -> bool {
-        if !self.projects_overview() || self.wide_stage != WideStage::FullBoard {
-            return false;
-        }
-        if !self.bind_project_preview() {
-            return false;
-        }
-        self.wide_stage = WideStage::Split;
-        true
-    }
-
-    /// Clear right-seat chrome that belongs to a focused Rail visit, while retaining the
-    /// same-project board session (selection, scroll, drawer, peek, and page form).
-    pub(crate) fn clear_project_preview_ephemeral_state(&mut self) {
-        let Some(right) = self.right_seat.as_deref_mut() else {
-            return;
-        };
-        right.message = None;
-        right.message_expires_at = None;
-        right.message_restore = None;
-        right.delete_notice = None;
-        right.delete_notice_count = None;
-        right.suspended_delete_notice = None;
-        right.suspended_delete_notice_count = None;
-        right.pending_delete = None;
-        right.pending_delete_bulk = false;
-        right.clear_marks();
-        right.mouse_press = None;
-        right.mouse_press_scroll = None;
-        right.text_selection = None;
-        right.last_row_click = None;
-        right.last_project_header_click = None;
-        right.last_project_row_click = None;
-    }
-
-    /// Drop the projects overview's transient right-column session.
-    pub(crate) fn drop_project_preview(&mut self) {
-        self.right_seat = None;
     }
 
     /// Move to `target` through the one shared guarded transition: reanchor by the
@@ -1529,19 +1280,11 @@ impl BoardModel {
             return;
         }
         self.thread_filter = ThreadFilter::All;
-        let preview_transition = self.right_seat.is_some()
-            || matches!(self.board_location, BoardLocation::Projects)
-            || matches!(target, BoardLocation::Projects);
-        if preview_transition {
-            self.right_seat = None;
-            self.wide_stage = WideStage::FullBoard;
-            self.stage_origin = None;
-        }
         self.board_location = target;
         self.reanchor_selection(previous, &previous_visible);
     }
 
-    /// The selected project scope carried by slot 2, independent of the active surface.
+    /// The last project scope picked, independent of the active scope.
     pub fn selected_project(&self) -> Option<&Path> {
         self.selected_project.as_deref()
     }
@@ -1551,7 +1294,7 @@ impl BoardModel {
             BoardLocation::Project(path) | BoardLocation::ArchivedProject(path) => {
                 Some(path.as_path())
             }
-            BoardLocation::Desk | BoardLocation::Projects => None,
+            BoardLocation::All | BoardLocation::Desk => None,
         }
     }
 
@@ -1565,19 +1308,13 @@ impl BoardModel {
     /// A task form parked behind `FullBoard` does not stop this from being a root Escape: the
     /// application quit guard sees that retained draft and refuses before the reducer can leave.
     pub(crate) fn root_escape_requests_quit(&self) -> bool {
-        // Resizing parks the slider session without painting its right column. A narrow
-        // board (or projects index) is already at its visible root, not one Esc away.
-        let parked_board =
-            !self.frame_wide() && (self.wide_stage == WideStage::Split || self.projects_overview());
-        !self.preview_seat
-            && !self.focus_is_archived()
+        !self.focus_is_archived()
             && self.input_mode_local() == BoardInputMode::Normal
-            && (self.wide_stage == WideStage::FullBoard || parked_board)
+            && self.wide_stage == WideStage::Board
             && self.surface == CommandSurface::None
             && self.popup == BoardPopup::None
             && self.project_picker.is_none()
             && self.list_picker.is_none()
-            && self.detail_open.is_none()
             && self.search_query.is_empty()
             && !self.inbox_header_selected()
             && !self.archived_header_selected()
@@ -1594,13 +1331,6 @@ impl BoardModel {
 
     /// Whether leaving the current surface would discard or hide an unsaved draft.
     pub fn has_unsaved_work(&self) -> bool {
-        if self
-            .right_seat
-            .as_ref()
-            .is_some_and(|right| right.has_unsaved_work())
-        {
-            return true;
-        }
         if self.task_session_dirty()
             || self.quick_add_save.is_some()
             || self.task_edit_save.is_some()
@@ -1643,13 +1373,13 @@ impl BoardModel {
         ))
     }
 
-    /// Leave the read-only archived focus for the desk (AC-45).
+    /// Leave the read-only archived focus for every project (AC-45).
     pub(super) fn leave_archived_focus(&mut self) {
         let previous_visible = self.visible_ids();
         self.clear_marks();
         self.search_query.clear();
         self.search_pinned = false;
-        self.board_location = BoardLocation::Desk;
+        self.board_location = BoardLocation::All;
         self.reanchor_selection(None, &previous_visible);
         self.seed_selection();
         self.clear_message();
@@ -1682,11 +1412,11 @@ impl BoardModel {
         }
     }
 
-    /// The desk and the index use the invocation/session default; slot 2 defaults to
-    /// its own project.
+    /// Every-project and desk scopes add to the desk; a project scope adds to its project.
+    /// The invocation directory is never a hidden destination.
     pub(super) fn quick_add_scope(&self) -> Option<TaskScope> {
         match &self.board_location {
-            BoardLocation::Desk | BoardLocation::Projects => self.session_default_scope.clone(),
+            BoardLocation::All | BoardLocation::Desk => Some(TaskScope::Global),
             // Quick-add is refused outright in read-only focus, so its scope is moot.
             BoardLocation::Project(path) | BoardLocation::ArchivedProject(path) => {
                 Some(TaskScope::Project {
@@ -1698,14 +1428,11 @@ impl BoardModel {
 
     /// The active destination's right-side control kind, when one is painted.
     pub fn nav_chip_kind(&self) -> Option<crate::ui::render::NavChipKind> {
-        Some(match (&self.board_location, self.projects_view()) {
-            (BoardLocation::Project(_), _) => crate::ui::render::NavChipKind::ThreadFilter,
-            (BoardLocation::Projects, _) => crate::ui::render::NavChipKind::ProjectsView,
-            _ => return None,
-        })
+        matches!(self.board_location, BoardLocation::Project(_))
+            .then_some(crate::ui::render::NavChipKind::ThreadFilter)
     }
 
-    /// The searchable list picker is open (thread filter / projects View).
+    /// The searchable list picker is open (thread filter).
     pub fn list_picker_open(&self) -> bool {
         self.list_picker.is_some()
     }
@@ -1721,36 +1448,17 @@ impl BoardModel {
             .map(|picker| picker.query.as_str())
     }
 
-    /// Cancel an armed project-header or index-row double-click when another pointer
-    /// target intervenes. Mouse-boundary state only, never persisted.
-    pub(crate) fn cancel_project_header_double_click(&mut self) {
-        self.last_project_header_click = None;
-        self.last_project_row_click = None;
-    }
-
     /// Record a left-button press cell and drop any finished selection's highlight.
     ///
     /// The press cell is what a following drag grows the selection from; a plain
     /// click never reads it. Called for every left press, whatever the input mode.
     pub fn begin_mouse_press(&mut self, position: Position) {
-        if self.project_right_seat_focused() {
-            self.text_selection = None;
-            self.input_target_mut().begin_mouse_press(position);
-            return;
-        }
         self.mouse_press = Some(position);
         self.mouse_press_scroll = Some(self.content_scroll());
         self.text_selection = None;
     }
 
     fn content_scroll(&self) -> usize {
-        if let Some(right) = self
-            .right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-        {
-            return right.content_scroll();
-        }
         if self.focused_surface() == FocusedSurface::Task {
             self.form
                 .as_ref()
@@ -1780,10 +1488,6 @@ impl BoardModel {
     /// Inert without a live press (a drag that starts mid-gesture, e.g. before tsk
     /// saw the press), so it can never invent an anchor.
     pub fn drag_text_selection(&mut self, position: Position) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().drag_text_selection(position);
-            return;
-        }
         if let Some(press) = self.mouse_press {
             let anchor = self.content_relative_anchor(press);
             self.text_selection = Some(TextSelection::new(anchor, position));
@@ -1792,41 +1496,23 @@ impl BoardModel {
 
     /// Recompute the live highlight after the viewport scrolled under a held drag.
     pub fn recompute_text_selection_head(&mut self, head: Position) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().recompute_text_selection_head(head);
-            return;
-        }
         self.drag_text_selection(head);
     }
 
     /// Clear the press on release; the selection itself stays until copy clears it
     /// or the next press replaces it.
     pub fn end_mouse_press(&mut self) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().end_mouse_press();
-            return;
-        }
         self.mouse_press = None;
         self.mouse_press_scroll = None;
     }
 
     /// Drop a finished text selection highlight (after copy, Esc, or cancel).
     pub fn clear_text_selection(&mut self) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().clear_text_selection();
-            return;
-        }
         self.text_selection = None;
     }
 
     /// The live drag selection, if a drag is (or was) in progress.
     pub fn text_selection(&self) -> Option<TextSelection> {
-        if self.project_right_seat_focused() {
-            return self
-                .right_seat
-                .as_deref()
-                .and_then(BoardModel::text_selection);
-        }
         self.text_selection
     }
 
@@ -1839,13 +1525,6 @@ impl BoardModel {
         direction: crate::ui::text_select::AutoScrollDirection,
         rows: u16,
     ) -> usize {
-        if let Some(right) = self
-            .right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-        {
-            return right.nudge_list_scroll(direction, rows);
-        }
         use crate::ui::text_select::AutoScrollDirection;
         self.follow_list.set(false);
         let max = self.list_max_scroll.get();
@@ -1864,11 +1543,6 @@ impl BoardModel {
         direction: crate::ui::text_select::AutoScrollDirection,
         rows: u16,
     ) -> usize {
-        if self.project_right_seat_focused() {
-            if let Some(right) = self.right_seat.as_deref_mut() {
-                return right.nudge_notes_scroll(direction, rows);
-            }
-        }
         use crate::ui::text_select::AutoScrollDirection;
         let Some(form) = self.form.as_mut() else {
             return 0;
@@ -1886,7 +1560,7 @@ impl BoardModel {
 
     /// Options the session project selector offers, in presentation order.
     ///
-    /// Home and desk are always available. Project entries are paths that really
+    /// Every project and the desk are always available. Project entries are paths that really
     /// carry a non-soft-deleted project-scoped task in the current snapshot, plus the
     /// resolved invocation repository and current selection: no path is ever invented.
     pub fn project_options(&self) -> Vec<ProjectScopeOption> {
@@ -1918,7 +1592,8 @@ impl BoardModel {
             push(path, &mut paths);
         }
 
-        let mut options = Vec::with_capacity(paths.len() + 1);
+        let mut options = Vec::with_capacity(paths.len() + 2);
+        options.push(ProjectScopeOption::All);
         options.push(ProjectScopeOption::Home);
         options.extend(paths.into_iter().map(ProjectScopeOption::Project));
         options
@@ -1960,57 +1635,25 @@ impl BoardModel {
 
     /// Queue sections + counts for the current session destination.
     pub fn queue_view(&self) -> QueueView {
-        let mut view = if self.projects_overview() {
-            queue::query_board(
-                &self.tasks,
-                &self.archived_projects,
-                self.this_repo.as_deref(),
-                self.effective_lens(),
-                self.drawer_open,
-                &self.thread_filter,
-            )
-        } else {
-            queue::query_board_search(
-                &self.tasks,
-                &self.archived_projects,
-                self.this_repo.as_deref(),
-                self.effective_lens(),
-                self.drawer_open,
-                &self.thread_filter,
-                &self.search_query,
-            )
-        };
-        if self.projects_overview() {
-            // Overview rows retain their existing name-or-path substring search.
-            let query = self.search_query.trim().to_lowercase();
-            if !query.is_empty() {
-                view.projects.retain(|row| {
-                    queue::short_project_name(&row.path)
-                        .to_lowercase()
-                        .contains(&query)
-                        || row.path.to_lowercase().contains(&query)
-                });
-            }
-        }
-        view
+        queue::query_board_search(
+            &self.tasks,
+            &self.archived_projects,
+            self.effective_lens(),
+            self.drawer_open,
+            &self.thread_filter,
+            self.sort,
+            &self.search_query,
+        )
     }
 
-    /// The lens the current destination and its view control resolve to.
+    /// The lens the current scope resolves to.
     pub(super) fn effective_lens(&self) -> BoardLens<'_> {
-        match (&self.board_location, &self.projects_view) {
-            (BoardLocation::Projects, ProjectsView::Thread(name)) => BoardLens::ThreadView(name),
-            (location, _) => location.lens(),
-        }
+        self.board_location.lens()
     }
 
     /// The thread filter active on slot 2's board.
     pub fn thread_filter(&self) -> &ThreadFilter {
         &self.thread_filter
-    }
-
-    /// The projects index's current View control.
-    pub fn projects_view(&self) -> &ProjectsView {
-        &self.projects_view
     }
 
     /// The help card's focused search query.
@@ -2031,46 +1674,6 @@ impl BoardModel {
     /// Whether the current query is pinned while normal board keys own input.
     pub fn search_pinned(&self) -> bool {
         self.search_pinned
-    }
-
-    /// The index rows the current query leaves visible (owned copy: rows are small).
-    pub fn project_rows(&self) -> Vec<ProjectRow> {
-        self.queue_view().projects
-    }
-
-    /// The index cursor, clamped to the rows the current query leaves visible.
-    pub fn projects_cursor(&self) -> usize {
-        let len = self.queue_view().projects.len();
-        self.projects_selected.min(len.saturating_sub(1))
-    }
-
-    /// The index row the cursor rests on.
-    pub fn selected_project_row(&self) -> Option<ProjectRow> {
-        let projects = self.queue_view().projects;
-        let cursor = self.projects_selected.min(projects.len().saturating_sub(1));
-        projects.into_iter().nth(cursor)
-    }
-
-    pub(super) fn move_projects_cursor(&mut self, forward: bool) -> bool {
-        let len = self.queue_view().projects.len();
-        if len == 0 {
-            self.projects_selected = 0;
-            return false;
-        }
-        let previous = self.projects_selected;
-        self.projects_selected = if forward {
-            (self.projects_selected + 1) % len
-        } else {
-            self.projects_selected.checked_sub(1).unwrap_or(len - 1)
-        };
-        // Preview opening is presentation-dependent and belongs to the app input boundary,
-        // where the responsive width is known. A model cursor move must stay harmless on a
-        // narrow frame; an already-open wide preview still rebinds its seat here.
-        if self.projects_preview_active() && !self.bind_project_preview() {
-            self.projects_selected = previous;
-            return false;
-        }
-        true
     }
 
     /// Open the project board's searchable thread filter picker (bare `t`).
@@ -2126,59 +1729,10 @@ impl BoardModel {
                     self.thread_filter == ThreadFilter::Named(name.clone())
                 }
                 ListPickerValue::ThreadWithout => self.thread_filter == ThreadFilter::Without,
-                _ => false,
             })
             .unwrap_or(0);
         self.list_picker = Some(ListPickerState {
             kind: ListPickerKind::ThreadFilter,
-            options,
-            selected,
-            query: String::new(),
-        });
-    }
-
-    /// Open the projects index's searchable View picker (bare `v`).
-    pub(super) fn open_projects_view_picker(&mut self) {
-        if !matches!(self.board_location, BoardLocation::Projects) {
-            return;
-        }
-        let mut threads: BTreeMap<String, usize> = BTreeMap::new();
-        for task in &self.tasks {
-            if task.soft_deleted
-                || task.archived
-                || task.status == HumanStatus::Done
-                || self.is_hidden(task)
-            {
-                continue;
-            }
-            if let Some(name) = task.thread.as_deref() {
-                *threads.entry(name.to_ascii_lowercase()).or_default() += 1;
-            }
-        }
-        let mut options = vec![ListPickerOption {
-            label: "Overview".to_string(),
-            count: None,
-            value: ListPickerValue::ProjectsOverview,
-        }];
-        let mut named: Vec<(String, usize)> = threads.into_iter().collect();
-        named.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        options.extend(named.into_iter().map(|(name, count)| ListPickerOption {
-            label: format!("#{name}"),
-            count: Some(count),
-            value: ListPickerValue::ProjectsThread(name),
-        }));
-        let selected = options
-            .iter()
-            .position(|option| match (&option.value, &self.projects_view) {
-                (ListPickerValue::ProjectsOverview, ProjectsView::Overview) => true,
-                (ListPickerValue::ProjectsThread(name), ProjectsView::Thread(active)) => {
-                    name == active
-                }
-                _ => false,
-            })
-            .unwrap_or(0);
-        self.list_picker = Some(ListPickerState {
-            kind: ListPickerKind::ProjectsView,
             options,
             selected,
             query: String::new(),
@@ -2274,21 +1828,6 @@ impl BoardModel {
                 self.thread_filter = ThreadFilter::Without;
                 true
             }
-            (ListPickerKind::ProjectsView, ListPickerValue::ProjectsOverview) => {
-                self.projects_view = ProjectsView::Overview;
-                self.search_query.clear();
-                self.search_pinned = false;
-                self.projects_selected = 0;
-                true
-            }
-            (ListPickerKind::ProjectsView, ListPickerValue::ProjectsThread(name)) => {
-                self.projects_view = ProjectsView::Thread(name.clone());
-                self.search_query.clear();
-                self.search_pinned = false;
-                self.projects_selected = 0;
-                true
-            }
-            _ => false,
         };
         if applied {
             self.list_picker = None;
@@ -2365,16 +1904,6 @@ impl BoardModel {
             Some(queue::ARCHIVED_HEADER_ROW_ID),
             SelectionRetarget::Explicit,
         )
-    }
-
-    /// Task id whose accordion/takeover detail is open, if any (session-only).
-    pub fn detail_open(&self) -> Option<Uuid> {
-        self.detail_open
-    }
-
-    /// Close the session-only detail layer.
-    pub fn close_detail(&mut self) {
-        self.detail_open = None;
     }
 
     /// Visible task ids from the queue section query (flat section order).
@@ -2468,7 +1997,7 @@ impl BoardModel {
 
     /// Whether this model's task list owns resolved input, including while a task page is parked.
     pub(super) fn task_list_owns_input(&self) -> bool {
-        self.input_mode_local() == BoardInputMode::Normal && !self.projects_overview()
+        self.input_mode_local() == BoardInputMode::Normal
     }
 
     /// Mark targets when the task list owns input, otherwise the cursor target.
@@ -2490,23 +2019,14 @@ impl BoardModel {
         self.wide_stage.focused_surface()
     }
 
-    /// Focused surface inside the seat that currently owns input. The outer projects Rail remains
-    /// task-shaped for layout, while its right board can still be a board-shaped surface.
-    pub fn input_focused_surface(&self) -> FocusedSurface {
-        self.right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-            .map_or_else(|| self.focused_surface(), BoardModel::focused_surface)
-    }
-
     /// Whether a capture draft (quick-add expanded with `Tab`) owns the frame. The draft is
-    /// neither the board nor a task, so the wide slider has no column for it: while it is open
+    /// neither the list nor a task, so the wide layout has no column for it: while it is open
     /// the frame is painted and pointer-routed as a single surface at every width.
     pub fn capture_draft_open(&self) -> bool {
         self.form.as_ref().is_some_and(|form| !form.is_task())
     }
 
-    /// Live responsive geometry for `area`: the slider stage, unless a capture draft owns the
+    /// Live responsive geometry for `area`: list and detail, unless a capture draft owns the
     /// frame (see [`Self::capture_draft_open`]).
     pub fn responsive_geometry(
         &self,
@@ -2527,66 +2047,9 @@ impl BoardModel {
         resolve_responsive(area.width, area.height, self.wide_stage)
     }
 
-    /// Only a successfully applied row click can authorize gesture continuation.
-    pub(crate) fn pending_row_double_click(&self, id: Uuid) -> bool {
-        self.last_row_click.is_some_and(|(at, last)| {
-            last == id && at.elapsed() <= super::apply::ROW_DOUBLE_CLICK_WINDOW
-        })
-    }
-
-    /// Session-only wide-slider stage. The board always opens in `FullBoard`.
+    /// Session-only focus owner. The board always opens with the list focused.
     pub fn wide_stage(&self) -> WideStage {
         self.wide_stage
-    }
-
-    /// Wide stage of the seat that currently owns keyboard input. The outer stage remains the
-    /// layout stage, while a focused project preview may be in its own FullTask page.
-    pub fn input_stage(&self) -> WideStage {
-        if self.preview_seat {
-            return if self.wide_stage == WideStage::FullTask
-                && self.input_mode_local() == BoardInputMode::TaskPage
-            {
-                WideStage::FullTask
-            } else {
-                WideStage::Rail
-            };
-        }
-        self.right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-            .map_or(self.wide_stage, |right| right.input_stage())
-    }
-
-    fn project_right_board_at_root(&self) -> bool {
-        self.project_right_seat_focused()
-            && self.right_seat.as_ref().is_some_and(|right| {
-                matches!(right.wide_stage, WideStage::FullBoard | WideStage::Rail)
-                    && right.input_mode() == BoardInputMode::Normal
-                    && right.surface == CommandSurface::None
-                    && right.popup == BoardPopup::None
-                    && right.detail_open.is_none()
-            })
-    }
-
-    /// Whether an otherwise-unhandled Escape on the nested project board should return focus to
-    /// the projects index. A pinned search consumes Escape before the stage transition.
-    pub(crate) fn project_right_board_leave_requested(&self) -> bool {
-        self.project_right_board_at_root()
-            && self
-                .right_seat
-                .as_ref()
-                .is_some_and(|right| !right.search_pinned)
-    }
-
-    /// Whether the left stage arrow should return from the nested project board to its index.
-    /// Unlike Escape, stage arrows do not clear a pinned search first.
-    pub(crate) fn project_right_board_arrow_leave_requested(&self) -> bool {
-        self.project_right_board_at_root()
-    }
-
-    /// Stage the full task page returns to on `Esc`, while one is remembered.
-    pub fn stage_origin(&self) -> Option<WideStage> {
-        self.stage_origin
     }
 
     /// Test surface. Retained task-page viewport offset.
@@ -2625,13 +2088,6 @@ impl BoardModel {
 impl BoardModel {
     /// Current input mode (normal vs edit field).
     pub fn input_mode(&self) -> BoardInputMode {
-        if let Some(right) = self
-            .right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-        {
-            return right.input_mode_local();
-        }
         self.input_mode_local()
     }
 
@@ -3251,13 +2707,6 @@ impl BoardModel {
 
     /// Chrome status/message line feedback.
     pub fn message(&self) -> Option<&str> {
-        if let Some(right) = self
-            .right_seat
-            .as_deref()
-            .filter(|_| self.project_right_seat_focused())
-        {
-            return right.message();
-        }
         self.message.as_deref()
     }
 
@@ -3270,10 +2719,6 @@ impl BoardModel {
     }
 
     pub fn set_message(&mut self, msg: impl Into<String>) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().set_message(msg);
-            return;
-        }
         self.message = Some(terminal_text(&msg.into()));
         self.message_expires_at = None;
         self.message_restore = None;
@@ -3284,10 +2729,6 @@ impl BoardModel {
     /// A sticky status already on the line (save-recovery banner, etc.) is stashed and
     /// restored when the toast expires, so a `copied` flash cannot erase it.
     pub fn set_ephemeral_message(&mut self, msg: impl Into<String>, ttl: std::time::Duration) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().set_ephemeral_message(msg, ttl);
-            return;
-        }
         if self.message_expires_at.is_none() {
             self.message_restore = self.message.clone();
         }
@@ -3296,10 +2737,6 @@ impl BoardModel {
     }
 
     pub fn clear_message(&mut self) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().clear_message();
-            return;
-        }
         self.message = None;
         self.message_expires_at = None;
         self.message_restore = None;
@@ -3308,10 +2745,6 @@ impl BoardModel {
     /// Drop an ephemeral status line whose TTL has elapsed. Sticky messages are untouched;
     /// a stashed sticky under a toast is restored.
     pub fn expire_ephemeral_message(&mut self) {
-        if self.project_right_seat_focused() {
-            self.input_target_mut().expire_ephemeral_message();
-            return;
-        }
         if self
             .message_expires_at
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -3495,12 +2928,6 @@ impl BoardModel {
     /// Re-pin selection after the visible set changes through the shared retarget boundary.
     pub(super) fn reanchor_selection(&mut self, previous: Option<Uuid>, previous_visible: &[Uuid]) {
         let new_visible = self.visible_ids();
-        if self
-            .detail_open
-            .is_some_and(|id| !new_visible.contains(&id))
-        {
-            self.close_detail();
-        }
         let requested = selection::reanchor(previous, previous_visible, &new_visible);
         // Group headers are selectable chrome, but when a task leaves the view and a
         // real task survives, keep the selection on that task instead of landing on
@@ -3611,8 +3038,7 @@ impl BoardModel {
         self.follow_list.set(false);
     }
 
-    /// Set the session destination through the picker. `None` (the desk choice) goes
-    /// to tab 1, never to the index.
+    /// Set the board scope to one project, or to the desk for `None`.
     pub fn set_selected_project(&mut self, project: Option<PathBuf>) {
         self.set_board_scope(match project {
             None => ProjectScopeOption::Home,
@@ -3628,8 +3054,10 @@ impl BoardModel {
             self.input_mode = BoardInputMode::Normal;
         }
         match scope {
+            ProjectScopeOption::All => {
+                self.switch_location(BoardLocation::All);
+            }
             ProjectScopeOption::Home => {
-                self.selected_project = None;
                 self.switch_location(BoardLocation::Desk);
             }
             ProjectScopeOption::Project(path) => {
@@ -3652,6 +3080,7 @@ pub fn project_option_label(path: &Path) -> String {
 
 pub(super) fn project_scope_option_label(option: &ProjectScopeOption) -> String {
     match option {
+        ProjectScopeOption::All => "all".to_string(),
         ProjectScopeOption::Home => "desk".to_string(),
         ProjectScopeOption::Project(path) => project_option_label(path.as_path()),
     }
@@ -3743,33 +3172,61 @@ mod tests {
     }
 
     #[test]
-    fn nav_tabs_never_shift_meaning_and_slot_two_without_a_project_opens_nothing_here() {
+    fn startup_in_a_repo_opens_its_project_and_every_scope_is_the_plain_default() {
         let mut domain = DomainState::new();
         create(&mut domain, "task-a", project(REPO_A));
 
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
-        assert_eq!(
-            model.nav_tab(),
-            NavTab::ProjectBoard,
-            "startup in a repo opens slot 2"
-        );
+        let model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
+        assert_eq!(model.nav_tab(), NavTab::Board);
+        assert_eq!(model.active_project(), Some(Path::new(REPO_A)));
 
-        assert!(model.select_nav_tab(NavTab::Desk));
-        assert_eq!(model.nav_tab(), NavTab::Desk);
-        assert_eq!(model.selected_project(), Some(Path::new(REPO_A)));
-        assert!(model.select_nav_tab(NavTab::Projects));
-        assert_eq!(model.nav_tab(), NavTab::Projects);
-        assert!(model.select_nav_tab(NavTab::ProjectBoard));
-        assert_eq!(model.nav_tab(), NavTab::ProjectBoard);
-        assert_eq!(model.selected_project(), Some(Path::new(REPO_A)));
-        assert!(model.select_nav_tab(NavTab::Desk));
-        assert!(model.select_nav_tab(NavTab::Projects));
-        assert!(model.select_nav_tab(NavTab::ProjectBoard));
-        assert_eq!(model.nav_tab(), NavTab::ProjectBoard);
-        model.set_selected_project(Some(PathBuf::from(REPO_B)));
-        model.select_nav_tab(NavTab::Desk);
-        assert!(model.select_nav_tab(NavTab::ProjectBoard));
-        assert_eq!(model.selected_project(), Some(Path::new(REPO_B)));
+        let model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
+        assert_eq!(model.board_location, BoardLocation::All);
+        assert_eq!(model.sort(), BoardSort::Number);
+    }
+
+    #[test]
+    fn sort_toggle_keeps_the_selected_row_and_reorders_by_project() {
+        let mut domain = DomainState::new();
+        let b1 = create(&mut domain, "b first", project(REPO_B));
+        let desk = create(&mut domain, "desk", TaskScope::Global);
+        let a1 = create(&mut domain, "a later", project(REPO_A));
+        for id in [b1, desk, a1] {
+            domain.set_status(id, HumanStatus::Started).expect("start");
+        }
+        domain.assign_numbers_for_persistence();
+
+        let mut model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
+        model.seed_selection();
+        assert_eq!(
+            model.visible_ids(),
+            vec![b1, desk, a1],
+            "number order is capture order"
+        );
+        model.selection_id = Some(a1);
+        model.toggle_sort();
+        assert_eq!(model.sort(), BoardSort::Project);
+        assert_eq!(
+            model.visible_ids(),
+            vec![desk, a1, b1],
+            "project order: desk first, then project path"
+        );
+        assert_eq!(model.selected_id(), Some(a1), "the selection rides along");
+        model.toggle_sort();
+        assert_eq!(model.visible_ids(), vec![b1, desk, a1]);
+    }
+
+    #[test]
+    fn quick_add_from_every_scope_or_the_desk_goes_to_the_desk() {
+        let domain = DomainState::new();
+        let mut model =
+            BoardModel::from_tasks(domain.tasks().to_vec(), Some(PathBuf::from(REPO_A)));
+        model.board_location = BoardLocation::All;
+        assert_eq!(model.quick_add_scope(), Some(TaskScope::Global));
+        model.board_location = BoardLocation::Desk;
+        assert_eq!(model.quick_add_scope(), Some(TaskScope::Global));
+        model.board_location = BoardLocation::Project(PathBuf::from(REPO_B));
+        assert_eq!(model.quick_add_scope(), Some(project(REPO_B)));
     }
 
     #[test]
@@ -3794,43 +3251,14 @@ mod tests {
     }
 
     #[test]
-    fn picker_desk_choice_lands_on_the_desk_tab_not_the_index() {
+    fn picker_desk_choice_lands_on_the_desk_scope() {
         let mut domain = DomainState::new();
         create(&mut domain, "task-a", project(REPO_A));
 
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
         model.set_selected_project(Some(PathBuf::from(REPO_B)));
         model.set_selected_project(None);
-        assert_eq!(model.nav_tab(), NavTab::Desk);
-    }
-
-    #[test]
-    fn projects_index_cursor_moves_within_the_visible_rows() {
-        let mut domain = DomainState::new();
-        create(&mut domain, "task-a", project("/repos/alpha"));
-        create(&mut domain, "task-b", project("/repos/beta"));
-
-        let mut model = BoardModel::from_domain(&domain, None);
-        model.board_location = BoardLocation::Projects;
-        assert_eq!(model.project_rows().len(), 2);
-        assert!(model.move_projects_cursor(true));
-        assert_eq!(model.projects_cursor(), 1);
-        assert!(model.move_projects_cursor(true));
-        assert_eq!(model.projects_cursor(), 0, "the index cursor wraps");
-        assert!(model.move_projects_cursor(false));
-        assert_eq!(model.projects_cursor(), 1);
-
-        // Search narrows the rows and the cursor clamps.
-        model.search_query = "beta".to_string();
-        assert_eq!(model.project_rows().len(), 1);
-        assert_eq!(model.projects_cursor(), 0);
-        assert_eq!(
-            model.selected_project_row().expect("row").path,
-            "/repos/beta"
-        );
-        model.search_query = "zzz".to_string();
-        assert!(model.project_rows().is_empty());
-        assert!(model.selected_project_row().is_none());
+        assert_eq!(model.board_location, BoardLocation::Desk);
     }
 
     #[test]
@@ -3928,50 +3356,6 @@ mod tests {
     }
 
     #[test]
-    fn projects_view_picker_lists_cross_project_threads() {
-        let mut domain = DomainState::new();
-        let a = create(&mut domain, "a1", project(REPO_A));
-        domain
-            .edit(a, "a1", None, project(REPO_A), Some("release".to_string()))
-            .expect("thread");
-        create(&mut domain, "b1", project(REPO_B));
-
-        let mut model = BoardModel::from_domain(&domain, None);
-        model.board_location = BoardLocation::Projects;
-        model.open_projects_view_picker();
-        let labels: Vec<String> = model
-            .visible_list_picker_options()
-            .iter()
-            .map(|(_, option)| option.label.clone())
-            .collect();
-        assert_eq!(labels, vec!["Overview", "#release"]);
-
-        model.move_list_picker(true);
-        assert_eq!(
-            model.confirm_list_picker(),
-            Some(ListPickerValue::ProjectsThread("release".to_string()))
-        );
-        assert!(
-            model
-                .queue_view()
-                .sections
-                .iter()
-                .any(|section| section.task_ids.contains(&a)),
-            "the thread view shows the matching task from any project"
-        );
-
-        // Re-opening highlights the active view; step back to Overview and confirm.
-        model.open_projects_view_picker();
-        model.move_list_picker(false);
-        assert_eq!(
-            model.confirm_list_picker(),
-            Some(ListPickerValue::ProjectsOverview)
-        );
-        assert_eq!(model.projects_view(), &ProjectsView::Overview);
-        assert!(!model.project_rows().is_empty());
-    }
-
-    #[test]
     fn sync_from_domain_reanchors_by_prior_order_not_new_order() {
         let mut domain = DomainState::new();
         let t1 = create(&mut domain, "task-1", project(REPO_A));
@@ -3997,149 +3381,6 @@ mod tests {
     }
 
     #[test]
-    fn projects_sync_reanchors_preview_by_path_when_a_project_is_inserted_before_it() {
-        let mut domain = DomainState::new();
-        create(&mut domain, "alpha task", project(REPO_A));
-        create(&mut domain, "beta task", project(REPO_B));
-
-        let mut model = BoardModel::from_domain(&domain, None);
-        model.board_location = BoardLocation::Projects;
-        model.projects_selected = 1;
-        model.wide_stage = WideStage::Split;
-        assert_eq!(
-            model.selected_project_row().map(|row| row.path),
-            Some(REPO_B.into())
-        );
-        assert!(model.bind_project_preview());
-
-        // An external writer adds a project that sorts before the selected project. The preview
-        // must stay on /repos/b, not follow the old numeric cursor at index 1.
-        create(&mut domain, "before both", project("/repos/0"));
-        model.sync_from_domain(&domain);
-
-        assert_eq!(
-            model.selected_project_row().map(|row| row.path),
-            Some(REPO_B.into())
-        );
-        assert_eq!(
-            model.right_seat().and_then(BoardModel::active_project),
-            Some(Path::new(REPO_B))
-        );
-    }
-
-    #[test]
-    fn dirty_project_preview_sync_reanchors_cursor_without_stale_domain() {
-        let mut domain = DomainState::new();
-        let alpha = create(&mut domain, "alpha task", project(REPO_A));
-        create(&mut domain, "beta task", project(REPO_B));
-
-        let mut model = BoardModel::from_domain(&domain, None);
-        model.board_location = BoardLocation::Projects;
-        model.wide_stage = WideStage::Split;
-        assert_eq!(
-            model.selected_project_row().map(|row| row.path),
-            Some(REPO_A.into())
-        );
-        assert!(model.bind_project_preview());
-        model.wide_stage = WideStage::Rail;
-
-        let right = model.right_seat.as_deref_mut().expect("preview seat");
-        let task = right
-            .tasks
-            .iter()
-            .find(|task| task.id == alpha)
-            .expect("preview task")
-            .clone();
-        let mut form = BoardForm::task(
-            &task,
-            right.this_repo.as_deref(),
-            &right.tasks,
-            CaptureField::Title,
-            &right.archived_projects,
-        );
-        form.editing = true;
-        form.title.insert_char('!');
-        right.form = Some(form);
-        right.input_mode = BoardInputMode::EditTitle;
-        assert!(model.has_unsaved_work());
-
-        domain.soft_delete(alpha).expect("remove alpha");
-        model.sync_from_domain(&domain);
-
-        assert_eq!(model.tasks.as_slice(), domain.tasks());
-        assert_eq!(
-            model.selected_project_row().map(|row| row.path),
-            Some(REPO_B.into())
-        );
-        assert_eq!(
-            model.right_seat().and_then(BoardModel::active_project),
-            Some(Path::new(REPO_A))
-        );
-        assert!(model.right_seat().is_some_and(BoardModel::has_unsaved_work));
-        assert_eq!(model.message(), Some(DIRTY_TASK_SWITCH_REFUSAL));
-
-        model
-            .right_seat
-            .as_deref_mut()
-            .expect("preview seat")
-            .set_message("keep this message");
-        model.sync_from_domain(&domain);
-        assert_eq!(model.tasks.as_slice(), domain.tasks());
-        assert_eq!(
-            model.right_seat().and_then(BoardModel::active_project),
-            Some(Path::new(REPO_A))
-        );
-        assert_eq!(model.message(), Some("keep this message"));
-    }
-
-    #[test]
-    fn leaving_project_preview_clears_ephemeral_chrome_but_retains_the_session() {
-        let mut domain = DomainState::new();
-        let id = create(&mut domain, "preview task", project(REPO_A));
-        create(&mut domain, "other project", project(REPO_B));
-
-        let mut model = BoardModel::from_domain(&domain, None);
-        model.board_location = BoardLocation::Projects;
-        model.wide_stage = WideStage::Split;
-        assert!(model.bind_project_preview());
-        model.wide_stage = WideStage::Rail;
-        let project = model
-            .right_seat()
-            .and_then(BoardModel::active_project)
-            .map(Path::to_path_buf);
-        let selected = model.right_seat().and_then(BoardModel::selected_id);
-        {
-            let right = model.right_seat.as_deref_mut().expect("preview seat");
-            right.list_scroll.set(3);
-            right.pending_delete = Some([id].into_iter().collect());
-            right.delete_notice = Some("stale delete notice".into());
-            right.set_message("stale preview message");
-        }
-        assert!(model.right_seat().is_some_and(|right| {
-            right.pending_delete.is_some()
-                && right.delete_notice().is_some()
-                && right.message().is_some()
-        }));
-
-        crate::ui::board::apply_intent(
-            &mut domain,
-            &mut model,
-            crate::ui::input::BoardIntent::StageLeft,
-            None,
-        )
-        .expect("leave preview rail");
-
-        assert_eq!(model.wide_stage(), WideStage::Split);
-        let right = model.right_seat().expect("retained preview seat");
-        assert_eq!(right.active_project(), project.as_deref());
-        assert_eq!(right.selected_id(), selected);
-        assert_eq!(right.list_scroll(), 3);
-        assert!(right.pending_delete.is_none());
-        assert!(right.delete_notice().is_none());
-        assert!(right.message().is_none());
-    }
-
-    #[test]
     fn sync_from_domain_does_not_yank_home_tab_for_externally_created_tasks() {
         let mut domain = DomainState::new();
         let desk_task = create(&mut domain, "desk task", TaskScope::Global);
@@ -4147,16 +3388,15 @@ mod tests {
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(REPO_A)));
         model.board_location = BoardLocation::Desk;
         model.seed_selection();
-        assert_eq!(model.nav_tab(), NavTab::Desk);
 
         // Another process adds a project task between two syncs.
         create(&mut domain, "external task", project(REPO_B));
         model.sync_from_domain(&domain);
 
         assert_eq!(
-            model.nav_tab(),
-            NavTab::Desk,
-            "a background merge must not move the user's destination"
+            model.board_location,
+            BoardLocation::Desk,
+            "a background merge must not move the user's scope"
         );
         assert_eq!(model.selected_id(), Some(desk_task));
     }
@@ -4178,9 +3418,9 @@ mod tests {
         model.sync_from_domain(&domain);
 
         assert_eq!(
-            model.nav_tab(),
-            NavTab::Desk,
-            "surfacing never moves the destination"
+            model.board_location,
+            BoardLocation::Desk,
+            "surfacing never moves the scope"
         );
         assert_eq!(model.selected_id(), Some(started));
 
@@ -4191,7 +3431,7 @@ mod tests {
         let mut domain = DomainState::new();
         create(&mut domain, "elsewhere", project(REPO_B));
         model.sync_from_domain(&domain);
-        assert_eq!(model.nav_tab(), NavTab::Desk);
+        assert_eq!(model.board_location, BoardLocation::Desk);
         assert_eq!(
             model.selected_id(),
             None,

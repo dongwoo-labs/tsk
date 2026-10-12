@@ -1,0 +1,32 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                            │                                                                 │
+│ board  ·  all ▾  ·  sort number ▾          │  ■ T5 Wire dispatch cleanup receipts            blocked · herdr │
+│                                            │ ────────────────────────────────────────────────────────────────│
+│ NEEDS YOU ───────────────────────────────2 │   no notes yet                                                  │
+│                                            │                                                                 │
+│▸ ■ T5 Wire dispatch cleanup receipts       │                                                                 │
+│  ▲ T6 Docs refresh pass after F9 ships     │   steps 0/0                                                     │
+│                                            │    + step                                                       │
+│ IN MOTION ───────────────────────────────2 │                                                                 │
+│                                            │                                                                 │
+│  ● T1 Smoke-test worktree dispatch         │                                                                 │
+│  ● T2 Edit target binding pin              │                                                                 │
+│                                            │                                                                 │
+│ ON DECK ─────────────────────────────────3 │                                                                 │
+│                                            │                                                                 │
+│  ○ T3 Prototype the queue-style board UI   │                                                                 │
+│  ○ T4 Cut rust-toolchain pin into CI docs  │                                                                 │
+│  ○ T7 Global backlog note                  │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │   created 1062d ago · updated 1062d ago                         │
+│──────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+│ all                                                                                                 → detail │
+│ enter open · ctrl+d done · ctrl+b unblock · ctrl+o inbox · + add · ? help                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

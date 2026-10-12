@@ -86,7 +86,7 @@ user-level skills directory.
 Run `tsk`, or press **prefix+t** in Herdr.
 
 **No project setup needed.** Inside Git, tsk opens the repository project. Outside
-Git, it opens your desk and keeps the current directory ready on the project tab.
+Git, it opens every task: your desk and all your projects.
 
 ### Add a task
 
@@ -103,7 +103,7 @@ the bug.”
 
 ## Usage
 
-Mouse or keyboard, your choice. Click tabs to switch views, double-click a task
+Mouse or keyboard, your choice. Click the scope and sort controls to change what the board shows, double-click a task
 to open it, and scroll through your board. The actions along the bottom are
 clickable too, including adding a task and changing its status. `Shift+M` marks
 several tasks so one action covers them all.
@@ -116,7 +116,8 @@ Prefer the keyboard? A few keys for everyday use:
 | `Shift+M` | Enter or leave multi-select |
 | `Shift+↑` / `Shift+↓` | In multi-select, mark the current task, then move |
 | `Space` or click | In multi-select, mark or unmark a task |
-| `→` / `←` or `l` / `h` | Peek at a task and close the peek in narrow panes; move between board and task views in wide panes |
+| `→` / `←` or `l` / `h` | In wide panes, move between the task list and the task detail beside it |
+| `S` | Order tasks by number or group them by project |
 | `+` | Add a task |
 | `Enter` | Open the selected task |
 | `ctrl+s` | Start an open or ready task |
@@ -124,7 +125,7 @@ Prefer the keyboard? A few keys for everyday use:
 | `ctrl+o` | Send a task to the open inbox |
 | `ctrl+r` | Send a task to review, or back to ready |
 | `ctrl+d` | Mark the selected task done |
-| `p` | Switch projects |
+| `p` | Show all tasks, your desk, or one project |
 | `d` | Show or hide completed tasks |
 | `?` | Show all shortcuts |
 

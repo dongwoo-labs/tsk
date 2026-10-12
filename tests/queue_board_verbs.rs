@@ -587,11 +587,19 @@ fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Projects),
+        BoardIntent::OpenProjectSelector,
         None,
     )
-    .expect("switch lens");
-    assert_eq!(model.marked_count(), 0, "tab changes clear marks");
+    .expect("open scope picker");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::SelectProjectOption(1),
+        None,
+    )
+    .expect("switch scope to the desk");
+    assert!(model.at_home());
+    assert_eq!(model.marked_count(), 0, "scope changes clear marks");
 }
 
 #[test]
@@ -611,10 +619,8 @@ fn parked_task_page_still_allows_marking_and_bulk_verbs_on_the_board() {
 
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
         .expect("open marked cursor task");
-    for _ in 0..3 {
-        apply_intent(&mut domain, &mut model, BoardIntent::StageLeft, None)
-            .expect("return focus to the board");
-    }
+    apply_intent(&mut domain, &mut model, BoardIntent::FocusList, None)
+        .expect("return focus to the board");
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
     assert_eq!(model.marked_count(), 2);
 
@@ -907,7 +913,6 @@ fn enter_opens_the_task_page_and_enter_again_closes_it_without_mutating() {
         .expect("open task page");
     assert_eq!(outcome, IntentOutcome::None);
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
-    assert_eq!(model.detail_open(), None, "the page replaces any peek");
     assert_eq!(domain.get(id).expect("task").revision, rev_before);
     assert_eq!(domain.get(id).expect("task").status, HumanStatus::Ready);
 
@@ -917,50 +922,6 @@ fn enter_opens_the_task_page_and_enter_again_closes_it_without_mutating() {
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
     assert_eq!(domain.get(id).expect("task").revision, rev_before);
     assert!(!board_intent_may_persist(&BoardIntent::OpenTaskPage));
-}
-
-#[test]
-fn right_arrow_peeks_detail_and_left_arrow_collapses_it() {
-    let (mut domain, mut model, id) = board_with_task("peek me", HumanStatus::Ready);
-    let rev_before = domain.get(id).expect("task").revision;
-    assert_eq!(model.detail_open(), None);
-
-    // Right opens the peek on the selected row without touching the domain.
-    let outcome =
-        apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek detail");
-    assert_eq!(outcome, IntentOutcome::None);
-    assert_eq!(model.detail_open(), Some(id));
-    assert_eq!(domain.get(id).expect("task").revision, rev_before);
-
-    // Right again is idempotent: still open, still no mutation.
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek again");
-    assert_eq!(model.detail_open(), Some(id));
-
-    // Left collapses the open peek.
-    let outcome = apply_intent(&mut domain, &mut model, BoardIntent::CollapseDetail, None)
-        .expect("collapse detail");
-    assert_eq!(outcome, IntentOutcome::None);
-    assert_eq!(model.detail_open(), None);
-
-    // Left with nothing open is a clean no-op.
-    apply_intent(&mut domain, &mut model, BoardIntent::CollapseDetail, None)
-        .expect("collapse no-op");
-    assert_eq!(model.detail_open(), None);
-    assert_eq!(domain.get(id).expect("task").revision, rev_before);
-
-    assert!(!board_intent_may_persist(&BoardIntent::PeekDetail));
-    assert!(!board_intent_may_persist(&BoardIntent::CollapseDetail));
-}
-
-#[test]
-fn detail_closes_when_its_task_leaves_the_visible_set() {
-    let (mut domain, mut model, id) = board_with_task("inspect then remove", HumanStatus::Ready);
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("open peek");
-    assert_eq!(model.detail_open(), Some(id));
-
-    domain.soft_delete(id).expect("soft delete");
-    model.sync_from_domain(&domain);
-    assert_eq!(model.detail_open(), None);
 }
 
 #[test]
@@ -1042,7 +1003,7 @@ fn block_on_done_and_verbs_without_selection_leave_visible_notices() {
 
 #[test]
 fn esc_closes_transient_then_detail_then_quits_at_the_root() {
-    let (mut domain, mut model, id) = board_with_task("layered", HumanStatus::Ready);
+    let (mut domain, mut model, _) = board_with_task("layered", HumanStatus::Ready);
 
     // Transient: help card
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("help");
@@ -1066,13 +1027,13 @@ fn esc_closes_transient_then_detail_then_quits_at_the_root() {
     assert_eq!(outcome, IntentOutcome::None);
     assert_eq!(model.command_surface(), CommandSurface::None);
 
-    // Peek / accordion
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek");
-    assert_eq!(model.detail_open(), Some(id));
+    // Detail focus
+    apply_intent(&mut domain, &mut model, BoardIntent::FocusDetail, None).expect("detail");
+    assert_eq!(model.wide_stage(), tier::WideStage::Task);
     let outcome =
         apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("esc detail");
     assert_eq!(outcome, IntentOutcome::None);
-    assert_eq!(model.detail_open(), None);
+    assert_eq!(model.wide_stage(), tier::WideStage::Board);
 
     // Nothing open: the board-level Esc quits without changing navigation state.
     let outcome =
@@ -1151,12 +1112,8 @@ fn t64_ctrl_q_quits_instead_of_dismissing_help_or_pickers() {
 }
 
 #[test]
-fn t64_root_esc_quits_on_each_navigation_tab_without_resetting_it() {
-    for tab in [
-        tsk_tui::ui::queue::NavTab::Desk,
-        tsk_tui::ui::queue::NavTab::ProjectBoard,
-        tsk_tui::ui::queue::NavTab::Projects,
-    ] {
+fn t64_root_esc_quits_on_each_board_scope_without_resetting_it() {
+    for scope in [None, Some(None), Some(Some(PathBuf::from(THIS_REPO)))] {
         let mut domain = DomainState::new();
         let id = domain
             .create(
@@ -1170,25 +1127,18 @@ fn t64_root_esc_quits_on_each_navigation_tab_without_resetting_it() {
         domain
             .set_status(id, HumanStatus::Ready)
             .expect("put task on deck");
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-        if tab == tsk_tui::ui::queue::NavTab::ProjectBoard {
-            model.set_selected_project(Some(PathBuf::from(THIS_REPO)));
-        } else {
-            apply_intent(
-                &mut domain,
-                &mut model,
-                BoardIntent::SelectNavTab(tab),
-                None,
-            )
-            .expect("select tab");
+        let mut model = BoardModel::from_domain(&domain, None);
+        if let Some(project) = scope.clone() {
+            model.set_selected_project(project);
         }
+        let tab = scope.clone();
+        let active = model.active_project().map(|path| path.to_path_buf());
+        let home = model.at_home();
 
-        assert_eq!(model.wide_stage(), tier::WideStage::FullBoard);
-        assert_eq!(model.nav_tab(), tab);
+        assert_eq!(model.wide_stage(), tier::WideStage::Board);
         assert_eq!(model.input_mode(), BoardInputMode::Normal, "{tab:?}");
         assert_eq!(model.popup(), BoardPopup::None, "{tab:?}");
         assert_eq!(model.command_surface(), CommandSurface::None, "{tab:?}");
-        assert_eq!(model.detail_open(), None, "{tab:?}");
         assert_eq!(model.search_query(), "", "{tab:?}");
         assert!(!model.inbox_header_selected(), "{tab:?}");
         assert!(!model.archived_header_selected(), "{tab:?}");
@@ -1198,20 +1148,25 @@ fn t64_root_esc_quits_on_each_navigation_tab_without_resetting_it() {
             IntentOutcome::Quit,
             "{tab:?}"
         );
-        assert_eq!(model.nav_tab(), tab, "root Esc must not reset the tab");
+        assert_eq!(
+            model.active_project().map(|path| path.to_path_buf()),
+            active,
+            "root Esc must not reset the scope"
+        );
+        assert_eq!(model.at_home(), home, "root Esc must not reset the scope");
     }
 }
 
 #[test]
-fn t64_esc_collapses_split_without_quitting_and_keeps_header_exclusions() {
+fn t64_esc_returns_detail_focus_to_the_list_without_quitting_and_keeps_header_exclusions() {
     let (mut domain, mut model, _) = board_with_task("split", HumanStatus::Ready);
-    apply_intent(&mut domain, &mut model, BoardIntent::StageRight, None).expect("open split");
-    assert_eq!(model.wide_stage(), tier::WideStage::Split);
+    apply_intent(&mut domain, &mut model, BoardIntent::FocusDetail, None).expect("focus detail");
+    assert_eq!(model.wide_stage(), tier::WideStage::Task);
     assert_eq!(
         apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("split Esc"),
         IntentOutcome::None
     );
-    assert_eq!(model.wide_stage(), tier::WideStage::FullBoard);
+    assert_eq!(model.wide_stage(), tier::WideStage::Board);
 
     let mut domain = DomainState::new();
     let archived = domain
@@ -1247,7 +1202,7 @@ fn t64_inbox_header_esc_does_not_quit() {
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleInboxGroup, None)
         .expect("select inbox header");
     assert!(model.inbox_header_selected());
-    assert_eq!(model.wide_stage(), tier::WideStage::FullBoard);
+    assert_eq!(model.wide_stage(), tier::WideStage::Board);
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
     assert_eq!(
         apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None)
@@ -2088,7 +2043,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
     )
     .expect("scope home");
     assert!(model.at_home());
-    assert_eq!(model.nav_tab(), tsk_tui::ui::queue::NavTab::Desk);
+    assert_eq!(model.active_project(), None);
     let home_view = model.queue_view();
     assert_eq!(home_view.counts.in_motion, 3);
     assert!(model.visible_ids().contains(&motion_global));
@@ -3305,9 +3260,23 @@ fn enter_stays_in_view_and_edit_verb_targets_step_or_title_by_cursor() {
     );
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
-    // Cursor inactive (fresh page session): Ctrl+e is the existing title edit.
+    // Cursor inactive: the wide detail keeps its session across list focus, so the step
+    // cursor survives a refocus; Up from the first step clears it. Ctrl+e is then the
+    // existing title edit.
     apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("close page");
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("reopen page");
+    for _ in 0..4 {
+        if model.step_cursor().is_none() {
+            break;
+        }
+        apply_intent(&mut domain, &mut model, BoardIntent::PageScrollUp, None)
+            .expect("up toward the notes");
+    }
+    assert_eq!(
+        model.step_cursor(),
+        None,
+        "up from the first step clears the cursor"
+    );
     let rename = map_key(BoardInputMode::TaskPage, ctrl(KeyCode::Char('e'))).expect("ctrl+e");
     apply_intent(&mut domain, &mut model, rename, None).expect("ctrl+e inactive cursor");
     assert_eq!(
@@ -4975,7 +4944,7 @@ fn file_on_a_taskless_invocation_repo_refuses_on_the_status_line() {
 }
 
 #[test]
-fn picker_archive_of_the_focused_project_keeps_an_unarchived_cwd_default_for_quick_add() {
+fn picker_archive_of_the_focused_project_sends_quick_add_to_the_desk() {
     // Focus /repos/other, archive it from the picker. The board goes home, but the
     // invocation default (THIS_REPO, unarchived) must still drive quick-add: archiving one
     // project is not a session-wide "everything goes to the desk".
@@ -5065,8 +5034,8 @@ fn picker_archive_of_the_focused_project_keeps_an_unarchived_cwd_default_for_qui
         .expect("probe saved");
     assert_eq!(
         probe.scope,
-        project(THIS_REPO),
-        "the unarchived invocation default still drives quick-add"
+        TaskScope::Global,
+        "quick-add from the reset scope goes to the desk, never the archived project"
     );
 }
 
@@ -5343,8 +5312,8 @@ fn ctrl_u_in_read_only_focus_unarchives_in_place() {
 fn leaving_read_only_focus_hides_the_archived_projects_tasks_again() {
     for leave in [
         BoardIntent::CancelEdit,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Desk),
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Projects),
+        BoardIntent::CloseLayer,
+        BoardIntent::OpenProjectSelector,
     ] {
         let (mut domain, mut model, inside) = read_only_focus();
         assert!(model.visible_ids().contains(&inside));

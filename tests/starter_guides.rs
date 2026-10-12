@@ -17,7 +17,6 @@ use tsk_tui::guides::CATALOG;
 use tsk_tui::store::TaskStore;
 use tsk_tui::ui::board::{apply_intent, IntentOutcome};
 use tsk_tui::ui::input::BoardIntent;
-use tsk_tui::ui::queue::NavTab;
 use tsk_tui::update::suppress_background_fetch;
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -171,7 +170,11 @@ fn non_git_full_board_open_keeps_the_directory_in_slot_two_and_captures_on_desk(
     let _context = ContextEnv::set(&outside);
 
     let (_store, mut state, mut model) = load_board().expect("full board open");
-    assert_eq!(model.nav_tab(), NavTab::Desk);
+    assert_eq!(
+        model.active_project(),
+        None,
+        "the board opens on every scope"
+    );
     assert_eq!(model.selected_project(), Some(outside.as_path()));
 
     let snapshot = build_snapshot(

@@ -38,6 +38,13 @@ fn apply(
     apply_intent(domain, model, intent, snapshot).expect("apply capture-bar intent")
 }
 
+/// A board scoped to the invocation project, so quick-add defaults there.
+fn invocation_board(domain: &DomainState) -> BoardModel {
+    let mut model = BoardModel::from_domain(domain, None);
+    model.set_selected_project(Some(PathBuf::from("/repos/invocation")));
+    model
+}
+
 fn open(domain: &mut DomainState, model: &mut BoardModel, snapshot: &InvocationSnapshot) {
     assert_eq!(
         apply(domain, model, BoardIntent::OpenCapture, Some(snapshot)),
@@ -455,7 +462,7 @@ fn invocation_default_scope_and_this_repo_are_project_candidates() {
 #[test]
 fn unmatched_project_basename_refuses_and_keeps_the_last_good_destination() {
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
     let snap = snapshot();
 
     open(&mut domain, &mut model, &snap);
@@ -518,7 +525,7 @@ fn relative_project_path_refuses_without_saving() {
 fn shift_enter_uses_the_same_project_basename_resolution() {
     let mut domain = DomainState::new();
     create_project_fixture(&mut domain, "/work/ctrl-target");
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snapshot());
     type_title(&mut domain, &mut model, "keep open !p ctrl-target");
@@ -538,7 +545,7 @@ fn shift_enter_uses_the_same_project_basename_resolution() {
     assert_eq!(
         model.selected_id(),
         None,
-        "saved project task is outside the desk lens"
+        "saved task is outside the invocation project's lens"
     );
     assert_eq!(model.message(), None);
 }
@@ -547,7 +554,7 @@ fn shift_enter_uses_the_same_project_basename_resolution() {
 fn capture_bar_strips_bare_project_token_as_global_and_project_scope_tokens() {
     let snap = snapshot();
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snap);
     type_title(&mut domain, &mut model, "global task !p");
@@ -620,7 +627,7 @@ fn bare_project_token_requires_a_title_and_preselects_global_when_expanded() {
 fn empty_enter_stays_open_esc_discards_and_tab_expands_the_seeded_task_page() {
     let snap = snapshot();
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, None);
+    let mut model = invocation_board(&domain);
 
     open(&mut domain, &mut model, &snap);
     assert_eq!(
@@ -1142,7 +1149,7 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     for text in [
         "visible task",
         "title…   !p = desk · !p name = project · !t name = thread",
-        "add to invocation",
+        "add to desk",
         "enter save · tab details · esc close",
     ] {
         assert!(standard.contains(text), "missing {text:?}: {standard}");
@@ -1150,7 +1157,7 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     let standard_rows = render_rows(&model, 80, 24);
     assert_eq!(
         standard_rows[20].trim(),
-        "add to invocation",
+        "add to desk",
         "the row above the input names the destination"
     );
     assert!(standard_rows[21].contains("title…"), "input row");

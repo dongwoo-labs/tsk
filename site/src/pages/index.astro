@@ -21,8 +21,8 @@ const PAGE_JUMPS = [
 const BOARD_PINS = [
   {
     n: 1,
-    title: 'Three tabs, always on screen.',
-    body: '<b>desk</b> gathers work across every project. The middle tab is your selected project; <kbd>p</kbd> picks a different one. <b>projects</b> is the index of them all. <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> jump between them; the active tab is underlined.',
+    title: 'One board, scope and sort.',
+    body: 'The <b>board</b> tab is underlined. <kbd>p</kbd> picks the scope: <b>all</b>, <b>desk</b>, or one project. <kbd>S</kbd> flips the sort between task number and project groups.',
   },
   {
     n: 2,
@@ -32,12 +32,12 @@ const BOARD_PINS = [
   {
     n: 3,
     title: 'A task.',
-    body: 'A selection arrow without a filled highlight, status glyph, a dim <code>T</code>-number you can click to copy, and the wrapped title. Project or thread attribution appears only at the bottom of an open peek.',
+    body: 'A selection arrow without a filled highlight, status glyph, a dim <code>T</code>-number you can click to copy, and the wrapped title. Nothing else: project and thread live in the task detail.',
   },
   {
     n: 4,
-    title: 'Peek.',
-    body: 'Below 110 columns, <kbd>→</kbd>, <kbd>l</kbd>, or a click shows up to five wrapped note lines under the task. Wide, those keys or a click open the task page beside the board instead. <kbd>←</kbd> or <kbd>h</kbd> closes it; <kbd>Enter</kbd> opens the full page.',
+    title: 'Number order.',
+    body: 'Rows follow task numbers, so a task keeps its place while you work on it. At 110 columns or wider the selected task always shows beside the list; <kbd>→</kbd> or <kbd>l</kbd> moves into it and <kbd>J</kbd> / <kbd>K</kbd> walk the list from there.',
   },
   {
     n: 5,
@@ -224,7 +224,7 @@ const softwareApplication = {
           <div class="hero-side" data-board-pins>
             <div class="screen" role="group" aria-label="A tsk board at 78 columns. Hover or click a number for its callout.">
               <div class="s-row s-tabs is-on">
-                <span class="l"><span class="on">desk</span><span class="dim">  ·  </span>tsk ▾<span class="dim">  ·  </span>projects</span>
+                <span class="l"><span class="on">board</span><span class="dim">  ·  </span>desk ▾<span class="dim">  ·  </span>sort number ▾</span>
                 <button type="button" class="pin is-on" data-pin="1" aria-label={pinLabel(1)} aria-controls="pin-card" aria-expanded="true">1</button>
               </div>
               <div class="s-gap"></div>
@@ -233,16 +233,13 @@ const softwareApplication = {
                 <button type="button" class="pin" data-pin="2" aria-label={pinLabel(2)} aria-controls="pin-card" aria-expanded="false">2</button>
               </div>
               <div class="s-gap"></div>
+              <div class="s-row s-task">
+                <span class="l"><span class="glyph">■</span> <span class="tid">T29</span> Waiting on the pane label</span>
+                <button type="button" class="pin" data-pin="4" aria-label={pinLabel(4)} aria-controls="pin-card" aria-expanded="false">4</button>
+              </div>
               <div class="s-row s-task is-sel">
                 <span class="l">▸ <span class="glyph">▲</span> <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span>
                 <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
-              </div>
-              <div class="s-row s-peek"><span class="l dim">  │ Steps live on the task page. Notes wrap, never truncate.</span></div>
-              <div class="s-row s-peek"><span class="l dim">  └─ tsk</span>
-                <button type="button" class="pin" data-pin="4" aria-label={pinLabel(4)} aria-controls="pin-card" aria-expanded="false">4</button>
-              </div>
-              <div class="s-row s-task">
-                <span class="l"><span class="glyph">■</span> <span class="tid">T29</span> Waiting on the pane label</span>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
@@ -258,10 +255,10 @@ const softwareApplication = {
                 <button type="button" class="pin" data-pin="5" aria-label={pinLabel(5)} aria-controls="pin-card" aria-expanded="false">5</button>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T25</span> Draft the announcement</span>
+                <span class="l"><span class="glyph">○</span> <span class="tid">T18</span> Global backlog note</span>
               </div>
               <div class="s-row s-task">
-                <span class="l"><span class="glyph">○</span> <span class="tid">T18</span> Global backlog note</span>
+                <span class="l"><span class="glyph">○</span> <span class="tid">T25</span> Draft the announcement</span>
               </div>
               <div class="s-row s-sub"><span class="sec">inbox</span><span class="count">2</span></div>
               <div class="s-row s-task">
@@ -414,47 +411,35 @@ const softwareApplication = {
             <span class="index">02 <span class="index-label">board</span></span>
             <h2 id="board-heading">One list, ordered by urgency.</h2>
             <p class="band-lede">
-              Inside Git, start on the repo’s project board. Outside Git, start on <b>desk</b> with the current directory one tab away. <b>desk</b> shows what
-              needs you across projects, active work, and your loose backlog. The selected
-              <b>project</b> stays one key away; <b>projects</b> is a searchable index with
-              a View selector for cross-project threads. Filter threads within a project
-              with <kbd>t</kbd>, or across projects with <kbd>v</kbd> on the index.
-              Give the board 110 columns and it becomes a slider.
+              Inside Git, start on the repo’s project board. Outside Git, start on <b>all</b>. <kbd>p</kbd> picks the
+              scope: <b>all</b> tasks, your <b>desk</b> (what needs you across projects, active work,
+              and your loose backlog), or one project. Rows follow task numbers; <kbd>S</kbd> groups
+              them by project. Filter threads within a project with <kbd>t</kbd>.
+              Give the board 110 columns and the selected task sits beside the list.
             </p>
           </header>
 
           <div class="stages">
             <div class="stages-head">
-              <h3>Wide: the four-stage slider.</h3>
-              <p>At 110 columns and up, focus and geometry are the same thing. One rule, one footer, no colour.</p>
+              <h3>Wide: list and detail, always.</h3>
+              <p>At 110 columns and up the geometry never changes; only focus moves. One rule, one footer, no colour.</p>
             </div>
-            <ol class="stage-strip" aria-label="The four stages: board, split, rail, page">
-              <li>
-                <div class="frame f-0" aria-hidden="true"><i class="b is-focus"></i></div>
-                <div class="stage-name"><b>Board</b></div>
-                <div class="stage-focus">full width · board has focus</div>
-              </li>
+            <ol class="stage-strip" aria-label="Two focus states: list, detail">
               <li>
                 <div class="frame f-a" aria-hidden="true"><i class="b is-focus"></i><i class="r"></i><i class="t"></i></div>
-                <div class="stage-name"><b>Split</b></div>
-                <div class="stage-focus">board 40%, task page beside it · board has focus</div>
+                <div class="stage-name"><b>List</b></div>
+                <div class="stage-focus">list 40%, detail beside it · list has focus</div>
               </li>
               <li>
-                <div class="frame f-g" aria-hidden="true"><i class="b is-dim"></i><i class="r"></i><i class="t is-focus"></i></div>
-                <div class="stage-name"><b>Rail</b></div>
-                <div class="stage-focus">dim 32-column rail, task page · task has focus</div>
-              </li>
-              <li>
-                <div class="frame f-f" aria-hidden="true"><i class="t is-focus"></i></div>
-                <div class="stage-name"><b>Page</b></div>
-                <div class="stage-focus">full width · task has focus</div>
+                <div class="frame f-a" aria-hidden="true"><i class="b"></i><i class="r"></i><i class="t is-focus"></i></div>
+                <div class="stage-name"><b>Detail</b></div>
+                <div class="stage-focus">same columns · detail has focus</div>
               </li>
             </ol>
             <p class="stages-keys">
-              <span><kbd>→</kbd> / <kbd>l</kbd> one stage right</span>
-              <span><kbd>←</kbd> / <kbd>h</kbd> one stage left</span>
-              <span><kbd>Enter</kbd> jump to the page and remember where you were</span>
-              <span><kbd>Esc</kbd> go back there</span>
+              <span><kbd>→</kbd> / <kbd>l</kbd> / <kbd>Enter</kbd> focus the detail</span>
+              <span><kbd>←</kbd> / <kbd>h</kbd> / <kbd>Esc</kbd> back to the list</span>
+              <span><kbd>J</kbd> / <kbd>K</kbd> next / previous task</span>
             </p>
           </div>
         </div>

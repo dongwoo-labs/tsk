@@ -6,7 +6,7 @@
 //! path and the mouse path and comparing what actually happened, never by asserting a
 //! mapping table.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
@@ -17,7 +17,7 @@ use tsk_tui::app::{drag_content_area, tick_drag_autoscroll};
 use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::ui::board::{
     apply_intent, board_hit_map, board_verb_items, draw_board, resolve_board_command,
-    BoardInputMode, BoardModel, ProjectScopeOption,
+    BoardInputMode, BoardModel,
 };
 use tsk_tui::ui::capture::CaptureField;
 use tsk_tui::ui::input::{
@@ -281,66 +281,6 @@ fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_row
 }
 
 #[test]
-fn projects_index_row_click_selects_and_a_double_click_opens_the_project() {
-    let (mut domain, mut model, _id) = scoped_board();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Desk),
-        None,
-    )
-    .expect("start from the desk");
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new("/repos/app")),
-        "slot 2 retains its project while Desk is active"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Projects),
-        None,
-    )
-    .expect("open projects index");
-    let hits = board_hit_map(STANDARD, &model);
-    let view = model.queue_view();
-    let row = hits
-        .regions
-        .iter()
-        .find(|hit| match hit.target {
-            QueueHitTarget::ProjectRow(index) => view
-                .projects
-                .get(index)
-                .is_some_and(|row| row.path == OTHER_REPO),
-            _ => false,
-        })
-        .unwrap_or_else(|| panic!("no index row hit region for {OTHER_REPO}: {hits:?}"));
-    let intent = click(row, &model, &hits).expect("row click maps to an intent");
-    apply_intent(&mut domain, &mut model, intent.clone(), None).expect("apply row click");
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new("/repos/app")),
-        "a single index-row click only selects; slot 2 keeps its project"
-    );
-    assert_eq!(
-        model.selected_project_row().map(|row| row.path),
-        Some(OTHER_REPO.to_string()),
-        "the clicked row is the index selection"
-    );
-    assert_eq!(
-        model.nav_tab(),
-        tsk_tui::ui::queue::NavTab::Projects,
-        "the index stays open after a single click"
-    );
-    apply_intent(&mut domain, &mut model, intent, None).expect("apply second click");
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new(OTHER_REPO)),
-        "a second click on the same row inside the window opens it in slot 2"
-    );
-}
-
-#[test]
 fn scoped_project_named_all_projects_has_no_group_header_hit_target() {
     const COLLIDING_REPO: &str = "/repos/all projects";
     let mut domain = DomainState::new();
@@ -361,8 +301,8 @@ fn scoped_project_named_all_projects_has_no_group_header_hit_target() {
         !hits
             .regions
             .iter()
-            .any(|hit| matches!(hit.target, QueueHitTarget::ProjectRow(_))),
-        "project focus is a task board: it must offer no index rows at all: {hits:?}"
+            .any(|hit| matches!(hit.target, QueueHitTarget::ArchivedHeader)),
+        "project focus is a task board: it must offer no group header rows: {hits:?}"
     );
 }
 
@@ -708,9 +648,9 @@ fn assert_verb_parity(title: &str, status: HumanStatus, chord: &str, key: KeyCod
         "chord {chord:?}: status diverged between the two routes"
     );
     assert_eq!(
-        model_key.detail_open().is_some(),
-        model_mouse.detail_open().is_some(),
-        "chord {chord:?}: detail-open diverged between the two routes"
+        model_key.edit_target() == Some(id_key),
+        model_mouse.edit_target() == Some(id_mouse),
+        "chord {chord:?}: the open task diverged between the two routes"
     );
     assert_eq!(
         model_key.command_surface(),
@@ -804,22 +744,13 @@ fn click_and_wheel_match_keyboard_effects_for_each_control() {
     )
     .expect("direct open");
     let hits = board_hit_map(STANDARD, &model_mouse);
-    let tab_hit = hits
+    let scope_hit = hits
         .regions
         .iter()
-        .find(|hit| {
-            matches!(
-                hit.target,
-                QueueHitTarget::NavTab(tsk_tui::ui::queue::NavTab::ProjectBoard)
-            )
-        })
-        .expect("slot-2 tab hit region");
-    let mouse_intent = click(tab_hit, &model_mouse, &hits).expect("tab click intent");
-    assert_eq!(
-        mouse_intent,
-        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::ProjectBoard),
-        "slot 2's click routes through the tab intent; the reducer opens the picker"
-    );
+        .find(|hit| matches!(hit.target, QueueHitTarget::ScopeChip))
+        .expect("scope control hit region");
+    let mouse_intent = click(scope_hit, &model_mouse, &hits).expect("scope click intent");
+    assert_eq!(mouse_intent, BoardIntent::OpenProjectSelector);
     apply_intent(&mut domain_mouse, &mut model_mouse, mouse_intent, None).expect("mouse open");
     assert_eq!(
         model_direct.project_picker_index(),
@@ -1127,9 +1058,6 @@ fn click_a_task_row_selects_its_index_on_a_scrolled_list() {
         None,
     )
     .expect("select last task");
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None)
-        .expect("open peek on the last task");
-    assert_eq!(model.detail_open(), Some(visible[last]));
 
     let hits = board_hit_map(STANDARD, &model);
     let geo = tsk_tui::ui::tier::resolve(STANDARD.width, STANDARD.height);
@@ -1145,7 +1073,7 @@ fn click_a_task_row_selects_its_index_on_a_scrolled_list() {
         .regions
         .iter()
         .find(|hit| matches!(hit.target, QueueHitTarget::Task(id) if id == visible[neighbor]))
-        .expect("the task just above the open accordion must still carry its own hit region");
+        .expect("the task just above the last row must still carry its own hit region");
     assert_eq!(
         click(region, &model, &hits),
         Some(BoardIntent::SelectIndex(neighbor)),
@@ -1713,12 +1641,12 @@ fn section_headers_have_no_hits_and_collapsed_task_titles_are_selectable() {
 }
 
 #[test]
-fn a_row_click_selects_and_peeks_and_a_second_click_opens_the_task_page() {
+fn a_row_click_selects_and_a_second_click_opens_the_task_page() {
     let (mut domain, mut model) = deck_of(3);
     let visible = model.visible_ids();
     let target = visible[1];
 
-    // First click selects the row and expands its peek.
+    // First click selects the row.
     let hits = board_hit_map(STANDARD, &model);
     let area = hits
         .regions
@@ -1731,9 +1659,9 @@ fn a_row_click_selects_and_peeks_and_a_second_click_opens_the_task_page() {
     apply_intent(&mut domain, &mut model, intent, None).expect("apply first click");
     assert_eq!(model.selected_id(), Some(target));
     assert_eq!(
-        model.detail_open(),
-        Some(target),
-        "a single row click expands that row's peek"
+        model.edit_target(),
+        None,
+        "a single row click opens nothing"
     );
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
 
@@ -1743,13 +1671,13 @@ fn a_row_click_selects_and_peeks_and_a_second_click_opens_the_task_page() {
         .regions
         .iter()
         .find(|hit| hit.target == QueueHitTarget::Task(target))
-        .expect("the peeked row still paints a hit region")
+        .expect("the selected row still paints a hit region")
         .area;
     let intent =
         map_board_mouse(&model, &hits, left_click(area.x + 1, area.y)).expect("second click");
     apply_intent(&mut domain, &mut model, intent, None).expect("apply second click");
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
-    assert_eq!(model.detail_open(), None, "the page replaces the peek");
+    assert_eq!(model.edit_target(), Some(target));
 }
 
 #[test]
@@ -2507,113 +2435,6 @@ fn drag_selection_copies_painted_task_title_not_undeclared_chrome() {
     assert_eq!(selection_text(&rows, &hits.copyable, &bare), None);
 }
 
-/// Peek accordion body paints a `│` gutter; that pipe is chrome. A drag across the
-/// open peek on a project-scoped board must copy the notes text without it — the
-/// same surface that felt broken when copyable rects spanned the full row.
-#[test]
-fn peek_on_project_board_copy_excludes_pipe_gutter() {
-    use ratatui::layout::Position;
-    use tsk_tui::ui::text_select::{selection_text, TextSelection};
-
-    let mut domain = DomainState::new();
-    let notes = "Fixed. It wasn't a bug in the terminal-selection sense.";
-    let id = domain
-        .create(
-            "hi",
-            Some(notes.to_string()),
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            None,
-        )
-        .expect("create");
-    domain.set_status(id, HumanStatus::Started).expect("start");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    // Focus the project board (the "project page" surface), then open peek.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open project picker");
-    let project_idx = model
-        .project_options()
-        .iter()
-        .position(|opt| matches!(opt, ProjectScopeOption::Project(p) if p == Path::new(THIS_REPO)))
-        .expect("this repo is offered");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectProjectOption(project_idx),
-        None,
-    )
-    .expect("select project");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("confirm project focus");
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new(THIS_REPO)),
-        "board must be project-focused"
-    );
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek");
-    assert_eq!(model.detail_open(), Some(id));
-
-    let hits = board_hit_map(STANDARD, &model);
-    let mut terminal =
-        Terminal::new(TestBackend::new(STANDARD.width, STANDARD.height)).expect("test terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw");
-    let buffer = terminal.backend().buffer();
-    let rows: Vec<String> = (0..STANDARD.height)
-        .map(|y| {
-            (0..STANDARD.width)
-                .map(|x| buffer[(x, y)].symbol().to_string())
-                .collect::<String>()
-        })
-        .collect();
-
-    let note_y = rows
-        .iter()
-        .position(|row| row.contains("Fixed. It wasn't"))
-        .expect("peek paints the notes preview") as u16;
-    assert!(
-        rows[note_y as usize].contains('│'),
-        "sanity: the peek gutter is on the painted row"
-    );
-    let note_copyable = hits
-        .copyable
-        .iter()
-        .find(|rect| rect.y == note_y)
-        .expect("peek notes row must declare a copyable rect");
-    assert!(
-        note_copyable.x >= 6,
-        "copyable must start past `    │ ` (6 cells), got x={}",
-        note_copyable.x
-    );
-
-    let selection = TextSelection::new(
-        Position::new(0, note_y),
-        Position::new(STANDARD.width - 1, note_y),
-    );
-    let text = selection_text(&rows, &hits.copyable, &selection).expect("peek notes copy");
-    assert!(
-        text.contains("Fixed. It wasn't a bug"),
-        "notes text must copy, got {text:?}"
-    );
-    assert!(
-        !text.contains('│'),
-        "peek pipe gutter must stay out of the clipboard, got {text:?}"
-    );
-}
-
 /// Task-page header copyable rects cover title words only — not the status glyph or
 /// the right-aligned status word.
 #[test]
@@ -2758,7 +2579,6 @@ fn list_scrollbar_click_jumps_viewport_without_changing_selection() {
     let (mut domain, mut model) = deck_of(40);
     let first = model.selected_id().expect("the first task is selected");
     assert_eq!(model.visible_ids()[1], first);
-    assert_eq!(model.detail_open(), None);
 
     let hits = board_hit_map(STANDARD, &model);
     let bottom = hits
@@ -2788,7 +2608,11 @@ fn list_scrollbar_click_jumps_viewport_without_changing_selection() {
         Some(first),
         "track click must leave selection alone"
     );
-    assert_eq!(model.detail_open(), None, "scrollbar click must not peek");
+    assert_eq!(
+        model.edit_target(),
+        None,
+        "scrollbar click must not open a task"
+    );
     assert_eq!(model.input_mode(), BoardInputMode::Normal);
 }
 
@@ -2807,48 +2631,20 @@ fn row_click_selects_without_jumping_the_viewport() {
     apply_intent(&mut domain, &mut model, BoardIntent::SelectIndex(mid), None)
         .expect("select middle row");
     assert_eq!(model.selected_id(), Some(ids[mid]));
-    assert_eq!(model.detail_open(), Some(ids[mid]));
     let after = page_rows(&model);
     assert!(
         after.iter().any(|row| row.contains("task 0")),
-        "clicking a visible row must not park the peek at the bottom:\n{}",
+        "clicking a visible row must not jump the viewport:\n{}",
         after.join("\n")
     );
 }
 
 #[test]
-fn list_scrollbar_still_moves_the_viewport_while_peek_is_open() {
-    let (mut domain, mut model) = deck_of(40);
-    let _ = page_rows(&model);
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectIndex(1), None)
-        .expect("peek first task row");
-    assert!(model.detail_open().is_some());
-    let before = page_rows(&model);
-    let hits = board_hit_map(STANDARD, &model);
-    let bottom = hits
-        .regions
-        .iter()
-        .filter(|hit| matches!(hit.target, QueueHitTarget::ListScroll(_)))
-        .max_by_key(|hit| hit.area.y)
-        .expect("peek must not remove the list scrollbar");
-    let intent = map_board_mouse(&model, &hits, left_click(bottom.area.x, bottom.area.y))
-        .expect("scrollbar click with peek open");
-    apply_intent(&mut domain, &mut model, intent, None).expect("scroll with peek open");
-    let after = page_rows(&model);
-    assert_ne!(
-        after,
-        before,
-        "scrollbar must move the list while peek is open:\n{}",
-        after.join("\n")
-    );
-}
-
-#[test]
-fn mouse_wheel_scrolls_the_list_while_peek_is_open() {
+fn mouse_wheel_scrolls_the_list_after_a_row_click() {
     let (mut domain, mut model) = deck_of(40);
     let _ = page_rows(&model);
     apply_intent(&mut domain, &mut model, BoardIntent::SelectIndex(0), None)
-        .expect("peek first row");
+        .expect("select first row");
     let selected = model.selected_id();
     let before = page_rows(&model);
     let hits = board_hit_map(STANDARD, &model);
@@ -2861,13 +2657,12 @@ fn mouse_wheel_scrolls_the_list_while_peek_is_open() {
         selected,
         "wheel must not move selection"
     );
-    assert_eq!(model.detail_open(), selected, "wheel must leave peek open");
     assert!(model.list_scroll() > 0, "wheel must advance list_scroll");
     let after = page_rows(&model);
     assert_ne!(
         after,
         before,
-        "wheel must move the list while peek is open:\n{}",
+        "wheel must move the list:\n{}",
         after.join("\n")
     );
 }
@@ -3125,13 +2920,12 @@ fn wide_task_drag_uses_task_column_content_edges_for_autoscroll() {
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::StageRight, None).expect("stage A");
-    apply_intent(&mut domain, &mut model, BoardIntent::StageRight, None).expect("stage G");
+    apply_intent(&mut domain, &mut model, BoardIntent::FocusDetail, None).expect("detail");
 
-    // Rail 32 + rule 1 + pad 1: the page body runs from the row under the header rule down
+    // List 44 + rule 1 + pad 1: the page body runs from the row under the header rule down
     // to the shared footer's rule.
     let content = drag_content_area(&model, Rect::new(0, 0, 110, 24));
-    assert_eq!(content, Rect::new(34, 3, 76, 18));
+    assert_eq!(content, Rect::new(46, 3, 64, 18));
 
     let mut gesture = DragSelectGesture::new();
     gesture.update_autoscroll(3, content, true);
@@ -3512,35 +3306,6 @@ fn popup_typing_and_cursor_movement_restore_notes_after_manual_scroll() {
         apply_intent(&mut domain, &mut model, intent, None).unwrap();
         assert!(page_rows(&model).join("\n").contains("LASTLINE"));
     }
-}
-
-#[test]
-fn peek_attribution_is_copyable_but_not_a_task_click_target() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "peek target",
-            Some("note body".into()),
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-            Some("release".into()),
-        )
-        .unwrap();
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    model.set_selected_project(Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).unwrap();
-    let rows = page_rows(&model);
-    let y = rows
-        .iter()
-        .position(|row| row.contains("└─ #release"))
-        .unwrap() as u16;
-    let hits = board_hit_map(STANDARD, &model);
-    assert!(!hits.regions.iter().any(|hit| hit.area.y == y));
-    assert!(hits
-        .copyable
-        .iter()
-        .any(|area| area.y == y && area.x == 7 && area.width == 8));
-    assert_eq!(map_board_mouse(&model, &hits, left_click(8, y)), None);
 }
 
 /// #159 review F-3: `ctrl+a` adds below the selected step, but a click on the trailing

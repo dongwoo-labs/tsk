@@ -1,26 +1,32 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ desk  ·  tsk ▾  ·  projects                                              all ▾ │
+│ board  ·  all ▾  ·  sort project ▾                                             │
 │                                                                                │
 │ NEEDS YOU ───────────────────────────────────────────────────────────────────2 │
 │                                                                                │
-│  ■ T5 Wire dispatch cleanup receipts                                           │
+│   herdr                                                                        │
+│▸ ■ T5 Wire dispatch cleanup receipts                                           │
 │  ▲ T6 Docs refresh pass after F9 ships                                         │
 │                                                                                │
 │ IN MOTION ───────────────────────────────────────────────────────────────────2 │
 │                                                                                │
-│▸ ● T1 Smoke-test worktree dispatch                                             │
-│    │ no notes yet                                                              │
-│    └─ tsk                                                                      │
+│   herdr                                                                        │
 │  ● T2 Edit target binding pin                                                  │
+│   tsk                                                                          │
+│  ● T1 Smoke-test worktree dispatch                                             │
 │                                                                                │
-│ ON DECK · desk ──────────────────────────────────────────────────────────────1 │
+│ ON DECK ─────────────────────────────────────────────────────────────────────3 │
 │                                                                                │
+│   desk                                                                         │
 │  ○ T7 Global backlog note                                                      │
+│   tsk                                                                          │
+│  ○ T3 Prototype the queue-style board UI                                       │
+│  ○ T4 Cut rust-toolchain pin into CI docs                                      │
+│                                                                                │
 │                                                                                │
 │                                                                                │
 │                                                                                │
 │────────────────────────────────────────────────────────────────────────────────│
-│ desk                                                                           │
-│ enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ctrl+b block · ? help  │
+│ all                                                                            │
+│ enter open · ctrl+d done · ctrl+b unblock · ctrl+o inbox · + add · ? help      │
 └────────────────────────────────────────────────────────────────────────────────┘

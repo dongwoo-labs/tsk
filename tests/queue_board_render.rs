@@ -13,7 +13,7 @@ use tsk_tui::domain::{
     DomainState, HumanStatus, Notice, ProvenanceOrigin, Task, TaskEvent, TaskEventKind, TaskScope,
 };
 use tsk_tui::ui::input::map_key;
-use tsk_tui::ui::queue::{self, BoardLens, NavTab, QueueView, ThreadFilter};
+use tsk_tui::ui::queue::{self, BoardLens, BoardSort, NavTab, QueueView, ThreadFilter};
 use tsk_tui::ui::render::{
     assert_buffer_mono, assert_no_color_sgr, draw_queue_frame, BottomInputSlot, NavChipPaint,
     NavPaint, PaletteCommandRow, QueueFrameModel, QueueOverlay, VerbEntry,
@@ -245,21 +245,6 @@ fn todo_verbs() -> Vec<VerbEntry<'static>> {
     board_verb_items(&model)
 }
 
-/// Same binding as [`fixture_verbs`], for the accordion scene: task 1's detail open, so
-/// `board_verb_items` must flip `enter` to `close`.
-fn accordion_verbs() -> Vec<VerbEntry<'static>> {
-    let mut model = base_board_model();
-    let mut domain = DomainState::new();
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None)
-        .expect("peek the fixture's selected task");
-    assert_eq!(
-        model.detail_open(),
-        Some(Uuid::from_u128(1)),
-        "ToggleDetail must have opened the fixture's selected task"
-    );
-    board_verb_items(&model)
-}
-
 /// G-8 (gate MEDIUM): the palette golden used to hand-write its command rows and included
 /// `dispatch agent…`, a label no code path can produce -- the excludes dispatch from the
 /// palette outright. This is the same defect class fixed for the verb bar
@@ -337,10 +322,10 @@ fn fixture_view(tasks: &[Task], drawer_open: bool) -> QueueView {
     queue::query_board(
         tasks,
         &std::collections::BTreeSet::new(),
-        Some(Path::new("/repos/tsk")),
         BoardLens::Desk,
         drawer_open,
         &ThreadFilter::All,
+        BoardSort::Number,
     )
 }
 
@@ -348,21 +333,26 @@ fn fixture_view_projects(tasks: &[Task], drawer_open: bool) -> QueueView {
     queue::query_board(
         tasks,
         &std::collections::BTreeSet::new(),
-        Some(Path::new("/repos/tsk")),
         BoardLens::Project(Path::new("/repos/tsk")),
         drawer_open,
         &ThreadFilter::All,
+        BoardSort::Number,
     )
 }
 
 fn fixture_model<'a>(tasks: &'a [Task], view: &'a QueueView) -> QueueFrameModel<'a> {
-    fixture_model_on_tab(tasks, view, NavTab::Desk)
+    fixture_model_on_scope(tasks, view, false)
 }
 
-fn fixture_model_on_tab<'a>(
+/// The fixture on the `/repos/tsk` project board (thread filter chip on the right).
+fn fixture_model_on_project<'a>(tasks: &'a [Task], view: &'a QueueView) -> QueueFrameModel<'a> {
+    fixture_model_on_scope(tasks, view, true)
+}
+
+fn fixture_model_on_scope<'a>(
     tasks: &'a [Task],
     view: &'a QueueView,
-    active: NavTab,
+    project: bool,
 ) -> QueueFrameModel<'a> {
     QueueFrameModel {
         tasks,
@@ -370,20 +360,20 @@ fn fixture_model_on_tab<'a>(
         selection_id: Some(Uuid::from_u128(1)),
         marked_ids: std::collections::BTreeSet::new(),
         nav: NavPaint {
-            active,
-            slot2_label: "tsk".to_string(),
-            slot2_project: true,
-            chip: Some(NavChipPaint {
+            active: NavTab::Board,
+            scope_label: if project { "tsk" } else { "desk" }.to_string(),
+            sort_label: "number",
+            chip: project.then(|| NavChipPaint {
                 label: "all".to_string(),
                 kind: tsk_tui::ui::render::NavChipKind::ThreadFilter,
             }),
         },
-        surface: tsk_tui::ui::render::BoardSurface::Desk,
-        thread_labels: false,
-        show_project_meta: true,
-        projects: &[],
-        projects_index: false,
-        projects_cursor: 0,
+        surface: if project {
+            tsk_tui::ui::render::BoardSurface::Project
+        } else {
+            tsk_tui::ui::render::BoardSurface::Desk
+        },
+        project_groups: false,
         search_query: "",
         search_pinned: false,
         summary: None,
@@ -395,7 +385,6 @@ fn fixture_model_on_tab<'a>(
         verb_items: fixture_verbs(),
         now: now(),
         overlay: QueueOverlay::None,
-        detail_open: None,
         list_scroll: 0,
         follow_list: true,
         archived_collapsed: true,
@@ -459,7 +448,7 @@ fn board_rows(model: &BoardModel, width: u16, height: u16) -> Vec<String> {
 }
 
 #[test]
-fn inactive_home_tabs_are_dimmed() {
+fn inactive_selector_controls_are_dimmed() {
     let model = base_board_model();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
     terminal
@@ -473,34 +462,28 @@ fn inactive_home_tabs_are_dimmed() {
             let row = (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
             (y, row)
         })
-        .find(|(_, row)| {
-            row.contains("desk") && row.contains("projects") && !row.contains("1 desk")
-        })
-        .expect("tab row without visible shortcut digits");
-    let label = "projects";
-    let x = row.find(label).expect("tab label") as u16;
+        .find(|(_, row)| row.contains("board") && row.contains("sort") && !row.contains("1 board"))
+        .expect("selector row without visible shortcut digits");
+    let label = "sort";
+    let x = row[..row.find(label).expect("sort control")]
+        .chars()
+        .count() as u16;
     assert!(
         buffer[(x, tab_y)]
             .style()
             .add_modifier
             .contains(Modifier::DIM),
-        "inactive {label} tab must be dimmed"
+        "inactive {label} control must be dimmed"
     );
 }
 
 #[test]
-fn project_rows_show_full_thread_metadata_without_relative_age() {
+fn wide_detail_shows_full_thread_metadata_and_rows_show_the_title_only() {
     let mut tasks = fixture_tasks();
     tasks[0].thread = Some("a".repeat(32));
     let mut model = BoardModel::from_tasks(tasks, Some(PathBuf::from("/repos/tsk")));
     let mut domain = DomainState::new();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::ProjectBoard),
-        None,
-    )
-    .unwrap();
+    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
     let index = model
         .visible_ids()
         .iter()
@@ -513,16 +496,15 @@ fn project_rows_show_full_thread_metadata_without_relative_age() {
         None,
     )
     .unwrap();
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).unwrap();
-    let rows = board_rows(&model, 80, 24);
-    let joined = rows.join("\n");
+    let wide = board_rows(&model, 162, 24).join("\n");
     assert!(
-        joined.contains("#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        "full thread attribution missing: {joined}"
+        wide.contains("#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        "full thread attribution missing from the wide detail: {wide}"
     );
+    let rows = board_rows(&model, 80, 24).join("\n");
     assert!(
-        !joined.contains("ago"),
-        "task rows must not paint relative ages: {joined}"
+        !rows.contains("#aaaa") && !rows.contains("ago"),
+        "list rows paint the title only: {rows}"
     );
 }
 
@@ -532,7 +514,7 @@ fn full_thread_selector_and_dropdown_values_are_not_capped_to_the_old_prefix_bud
     let view = fixture_view_projects(&tasks, false);
     let thread = "a".repeat(32);
     for (width, height) in [(40, 10), (40, 24), (78, 24), (110, 24), (162, 24)] {
-        let mut model = fixture_model_on_tab(&tasks, &view, NavTab::ProjectBoard);
+        let mut model = fixture_model_on_project(&tasks, &view);
         model.nav.chip = Some(NavChipPaint {
             label: format!("#{thread}"),
             kind: tsk_tui::ui::render::NavChipKind::ThreadFilter,
@@ -541,7 +523,7 @@ fn full_thread_selector_and_dropdown_values_are_not_capped_to_the_old_prefix_bud
         if width == 40 {
             let tabs_y = body_rows
                 .iter()
-                .position(|row| row.contains("desk"))
+                .position(|row| row.contains("board"))
                 .expect("tabs");
             let thread_y = body_rows
                 .iter()
@@ -699,20 +681,15 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
 
     let selector = trimmed(&rows[1]);
     assert!(
-        !selector.contains("queue") && !selector.contains("board"),
+        !selector.contains("queue"),
         "selector must not paint a view switcher: {selector:?}"
     );
     assert!(
-        selector.contains("desk")
-            && selector.contains("projects")
-            && !selector.contains("1 desk")
-            && !selector.contains("2 tsk")
-            && !selector.contains("3 projects"),
-        "selector must show the persistent tabs without shortcut digits: {selector:?}"
-    );
-    assert!(
-        selector.contains("tsk"),
-        "slot 2 names the selected project: {selector:?}"
+        selector.contains("board")
+            && selector.contains("desk ▾")
+            && selector.contains("sort number ▾")
+            && !selector.contains("1 board"),
+        "selector must show the board tab, scope, and sort without shortcut digits: {selector:?}"
     );
 
     let list: String = rows
@@ -969,8 +946,8 @@ fn every_section_header_has_symmetric_spacing_and_scrolls_with_its_selected_task
         ("IN MOTION", Uuid::from_u128(1), "Smoke-test worktree"),
         (
             "ON DECK",
-            Uuid::from_u128(11),
-            "Cut rust-toolchain pin into CI docs",
+            Uuid::from_u128(10),
+            "Prototype the queue-style board UI",
         ),
     ];
 
@@ -996,12 +973,14 @@ fn every_section_header_has_symmetric_spacing_and_scrolls_with_its_selected_task
             assert_visible_chrome(&rows, geo, &dimensions);
         }
         for &(header, selected_id, selected_title) in &project_cases {
-            if width == 40 && header == "ON DECK" {
-                // The fixture's long project titles wrap at 40 columns, which is the
-                // compact wrap test's own subject, not header spacing.
+            if width == 40 {
+                // At 40 columns the project board's thread filter wraps onto its own
+                // selector row (pinned by the full-thread selector test), and the long
+                // project titles wrap too: a 10-row frame keeps no room for both blank
+                // rows around a header, which is the compact floor's own trade-off.
                 continue;
             }
-            let mut model = fixture_model_on_tab(&tasks, &projects_view, NavTab::ProjectBoard);
+            let mut model = fixture_model_on_project(&tasks, &projects_view);
             model.selection_id = Some(selected_id);
             let (rows, geo) = paint(width, height, &model);
             assert_exact_header_spacing(&rows, geo, header, selected_title, &dimensions);
@@ -1025,12 +1004,7 @@ fn every_section_header_has_symmetric_spacing_and_scrolls_with_its_selected_task
 #[test]
 fn empty_board_hint_advertises_the_live_quick_add_key() {
     let tasks = fixture_tasks();
-    let view = queue::query_lens(
-        &tasks,
-        None,
-        BoardLens::Project(Path::new("/no-tasks")),
-        false,
-    );
+    let view = queue::query_lens(&tasks, BoardLens::Project(Path::new("/no-tasks")), false);
     let model = fixture_model(&tasks, &view);
     let (rows, _) = paint(80, 24, &model);
     let frame = rows.join("\n");
@@ -1187,8 +1161,8 @@ fn overlay_rows_are_padded_exact_no_base_bleed() {
         let (rows, _geo) = paint(80, 24, &model);
         let desk_row = rows
             .iter()
-            .position(|row| row.contains("▸ desk") || row.contains("  desk"))
-            .expect("scope dropdown must paint the desk option");
+            .position(|row| row.contains("▸ desk"))
+            .expect("scope dropdown must paint the selected desk option");
         assert_eq!(
             rows[desk_row].chars().count(),
             80,
@@ -1408,14 +1382,13 @@ fn notice_task_page_header_derives_the_n_identifier_and_its_copy_hit() {
 }
 
 #[test]
-fn standard_row_meta_keeps_full_project_without_relative_age() {
+fn standard_rows_paint_the_title_only_without_project_or_age() {
     let mut tasks = fixture_tasks();
     tasks[0].number = Some(7);
     tasks[0].scope = project("/src/customer-portal-api");
     tasks[0].updated_at = at_secs_ago(12 * 60);
     let view = fixture_view(&tasks, false);
-    let mut model = fixture_model(&tasks, &view);
-    model.detail_open = Some(tasks[0].id);
+    let model = fixture_model(&tasks, &view);
     let rows = paint(80, 24, &model).0;
     let row = rows
         .iter()
@@ -1423,32 +1396,12 @@ fn standard_row_meta_keeps_full_project_without_relative_age() {
         .expect("started fixture row");
     assert!(row.contains('7'), "number must remain visible:\n{row}");
     assert!(
-        rows.iter()
-            .any(|row| row.contains("└─ customer-portal-api")),
-        "full project attribution must remain visible:\n{row}"
+        !rows.iter().any(|row| row.contains("customer-portal-api")),
+        "rows must not paint a project label:\n{row}"
     );
     assert!(
         !row.contains("12m"),
         "task rows must not paint relative ages:\n{row}"
-    );
-}
-
-#[test]
-fn peek_keeps_the_identifier_on_its_task_row_not_in_detail_meta() {
-    let mut tasks = fixture_tasks();
-    tasks[0].number = Some(12);
-    let view = fixture_view(&tasks, false);
-    let mut model = fixture_model(&tasks, &view);
-    model.detail_open = Some(Uuid::from_u128(1));
-    let body = paint(80, 24, &model).0.join("\n");
-
-    assert!(
-        body.contains("T12 Smoke-test worktree dispatch"),
-        "row must lead with T12:\n{body}"
-    );
-    assert!(
-        !body.contains("12 · created"),
-        "peek detail must not duplicate the identifier:\n{body}"
     );
 }
 
@@ -2572,215 +2525,6 @@ fn compact_notes_editor_never_paints_into_the_rule_or_status_row_at_40x10() {
 // accordion/takeover detail, and surface goldens for the reviewer.
 // ---------------------------------------------------------------------------
 
-/// standard (Enter) accordion expands full width directly under the selected
-/// row -- it does not replace/hide any other row, and it never touches the domain (render
-/// only ever holds `&[Task]`, so "no mutation" is a structural guarantee this test pins).
-#[test]
-fn standard_accordion_expands_full_width_under_selection_without_mutating_domain() {
-    let tasks = fixture_tasks();
-    let before = tasks.clone();
-    let view = fixture_view(&tasks, true);
-    let mut model = fixture_model(&tasks, &view);
-    let selected = Uuid::from_u128(1); // "Smoke-test worktree dispatch", the fixture's selection.
-    model.detail_open = Some(selected);
-
-    // Tall enough that the accordion's extra rows do not push DONE off the viewport --
-    // width >= 78 and height >= 24 both stay Standard tier (see `tier::resolve`).
-    let (rows, geo) = paint(80, 30, &model);
-    assert_eq!(geo.tier, Tier::Standard);
-
-    let selected_idx = rows
-        .iter()
-        .position(|r| r.contains("Smoke-test worktree dispatch"))
-        .expect("selected task row must still be painted");
-    // The accordion body sits directly under the selected row, indented like the
-    // prototype's expanded rows (` │ `). Row width is not asserted here: every row in
-    // `rows` is already exactly `width` chars by construction of the fixed-size
-    // `TestBackend` grid `paint()` reads from -- that is a property of the harness,
-    // not something `paint()`'s own assertions (mono/color only) enforce, so re-checking it
-    // per body row would be vacuous. What is worth pinning is the actual body content.
-    let body: Vec<&String> = rows[selected_idx + 1..]
-        .iter()
-        .take_while(|r| r.contains('│'))
-        .collect();
-    assert!(
-        !body.is_empty(),
-        "accordion body must appear directly under the selected row:\n{:#?}",
-        rows
-    );
-    let body_joined = body
-        .iter()
-        .map(|r| trimmed(r))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        body_joined.contains("no notes yet"),
-        "accordion body must show its notes preview:\n{body_joined}"
-    );
-    assert!(
-        !body_joined.contains("scope") && !body_joined.contains("created"),
-        "peek must omit task metadata:\n{body_joined}"
-    );
-    assert!(
-        rows.get(selected_idx + 1 + body.len())
-            .is_some_and(|row| row.contains('└')),
-        "the notes gutter must end in a connected corner:\n{}",
-        rows.join("\n")
-    );
-    // Every other task and every section header the base fixture paints (drawer open) must
-    // still be present: the accordion expands the list, it never mutates or hides it.
-    let joined = rows
-        .iter()
-        .map(|r| trimmed(r))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for still_present in [
-        "IN MOTION",
-        "desk",
-        "DONE",
-        "Edit target binding pin",
-        "Global backlog note",
-        "Ship the queue board milestone",
-    ] {
-        assert!(
-            joined.contains(still_present),
-            "accordion must not remove other rows, missing {still_present:?}:\n{joined}"
-        );
-    }
-    // Structural guarantee: render took `&[Task]`, so it cannot have mutated the domain.
-    assert_eq!(
-        tasks, before,
-        "painting the accordion must never mutate the domain"
-    );
-}
-
-/// Peek (`→`) body: up to five note lines, then a dim "N more lines" tail naming what did
-/// not fit. Task metadata stays on the full page, and a final corner closes the note gutter.
-#[test]
-fn standard_peek_body_caps_notes_at_five_lines_with_a_more_lines_tail() {
-    let mut tasks = fixture_tasks();
-    // Task 1 is the fixture's selection ("Smoke-test worktree dispatch").
-    tasks[0].notes = Some(
-        (1..=8)
-            .map(|i| format!("note line {i}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
-    let view = fixture_view(&tasks, true);
-    let mut model = fixture_model(&tasks, &view);
-    model.detail_open = Some(Uuid::from_u128(1));
-
-    let (rows, geo) = paint(80, 34, &model);
-    assert_eq!(geo.tier, Tier::Standard);
-    let selected_idx = rows
-        .iter()
-        .position(|r| r.contains("Smoke-test worktree dispatch"))
-        .expect("selected task row must be painted");
-    let body: Vec<String> = rows[selected_idx + 1..]
-        .iter()
-        .take_while(|r| r.contains('│'))
-        .map(|r| trimmed(r))
-        .collect();
-    let joined = body.join("\n");
-    for i in 1..=5 {
-        assert!(
-            joined.contains(&format!("note line {i}")),
-            "peek must show note line {i}:\n{joined}"
-        );
-    }
-    assert!(
-        !joined.contains("note line 6"),
-        "peek must not show a sixth note line:\n{joined}"
-    );
-    assert!(
-        joined.contains("3 more lines"),
-        "peek must name the three hidden lines:\n{joined}"
-    );
-    assert!(
-        !joined.contains("scope") && !joined.contains("created"),
-        "peek must omit task metadata:\n{joined}"
-    );
-    assert!(
-        rows.get(selected_idx + 1 + body.len())
-            .is_some_and(|row| row.contains('└')),
-        "the more-lines tail must be followed by the connected corner:\n{}",
-        rows.join("\n")
-    );
-}
-
-/// Five or fewer note lines fit whole: no "more lines" tail, nothing dropped.
-#[test]
-fn standard_peek_body_shows_short_notes_whole_without_a_tail() {
-    let mut tasks = fixture_tasks();
-    tasks[0].notes = Some("one\ntwo\nthree".to_string());
-    let view = fixture_view(&tasks, true);
-    let mut model = fixture_model(&tasks, &view);
-    model.detail_open = Some(Uuid::from_u128(1));
-
-    let (rows, geo) = paint(80, 30, &model);
-    assert_eq!(geo.tier, Tier::Standard);
-    let selected_idx = rows
-        .iter()
-        .position(|r| r.contains("Smoke-test worktree dispatch"))
-        .expect("selected task row must be painted");
-    let joined: String = rows[selected_idx + 1..]
-        .iter()
-        .take_while(|r| r.contains('│'))
-        .map(|r| trimmed(r))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for expected in ["one", "two", "three"] {
-        assert!(
-            joined.contains(expected),
-            "peek must show {expected:?}:\n{joined}"
-        );
-    }
-    assert!(
-        !joined.contains("more lines"),
-        "short notes must not carry a more-lines tail:\n{joined}"
-    );
-}
-
-/// the accordion inherited the un-fixed root cause of I4 -- the list was
-/// top-anchored with no scroll-to-anchor, so expanding a task below the viewport painted
-/// nothing at all. Pad the deck past the standard viewport, expand the *last* task, and
-/// require its title and full detail body to be visible (not scrolled away, not truncated).
-#[test]
-fn standard_accordion_on_a_task_below_the_fold_scrolls_the_whole_block_into_view() {
-    let mut tasks = fixture_tasks();
-    for i in 0..30u128 {
-        tasks.push(task(
-            2000 + i,
-            &format!("Padding task {i}"),
-            HumanStatus::Ready,
-            project("/repos/tsk"),
-            3600,
-        ));
-    }
-    let last_id = Uuid::from_u128(2000 + 29);
-    let view = fixture_view_projects(&tasks, false);
-    let mut model = fixture_model_on_tab(&tasks, &view, NavTab::ProjectBoard);
-    model.detail_open = Some(last_id);
-
-    let (rows, geo) = paint(80, 24, &model);
-    assert_eq!(geo.tier, Tier::Standard);
-    let top = geo.viewport_top as usize;
-    let bottom = (geo.viewport_top + geo.viewport_height) as usize;
-    let viewport: String = rows[top..bottom]
-        .iter()
-        .map(|r| trimmed(r))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        viewport.contains("Padding task 29"),
-        "the expanded task's own row must be scrolled into view:\n{viewport}"
-    );
-    assert!(
-        viewport.contains("no notes yet") && viewport.contains('└'),
-        "accordion body must show the notes preview and connected corner once scrolled into view:\n{viewport}"
-    );
-}
-
 /// G-2 (gate round 1, PR #11): with no expanded accordion open, the list once painted from
 /// row 0, so on a deck longer than the viewport, moving the plain selection past the fold
 /// walked it off-screen with no visual
@@ -2802,7 +2546,7 @@ fn plain_selection_on_a_task_below_the_fold_scrolls_it_into_view_in_both_tiers()
         .collect();
     let last_id = Uuid::from_u128(5000 + 39);
     let view = fixture_view_projects(&tasks, false);
-    let mut model = fixture_model_on_tab(&tasks, &view, NavTab::ProjectBoard);
+    let mut model = fixture_model_on_project(&tasks, &view);
     model.selection_id = Some(last_id);
 
     for &(width, height) in &[(80u16, 24u16), (77u16, 24u16), (40u16, 10u16)] {
@@ -2823,14 +2567,10 @@ fn plain_selection_on_a_task_below_the_fold_scrolls_it_into_view_in_both_tiers()
     }
 }
 
-/// on compact, both the read-only detail accordion and the field editors are
-/// full-screen takeovers;
-/// Peek (`→`/Enter's inline detail) is list content in BOTH tiers: at compact sizes the
-/// base list stays visible and the peek body weaves under its row, scrolling into view.
-/// Field editors remain the full-screen takeover family; closing either restores the
-/// prior selection.
+/// On compact frames the field editors are full-screen takeovers; closing one restores the
+/// base list and the prior selection.
 #[test]
-fn compact_peek_is_inline_and_editors_stay_full_screen_takeovers() {
+fn compact_editors_stay_full_screen_takeovers() {
     let tasks = fixture_tasks();
     let view = fixture_view(&tasks, false);
     let mut model = fixture_model(&tasks, &view);
@@ -2843,33 +2583,7 @@ fn compact_peek_is_inline_and_editors_stay_full_screen_takeovers() {
         let top = geo.viewport_top as usize;
         let bottom = (geo.viewport_top + geo.viewport_height) as usize;
 
-        // Peek: inline under the selected row, base list intact.
-        model.detail_open = Some(selected);
-        model.overlay = QueueOverlay::None;
-        let (rows, _geo) = paint(w, h, &model);
-        let viewport: String = rows[top..bottom]
-            .iter()
-            .map(|r| trimmed(r))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            viewport.contains("Smoke-test worktree dispatch"),
-            "{w}x{h}: the peeked task's row must stay visible:\n{viewport}"
-        );
-        if h > 10 {
-            assert!(
-                viewport.contains("no notes yet"),
-                "{w}x{h}: the peek body must weave inline under the row:\n{viewport}"
-            );
-        } else {
-            assert!(
-                viewport.contains("no notes yet"),
-                "{w}x{h}: compact floor still shows the peek under the row:\n{viewport}"
-            );
-        }
-
-        // A field editor (title) is still a full takeover that erases the base list.
-        model.detail_open = None;
+        // A field editor (title) is a full takeover that erases the base list.
         model.overlay = QueueOverlay::EditTitle {
             draft: "x".to_string(),
             cursor_col: 1,
@@ -2885,7 +2599,7 @@ fn compact_peek_is_inline_and_editors_stay_full_screen_takeovers() {
             "{w}x{h}: title editor takeover must erase the base list:\n{viewport2}"
         );
 
-        // Close both: the base list, and the prior selection, are back.
+        // Close it: the base list, and the prior selection, are back.
         model.overlay = QueueOverlay::None;
         let (rows3, _geo3) = paint(w, h, &model);
         let viewport3: String = rows3[top..bottom]
@@ -2905,69 +2619,6 @@ fn compact_peek_is_inline_and_editors_stay_full_screen_takeovers() {
     }
 }
 
-/// `detail_open_task`'s filtering -- the compact tier now resolves
-/// its takeover task through `model.view.sections`, not `model.tasks` directly (the
-/// residual fix) -- had no test anywhere. Build a view scoped to exclude a task that is
-/// still present in `QueueFrameModel::tasks` (a scope narrower than "all projects", the
-/// scenario the doc comment on `detail_open_task` names: "a scope change ... can outlive
-/// its task's visibility"), point `detail_open` at that excluded task, and require the
-/// compact takeover to paint nothing for it.
-#[test]
-fn compact_paints_no_takeover_for_a_detail_open_task_excluded_by_the_current_scope() {
-    let tasks = fixture_tasks();
-    // Task 20 ("Wire dispatch cleanup receipts", Blocked, `/repos/herdr`) stays in
-    // `tasks` -- the slice `QueueFrameModel::tasks` always carries -- but a view scoped to
-    // just `/repos/tsk` excludes it from `view.sections` entirely (unlike a Doing
-    // task, an ON DECK task is genuinely scope-filtered; `IN MOTION` is not).
-    let excluded_id = Uuid::from_u128(20);
-    assert!(
-        tasks.iter().any(|t| t.id == excluded_id),
-        "fixture must still carry the excluded task in model.tasks"
-    );
-    let scoped_view = queue::query_lens(
-        &tasks,
-        Some(Path::new("/repos/tsk")),
-        BoardLens::Project(Path::new("/repos/tsk")),
-        false,
-    );
-    assert!(
-        !scoped_view
-            .sections
-            .iter()
-            .flat_map(|s| s.task_ids.iter())
-            .any(|&id| id == excluded_id),
-        "the scoped view must actually exclude the task this test points detail_open at"
-    );
-    let model = QueueFrameModel {
-        detail_open: Some(excluded_id),
-        surface: tsk_tui::ui::render::BoardSurface::Project,
-        nav: NavPaint {
-            active: NavTab::ProjectBoard,
-            slot2_label: "tsk".to_string(),
-            slot2_project: true,
-            chip: None,
-        },
-        ..fixture_model(&tasks, &scoped_view)
-    };
-
-    for &(w, h) in &[(48u16, 19u16), (40u16, 10u16)] {
-        let (rows, geo) = paint(w, h, &model);
-        assert_eq!(geo.tier, Tier::Compact, "{w}x{h}");
-        let top = geo.viewport_top as usize;
-        let bottom = (geo.viewport_top + geo.viewport_height) as usize;
-        let viewport: String = rows[top..bottom]
-            .iter()
-            .map(|r| trimmed(r))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            !viewport.contains("Wire dispatch cleanup receipts"),
-            "{w}x{h}: a detail_open task excluded by the current scope must not repaint as \
-             a takeover:\n{viewport}"
-        );
-    }
-}
-
 /// One named scene painted for the reviewer's side-by-side against
 /// `python3 design/prototype/main.py --dump` (the-relevant scenes only).
 struct GoldenScene {
@@ -2979,36 +2630,28 @@ struct GoldenScene {
 fn golden_scenes() -> Vec<GoldenScene> {
     let tasks = fixture_tasks();
 
-    // Keep the projects-preview scenes on the real board painter: the nested right seat and its
+    // Wide scenes stay on the real board painter: the list + detail columns and their
     // shared footer are not representable by a standalone QueueFrameModel.
-    let mut projects_domain = DomainState::new();
-    let mut projects_model =
-        BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
+    let mut wide_domain = DomainState::new();
+    let mut wide_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
+    let board_wide_rows = board_rows(&wide_model, 110, 30);
     apply_intent(
-        &mut projects_domain,
-        &mut projects_model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
+        &mut wide_domain,
+        &mut wide_model,
+        BoardIntent::FocusDetail,
         None,
     )
-    .expect("open projects overview for goldens");
-    let projects_index_50_rows = board_rows(&projects_model, 50, 20);
-    let projects_index_110_rows = board_rows(&projects_model, 110, 30);
+    .expect("focus the wide detail for golden");
+    let board_wide_detail_rows = board_rows(&wide_model, 110, 30);
+    let mut sorted_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
     apply_intent(
-        &mut projects_domain,
-        &mut projects_model,
-        BoardIntent::StageRight,
+        &mut wide_domain,
+        &mut sorted_model,
+        BoardIntent::ToggleSort,
         None,
     )
-    .expect("enter projects split for golden");
-    let projects_split_rows = board_rows(&projects_model, 110, 30);
-    apply_intent(
-        &mut projects_domain,
-        &mut projects_model,
-        BoardIntent::StageRight,
-        None,
-    )
-    .expect("enter projects rail for golden");
-    let projects_rail_rows = board_rows(&projects_model, 110, 30);
+    .expect("project order for golden");
+    let board_project_order_rows = board_rows(&sorted_model, 80, 30);
 
     let mut search_domain = DomainState::new();
     let mut search_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
@@ -3087,15 +2730,6 @@ fn golden_scenes() -> Vec<GoldenScene> {
         Tier::Standard,
         "the default 78x24 Herdr split must render the designed tier"
     );
-
-    // Imp-3: the accordion scene's verb bar must show `enter close`, the same word
-    // `board_verb_items` computes for a task whose detail is open, bound by construction
-    // via `accordion_verbs` rather than reused from the base scene's array.
-    let accordion_verbs_owned = accordion_verbs();
-    let mut accordion_model = fixture_model(&tasks, &board_view);
-    accordion_model.detail_open = Some(Uuid::from_u128(1));
-    accordion_model.verb_items = &accordion_verbs_owned;
-    let (accordion_rows, _) = paint(80, 24, &accordion_model);
 
     let mut palette_model = fixture_model(&tasks, &board_view);
     let palette_commands_owned = palette_commands();
@@ -3201,11 +2835,6 @@ fn golden_scenes() -> Vec<GoldenScene> {
             width: 80,
         },
         GoldenScene {
-            name: "accordion",
-            rows: accordion_rows,
-            width: 80,
-        },
-        GoldenScene {
             name: "palette",
             rows: palette_rows,
             width: 80,
@@ -3231,24 +2860,19 @@ fn golden_scenes() -> Vec<GoldenScene> {
             width: 80,
         },
         GoldenScene {
-            name: "projects_index_50x20",
-            rows: projects_index_50_rows,
-            width: 50,
-        },
-        GoldenScene {
-            name: "projects_index_110x30",
-            rows: projects_index_110_rows,
+            name: "board_wide_110x30",
+            rows: board_wide_rows,
             width: 110,
         },
         GoldenScene {
-            name: "projects_preview_split_110x30",
-            rows: projects_split_rows,
+            name: "board_wide_detail_110x30",
+            rows: board_wide_detail_rows,
             width: 110,
         },
         GoldenScene {
-            name: "projects_preview_rail_110x30",
-            rows: projects_rail_rows,
-            width: 110,
+            name: "board_project_order_80x30",
+            rows: board_project_order_rows,
+            width: 80,
         },
     ]
 }
@@ -3293,11 +2917,11 @@ fn regenerate_golden_fixtures() {
 }
 
 /// the the-relevant scenes the reviewer compares against the frozen prototype dump
-/// (board at 80×24, board at the default 78×24 split, accordion/expanded, palette, help,
-/// done drawer) each have a checked-in golden frame, and every fresh paint still matches
+/// (board at 80×24, board at the default 78×24 split, the wide list + detail, palette,
+/// help, done drawer) each have a checked-in golden frame, and every fresh paint still matches
 /// its golden byte-for-byte.
 #[test]
-fn surface_goldens_board_accordion_palette_help_drawer_exist_for_reviewer_side_by_side() {
+fn surface_goldens_board_wide_palette_help_drawer_exist_for_reviewer_side_by_side() {
     for scene in golden_scenes() {
         let dump = dump_frame(&scene.rows, scene.width);
         let path = golden_path(scene.name);
@@ -3594,96 +3218,6 @@ fn board_with_thread_labels_paints_within_40x10_and_all_tasks_reachable() {
 }
 
 #[test]
-fn peek_omits_thread_metadata_for_every_task() {
-    let mut threaded = task(200, "threaded", HumanStatus::Ready, TaskScope::Global, 1);
-    threaded.thread = Some("release".to_string());
-    let mut threaded_model = BoardModel::from_tasks(vec![threaded], None);
-    let mut domain = DomainState::new();
-    apply_intent(
-        &mut domain,
-        &mut threaded_model,
-        BoardIntent::PeekDetail,
-        None,
-    )
-    .expect("open threaded peek");
-    assert!(
-        !board_rows(&threaded_model, 80, 24)
-            .join("\n")
-            .contains("thread #release"),
-        "thread metadata belongs to the task page, not the peek"
-    );
-
-    let mut unthreaded_model = BoardModel::from_tasks(
-        vec![task(
-            201,
-            "unthreaded",
-            HumanStatus::Ready,
-            TaskScope::Global,
-            1,
-        )],
-        None,
-    );
-    apply_intent(
-        &mut domain,
-        &mut unthreaded_model,
-        BoardIntent::PeekDetail,
-        None,
-    )
-    .expect("open unthreaded peek");
-    assert!(
-        !board_rows(&unthreaded_model, 80, 24)
-            .join("\n")
-            .contains("thread #"),
-        "unthreaded peek must not invent a thread line"
-    );
-}
-
-#[test]
-fn peek_shows_inline_backticks_and_fence_ticks() {
-    let mut coded = task(202, "coded", HumanStatus::Ready, TaskScope::Global, 1);
-    coded.notes = Some("`code`\n```\nfn x() {}\n```".into());
-    let mut model = BoardModel::from_tasks(vec![coded], None);
-    let mut domain = DomainState::new();
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek");
-    let body = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        body.contains("`code`"),
-        "peek must keep inline backticks:\n{body}"
-    );
-    assert!(body.contains("```"), "peek must keep fenced ticks:\n{body}");
-    assert!(
-        body.contains("fn x() {}"),
-        "peek must show the fence body:\n{body}"
-    );
-}
-
-#[test]
-fn peek_runs_markdown_not_plain_dim_text() {
-    let mut coded = task(203, "peek-md", HumanStatus::Ready, TaskScope::Global, 1);
-    coded.notes = Some("# Title\n**strong** here\n```\n**still stars**\n```".into());
-    let mut model = BoardModel::from_tasks(vec![coded], None);
-    let mut domain = DomainState::new();
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).expect("peek");
-    let body = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        !body.contains("**strong**"),
-        "peek must strip strong markers like the page:\n{body}"
-    );
-    assert!(
-        body.contains("strong"),
-        "peek must keep strong text:\n{body}"
-    );
-    assert!(
-        body.contains("# ") || body.contains("# Title"),
-        "peek must keep heading hashes:\n{body}"
-    );
-    assert!(
-        body.contains("**still stars**"),
-        "peek fence must leave body markers:\n{body}"
-    );
-}
-
-#[test]
 fn all_golden_frames_pass_no_color_sgr_scan() {
     let dir = golden_fixtures_dir();
     let mut scanned = 0usize;
@@ -3698,12 +3232,11 @@ fn all_golden_frames_pass_no_color_sgr_scan() {
         scanned += 1;
     }
     assert_eq!(
-        scanned, 16,
-        "expected the sixteen board surface goldens (board, board_marked, \
+        scanned, 14,
+        "expected the fourteen board surface goldens (board, board_marked, \
          board_default_split_78, board_search, board_search_pinned, board_search_empty, \
-         accordion, palette, help, done_drawer, inbox, done_drawer_archived, \
-         projects_index_50x20, projects_index_110x30, projects_preview_split_110x30, \
-         projects_preview_rail_110x30) in {dir:?}"
+         palette, help, done_drawer, inbox, done_drawer_archived, board_wide_110x30, \
+         board_wide_detail_110x30, board_project_order_80x30) in {dir:?}"
     );
 }
 
@@ -3901,7 +3434,7 @@ fn task_page_caps_a_wrapped_header_inside_the_page_body() {
         rows.join("\n")
     );
     assert!(
-        rows[8].contains("desk"),
+        rows[8].trim() == "all",
         "the status row was overwritten by the header:\n{}",
         rows.join("\n")
     );
@@ -4026,7 +3559,7 @@ fn overflowing_board_list_paints_a_scrollbar() {
         .collect();
     let last_id = Uuid::from_u128(7000 + 39);
     let view = fixture_view_projects(&tasks, false);
-    let mut model = fixture_model_on_tab(&tasks, &view, NavTab::ProjectBoard);
+    let mut model = fixture_model_on_project(&tasks, &view);
     model.selection_id = Some(last_id);
 
     let (rows, geo) = paint(80, 24, &model);
@@ -4068,7 +3601,7 @@ fn overflowing_board_list_does_not_clip_task_rows_to_ellipsis() {
         })
         .collect();
     let view = fixture_view_projects(&tasks, false);
-    let model = fixture_model_on_tab(&tasks, &view, NavTab::ProjectBoard);
+    let model = fixture_model_on_project(&tasks, &view);
     let (rows, geo) = paint(80, 24, &model);
     let top = geo.viewport_top as usize;
     let bottom = (geo.viewport_top + geo.viewport_height) as usize;
@@ -4199,46 +3732,30 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
         domain.archive_task(archived_id).expect("archive it");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/lens")));
 
-        // Lens setups: desk, the projects index, a cross-project thread view, and the
-        // project board.
-        let lens_names = ["desk", "projects", "thread view", "project board"];
+        // Scope setups: every scope, the desk, project order, and the project board.
+        let lens_names = ["all", "desk", "project order", "project board"];
         for (lens_index, lens) in lens_names.iter().enumerate() {
             match lens_index {
-                0 => {
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::SelectNavTab(NavTab::Desk),
-                        None,
-                    )
-                    .expect("desk tab");
-                }
+                0 => model.set_selected_project(None),
                 1 => {
                     apply_intent(
                         &mut domain,
                         &mut model,
-                        BoardIntent::SelectNavTab(NavTab::Projects),
+                        BoardIntent::OpenProjectSelector,
                         None,
                     )
-                    .expect("projects index");
+                    .expect("open picker");
+                    apply_intent(
+                        &mut domain,
+                        &mut model,
+                        BoardIntent::SelectProjectOption(0),
+                        None,
+                    )
+                    .expect("every scope");
                 }
                 2 => {
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::OpenProjectsViewPicker,
-                        None,
-                    )
-                    .expect("open view picker");
-                    apply_intent(&mut domain, &mut model, BoardIntent::ListPickerNext, None)
-                        .expect("first thread");
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::ConfirmListPicker,
-                        None,
-                    )
-                    .expect("thread view");
+                    apply_intent(&mut domain, &mut model, BoardIntent::ToggleSort, None)
+                        .expect("project order");
                 }
                 _ => {
                     apply_intent(
@@ -4251,7 +3768,7 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
                     apply_intent(
                         &mut domain,
                         &mut model,
-                        BoardIntent::SelectProjectOption(1),
+                        BoardIntent::SelectProjectOption(2),
                         None,
                     )
                     .expect("focus the project");
@@ -4267,21 +3784,17 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
                 );
             }
 
-            // Stage G rail at a wide width: the board column is a 32-cell rail.
-            for _ in 0..2 {
-                apply_intent(&mut domain, &mut model, BoardIntent::StageRight, None)
-                    .expect("stage right");
-            }
+            // Wide list + detail with the detail focused.
+            apply_intent(&mut domain, &mut model, BoardIntent::FocusDetail, None)
+                .expect("focus detail");
             let rows = board_rows(&model, 130, 24);
             assert!(
                 !rows.iter().any(|row| row.contains(&archived_title)),
-                "archived {status:?} task painted on the stage G rail in {lens}:\n{}",
+                "archived {status:?} task painted in the wide split in {lens}:\n{}",
                 rows.join("\n")
             );
-            for _ in 0..2 {
-                apply_intent(&mut domain, &mut model, BoardIntent::StageLeft, None)
-                    .expect("stage left");
-            }
+            apply_intent(&mut domain, &mut model, BoardIntent::FocusList, None)
+                .expect("focus list");
         }
     }
 }
@@ -4629,7 +4142,7 @@ fn archived_tab_lists_exactly_the_archived_projects_and_paints_an_empty_state_li
 }
 
 #[test]
-fn archived_project_paints_nowhere_on_home_tabs_or_the_picker_main_list() {
+fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
     let mut domain = DomainState::new();
     domain
         .create(
@@ -4659,53 +4172,31 @@ fn archived_project_paints_nowhere_on_home_tabs_or_the_picker_main_list() {
     domain.archive_project("/repos/gone").expect("archive gone");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/here")));
 
-    for tab in [NavTab::Desk, NavTab::Projects, NavTab::ProjectBoard] {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::SelectNavTab(tab),
-            None,
-        )
-        .or_else(|_| {
+    for desk in [false, true] {
+        if desk {
+            model.set_selected_project(None);
+        } else {
             apply_intent(
                 &mut domain,
                 &mut model,
                 BoardIntent::OpenProjectSelector,
                 None,
             )
-        })
-        .expect("switch destination");
-        if tab == NavTab::ProjectBoard {
-            // No project is selected: the tab intent opens the picker; close it and
-            // test the desk/index surfaces, then choose the live project explicitly.
+            .expect("open picker");
             apply_intent(
                 &mut domain,
                 &mut model,
-                BoardIntent::CancelProjectPicker,
+                BoardIntent::SelectProjectOption(0),
                 None,
             )
-            .expect("close picker");
-            let rows = board_rows(&model, 80, 24);
-            assert!(
-                !rows.iter().any(|row| row.contains("gone started task")),
-                "{tab:?}: the archived project's task paints:\n{}",
-                rows.join("\n")
-            );
-            continue;
+            .expect("every scope");
         }
         let rows = board_rows(&model, 80, 24);
         assert!(
             !rows.iter().any(|row| row.contains("gone started task")),
-            "{tab:?}: the archived project's task paints:\n{}",
+            "desk={desk}: the archived project's task paints:\n{}",
             rows.join("\n")
         );
-        if tab == NavTab::Projects {
-            assert!(
-                !rows.iter().any(|row| row.contains("gone")),
-                "{tab:?}: the archived project paints an index row:\n{}",
-                rows.join("\n")
-            );
-        }
     }
 
     // The picker's main list skips it too.
@@ -5118,6 +4609,7 @@ fn picker_list_capacity_counts_the_rule_row_on_a_short_frame() {
     // rule row the card also spends a content row on.
     let last = model.project_options().len() - 1;
     let label = match &model.project_options()[last] {
+        tsk_tui::ui::board::ProjectScopeOption::All => "all".to_string(),
         tsk_tui::ui::board::ProjectScopeOption::Home => "desk".to_string(),
         tsk_tui::ui::board::ProjectScopeOption::Project(path) => {
             tsk_tui::ui::board::project_option_label(path.as_path())
@@ -5176,7 +4668,7 @@ fn real_quick_add_paints_its_destination() {
 }
 
 #[test]
-fn project_and_cross_project_thread_views_omit_count_summaries() {
+fn project_thread_filter_omits_count_summaries() {
     let mut domain = DomainState::new();
     for (title, path, thread) in [
         ("desk release", None, Some("release")),
@@ -5235,45 +4727,21 @@ fn project_and_cross_project_thread_views_omit_count_summaries() {
         !local.contains("alpha release"),
         "filter stopped narrowing tasks:\n{local}"
     );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
-        None,
-    )
-    .expect("projects");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectsViewPicker,
-        None,
-    )
-    .expect("view picker");
-    apply_intent(&mut domain, &mut model, BoardIntent::ListPickerNext, None).expect("thread");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmListPicker,
-        None,
-    )
-    .expect("view");
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None)
-        .expect("open done drawer");
-    let cross = board_rows(&model, 162, 43).join("\n");
-    assert!(
-        !cross.contains("tasks ·") && !cross.contains("projects + desk"),
-        "cross-project count summary must not be painted:\n{cross}"
-    );
-    for title in ["alpha release", "desk release", "done desk release"] {
-        assert!(
-            cross.contains(title),
-            "thread task missing: {title}\n{cross}"
-        );
-    }
-    assert!(
-        cross.contains("desk"),
-        "cross-project desk attribution missing:\n{cross}"
-    );
+}
+
+/// The list column of a painted frame: everything left of the wide split's rule, or the
+/// whole row below the wide threshold.
+fn list_column(rows: &[String]) -> Vec<String> {
+    let rule = rows
+        .iter()
+        .find_map(|row| row.chars().position(|c| c == '│'))
+        .filter(|_| rows.first().is_some_and(|row| row.chars().count() >= 110));
+    rows.iter()
+        .map(|row| match rule {
+            Some(col) => row.chars().take(col).collect(),
+            None => row.clone(),
+        })
+        .collect()
 }
 
 #[test]
@@ -5300,14 +4768,14 @@ fn collapsed_short_panes_hide_project_and_thread_labels() {
             "collapsed project attribution should be hidden at {width}: {row}"
         );
         model.set_selected_project(Some(PathBuf::from("/repos/alpha")));
-        let project = board_rows(&model, width, 20);
+        let project = list_column(&board_rows(&model, width, 20));
         let row = project
             .iter()
             .find(|row| row.contains("Scope row"))
             .expect("project task row");
         assert!(
             !project.iter().any(|row| row.contains("#ship")),
-            "collapsed thread attribution should be hidden at {width}: {row}"
+            "list rows never paint a thread label at {width}: {row}"
         );
     }
 }
@@ -5339,14 +4807,14 @@ fn collapsed_wide_compact_rows_hide_thread_labels() {
     let desk = board_rows(&model, 162, 20).join("\n");
     assert!(desk.contains("desk"), "desk attribution missing:\n{desk}");
     model.set_selected_project(Some(PathBuf::from("/repos/alpha")));
-    let project = board_rows(&model, 162, 20).join("\n");
+    let project = list_column(&board_rows(&model, 162, 20)).join("\n");
     assert!(
         !project.contains("#release"),
-        "collapsed thread attribution should be hidden in wide compact mode:\n{project}"
+        "wide list rows never paint a thread label:\n{project}"
     );
 }
 
-fn searchable_thread_picker(global: bool) -> (DomainState, BoardModel) {
+fn searchable_thread_picker() -> (DomainState, BoardModel) {
     let mut domain = DomainState::new();
     domain
         .create(
@@ -5360,28 +4828,20 @@ fn searchable_thread_picker(global: bool) -> (DomainState, BoardModel) {
         )
         .expect("task");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    if global {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::SelectNavTab(NavTab::Projects),
-            None,
-        )
-        .expect("projects");
-    }
-    let open = if global {
-        BoardIntent::OpenProjectsViewPicker
-    } else {
-        BoardIntent::OpenThreadFilterPicker
-    };
-    apply_intent(&mut domain, &mut model, open, None).expect("picker");
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::OpenThreadFilterPicker,
+        None,
+    )
+    .expect("picker");
     (domain, model)
 }
 
 #[test]
 fn thread_picker_search_accepts_every_letter_and_digit() {
-    for global in [false, true] {
-        let (mut domain, mut model) = searchable_thread_picker(global);
+    {
+        let (mut domain, mut model) = searchable_thread_picker();
         let name = "abcdefghijklmnopqrstuvwxyz123456";
         for character in name.chars() {
             let intent = map_key(
@@ -5402,8 +4862,8 @@ fn thread_picker_search_accepts_every_letter_and_digit() {
 
 #[test]
 fn thread_picker_search_accepts_bracketed_paste() {
-    for global in [false, true] {
-        let (mut domain, mut model) = searchable_thread_picker(global);
+    {
+        let (mut domain, mut model) = searchable_thread_picker();
         let name = "abcdefghijklmnopqrstuvwxyz123456";
         let intent =
             tsk_tui::ui::input::map_edit_paste(model.input_mode(), name).expect("paste accepted");
@@ -5415,8 +4875,8 @@ fn thread_picker_search_accepts_bracketed_paste() {
 
 #[test]
 fn empty_thread_search_keeps_its_query_and_menu_visible() {
-    for global in [false, true] {
-        let (mut domain, mut model) = searchable_thread_picker(global);
+    {
+        let (mut domain, mut model) = searchable_thread_picker();
         apply_intent(
             &mut domain,
             &mut model,
@@ -5473,432 +4933,19 @@ fn real_thread_picker_paints_query_and_options() {
 }
 
 #[test]
-fn projects_index_paints_aligned_counts_search_hint_and_selected_path() {
-    let mut domain = DomainState::new();
-    for path in ["/one/alpha", "/two/alpha"] {
-        let id = domain
-            .create(
-                "project task",
-                None,
-                TaskScope::Project { path: path.into() },
-                ProvenanceOrigin::Manual,
-                None,
-            )
-            .expect("task");
-        domain.set_status(id, HumanStatus::Ready).expect("ready");
-    }
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/one/alpha")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
-        None,
-    )
-    .expect("projects index");
-
-    // Closed search: the status row names the selected project's path; rows never do.
-    let rows = board_rows(&model, 162, 43);
-    let text = rows.join("\n");
-    let status = rows
-        .iter()
-        .find(|row| row.trim_start().starts_with("/one/alpha"))
-        .expect("status row paints the selected path");
-    assert!(
-        rows.iter()
-            .position(|row| row == status)
-            .expect("status index")
-            > rows.len() - 4,
-        "the path sits on the footer status row:\n{text}"
-    );
-    assert!(
-        !text.contains("/two/alpha"),
-        "the unselected twin's path is nowhere on the frame:\n{text}"
-    );
-    let header_index = rows
-        .iter()
-        .position(|row| row.contains("NEEDS YOU"))
-        .expect("header");
-    assert_eq!(
-        rows[header_index + 1].trim(),
-        "",
-        "one blank row separates the legend from the first project:\n{text}"
-    );
-    let header = &rows[header_index];
-    let first = &rows[header_index + 2];
-    assert!(
-        first.contains("▸ alpha · here") && !first.contains("/one"),
-        "the selected row is the launch project, basename plus here, no path:\n{first}"
-    );
-    let twin = &rows[header_index + 3];
-    assert!(
-        twin.trim_start().starts_with("alpha ") && !twin.contains('/') && !twin.contains("here"),
-        "the twin paints the bare basename:\n{twin}"
-    );
-    // Counts are right-aligned: the last cell of each legend word sits over the digit.
-    // Positions are char columns, not byte offsets (the marker and dots are multibyte).
-    let legend_end =
-        |label: &str| char_col(header, header.find(label).expect(label)) + label.len() - 1;
-    let on_deck_x = char_col(first, first.rfind('1').expect("ON DECK count"));
-    assert_eq!(
-        legend_end("ON DECK"),
-        on_deck_x,
-        "ON DECK right edge over its count:\n{header}\n{first}"
-    );
-    let zero_cells: Vec<usize> = first
-        .match_indices('·')
-        .map(|(x, _)| char_col(first, x))
-        .collect();
-    assert!(
-        zero_cells.contains(&legend_end("NEEDS YOU"))
-            && zero_cells.contains(&legend_end("IN MOTION")),
-        "zero counts paint a dim dot under the legend's right edge:\n{header}\n{first}"
-    );
-    assert!(
-        !first.contains(" 0"),
-        "zero never paints as a digit:\n{first}"
-    );
-
-    // Moving the cursor moves the path.
-    apply_intent(&mut domain, &mut model, BoardIntent::SelectNext, None).expect("move down");
-    // Selecting a project opens its wide preview; close it so the remaining assertions keep
-    // exercising the full-width index renderer.
-    apply_intent(&mut domain, &mut model, BoardIntent::StageLeft, None).expect("close preview");
-    let rows = board_rows(&model, 162, 43);
-    let text = rows.join("\n");
-    assert!(
-        rows.iter()
-            .any(|row| row.trim_start().starts_with("/two/alpha")),
-        "status row follows the index cursor:\n{text}"
-    );
-    assert!(
-        !text.contains("/one/alpha"),
-        "only the selected path paints:\n{text}"
-    );
-
-    // Open search: the footer slot is the query, and the hint leaves the table.
-    apply_intent(&mut domain, &mut model, BoardIntent::FocusSearch, None).expect("focus search");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SearchQueryInsertText("alpha".into()),
-        None,
-    )
-    .expect("type search");
-    let rows = board_rows(&model, 162, 43);
-    let text = rows.join("\n");
-    assert!(
-        rows.iter().any(|row| row.contains("▎ alpha")),
-        "visible footer search query missing:\n{text}"
-    );
-    assert!(
-        !rows[..10.min(rows.len())]
-            .iter()
-            .any(|row| row.contains("search projects")),
-        "search hint must not remain above the project table:\n{text}"
-    );
-    // The status row is the input now, so the selected path moves to the reserved row
-    // directly above it (the query reset the cursor to the first match).
-    let input_index = rows
-        .iter()
-        .position(|row| row.contains("▎ alpha"))
-        .expect("input row");
-    assert_eq!(
-        rows[input_index - 1].trim(),
-        "/one/alpha",
-        "selected path paints above the search input:\n{text}"
-    );
-    assert!(
-        !rows[..input_index - 1].iter().any(|row| row.contains('/')),
-        "no path anywhere else while searching:\n{text}"
-    );
-
-    for width in [40, 52, 79, 100, 162] {
-        let rows = board_rows(&model, width, 20);
-        let text = rows.join("\n");
-        let header = rows
-            .iter()
-            .find(|row| row.contains("PROJECT"))
-            .expect("header");
-        let project_rows: Vec<&String> = rows
-            .iter()
-            .filter(|row| {
-                row.contains("alpha") && row.matches('·').count() >= 3 && row.contains('1')
-            })
-            .collect();
-        assert_eq!(
-            project_rows.len(),
-            2,
-            "both same-named rows paint at {width}:\n{text}"
-        );
-        let on_deck_label = if width < 66 { "DECK" } else { "ON DECK" };
-        let on_deck_end = char_col(header, header.find(on_deck_label).expect("ON DECK label"))
-            + on_deck_label.len()
-            - 1;
-        for row in &project_rows {
-            assert_eq!(
-                row.find('1').map(|x| char_col(row, x)),
-                Some(on_deck_end),
-                "ON DECK count anchors to the right edge at {width}:\n{header}\n{row}"
-            );
-            assert!(
-                !row.contains('/'),
-                "rows never paint a path at {width}:\n{row}"
-            );
-        }
-        assert_eq!(
-            header.contains("THREADS"),
-            width >= 100,
-            "THREADS column opens at 100 and above only ({width}):\n{header}"
-        );
-    }
-}
-
-#[test]
-fn projects_index_paints_four_count_columns_at_compact_and_wide_widths() {
-    let mut domain = DomainState::new();
-    for (title, status) in [
-        ("needs", HumanStatus::Blocked),
-        ("motion", HumanStatus::Started),
-        ("deck ready", HumanStatus::Ready),
-        ("deck open", HumanStatus::Open),
-        ("done", HumanStatus::Done),
-    ] {
-        let id = domain
-            .create(
-                title,
-                None,
-                TaskScope::Project {
-                    path: "/counts".into(),
-                },
-                ProvenanceOrigin::Manual,
-                None,
-            )
-            .expect("task");
-        domain.set_status(id, status).expect("status");
-    }
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/counts")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
-        None,
-    )
-    .expect("projects index");
-
-    for (width, labels) in [
-        (50, ["NEED", "MOTION", "DECK", "DONE"]),
-        (110, ["NEEDS YOU", "IN MOTION", "ON DECK", "DONE"]),
-    ] {
-        let rows = board_rows(&model, width, 20);
-        let text = rows.join("\n");
-        let header = rows
-            .iter()
-            .find(|row| row.contains("PROJECT"))
-            .expect("project legend");
-        for label in labels {
-            assert!(
-                header.contains(label),
-                "{label} missing at {width}:\n{text}"
-            );
-        }
-        let row = rows
-            .iter()
-            .find(|row| row.contains("▸ counts"))
-            .expect("project count row");
-        assert_eq!(
-            row.matches('1').count(),
-            3,
-            "needs, motion, and done each paint one at {width}:\n{row}"
-        );
-        assert!(
-            row.contains('2'),
-            "ready plus open paint one ON DECK total at {width}:\n{row}"
-        );
-        assert_eq!(
-            header.contains("THREADS"),
-            width >= 100,
-            "THREADS column threshold stays at 100 ({width}):\n{header}"
-        );
-    }
-}
-
-/// Char column of a byte offset inside a single-width rendered row.
-fn char_col(row: &str, byte: usize) -> usize {
-    row[..byte].chars().count()
-}
-
-#[test]
-fn projects_index_threads_column_lists_names_then_an_overflow_count() {
-    let mut domain = DomainState::new();
-    for (title, thread) in [
-        ("a", "board-redesign"),
-        ("b", "cli-router"),
-        ("c", "site-landing"),
-        ("d", "docs-keys"),
-        ("e", "release-0.5"),
-        ("f", "board-redesign"),
-    ] {
-        domain
-            .create(
-                title,
-                None,
-                TaskScope::Project {
-                    path: "/repos/alpha".into(),
-                },
-                ProvenanceOrigin::Manual,
-                Some(thread.into()),
-            )
-            .expect("task");
-    }
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectNavTab(NavTab::Projects),
-        None,
-    )
-    .expect("projects index");
-
-    let rows = board_rows(&model, 162, 24);
-    let row = rows
-        .iter()
-        .find(|row| row.contains("alpha · here"))
-        .expect("project row");
-    assert!(
-        row.contains("#board-redesign #release-0.5 #docs-keys #site-landing #cli-router"),
-        "all five threads fit at 162, most recently updated first:\n{row}"
-    );
-    assert!(
-        !row.contains('+'),
-        "no overflow when every thread fits:\n{row}"
-    );
-
-    let rows = board_rows(&model, 100, 24);
-    let row = rows
-        .iter()
-        .find(|row| row.contains("alpha · here"))
-        .expect("project row");
-    let header = rows
-        .iter()
-        .find(|row| row.contains("THREADS"))
-        .expect("threads header");
-    assert!(
-        row.contains("#board-redesign") && row.contains("  +"),
-        "narrow threads column truncates to an overflow count:\n{header}\n{row}"
-    );
-    assert!(
-        !row.contains("#cli-router"),
-        "the last thread gives way to the overflow count:\n{row}"
-    );
-    assert_eq!(
-        header.find("THREADS").map(|x| char_col(header, x)),
-        row.find("#board").map(|x| char_col(row, x)),
-        "thread cell starts under its legend:\n{header}\n{row}"
-    );
-
-    let rows = board_rows(&model, 99, 24);
-    let text = rows.join("\n");
-    assert!(
-        !text.contains("#board") && !text.contains("THREADS"),
-        "below 100 the threads column is gone:\n{text}"
-    );
-}
-
-#[test]
-fn persistent_slot_keeps_selected_project_label_on_home_tabs() {
+fn scope_control_names_the_active_scope() {
     let domain = DomainState::new();
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    for tab in [NavTab::Desk, NavTab::Projects] {
-        apply_intent(
-            &mut domain.clone(),
-            &mut model,
-            BoardIntent::SelectNavTab(tab),
-            None,
-        )
-        .expect("switch tab");
-        let text = board_rows(&model, 80, 24).join("\n");
-        assert!(
-            text.contains("alpha ▾"),
-            "slot label missing on {tab:?}:\n{text}"
-        );
-    }
-}
-
-#[test]
-fn attribution_appears_only_at_bottom_of_open_peek() {
-    let mut task = task(
-        999,
-        "A task with notes",
-        HumanStatus::Ready,
-        project("/repos/tsk"),
-        0,
+    let text = board_rows(&model, 80, 24).join("\n");
+    assert!(
+        text.contains("alpha ▾"),
+        "project scope label missing:\n{text}"
     );
-    task.thread = Some("release".into());
-    task.notes = Some("Peek note body".into());
-    let mut model = BoardModel::from_tasks(vec![task], Some(PathBuf::from("/repos/tsk")));
-    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
-    let mut domain = DomainState::new();
-    for peek in [false, true] {
-        if peek {
-            apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).unwrap();
-        }
-        let rows = board_rows(&model, 80, 24);
-        let title = rows
-            .iter()
-            .position(|row| row.contains("A task with notes"))
-            .unwrap();
-        if !peek {
-            assert!(
-                !rows.iter().any(|row| row.contains("#release")),
-                "collapsed task must have no label"
-            );
-            continue;
-        }
-        let label = rows
-            .iter()
-            .position(|row| row.contains("└─ #release"))
-            .expect("L-shaped label line");
-        assert!(label > title);
-        assert!(!rows[title].contains("release"));
-        let note = rows
-            .iter()
-            .position(|row| row.contains("Peek note body"))
-            .unwrap();
-        assert!(title < note && note < label);
-        assert_eq!(rows.iter().filter(|row| row.contains('└')).count(), 1);
-    }
-}
-
-#[test]
-fn peek_project_label_wraps_all_content_below_notes() {
-    let label = format!("{}end", "a".repeat(80));
-    let mut item = task(
-        9911,
-        "Wrapped label",
-        HumanStatus::Started,
-        project(&format!("/repos/{label}")),
-        0,
+    model.set_selected_project(None);
+    let text = board_rows(&model, 80, 24).join("\n");
+    assert!(text.contains("desk ▾"), "desk scope label missing:\n{text}");
+    assert!(
+        text.contains("sort number ▾"),
+        "sort control missing:\n{text}"
     );
-    item.notes = Some("notes above".into());
-    let mut model = BoardModel::from_tasks(vec![item], None);
-    let mut domain = DomainState::new();
-    apply_intent(&mut domain, &mut model, BoardIntent::PeekDetail, None).unwrap();
-    let rows = board_rows(&model, 40, 24);
-    let note = rows
-        .iter()
-        .position(|row| row.contains("notes above"))
-        .unwrap();
-    let corner = rows.iter().position(|row| row.contains("└─")).unwrap();
-    assert!(corner > note);
-    let mut copied = rows[corner].trim().strip_prefix("└─ ").unwrap().to_string();
-    let mut continuation_count = 0;
-    for row in rows.iter().skip(corner + 1) {
-        if !row.starts_with("       ") || row.trim().is_empty() {
-            break;
-        }
-        copied.push_str(row.trim());
-        continuation_count += 1;
-    }
-    assert!(continuation_count >= 2);
-    assert_eq!(copied, label);
 }

@@ -241,13 +241,12 @@ pub enum BoardIntent {
     /// the task list: it runs the same effect `ConfirmProjectChoice` does after enough
     /// `ProjectPickerNext`/`ProjectPickerPrev` presses reached this option.
     SelectProjectOption(usize),
-    /// Switch to a persistent navigation tab (`1` desk · `2` selected project · `3`
-    /// projects). Tab 2 with no project opens the picker instead.
+    /// Switch to a persistent navigation tab (`1` board).
     SelectNavTab(crate::ui::queue::NavTab),
     /// Open the project board's searchable thread filter picker (bare `t`).
     OpenThreadFilterPicker,
-    /// Open the projects index's searchable View picker (bare `v`).
-    OpenProjectsViewPicker,
+    /// `S` — flip every section between number order and project order.
+    ToggleSort,
     /// Focus the active board lens's search field (`/` or a click).
     FocusSearch,
     /// Pin the live query and return input to normal board keys.
@@ -271,8 +270,6 @@ pub enum BoardIntent {
     /// Paste into the active lens's search.
     SearchQueryInsertText(String),
     SearchQueryBackspace,
-    /// Mouse route onto a projects index row: select it and open its project in slot 2.
-    SelectProjectRow(usize),
     /// Move the task page's step cursor onto one steps step by its painted absolute
     /// index (mouse click on an step row; AC-21). A click selects — it never toggles the
     /// step, opens the editor, or arms the delete mark; no key produces it.
@@ -328,14 +325,14 @@ pub enum BoardIntent {
     MoveStepDown,
     /// `Enter` opens the selected task as a full-page view in single-pane presentation.
     OpenTaskPage,
-    /// `→` at wide widths: move the stage slider one step towards the task (0 → A → G → F).
-    StageRight,
-    /// `←` at wide widths: move the stage slider one step towards the board (F → G → A → 0).
-    StageLeft,
-    /// `→` / `l` — expand the selected row's inline peek (notes preview under the row).
-    PeekDetail,
-    /// `←` / `h` — collapse the inline peek when one is open; a no-op otherwise.
-    CollapseDetail,
+    /// `→` / `l` at wide widths: move input focus from the list to the task detail.
+    FocusDetail,
+    /// `←` / `h` at wide widths: move input focus from the task detail back to the list.
+    FocusList,
+    /// `J` on the focused task page: open the next task in the list's order.
+    NextTask,
+    /// `K` on the focused task page: open the previous task in the list's order.
+    PrevTask,
     /// Task page view mode: scroll the notes body one wrapped row up.
     PageScrollUp,
     /// Task page view mode: scroll the notes body one wrapped row down.
@@ -372,7 +369,7 @@ pub enum BoardIntent {
 }
 
 /// Bottom chrome: compact key legend for primary board actions.
-pub const BOARD_HELP_LINE: &str = "↑↓/jk  ·  shift+M multi-select  ·  shift+↑↓/space mark  ·  ctrl+s start  ·  ctrl+n next  ·  enter open  ·  h/l close/peek  ·  ctrl+d done  ·  ctrl+o inbox  ·  ctrl+b block  ·  ctrl+r review  ·  + add  ·  ctrl+e title  ·  ctrl+x del  ·  ctrl+u undo  ·  ctrl+f archive  ·  d drawer  ·  g fold / unfold group  ·  p projects  ·  / search  ·  : palette  ·  ? help  ·  ctrl+q quit";
+pub const BOARD_HELP_LINE: &str = "↑↓/jk  ·  shift+M multi-select  ·  shift+↑↓/space mark  ·  ctrl+s start  ·  ctrl+n next  ·  enter open  ·  h/l list/detail  ·  ctrl+d done  ·  ctrl+o inbox  ·  ctrl+b block  ·  ctrl+r review  ·  + add  ·  ctrl+e title  ·  ctrl+x del  ·  ctrl+u undo  ·  ctrl+f archive  ·  d drawer  ·  g fold / unfold group  ·  p scope  ·  S sort  ·  / search  ·  : palette  ·  ? help  ·  ctrl+q quit";
 /// Compact legend shown while the action sheet or command palette is open.
 pub const COMMAND_SURFACE_HELP_LINE: &str = "↑↓ select · type to filter · enter run · esc close";
 /// Compact legend shown while the help card is open.
@@ -462,34 +459,6 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         intent: BoardIntent::OpenTaskPage,
         help_chord: "enter",
         help_label: "open",
-        modifier: NormalModifier::Bare,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Right,
-        intent: BoardIntent::PeekDetail,
-        help_chord: "←/h · →/l",
-        help_label: "close / peek",
-        modifier: NormalModifier::Bare,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Char('l'),
-        intent: BoardIntent::PeekDetail,
-        help_chord: "←/h · →/l",
-        help_label: "close / peek",
-        modifier: NormalModifier::Bare,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Left,
-        intent: BoardIntent::CollapseDetail,
-        help_chord: "←/h · →/l",
-        help_label: "close / peek",
-        modifier: NormalModifier::Bare,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Char('h'),
-        intent: BoardIntent::CollapseDetail,
-        help_chord: "←/h · →/l",
-        help_label: "close / peek",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
@@ -602,29 +571,29 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "fold / unfold group",
         modifier: NormalModifier::Bare,
     },
-    // The project slot is mouse-clickable; `p` gives the keyboard the same route.
+    // The scope chip is mouse-clickable; `p` gives the keyboard the same route.
     NormalKeyEntry {
         code: KeyCode::Char('p'),
         intent: BoardIntent::OpenProjectSelector,
         help_chord: "p",
-        help_label: "projects",
+        help_label: "scope",
         modifier: NormalModifier::Bare,
     },
-    // `t` opens the project board's thread filter; `v` the projects index's View
-    // selector. Both are navigation (bare, not verbs); the reducer gates each to its
-    // own destination, so they are inert everywhere else.
+    // `S` flips the row order. Navigation, not a verb: it changes no task.
+    NormalKeyEntry {
+        code: KeyCode::Char('S'),
+        intent: BoardIntent::ToggleSort,
+        help_chord: "S",
+        help_label: "sort: number / project",
+        modifier: NormalModifier::Bare,
+    },
+    // `t` opens the project board's thread filter. Navigation (bare, not a verb); the
+    // reducer gates it to a project scope, so it is inert everywhere else.
     NormalKeyEntry {
         code: KeyCode::Char('t'),
         intent: BoardIntent::OpenThreadFilterPicker,
         help_chord: "t",
         help_label: "threads",
-        modifier: NormalModifier::Bare,
-    },
-    NormalKeyEntry {
-        code: KeyCode::Char('v'),
-        intent: BoardIntent::OpenProjectsViewPicker,
-        help_chord: "v",
-        help_label: "views",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
@@ -765,9 +734,7 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         | BoardIntent::MarkToggleAt(_)
         | BoardIntent::MarkExtend(_)
         | BoardIntent::MarkClear
-        | BoardIntent::OpenTaskPage
-        | BoardIntent::PeekDetail
-        | BoardIntent::CollapseDetail => HelpGroup::Navigation,
+        | BoardIntent::OpenTaskPage => HelpGroup::Navigation,
         BoardIntent::PrimaryVerb
         | BoardIntent::SetStatus(_)
         | BoardIntent::Complete
@@ -783,7 +750,7 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         | BoardIntent::OpenProjectSelector
         | BoardIntent::OpenThreadFilterPicker
         | BoardIntent::FocusSearch
-        | BoardIntent::OpenProjectsViewPicker
+        | BoardIntent::ToggleSort
         | BoardIntent::OpenCommandPalette => HelpGroup::ViewsFind,
         BoardIntent::CloseLayer | BoardIntent::OpenHelp | BoardIntent::Quit => {
             HelpGroup::AppControls
@@ -833,20 +800,20 @@ fn help_bindings() -> Vec<HelpBinding> {
         help_binding(
             HelpGroup::ViewsFind,
             "1",
-            "open desk",
+            "board tab, list focus",
             "switch view navigate board",
         ),
         help_binding(
-            HelpGroup::ViewsFind,
-            "2",
-            "open selected project",
-            "switch view navigate board",
+            HelpGroup::Navigation,
+            "←/h · →/l",
+            "list / detail focus (110+ columns)",
+            "move view wide pane split",
         ),
         help_binding(
-            HelpGroup::ViewsFind,
-            "3",
-            "open projects",
-            "switch view navigate board",
+            HelpGroup::Navigation,
+            "J / K",
+            "next / previous task (task page)",
+            "move list order detail",
         ),
         help_binding(HelpGroup::AppControls, "ctrl+c", "quit", "exit close app"),
         help_binding(
@@ -896,12 +863,6 @@ fn help_bindings() -> Vec<HelpBinding> {
             "↑↓ / jk",
             "scroll (task page)",
             "move view notes steps",
-        ),
-        help_binding(
-            HelpGroup::Navigation,
-            "←/h · →/l",
-            "wide stage (task page)",
-            "move view slider",
         ),
         help_binding(
             HelpGroup::SurfaceControls,
@@ -1325,25 +1286,23 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
 /// How one key routes at the responsive boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponsiveKeyRoute {
-    /// A stage-slider intent (or a stage key the current surface already maps).
+    /// A focus intent.
     Intent(BoardIntent),
-    /// A stage key that does nothing in this stage (`←` in 0, `→` in F).
+    /// A focus key that does nothing here (`←` on the list, `→` on the detail).
     Inert,
-    /// Not a stage key: the surface's own map owns it.
+    /// Not a focus key: the surface's own map owns it.
     Surface,
 }
 
-/// Route the stage-slider keys of the wide layout.
+/// Route the focus keys of the wide layout.
 ///
-/// Only bare `→` / `l` and `←` / `h` in the Normal and TaskPage view modes are stage keys,
-/// and only while
-/// the frame is wide. The mode check does the scoping: `Normal` slides the board-owned stages
-/// and `TaskPage` the task-owned ones, so every field editor (its own mode, never these two)
-/// keeps its existing arrow semantics without being named here. A task edit session parked in
-/// view mode (a dirty draft with no editor open) still slides: the pane stays bound, so
-/// nothing is lost. `Enter` and `Esc` keep their surface meaning (`OpenTaskPage` records the
-/// origin stage; `CloseLayer` restores it), and `Tab` is never a stage key. Below the wide
-/// threshold nothing here fires.
+/// Only bare `→` / `l` and `←` / `h` in the Normal and TaskPage view modes are focus keys,
+/// and only while the frame is wide. The mode check does the scoping: `Normal` moves focus
+/// from the list to the detail and `TaskPage` moves it back, so every field editor (its own
+/// mode, never these two) keeps its existing arrow semantics without being named here. A task
+/// edit session parked in view mode (a dirty draft with no editor open) still moves: the
+/// detail stays bound, so nothing is lost. `Enter` and `Esc` keep their surface meaning, and
+/// `Tab` is never a focus key. Below the wide threshold nothing here fires.
 pub fn route_responsive_key(
     mode: BoardInputMode,
     stage: WideStage,
@@ -1356,21 +1315,20 @@ pub fn route_responsive_key(
     {
         return ResponsiveKeyRoute::Surface;
     }
-    let board_owned =
-        mode == BoardInputMode::Normal && matches!(stage, WideStage::FullBoard | WideStage::Split);
-    let task_owned =
-        mode == BoardInputMode::TaskPage && matches!(stage, WideStage::Rail | WideStage::FullTask);
-    if !board_owned && !task_owned {
+    let list_owned = mode == BoardInputMode::Normal && stage == WideStage::Board;
+    let detail_owned = mode == BoardInputMode::TaskPage && stage == WideStage::Task;
+    if !list_owned && !detail_owned {
         return ResponsiveKeyRoute::Surface;
     }
-    match (key.code, stage) {
-        (KeyCode::Right | KeyCode::Char('l'), WideStage::FullTask)
-        | (KeyCode::Left | KeyCode::Char('h'), WideStage::FullBoard) => ResponsiveKeyRoute::Inert,
-        (KeyCode::Right | KeyCode::Char('l'), _) => {
-            ResponsiveKeyRoute::Intent(BoardIntent::StageRight)
+    match key.code {
+        KeyCode::Right | KeyCode::Char('l') if list_owned => {
+            ResponsiveKeyRoute::Intent(BoardIntent::FocusDetail)
         }
-        (KeyCode::Left | KeyCode::Char('h'), _) => {
-            ResponsiveKeyRoute::Intent(BoardIntent::StageLeft)
+        KeyCode::Left | KeyCode::Char('h') if detail_owned => {
+            ResponsiveKeyRoute::Intent(BoardIntent::FocusList)
+        }
+        KeyCode::Right | KeyCode::Char('l') | KeyCode::Left | KeyCode::Char('h') => {
+            ResponsiveKeyRoute::Inert
         }
         _ => ResponsiveKeyRoute::Surface,
     }
@@ -1762,7 +1720,7 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::SelectProjectOption(_)
         | BoardIntent::SelectNavTab(_)
         | BoardIntent::OpenThreadFilterPicker
-        | BoardIntent::OpenProjectsViewPicker
+        | BoardIntent::ToggleSort
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
         | BoardIntent::ConfirmListPicker
@@ -1776,7 +1734,6 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::SearchQueryBackspace
         | BoardIntent::FocusSearch
         | BoardIntent::PinSearch
-        | BoardIntent::SelectProjectRow(_)
         | BoardIntent::SelectStep(_)
         | BoardIntent::RetrySave
         | BoardIntent::CancelSave
@@ -1802,10 +1759,10 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::MoveStepUp
         | BoardIntent::MoveStepDown
         | BoardIntent::OpenTaskPage
-        | BoardIntent::StageRight
-        | BoardIntent::StageLeft
-        | BoardIntent::PeekDetail
-        | BoardIntent::CollapseDetail
+        | BoardIntent::FocusDetail
+        | BoardIntent::FocusList
+        | BoardIntent::NextTask
+        | BoardIntent::PrevTask
         | BoardIntent::PageScrollUp
         | BoardIntent::PageScrollDown
         | BoardIntent::PageWheelScrollUp
@@ -1939,6 +1896,8 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char('e') if verb => Some(BoardIntent::BeginEditTitle),
         KeyCode::Char('?') if !extra => Some(BoardIntent::OpenHelp),
         KeyCode::Char(':') if !extra => Some(BoardIntent::OpenCommandPalette),
+        KeyCode::Char('J') if !extra => Some(BoardIntent::NextTask),
+        KeyCode::Char('K') if !extra => Some(BoardIntent::PrevTask),
         KeyCode::Tab if !extra => Some(BoardIntent::FormFocusNext),
         KeyCode::BackTab
             if !mods

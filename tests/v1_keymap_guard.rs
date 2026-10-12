@@ -3,7 +3,11 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tsk_tui::domain::{DomainState, ProvenanceOrigin, TaskScope};
 use tsk_tui::ui::board::{apply_intent, BoardInputMode, BoardModel};
-use tsk_tui::ui::input::{map_key, normal_mode_keymap, BoardIntent, MarkDirection};
+use tsk_tui::ui::input::{
+    map_key, normal_mode_keymap, route_responsive_key, BoardIntent, MarkDirection,
+    ResponsiveKeyRoute,
+};
+use tsk_tui::ui::tier::{ResponsivePresentation, WideStage};
 
 fn normal(code: KeyCode) -> Option<BoardIntent> {
     map_key(
@@ -30,10 +34,6 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('M'), BoardIntent::ToggleMarkMode, false),
         (KeyCode::Char(' '), BoardIntent::MarkToggle, false),
         (KeyCode::Enter, BoardIntent::OpenTaskPage, false),
-        (KeyCode::Right, BoardIntent::PeekDetail, false),
-        (KeyCode::Char('l'), BoardIntent::PeekDetail, false),
-        (KeyCode::Left, BoardIntent::CollapseDetail, false),
-        (KeyCode::Char('h'), BoardIntent::CollapseDetail, false),
         (KeyCode::Esc, BoardIntent::CloseLayer, false),
         (KeyCode::Char('s'), BoardIntent::PrimaryVerb, true),
         (KeyCode::Char('d'), BoardIntent::Complete, true),
@@ -54,14 +54,10 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('d'), BoardIntent::ToggleDoneDrawer, false),
         (KeyCode::Char('g'), BoardIntent::ToggleAllGroups, false),
         (KeyCode::Char('p'), BoardIntent::OpenProjectSelector, false),
+        (KeyCode::Char('S'), BoardIntent::ToggleSort, false),
         (
             KeyCode::Char('t'),
             BoardIntent::OpenThreadFilterPicker,
-            false,
-        ),
-        (
-            KeyCode::Char('v'),
-            BoardIntent::OpenProjectsViewPicker,
             false,
         ),
         (KeyCode::Char('/'), BoardIntent::FocusSearch, false),
@@ -126,7 +122,9 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
     );
     assert_eq!(ctrl(KeyCode::Char('d')), Some(BoardIntent::Complete));
 
-    for retired in ['a', 'c', 'i', 'z', 'P', '1', '2', '3', '[', ']'] {
+    for retired in [
+        'a', 'c', 'i', 'z', 'P', 'v', 'h', 'l', 'J', 'K', '1', '2', '3', '[', ']',
+    ] {
         assert_eq!(
             normal(KeyCode::Char(retired)),
             None,
@@ -222,11 +220,26 @@ fn help_card_lines_fit_the_modal_body_at_every_size() {
 
 #[test]
 fn vim_horizontal_keys_are_navigation_only_outside_text_entry() {
+    // `h`/`l` only move focus between the wide list and detail columns.
+    let bare = |code| KeyEvent::new(code, KeyModifiers::NONE);
     assert_eq!(
-        normal(KeyCode::Char('h')),
-        Some(BoardIntent::CollapseDetail)
+        route_responsive_key(
+            BoardInputMode::Normal,
+            WideStage::Board,
+            ResponsivePresentation::WideSplit,
+            bare(KeyCode::Char('l')),
+        ),
+        ResponsiveKeyRoute::Intent(BoardIntent::FocusDetail)
     );
-    assert_eq!(normal(KeyCode::Char('l')), Some(BoardIntent::PeekDetail));
+    assert_eq!(
+        route_responsive_key(
+            BoardInputMode::TaskPage,
+            WideStage::Task,
+            ResponsivePresentation::WideSplit,
+            bare(KeyCode::Char('h')),
+        ),
+        ResponsiveKeyRoute::Intent(BoardIntent::FocusList)
+    );
 
     for character in ['h', 'l'] {
         for mode in [

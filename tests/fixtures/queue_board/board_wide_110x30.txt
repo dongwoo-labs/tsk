@@ -1,24 +1,22 @@
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                            │                                                                 │
-│ desk  ·  tsk ▾  ·  projects     Overview ▾ │  tsk                                                            │
+│ board  ·  all ▾  ·  sort number ▾          │  ■ T5 Wire dispatch cleanup receipts            blocked · herdr │
+│                                            │ ────────────────────────────────────────────────────────────────│
+│ NEEDS YOU ───────────────────────────────2 │   no notes yet                                                  │
 │                                            │                                                                 │
-│   PROJECT            NEED MOTION DECK DONE │  IN MOTION ───────────────────────────────────────────────────1 │
+│▸ ■ T5 Wire dispatch cleanup receipts       │                                                                 │
+│  ▲ T6 Docs refresh pass after F9 ships     │   steps 0/0                                                     │
+│                                            │    + step                                                       │
+│ IN MOTION ───────────────────────────────2 │                                                                 │
 │                                            │                                                                 │
-│ ▸ tsk · here            ·      1    2    1 │ ▸ ● T1 Smoke-test worktree dispatch                             │
-│   herdr                 2      1    ·    · │                                                                 │
-│                                            │  ON DECK ─────────────────────────────────────────────────────2 │
+│  ● T1 Smoke-test worktree dispatch         │                                                                 │
+│  ● T2 Edit target binding pin              │                                                                 │
 │                                            │                                                                 │
-│                                            │   ○ T4 Cut rust-toolchain pin into CI docs                      │
-│                                            │   ○ T3 Prototype the queue-style board UI                       │
+│ ON DECK ─────────────────────────────────3 │                                                                 │
 │                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
-│                                            │                                                                 │
+│  ○ T3 Prototype the queue-style board UI   │                                                                 │
+│  ○ T4 Cut rust-toolchain pin into CI docs  │                                                                 │
+│  ○ T7 Global backlog note                  │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
@@ -26,7 +24,9 @@
 │                                            │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │   created 1062d ago · updated 1062d ago                         │
 │──────────────────────────────────────────────────────────────────────────────────────────────────────────────│
-│ /repos/tsk                                                            index ▸ project    → project · ← close │
-│ enter open · / search · ? help                                                                               │
+│ all                                                                                                 → detail │
+│ enter open · ctrl+d done · ctrl+b unblock · ctrl+o inbox · + add · ? help                                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
