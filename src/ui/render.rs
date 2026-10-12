@@ -110,6 +110,9 @@ pub struct TaskRowPaint<'a> {
     pub title_bold: bool,
     /// Dim every span (the archived group's rows). Glyph and identifier are kept.
     pub dim: bool,
+    /// Dim right-aligned tag on the first line, such as the `⊂1/3` child count. The title
+    /// wraps inside the room left beside it.
+    pub badge: Option<&'a str>,
 }
 
 /// One painted task-row line plus the title-content cells a text selection may copy.
@@ -135,7 +138,11 @@ pub fn paint_task_row_lines(
     let identifier_width = row.identifier.map(display_width).unwrap_or(0);
     let identifier_gap = usize::from(identifier_width > 0);
     let title_x = prefix_cells.saturating_add(identifier_width + identifier_gap);
-    let room = title_budget.saturating_sub(title_x).max(1);
+    let badge_reserve = row.badge.map(|badge| display_width(badge) + 1).unwrap_or(0);
+    let room = title_budget
+        .saturating_sub(title_x)
+        .saturating_sub(badge_reserve)
+        .max(1);
     let head_content_x = u16::try_from(prefix_cells).unwrap_or(u16::MAX);
     let head_content_width = u16::try_from(identifier_width + identifier_gap + room)
         .unwrap_or(u16::MAX)
@@ -216,17 +223,20 @@ fn paint_task_row_with_indent(
     let prefix = format!("{}{marker}{glyph} ", " ".repeat(leading_indent));
     let identifier = row.identifier.unwrap_or_default();
     let identifier_gap = if identifier.is_empty() { "" } else { " " };
+    let badge = row.badge.unwrap_or_default();
+    let badge_w = display_width(badge);
     let title_room = title_budget
         .saturating_sub(display_width(&prefix))
         .saturating_sub(display_width(identifier))
-        .saturating_sub(display_width(identifier_gap));
+        .saturating_sub(display_width(identifier_gap))
+        .saturating_sub(if badge.is_empty() { 0 } else { badge_w + 1 });
     let title = present_line(row.title, title_room);
     let left_w = display_width(&prefix)
         .saturating_add(display_width(identifier))
         .saturating_add(display_width(identifier_gap))
         .saturating_add(display_width(&title));
 
-    let leader = " ".repeat(row_w.saturating_sub(left_w));
+    let leader = " ".repeat(row_w.saturating_sub(left_w).saturating_sub(badge_w));
 
     let (title_style, identifier_style, leader_style) = if row.dim {
         (style_dim(), style_dim(), style_dim())
@@ -251,6 +261,9 @@ fn paint_task_row_with_indent(
     spans.push(Span::styled(title, title_style));
     if !leader.is_empty() {
         spans.push(Span::styled(leader, leader_style));
+    }
+    if !badge.is_empty() {
+        spans.push(Span::styled(badge.to_string(), style_dim()));
     }
     bound_line(Line::from(spans), row_w)
 }
@@ -337,6 +350,17 @@ pub struct StepView {
     /// A positioned add draft painted between stored steps (`ctrl+a` below a selected
     /// step). It is not a stored step: cursor, mark, count, and hit indices skip it.
     pub inserted: bool,
+}
+
+/// One painted row of the task page's relationship block: the parent line, the children
+/// count, or one direct child. Rows arrive already wrapped to the content width, so a long
+/// title continues on the next row instead of being cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationRow {
+    pub text: String,
+    /// Labels and the none / not-found states paint dim; a resolved parent and each child
+    /// paint plain.
+    pub dim: bool,
 }
 
 /// The task page's in-place step editor. Its rows replace the selected stored step's text, or
@@ -459,6 +483,9 @@ pub enum QueueOverlay<'a> {
         notes_cursor: Option<(u16, u16)>,
         /// Wrapped note rows hidden below the window, named by the divider's tail.
         more_lines: usize,
+        /// The parent line and direct children, between the notes and the steps. Empty for
+        /// a capture draft, which has no relationships.
+        relation_rows: Vec<RelationRow>,
         /// The extracted steps step views, in storage order. An inline add contributes a
         /// final transient view, while `stored_step_count` stays tied to persisted steps.
         step_views: Vec<StepView>,
@@ -1000,6 +1027,7 @@ pub fn draw_task_column(
         ref notes_rows,
         notes_cursor,
         more_lines,
+        ref relation_rows,
         ref step_views,
         stored_step_count,
         step_cursor,
@@ -1028,6 +1056,7 @@ pub fn draw_task_column(
             notes_rows,
             notes_cursor,
             more_lines,
+            relation_rows,
             step_views,
             stored_step_count,
             step_cursor,
@@ -1604,6 +1633,7 @@ fn paint_overlay(
             ref notes_rows,
             notes_cursor,
             more_lines,
+            ref relation_rows,
             ref step_views,
             stored_step_count,
             step_cursor,
@@ -1631,6 +1661,7 @@ fn paint_overlay(
                 notes_rows,
                 *notes_cursor,
                 *more_lines,
+                relation_rows,
                 step_views,
                 *stored_step_count,
                 *step_cursor,
@@ -2505,9 +2536,13 @@ pub struct StepsWindow {
 }
 
 /// A shared page-content flow: steps follow the notes with two blank rows between
-/// them, and the whole resulting stream scrolls.
+/// them, and the whole resulting stream scrolls. A task page's relationship block (parent,
+/// then direct children) sits between the notes and the steps, with one blank row on
+/// each side of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageContentLayout {
+    /// First relationship row; equals `steps_start` when the block is empty.
+    pub relation_start: usize,
     pub steps_start: usize,
     pub total_rows: usize,
     pub max_scroll: usize,
@@ -2515,21 +2550,32 @@ pub struct PageContentLayout {
 
 pub fn page_content_layout(
     note_rows: usize,
+    relation_rows: usize,
     steps: usize,
     viewport_rows: u16,
 ) -> PageContentLayout {
     let note_rows = note_rows.max(1);
     let viewport = viewport_rows as usize;
     // Two blank rows after notes keep the steps visually separated from the note,
-    // regardless of viewport size. A trailing blank similarly separates the final
-    // content section from the fixed footer when it scrolls into view.
-    let steps_start = if steps == 0 {
+    // regardless of viewport size. A relationship block takes the place of the second
+    // blank and brings its own blank after it. A trailing blank similarly separates the
+    // final content section from the fixed footer when it scrolls into view.
+    let relation_start = note_rows.saturating_add(1);
+    let steps_start = if relation_rows > 0 {
+        relation_start + relation_rows + 1
+    } else if steps == 0 {
         note_rows
     } else {
         note_rows.saturating_add(2)
     };
+    let relation_start = if relation_rows > 0 {
+        relation_start
+    } else {
+        steps_start
+    };
     let total_rows = steps_start + usize::from(steps > 0) + steps + 1;
     PageContentLayout {
+        relation_start,
         steps_start,
         total_rows,
         max_scroll: total_rows.saturating_sub(viewport),
@@ -2646,6 +2692,7 @@ fn paint_task_page(
     notes_rows: &[String],
     notes_cursor: Option<(u16, u16)>,
     more_lines: usize,
+    relation_rows: &[RelationRow],
     step_views: &[StepView],
     stored_step_count: usize,
     step_cursor: Option<usize>,
@@ -2825,7 +2872,12 @@ fn paint_task_page(
     let note_count = notes_rows.len().max(1);
     let step_rows: usize = step_views.iter().map(|step| step.rows.len().max(1)).sum();
     // Every checklist has a trailing add control, including an empty one.
-    let content = page_content_layout(note_count, step_rows + 1, lay.notes_rows);
+    let content = page_content_layout(
+        note_count,
+        relation_rows.len(),
+        step_rows + 1,
+        lay.notes_rows,
+    );
     let scroll = step_scroll.min(content.max_scroll);
     // Content has a two-cell gutter on both sides. An overflowing page keeps its
     // scrollbar outside that right gutter at the frame edge.
@@ -2889,6 +2941,22 @@ fn paint_task_page(
                 Rect::new(0, y, content_width, 1),
             );
             // Notes body past the two-cell gutter (and the trailing pad space).
+            hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
+        } else if (content.relation_start..content.relation_start + relation_rows.len())
+            .contains(&absolute)
+        {
+            let row = &relation_rows[absolute - content.relation_start];
+            put_line(
+                frame,
+                surface,
+                y,
+                content_width,
+                paint_bounded_line(
+                    &format!("  {} ", row.text),
+                    content_width,
+                    if row.dim { style_dim() } else { style_plain() },
+                ),
+            );
             hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
         } else if absolute == content.steps_start {
             put_line(
@@ -3575,6 +3643,9 @@ fn build_list_rows(
     // Every section heading has one blank list row above it. This row remains ordinary list
     // content, so selection scrolling keeps the section and its first task reachable.
     out.push(ListRow::Blank);
+    // `⊂done/total` on a task with direct children, counted across every scope and status
+    // like `tsk list`, never only the rows this lens shows.
+    let child_counts = crate::domain::child_counts_by_parent(model.tasks);
 
     let push_task =
         |id: Uuid, out: &mut Vec<ListRow>, selected_idx: &mut Option<usize>, dim: bool| {
@@ -3588,6 +3659,9 @@ fn build_list_rows(
             // A long title wraps onto continuation lines indented under its own first
             // row; every painted line carries the task's hit target and selection.
             let identifier = task.board_identifier();
+            let badge = child_counts
+                .get(&task.id)
+                .map(|(done, total)| format!("\u{2282}{done}/{total}"));
             let lines = paint_task_row_lines(
                 &TaskRowPaint {
                     glyph: status_glyph(task.status),
@@ -3598,6 +3672,7 @@ fn build_list_rows(
                     title_bold: false,
                     // AC-41: every row of a read-only archived focus paints dim.
                     dim: dim || model.rows_dim,
+                    badge: badge.as_deref(),
                 },
                 geo,
                 0,
@@ -4436,11 +4511,24 @@ mod tests {
 
     #[test]
     fn steps_start_two_rows_after_the_notes_block() {
-        let layout = page_content_layout(1, 3, 16);
+        let layout = page_content_layout(1, 0, 3, 16);
         assert_eq!(layout.steps_start, 3);
 
-        let layout = page_content_layout(5, 3, 16);
+        let layout = page_content_layout(5, 0, 3, 16);
         assert_eq!(layout.steps_start, 7);
+    }
+
+    #[test]
+    fn relationship_rows_sit_between_notes_and_steps_with_a_blank_each_side() {
+        // notes 0..2, blank 2, relations 3..5, blank 5, steps label 6.
+        let layout = page_content_layout(2, 2, 3, 16);
+        assert_eq!(layout.relation_start, 3);
+        assert_eq!(layout.steps_start, 6);
+        assert_eq!(layout.total_rows, 6 + 1 + 3 + 1);
+        // No relationship rows: the original two-blank gap is unchanged.
+        let layout = page_content_layout(2, 0, 3, 16);
+        assert_eq!(layout.steps_start, 4);
+        assert_eq!(layout.relation_start, layout.steps_start);
     }
 
     #[test]
@@ -4457,6 +4545,7 @@ mod tests {
                 marked: false,
                 title_bold: false,
                 dim: false,
+                badge: None,
             };
             let lines = paint_task_row_lines(&row, &geo, 0);
             assert_eq!(lines.len(), 2);
@@ -4489,6 +4578,7 @@ mod tests {
                         marked: false,
                         title_bold: selected,
                         dim: false,
+                        badge: None,
                     };
                     for line in paint_task_row_lines(&row, &geo, 0) {
                         assert!(
@@ -4517,6 +4607,7 @@ mod tests {
                 marked: false,
                 title_bold: false,
                 dim: false,
+                badge: None,
             },
             &geo,
         );
@@ -4537,6 +4628,7 @@ mod tests {
                 marked: false,
                 title_bold: false,
                 dim: false,
+                badge: None,
             },
             &geo,
         );
@@ -4586,6 +4678,7 @@ mod tests {
                 marked: false,
                 title_bold: false,
                 dim: false,
+                badge: None,
             },
             TaskRowPaint {
                 glyph: "▲",
@@ -4595,6 +4688,7 @@ mod tests {
                 marked: false,
                 title_bold: true,
                 dim: false,
+                badge: None,
             },
             TaskRowPaint {
                 glyph: "◓",
@@ -4604,6 +4698,7 @@ mod tests {
                 marked: false,
                 title_bold: false,
                 dim: false,
+                badge: None,
             },
         ];
 

@@ -31,6 +31,7 @@ mod scope_resolver;
 mod setup_herdr;
 mod setup_safety;
 mod store_persist;
+mod task_parent_page;
 mod trash_store;
 mod v1_keymap_guard;
 mod wide_task_split;

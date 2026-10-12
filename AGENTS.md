@@ -199,8 +199,11 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 
 - Mutating verbs always take Ctrl. Bare letters do nothing unless they carry a bare
   route; the keymap resolves one letter by modifier class (`d` drawer vs `ctrl+d` done).
-  The one exception is `alt+↑`/`alt+↓` (move the selected step on the task page): macOS
-  takes ctrl+arrows for Mission Control. Do not add another non-Ctrl mutating chord.
+  The exceptions are `alt+↑`/`alt+↓` (move the selected step on the task page), because
+  macOS takes ctrl+arrows for Mission Control, and the task page's bare `P`/`U` (choose or
+  clear the open task's parent), a user-confirmed key contract. `P`/`U` act on the open
+  task only, never a marked set, refuse a dirty draft, and stay text in every input. Do
+  not add another non-Ctrl mutating chord.
 - Mono modifiers only, no colour, at every width. There is no theme module.
 - Text wraps, never truncates. One wrap engine (`edit::wrap_text`) feeds every surface;
   `escaped_draft_rows` remains only for single-line Title/Thread editors.

@@ -13,7 +13,7 @@ At 110 usable columns or wider, the selected task's details always show beside t
 
 Press `J` / `K` on the page to open the next or previous task in the list's order. A draft with unsaved changes refuses to switch.
 
-Click the task's `T` number to copy it. The page shows its status, notes, steps, project, thread, and dates. Its footer puts `#thread` before the project, then the created and updated dates. Long text wraps.
+Click the task's `T` number to copy it. The page shows its status, notes, parent and direct children, steps, project, thread, and dates. Its footer puts `#thread` before the project, then the created and updated dates. Long text wraps.
 
 ## Edit
 
@@ -71,9 +71,30 @@ While editing a field, use its edit keys. Save or cancel to return to the task's
 
 Scroll with the wheel or scrollbar while editing. Typing or moving the Notes cursor brings it back into view.
 
-## Related tasks from the CLI
+## Related tasks
 
-A child Task is separate tracked work; a Step remains part of this task. Use `tsk add --parent T10` or `tsk edit T12 --parent T10` to connect tasks, and `tsk edit T12 --no-parent` to clear a parent. `tsk list T10` shows direct children and their Done/total count. Parents can belong to a different scope. Archive and Done do not break a relationship; a deleted or missing parent keeps its UUID as unresolved. Nothing completes, deletes, or starts a child automatically. The current task-page editor preserves relationships but does not provide parent controls.
+A child Task is separate tracked work; a Step remains part of this task. Each task has at most one direct parent, and a parent can belong to a different scope.
+
+Between the notes and the steps, the page shows one parent line, then the direct children:
+
+| Parent line | Meaning |
+| --- | --- |
+| `parent  none · P to set` | No parent |
+| `parent  ↑ T10 <title> · <status>` | The parent task; `archived` replaces the status of an archived parent |
+| `parent  ↑ <UUID> not found · link kept` | The parent was deleted or is missing; its id stays on this task |
+
+When the task has children, `children 1/3 done` follows, then one row per direct child with its status glyph, number, and title. Children in every scope and status count, archived ones included; deleted tasks do not. When every child is done and this task is not, the page says `all children done · ctrl+d completes this task`. Nothing completes it for you.
+
+| Action | Key |
+| --- | --- |
+| Choose a parent | `P`, type to filter, arrows to select, `Enter` to save |
+| Clear the parent | `U`, or `P` and choose **no parent** |
+
+`P` and `U` work in view mode on the open task, including the detail beside the list at 110+ columns. In a text field they type capital letters, and a draft with unsaved changes refuses both until you save or cancel it. The picker lists every other task by number; **current** marks the present parent and **archived** an archived task. A task under this one is marked **under this task** and refused, because choosing it would form a cycle. Each change saves at once; a failed save offers [retry or cancel](/docs/board/#save-failures).
+
+Changing or clearing a parent never changes the status, scope, or children of either task. Archive and Done do not break a relationship. Deleting a parent never deletes, detaches, or completes its children; they keep its id and show it as not found. Saving other fields of a task keeps its parent as it is, found or not.
+
+From the CLI, `tsk add --parent T10` and `tsk edit T12 --parent T10` set a parent, `tsk edit T12 --no-parent` clears it, and `tsk list T10` shows direct children with their Done/total count. A Linear import keeps the external parent as a `Parent: Linear <identifier> <URL>` line in Notes.
 
 ## Notes markdown
 

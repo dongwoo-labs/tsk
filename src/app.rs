@@ -933,6 +933,7 @@ fn board_keyboard_intent(
                 | BoardInputMode::Palette
                 | BoardInputMode::Help
                 | BoardInputMode::ListPicker
+                | BoardInputMode::ParentPicker
                 | BoardInputMode::Search
                 | BoardInputMode::QuickAdd
         );
@@ -2877,6 +2878,9 @@ mod tests {
             BoardIntent::ToggleBlock,
             BoardIntent::ToggleReview,
             BoardIntent::ToggleStep,
+            BoardIntent::ClearParent,
+            BoardIntent::ConfirmParentPicker,
+            BoardIntent::SelectParentOption(0),
         ] {
             assert!(
                 board_intent_may_persist(&intent),

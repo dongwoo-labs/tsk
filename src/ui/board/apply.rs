@@ -19,8 +19,8 @@ use crate::ui::tier::{FocusedSurface, WideStage};
 use super::commands::{resolve_board_command, CommandSurface};
 use super::model::{steps_scroll_to_cursor, steps_scroll_to_row};
 use super::model::{
-    BoardForm, BoardInputMode, BoardLocation, BoardModel, IntentOutcome, PickerTab,
-    ProjectPickerState, ProjectScopeOption, StepEditor, StepEditorSave, TaskEditSave,
+    BoardForm, BoardInputMode, BoardLocation, BoardModel, IntentOutcome, ListPickerValue,
+    PickerTab, ProjectPickerState, ProjectScopeOption, StepEditor, StepEditorSave, TaskEditSave,
     DIRTY_TASK_SWITCH_REFUSAL,
 };
 
@@ -33,6 +33,13 @@ const NO_SELECTION: &str = "select a task first";
 const LAST_TASK: &str = "last task in this list";
 const FIRST_TASK: &str = "first task in this list";
 const TASK_NOT_IN_LIST: &str = "this task is not in the list · esc back";
+
+/// What `P` / `U` and the parent chooser say. Changing a parent never changes either task's
+/// status, scope, or children.
+const NO_PARENT: &str = "this task has no parent";
+const PARENT_CLEARED: &str = "parent cleared";
+const PARENT_UNCHANGED: &str = "parent unchanged";
+const PARENT_NEEDS_CLEAN_PAGE: &str = "save or cancel edits before changing the parent";
 
 /// What the row says when Shift+Enter reaches a form as Ctrl+J (#125).
 pub const SHIFT_ENTER_AS_CTRL_J_HINT: &str = "Shift+Enter sent Ctrl+J: check terminal keys";
@@ -157,6 +164,9 @@ pub fn board_intent_may_persist(intent: &BoardIntent) -> bool {
             | BoardIntent::MoveStepDown
             | BoardIntent::QuickAddSave
             | BoardIntent::QuickAddSaveNext
+            | BoardIntent::ClearParent
+            | BoardIntent::ConfirmParentPicker
+            | BoardIntent::SelectParentOption(_)
     )
 }
 
@@ -234,6 +244,7 @@ fn read_only_focus_refuses(intent: &BoardIntent) -> bool {
             | BoardIntent::FocusFormField(_)
             | BoardIntent::FocusFormCursor(_, _, _)
             | BoardIntent::SelectStep(_)
+            | BoardIntent::OpenParentPicker
     )
 }
 
@@ -1425,9 +1436,87 @@ fn apply_board_intent(
             return Ok(IntentOutcome::None);
         }
         BoardIntent::CancelListPicker => {
+            let back = if model.parent_picker_task().is_some() {
+                BoardInputMode::TaskPage
+            } else {
+                BoardInputMode::Normal
+            };
             model.cancel_list_picker();
-            model.input_mode = BoardInputMode::Normal;
+            model.input_mode = back;
             return Ok(IntentOutcome::None);
+        }
+        BoardIntent::OpenParentPicker => {
+            let Some(task) = parent_verb_target(model) else {
+                return Ok(IntentOutcome::None);
+            };
+            if model.open_parent_picker(task) {
+                model.input_mode = BoardInputMode::ParentPicker;
+                model.clear_message();
+            }
+            return Ok(IntentOutcome::None);
+        }
+        BoardIntent::ClearParent => {
+            let Some(task) = parent_verb_target(model) else {
+                return Ok(IntentOutcome::None);
+            };
+            if domain
+                .get(task)
+                .and_then(|task| task.parent_task_id)
+                .is_none()
+            {
+                model.set_message(NO_PARENT);
+                return Ok(IntentOutcome::None);
+            }
+            domain.set_parent(task, None)?;
+            model.set_message(PARENT_CLEARED);
+            return Ok(IntentOutcome::Persist);
+        }
+        BoardIntent::SelectParentOption(index) => {
+            if let Some(picker) = model.list_picker.as_mut() {
+                picker.selected = index;
+            }
+            return apply_board_intent(domain, model, BoardIntent::ConfirmParentPicker, snapshot);
+        }
+        BoardIntent::ConfirmParentPicker => {
+            let Some(task) = model.parent_picker_task() else {
+                return Ok(IntentOutcome::None);
+            };
+            let Some((_, option)) = model.selected_list_picker_option() else {
+                return Ok(IntentOutcome::None);
+            };
+            let parent = match option.value {
+                ListPickerValue::ParentNone => None,
+                ListPickerValue::ParentTask(id) => Some(id),
+                ListPickerValue::ParentCycle(id) => {
+                    // Listed so the user can see why it is missing from the choices; the
+                    // chooser stays open for another pick.
+                    let name = domain
+                        .get(id)
+                        .and_then(|task| task.board_identifier())
+                        .unwrap_or_else(|| "that task".to_string());
+                    model.set_message(format!(
+                        "{name} is under this task · choosing it would form a cycle"
+                    ));
+                    return Ok(IntentOutcome::None);
+                }
+                _ => return Ok(IntentOutcome::None),
+            };
+            model.cancel_list_picker();
+            model.input_mode = BoardInputMode::TaskPage;
+            if !domain.set_parent(task, parent)? {
+                model.set_message(PARENT_UNCHANGED);
+                return Ok(IntentOutcome::None);
+            }
+            model.set_message(match parent.and_then(|id| domain.get(id)) {
+                Some(parent) => format!(
+                    "parent set to {}",
+                    parent
+                        .board_identifier()
+                        .unwrap_or_else(|| parent.title.clone())
+                ),
+                None => PARENT_CLEARED.to_string(),
+            });
+            return Ok(IntentOutcome::Persist);
         }
         BoardIntent::FocusSearch => {
             if model.input_mode != BoardInputMode::Search {
@@ -2436,6 +2525,26 @@ fn leave_task_page(model: &mut BoardModel) {
         };
     }
     model.clear_message();
+}
+
+/// The task `P` / `U` act on: the focused task page's own task, in view mode only. A dirty
+/// edit session refuses on the status row and keeps its draft; every other surface is inert.
+fn parent_verb_target(model: &mut BoardModel) -> Option<Uuid> {
+    if model.focused_surface() != FocusedSurface::Task
+        || model.input_mode != BoardInputMode::TaskPage
+    {
+        return None;
+    }
+    let task = model
+        .form
+        .as_ref()
+        .filter(|form| form.is_task())
+        .and_then(BoardForm::task_id)?;
+    if model.task_session_dirty() {
+        model.set_message(PARENT_NEEDS_CLEAN_PAGE);
+        return None;
+    }
+    Some(task)
 }
 
 /// Make sure the task page is bound to the selected task before the task side owns input.

@@ -366,6 +366,15 @@ pub enum BoardIntent {
     CloseLayer,
     /// Toggle all group headers on the active home tab (`Ctrl+G`).
     ToggleAllGroups,
+    /// `P` on the task page: open the parent chooser for the page's task.
+    OpenParentPicker,
+    /// `U` on the task page: clear the page task's parent. Children and the parent itself
+    /// are untouched.
+    ClearParent,
+    /// Apply the parent chooser's highlighted option (a task, or no parent).
+    ConfirmParentPicker,
+    /// Mouse: choose a visible parent-chooser row by index and apply it in one step.
+    SelectParentOption(usize),
 }
 
 /// Bottom chrome: compact key legend for primary board actions.
@@ -835,6 +844,18 @@ fn help_bindings() -> Vec<HelpBinding> {
             "reorder checklist up down",
         ),
         help_binding(
+            HelpGroup::TaskActions,
+            "P",
+            "set parent task (task page)",
+            "relationship parent child subtask link",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "U",
+            "clear parent task (task page)",
+            "relationship parent child subtask unlink",
+        ),
+        help_binding(
             HelpGroup::Navigation,
             "tab / ↓",
             "select steps (task page)",
@@ -1222,6 +1243,7 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
                 | BoardInputMode::LaunchCard
                 | BoardInputMode::ProjectPicker
                 | BoardInputMode::ListPicker
+                | BoardInputMode::ParentPicker
                 | BoardInputMode::Help
         )
     {
@@ -1233,6 +1255,7 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
         BoardInputMode::CapturePage => map_capture_page(key),
         BoardInputMode::ProjectPicker => map_project_picker(key),
         BoardInputMode::ListPicker => map_list_picker(key),
+        BoardInputMode::ParentPicker => map_parent_picker(key),
         BoardInputMode::Search => map_search(key),
         BoardInputMode::SaveRecovery => map_save_recovery(key),
         BoardInputMode::LaunchCard => map_launch_card(key),
@@ -1631,7 +1654,7 @@ pub fn map_edit_paste(mode: BoardInputMode, text: &str) -> Option<BoardIntent> {
         | BoardInputMode::LaunchCard
         | BoardInputMode::TaskPage
         | BoardInputMode::CapturePage => None,
-        BoardInputMode::ListPicker => {
+        BoardInputMode::ListPicker | BoardInputMode::ParentPicker => {
             Some(BoardIntent::ListPickerQueryInsertText(text.to_string()))
         }
         BoardInputMode::Search => Some(BoardIntent::SearchQueryInsertText(text.to_string())),
@@ -1779,7 +1802,11 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::File
         | BoardIntent::OpenHelp
         | BoardIntent::CloseLayer
-        | BoardIntent::ToggleAllGroups => None,
+        | BoardIntent::ToggleAllGroups
+        | BoardIntent::OpenParentPicker
+        | BoardIntent::ClearParent
+        | BoardIntent::ConfirmParentPicker
+        | BoardIntent::SelectParentOption(_) => None,
     }
 }
 
@@ -1898,6 +1925,10 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char(':') if !extra => Some(BoardIntent::OpenCommandPalette),
         KeyCode::Char('J') if !extra => Some(BoardIntent::NextTask),
         KeyCode::Char('K') if !extra => Some(BoardIntent::PrevTask),
+        // The two relationship keys are bare capitals by design: `P` only opens a chooser,
+        // and `U` clears one link without touching either task's status or scope.
+        KeyCode::Char('P') if !extra => Some(BoardIntent::OpenParentPicker),
+        KeyCode::Char('U') if !extra => Some(BoardIntent::ClearParent),
         KeyCode::Tab if !extra => Some(BoardIntent::FormFocusNext),
         KeyCode::BackTab
             if !mods
@@ -2008,6 +2039,15 @@ fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
             Some(BoardIntent::ListPickerQueryInsert(character))
         }
         _ => None,
+    }
+}
+
+/// The parent chooser: the list picker's typing and movement, but Enter applies the chosen
+/// parent (a persisting verb) and Esc returns to the task page.
+fn map_parent_picker(key: KeyEvent) -> Option<BoardIntent> {
+    match map_list_picker(key)? {
+        BoardIntent::ConfirmListPicker => Some(BoardIntent::ConfirmParentPicker),
+        intent => Some(intent),
     }
 }
 

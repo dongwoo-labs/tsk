@@ -63,6 +63,8 @@ These keys apply in **view mode**:
 | Edit title or selected step | `ctrl+e` |
 | Change task status | Board status shortcuts above |
 | Next / previous task in list order | `J` / `K` |
+| Choose this task's parent | `P` |
+| Clear this task's parent | `U` |
 | Mark/remove selected step; otherwise confirm/delete task | `ctrl+x` |
 | Command palette | `:` |
 | All shortcuts | `?` |
@@ -71,7 +73,9 @@ These keys apply in **view mode**:
 
 Click a step to select it. Click **+ step** to add at the end. Field clicks become editable only after task editing starts.
 
-`alt+↑` / `alt+↓` is the one mutating shortcut without `ctrl`: macOS reserves `ctrl+arrows` for Mission Control. It also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
+`alt+↑` / `alt+↓` and the parent keys `P` / `U` are the mutating shortcuts without `ctrl`. macOS reserves `ctrl+arrows` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
+
+`P` and `U` act on the open task only, never on a marked set, and only while no text field is open; in a field they type capital letters. A draft with unsaved changes refuses both until you save or cancel it. `P` opens the parent picker; `U` clears the parent at once. Neither changes either task's status or scope. [Related tasks](/docs/task-page/#related-tasks).
 
 ## Editing
 
@@ -121,13 +125,14 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 | Project archive | `ctrl+f` archives; on archived tab, `ctrl+f` or `ctrl+u` restores |
 | Archived project view | `ctrl+u` restores; `Esc` or `p` leaves |
 | Thread filter | Type or paste to filter; arrows or `Tab` select; `Enter` chooses; `Esc` closes |
+| Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select; `Enter` saves the parent (or **no parent**); a click saves that row; `Esc` closes without saving |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
 | Palette | Type to filter; arrows or `Tab` select; `Enter` runs; `Esc` closes |
 | Help | Type or paste to filter by key or action; arrows, page keys, or wheel scroll; `Esc` clears the search, then closes |
 | Archived-project launch prompt | `y` restores; `n` or `Esc` keeps archived; `?` opens Help |
 | Failed save | `r` or `Enter` retries; `c` or `Esc` cancels |
 
-`j` and `k` are text in board search, the thread filter, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
+`j` and `k` are text in board search, the thread filter, the parent picker, and Help search, not navigation. `?` and `/` are text in every input field, including Help search.
 
 ## Wide layout
 

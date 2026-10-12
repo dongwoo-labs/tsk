@@ -1420,6 +1420,7 @@ fn task_page_header_shows_identifier_not_footer() {
         notes_rows: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
+        relation_rows: Vec::new(),
         step_views: Vec::new(),
         stored_step_count: 0,
         step_cursor: None,
@@ -1528,6 +1529,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
         ],
         notes_cursor: None,
         more_lines: 0,
+        relation_rows: Vec::new(),
         step_views: Vec::new(),
         stored_step_count: 0,
         step_cursor: None,
@@ -1616,14 +1618,16 @@ fn task_page_paints_steps_section_between_notes_and_footer() {
             .unwrap_or_else(|| panic!("{needle:?} missing from page:\n{rows:#?}"))
     };
     let notes_row = find("the notes body", &shown);
+    let parent_row = find("parent  none · P to set", &shown);
     let label_row = find("steps 2/3", &shown);
     let meta_row = find("created", &shown);
     assert_eq!(
-        label_row,
-        notes_row + 3,
-        "steps label must follow the notes with two blank rows:\n{}",
+        (parent_row, label_row),
+        (notes_row + 2, notes_row + 4),
+        "the parent line sits between the notes and the steps label, a blank row each side:\n{}",
         shown.join("\n")
     );
+    assert!(shown[notes_row + 1].is_empty() && shown[notes_row + 3].is_empty());
     assert!(
         label_row < meta_row,
         "steps section must sit before the meta footer:\n{}",
@@ -1639,7 +1643,7 @@ fn task_page_paints_steps_section_between_notes_and_footer() {
         shown.join("\n")
     );
 
-    // The compact tier stays operable: the notes and their two-row separation remain
+    // The compact tier stays operable: the notes, a blank row, and the parent line remain
     // visible at the head, while the steps section can be reached by scrolling. Every
     // scroll position must preserve the fixed chrome and the frame width.
     let compact = board_rows(&model, 40, 10);
@@ -1650,8 +1654,8 @@ fn task_page_paints_steps_section_between_notes_and_footer() {
         .expect("compact page omitted the notes");
     assert!(
         list_body(&compact[compact_note + 1]).is_empty()
-            && list_body(&compact[compact_note + 2]).is_empty(),
-        "compact page must keep two blank rows before steps:\n{}",
+            && compact_shown[compact_note + 2].contains("parent  none · P to set"),
+        "compact page must keep the blank row and the parent line before steps:\n{}",
         compact_shown.join("\n")
     );
 
@@ -1759,7 +1763,7 @@ fn task_page_without_steps_reaches_its_trailing_add_target() {
 }
 
 /// At the 40x10 compact floor, a notes edit keeps its draft row visible and preserves
-/// the two blank rows before the steps section. The notes editor owns the viewport, so
+/// the blank row and parent line before the steps section. The notes editor owns the viewport, so
 /// below-fold steps become reachable after Esc returns to page view.
 #[test]
 fn task_page_notes_edit_keeps_a_visible_row_and_spacing_at_the_compact_floor() {
@@ -1795,8 +1799,9 @@ fn task_page_notes_edit_keeps_a_visible_row_and_spacing_at_the_compact_floor() {
         .position(|row| row.contains("draft line under edit"))
         .expect("notes edit row missing");
     assert!(
-        list_body(&rows[note_row + 1]).is_empty() && list_body(&rows[note_row + 2]).is_empty(),
-        "notes edit must preserve two blank rows before steps:\n{body}"
+        list_body(&rows[note_row + 1]).is_empty()
+            && shown[note_row + 2].contains("parent  none · P to set"),
+        "notes edit must keep the blank row and the parent line before steps:\n{body}"
     );
     assert!(
         rows.iter().all(|row| row_display_width(row) == 40),
@@ -2174,8 +2179,8 @@ fn task_page_view_wraps_long_notes_instead_of_truncating() {
     );
 }
 
-/// Long notes and steps form one scrollable page body. Steps follow the notes after
-/// two blank rows instead of being positioned at a viewport fraction. The header and
+/// Long notes and steps form one scrollable page body. Steps follow the notes and the
+/// parent line instead of being positioned at a viewport fraction. The header and
 /// meta footer remain fixed while PageScroll reveals the deferred steps and scrollbar.
 #[test]
 fn task_page_scrolls_notes_and_steps_as_one_content_region() {
@@ -2215,7 +2220,8 @@ fn task_page_scrolls_notes_and_steps_as_one_content_region() {
         shown.join("\n")
     );
 
-    for _ in 0..8 {
+    // Enough wheel steps to reach the end of the stream (the scroll clamps there).
+    for _ in 0..10 {
         apply_intent(
             &mut domain,
             &mut model,
@@ -2422,8 +2428,8 @@ fn steps_stack_from_the_top_below_the_divider() {
     let mut model = BoardModel::from_domain(&domain, None);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open task page");
 
-    // 78x24: the note is on row 3, the two-row gap follows, and the label is on row 6;
-    // steps 1..3 stack downward from it while the footer-side rows stay empty.
+    // 78x24: the note is on row 3, then a blank, the parent line on row 5, a blank, and the
+    // label on row 7; steps 1..3 stack downward from it while the footer-side rows stay empty.
     let rows = board_rows(&model, 78, 24);
     let shown: Vec<String> = rows.iter().map(|row| trimmed(row)).collect();
     let label = shown
@@ -2431,13 +2437,13 @@ fn steps_stack_from_the_top_below_the_divider() {
         .position(|row| row.contains("steps 0/3"))
         .unwrap_or_else(|| panic!("steps label missing:\n{}", shown.join("\n")));
     assert_eq!(
-        label, 6,
-        "the steps label follows the notes and two-row gap"
+        label, 7,
+        "the steps label follows the notes and the parent line"
     );
     assert!(
-        shown[7].contains("▪ first step")
-            && shown[8].contains("▪ second step")
-            && shown[9].contains("▪ third step"),
+        shown[8].contains("▪ first step")
+            && shown[9].contains("▪ second step")
+            && shown[10].contains("▪ third step"),
         "steps must stack one directly under another from the top of the half:\n{}",
         shown.join("\n")
     );
@@ -2453,7 +2459,7 @@ fn steps_stack_from_the_top_below_the_divider() {
     let rows4 = board_rows(&model, 78, 24);
     let shown4: Vec<String> = rows4.iter().map(|row| trimmed(row)).collect();
     assert!(
-        shown4[10].contains("▪ fourth step"),
+        shown4[11].contains("▪ fourth step"),
         "the fourth step must land directly below the third:\n{}",
         shown4.join("\n")
     );

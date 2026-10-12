@@ -502,6 +502,9 @@ pub fn map_responsive_board_mouse(
         return match model.input_mode() {
             BoardInputMode::Help => Some(BoardIntent::CloseHelp),
             BoardInputMode::Palette => Some(BoardIntent::CloseCommandSurface),
+            // A press on the list column dismisses the detail's parent chooser, the same as a
+            // press beside its card inside the detail column.
+            BoardInputMode::ParentPicker => Some(BoardIntent::CancelListPicker),
             _ => None,
         };
     }
@@ -862,6 +865,14 @@ pub fn map_board_mouse(
             }
             Some(QueueHitTarget::ModalChrome) => None,
             Some(QueueHitTarget::ModalClose) => Some(BoardIntent::CancelListPicker),
+            _ => Some(BoardIntent::CancelListPicker),
+        },
+        // The parent chooser paints the same card; a row click saves that parent.
+        BoardInputMode::ParentPicker => match hit_at(hits, pos) {
+            Some(QueueHitTarget::ListPickerOption(index)) => {
+                Some(BoardIntent::SelectParentOption(index))
+            }
+            Some(QueueHitTarget::ModalChrome) => None,
             _ => Some(BoardIntent::CancelListPicker),
         },
         BoardInputMode::Search => match hit_at(hits, pos) {

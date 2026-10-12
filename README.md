@@ -31,6 +31,8 @@ run `tsk` in your terminal.
 Use `tsk add -t "Implement parser" --parent T10` to create a child task, and
 `tsk edit T12 --parent T11` or `--no-parent` to change or clear its parent.
 `tsk list T10` shows direct children and their calculated Done/total count.
+On the board, press `P` on a task page to choose its parent and `U` to clear it;
+the page lists the direct children, and their parent's row shows `⊂done/total`.
 Relationships never complete or delete other tasks. See the [CLI guide](https://gettsk.sh/docs/cli/#edit).
 
 ### Coming soon

@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::domain::{HumanStatus, TaskScope};
+use crate::domain::{direct_children_in, parent_in, HumanStatus, ParentRelation, Task, TaskScope};
 use crate::ui::capture::CaptureField;
 use crate::ui::edit::{
     escaped_line_window, wrap_text, wrapped_draft_rows, wrapped_edit_rows, EditBuffer,
@@ -16,7 +16,7 @@ use crate::ui::mouse::BoardPopup;
 use crate::ui::queue::ThreadFilter;
 use crate::ui::render::{
     self, BoardSurface, FormScopeDropdown, NavChipKind, NavChipPaint, NavPaint, PaletteCommandRow,
-    QueueFrameModel, QueueOverlay, VerbEntry,
+    QueueFrameModel, QueueOverlay, RelationRow, VerbEntry,
 };
 use crate::ui::tier;
 use crate::ui::{present_line, terminal_text};
@@ -439,15 +439,8 @@ fn build_task_page_overlay<'a>(
         .unwrap_or(HumanStatus::Ready);
     // AC-8: an archived task's header slot reads `archived` in place of the status word.
     let status_word = match bound_task {
-        Some(task) if task.archived => "archived",
-        _ => match status {
-            HumanStatus::Open => "open",
-            HumanStatus::Ready => "ready",
-            HumanStatus::Started => "started",
-            HumanStatus::Blocked => "blocked",
-            HumanStatus::Review => "review",
-            HumanStatus::Done => "done",
-        },
+        Some(task) => page_status_word(task),
+        None => status_name(status),
     };
     let glyph = render::status_glyph(status);
 
@@ -588,10 +581,17 @@ fn build_task_page_overlay<'a>(
         )
     };
     let step_rows: usize = step_views.iter().map(|step| step.rows.len().max(1)).sum();
+    let relation_rows = bound_task
+        .map(|task| relation_rows(&model.tasks, task, notes_width))
+        .unwrap_or_default();
     // Match the painter's stream exactly: it always paints one notes row and a trailing
     // `+ step` row, even when both stored notes and stored steps are empty.
-    let content =
-        render::page_content_layout(notes_rows.len().max(1), step_rows + 1, lay.notes_rows);
+    let content = render::page_content_layout(
+        notes_rows.len().max(1),
+        relation_rows.len(),
+        step_rows + 1,
+        lay.notes_rows,
+    );
     form.notes_max_scroll.set(content.max_scroll);
     form.steps.content_start.set(content.steps_start);
     form.notes_width.set(notes_width);
@@ -687,6 +687,7 @@ fn build_task_page_overlay<'a>(
         notes_rows,
         notes_cursor,
         more_lines,
+        relation_rows,
         step_views,
         stored_step_count,
         step_cursor: form.steps.cursor.and_then(visible_step_index),
@@ -702,6 +703,116 @@ fn build_task_page_overlay<'a>(
         focus,
         scope_dropdown,
     }
+}
+
+fn status_name(status: HumanStatus) -> &'static str {
+    match status {
+        HumanStatus::Open => "open",
+        HumanStatus::Ready => "ready",
+        HumanStatus::Started => "started",
+        HumanStatus::Blocked => "blocked",
+        HumanStatus::Review => "review",
+        HumanStatus::Done => "done",
+    }
+}
+
+/// AC-8: an archived task reads `archived` in place of its status word.
+fn page_status_word(task: &Task) -> &'static str {
+    if task.archived {
+        "archived"
+    } else {
+        status_name(task.status)
+    }
+}
+
+/// `T12 ` for a numbered task, nothing for one that has no number yet.
+fn identifier_prefix(task: &Task) -> String {
+    task.board_identifier()
+        .map(|identifier| format!("{identifier} "))
+        .unwrap_or_default()
+}
+
+/// Wrap `text` to `width` cells: the first row carries `lead`, later rows align under the text.
+fn push_wrapped_relation(
+    rows: &mut Vec<RelationRow>,
+    lead: &str,
+    text: &str,
+    width: usize,
+    dim: bool,
+) {
+    let lead_w = render::display_width(lead);
+    let wrapped = wrap_text(text, width.saturating_sub(lead_w).max(1));
+    for (index, row) in wrapped.iter().enumerate() {
+        let prefix = if index == 0 {
+            lead.to_string()
+        } else {
+            " ".repeat(lead_w)
+        };
+        rows.push(RelationRow {
+            text: format!("{prefix}{}", row.text),
+            dim,
+        });
+    }
+}
+
+/// The task page's relationship block: one parent line (none, resolved, or not found), then
+/// the direct children with their done count. Counting matches `tsk list`: every scope and
+/// status, archived included, deleted tasks and notices excluded. A missing or deleted parent
+/// keeps its stored id on screen; nothing here changes either task.
+fn relation_rows(tasks: &[Task], task: &Task, width: usize) -> Vec<RelationRow> {
+    let mut rows = Vec::new();
+    match parent_in(tasks, task) {
+        None => push_wrapped_relation(&mut rows, "parent  ", "none · P to set", width, true),
+        Some(ParentRelation::Resolved(parent)) => {
+            let text = format!(
+                "\u{2191} {}{} · {}",
+                identifier_prefix(parent),
+                terminal_text(&parent.title),
+                page_status_word(parent)
+            );
+            push_wrapped_relation(&mut rows, "parent  ", &text, width, false);
+        }
+        Some(ParentRelation::Unresolved(id)) => push_wrapped_relation(
+            &mut rows,
+            "parent  ",
+            &format!("\u{2191} {id} not found · link kept"),
+            width,
+            true,
+        ),
+    }
+    let children = direct_children_in(tasks, task.id);
+    if !children.is_empty() {
+        let done = children
+            .iter()
+            .filter(|child| child.status == HumanStatus::Done)
+            .count();
+        rows.push(RelationRow {
+            text: format!("children {done}/{} done", children.len()),
+            dim: true,
+        });
+        for child in &children {
+            let lead = format!("{} ", render::status_glyph(child.status));
+            let mut text = format!(
+                "{}{}",
+                identifier_prefix(child),
+                terminal_text(&child.title)
+            );
+            if child.archived {
+                text.push_str(" · archived");
+            }
+            push_wrapped_relation(&mut rows, &lead, &text, width, child.archived);
+        }
+        if done == children.len() && task.status != HumanStatus::Done {
+            push_wrapped_relation(
+                &mut rows,
+                "",
+                "all children done · ctrl+d completes this task",
+                width,
+                true,
+            );
+        }
+    }
+    rows
 }
 
 /// Idle status-row context for the active lens. Stored paths and thread names reach the
@@ -1012,8 +1123,15 @@ impl<'a> OverlayPayloads<'a> {
         if let Some(name) = self.launch_card_name.as_deref() {
             return Some(QueueOverlay::LaunchCard { name });
         }
-        if model.input_mode() == BoardInputMode::ListPicker {
-            let title = "thread filter";
+        if matches!(
+            model.input_mode(),
+            BoardInputMode::ListPicker | BoardInputMode::ParentPicker
+        ) {
+            let title = if model.input_mode() == BoardInputMode::ParentPicker {
+                "parent"
+            } else {
+                "thread filter"
+            };
             return Some(QueueOverlay::ScopeDropdown {
                 options: &self.list_picker_options,
                 selected: self

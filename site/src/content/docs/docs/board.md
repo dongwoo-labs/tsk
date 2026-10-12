@@ -17,7 +17,7 @@ The top row holds the **board** tab, a scope control, and a sort control. Press 
 
 Launching inside a Git repository opens that project. Outside Git, tsk opens **all**.
 
-Rows show the status glyph, the `T`/`N` number, and the title only. They follow task numbers by default. Press `S` or click the sort control to group rows by project instead (desk first, then project path); press `S` again to return to number order. In project order on **all** or **desk**, a dim project name heads each group. The sort is session-only and never changes a task. The [CLI](/docs/cli/#list) keeps its own order.
+Rows show the status glyph, the `T`/`N` number, and the title. A task with direct children adds a dim `⊂done/total` count at the right edge, such as `⊂1/3`; it counts children in every scope and status, archived ones included ([related tasks](/docs/task-page/#related-tasks)). Rows follow task numbers by default. Press `S` or click the sort control to group rows by project instead (desk first, then project path); press `S` again to return to number order. In project order on **all** or **desk**, a dim project name heads each group. The sort is session-only and never changes a task. The [CLI](/docs/cli/#list) keeps its own order.
 
 In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one is already open in another tab there, Herdr switches to that tab and focuses its pane, preserving its view and edits. Otherwise, it opens a board beside your work. Boards in other workspaces stay untouched; all boards share the same tasks.
 
@@ -108,6 +108,7 @@ At **110 usable columns** or wider, the board is always two columns: the list on
 | `→` / `l` or `Enter` | Focus the detail of the selected task |
 | `←` / `h` or `Esc` | Return focus to the list |
 | `J` / `K` | On the detail or task page, open the next or previous task in list order |
+| `P` / `U` | On the detail or task page, choose or clear the task's parent |
 
 `J` and `K` skip group headings and follow the current scope, sort, search, and drawer. At either end they stay put and say `last task in this list` or `first task in this list`; if the open task has left the list, they say `this task is not in the list · esc back`. A task draft with unsaved changes refuses to switch until you save or cancel it.
 

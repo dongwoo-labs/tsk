@@ -4,10 +4,10 @@
 │                                            │ ────────────────────────────────────────────────────────────────│
 │ NEEDS YOU ───────────────────────────────2 │   no notes yet                                                  │
 │                                            │                                                                 │
-│▸ ■ T5 Wire dispatch cleanup receipts       │                                                                 │
-│  ▲ T6 Docs refresh pass after F9 ships     │   steps 0/0                                                     │
-│                                            │    + step                                                       │
-│ IN MOTION ───────────────────────────────2 │                                                                 │
+│▸ ■ T5 Wire dispatch cleanup receipts       │   parent  none · P to set                                       │
+│  ▲ T6 Docs refresh pass after F9 ships     │                                                                 │
+│                                            │   steps 0/0                                                     │
+│ IN MOTION ───────────────────────────────2 │    + step                                                       │
 │                                            │                                                                 │
 │  ● T1 Smoke-test worktree dispatch         │                                                                 │
 │  ● T2 Edit target binding pin              │                                                                 │

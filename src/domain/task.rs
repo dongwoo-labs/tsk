@@ -2,7 +2,7 @@
 //!
 //! Human status remains the source of truth.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -161,6 +161,64 @@ pub const STORE_FORMAT_VERSION: u32 = 6;
 pub enum ParentRelation<'a> {
     Resolved(&'a Task),
     Unresolved(Uuid),
+}
+
+/// Whether a task takes part in parent/child relationships: deleted tasks and notices do not.
+fn relationship_member(task: &Task) -> bool {
+    !task.soft_deleted && !task.is_notice()
+}
+
+/// [`DomainState::parent`] over a task slice, for callers that hold a snapshot (the board).
+pub fn parent_in<'a>(tasks: &'a [Task], task: &Task) -> Option<ParentRelation<'a>> {
+    let id = task.parent_task_id?;
+    Some(
+        match tasks
+            .iter()
+            .find(|candidate| candidate.id == id)
+            .filter(|candidate| relationship_member(candidate))
+        {
+            Some(parent) => ParentRelation::Resolved(parent),
+            None => ParentRelation::Unresolved(id),
+        },
+    )
+}
+
+/// [`DomainState::direct_children`] over a task slice.
+pub fn direct_children_in(tasks: &[Task], parent_id: Uuid) -> Vec<&Task> {
+    let mut children = tasks
+        .iter()
+        .filter(|task| task.parent_task_id == Some(parent_id) && relationship_member(task))
+        .collect::<Vec<_>>();
+    children.sort_by_key(|task| (task.number, task.id));
+    children
+}
+
+/// [`DomainState::child_counts`] over a task slice: `(done, total)` direct children.
+pub fn child_counts_in(tasks: &[Task], parent_id: Uuid) -> (usize, usize) {
+    let children = direct_children_in(tasks, parent_id);
+    (
+        children
+            .iter()
+            .filter(|task| task.status == HumanStatus::Done)
+            .count(),
+        children.len(),
+    )
+}
+
+/// Every task's `(done, total)` direct-child counts in one pass, keyed by parent id. Parents
+/// without children are absent. The board list reads this once per frame.
+pub fn child_counts_by_parent(tasks: &[Task]) -> HashMap<Uuid, (usize, usize)> {
+    let mut counts: HashMap<Uuid, (usize, usize)> = HashMap::new();
+    for task in tasks.iter().filter(|task| relationship_member(task)) {
+        if let Some(parent) = task.parent_task_id {
+            let entry = counts.entry(parent).or_default();
+            entry.1 += 1;
+            if task.status == HumanStatus::Done {
+                entry.0 += 1;
+            }
+        }
+    }
+    counts
 }
 
 fn default_next_notice_number() -> u64 {
@@ -378,40 +436,16 @@ impl DomainState {
     }
 
     pub fn parent(&self, task_id: Uuid) -> Option<ParentRelation<'_>> {
-        let id = self.get(task_id)?.parent_task_id?;
-        Some(
-            match self
-                .get(id)
-                .filter(|task| !task.soft_deleted && !task.is_notice())
-            {
-                Some(task) => ParentRelation::Resolved(task),
-                None => ParentRelation::Unresolved(id),
-            },
-        )
+        parent_in(&self.tasks, self.get(task_id)?)
     }
 
     /// Relationship membership is independent of the working lens: archived children count.
     pub fn direct_children(&self, parent_id: Uuid) -> Vec<&Task> {
-        let mut children = self
-            .tasks
-            .iter()
-            .filter(|task| {
-                task.parent_task_id == Some(parent_id) && !task.soft_deleted && !task.is_notice()
-            })
-            .collect::<Vec<_>>();
-        children.sort_by_key(|task| (task.number, task.id));
-        children
+        direct_children_in(&self.tasks, parent_id)
     }
 
     pub fn child_counts(&self, parent_id: Uuid) -> (usize, usize) {
-        let children = self.direct_children(parent_id);
-        (
-            children
-                .iter()
-                .filter(|task| task.status == HumanStatus::Done)
-                .count(),
-            children.len(),
-        )
+        child_counts_in(&self.tasks, parent_id)
     }
 
     pub fn validate_parent(

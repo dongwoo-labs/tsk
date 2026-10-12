@@ -115,6 +115,9 @@ pub enum BoardInputMode {
     /// A searchable list picker owns input (project-board thread filter, projects
     /// index View selector). Query typing, movement, Enter applies, Esc cancels.
     ListPicker,
+    /// The task page's parent chooser (`P`): the searchable list picker over candidate
+    /// parents. Enter applies and saves; Esc returns to the task page.
+    ParentPicker,
     /// The active board lens's search field owns text input until Enter or Esc.
     Search,
     /// Single-line status-row capture from board `+`.
@@ -197,6 +200,8 @@ impl BoardLocation {
 pub enum ListPickerKind {
     /// The project board's thread filter (bare `t`).
     ThreadFilter,
+    /// The task page's parent chooser (`P`) for this task.
+    Parent { task: Uuid },
 }
 
 /// One choice inside a searchable list picker.
@@ -207,14 +212,18 @@ pub struct ListPickerOption {
     pub value: ListPickerValue,
 }
 
-/// What confirming a list-picker option applies. The thread filter is the only list picker
-/// left, so every variant names a thread choice.
+/// What confirming a list-picker option applies: a thread-filter choice or a parent choice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)]
 pub enum ListPickerValue {
     ThreadAll,
     ThreadNamed(String),
     ThreadWithout,
+    /// Clear the task's parent.
+    ParentNone,
+    /// Make this task the parent.
+    ParentTask(Uuid),
+    /// A task under this one: choosing it would form a cycle, so it is listed but refused.
+    ParentCycle(Uuid),
 }
 
 /// An open searchable list picker (thread filter). Session-only.
@@ -1340,6 +1349,8 @@ impl BoardModel {
         let underlying_mode = match self.input_mode {
             BoardInputMode::Help => self.help_return_mode,
             BoardInputMode::Search => self.search_return_mode,
+            // The parent chooser opens over a clean task page and holds no draft of its own.
+            BoardInputMode::ParentPicker => BoardInputMode::TaskPage,
             mode => mode,
         };
         if self.form.is_some() && underlying_mode != BoardInputMode::TaskPage {
@@ -1729,6 +1740,9 @@ impl BoardModel {
                     self.thread_filter == ThreadFilter::Named(name.clone())
                 }
                 ListPickerValue::ThreadWithout => self.thread_filter == ThreadFilter::Without,
+                ListPickerValue::ParentNone
+                | ListPickerValue::ParentTask(_)
+                | ListPickerValue::ParentCycle(_) => false,
             })
             .unwrap_or(0);
         self.list_picker = Some(ListPickerState {
@@ -1828,6 +1842,8 @@ impl BoardModel {
                 self.thread_filter = ThreadFilter::Without;
                 true
             }
+            // The parent chooser saves through its own persisting intent.
+            _ => false,
         };
         if applied {
             self.list_picker = None;
@@ -1839,6 +1855,96 @@ impl BoardModel {
 
     pub(super) fn cancel_list_picker(&mut self) {
         self.list_picker = None;
+    }
+
+    /// Open the parent chooser for `task_id`: `no parent` first, then every other live,
+    /// non-notice task in number order, from every scope. Tasks under this one stay listed but
+    /// are marked and refused, since choosing one would form a cycle. Returns false when the
+    /// task is not on the board.
+    pub(super) fn open_parent_picker(&mut self, task_id: Uuid) -> bool {
+        let Some(task) = self.tasks.iter().find(|task| task.id == task_id) else {
+            return false;
+        };
+        let current = task.parent_task_id;
+        let parent_of = |id: Uuid| {
+            self.tasks
+                .iter()
+                .find(|task| task.id == id)
+                .and_then(|task| task.parent_task_id)
+        };
+        let under_this_task = |candidate: Uuid| {
+            let mut seen = BTreeSet::new();
+            let mut cursor = Some(candidate);
+            while let Some(id) = cursor {
+                if id == task_id {
+                    return true;
+                }
+                if !seen.insert(id) {
+                    return false;
+                }
+                cursor = parent_of(id);
+            }
+            false
+        };
+        let mut candidates: Vec<&Task> = self
+            .tasks
+            .iter()
+            .filter(|task| task.id != task_id && !task.soft_deleted && !task.is_notice())
+            .collect();
+        candidates.sort_by_key(|task| (task.number.is_none(), task.number, task.id));
+        let mut options = vec![ListPickerOption {
+            label: "no parent".to_string(),
+            count: None,
+            value: ListPickerValue::ParentNone,
+        }];
+        for candidate in candidates {
+            let mut label = match candidate.board_identifier() {
+                Some(identifier) => format!("{identifier} {}", terminal_text(&candidate.title)),
+                None => terminal_text(&candidate.title),
+            };
+            let cycle = under_this_task(candidate.id);
+            if Some(candidate.id) == current {
+                label.push_str(" · current");
+            }
+            if candidate.archived {
+                label.push_str(" · archived");
+            }
+            if cycle {
+                label.push_str(" · under this task");
+            }
+            options.push(ListPickerOption {
+                label,
+                count: None,
+                value: if cycle {
+                    ListPickerValue::ParentCycle(candidate.id)
+                } else {
+                    ListPickerValue::ParentTask(candidate.id)
+                },
+            });
+        }
+        let selected = options
+            .iter()
+            .position(|option| match option.value {
+                ListPickerValue::ParentNone => current.is_none(),
+                ListPickerValue::ParentTask(id) => Some(id) == current,
+                _ => false,
+            })
+            .unwrap_or(0);
+        self.list_picker = Some(ListPickerState {
+            kind: ListPickerKind::Parent { task: task_id },
+            options,
+            selected,
+            query: String::new(),
+        });
+        true
+    }
+
+    /// The task the open parent chooser edits, when the chooser is open.
+    pub fn parent_picker_task(&self) -> Option<Uuid> {
+        match self.list_picker.as_ref()?.kind {
+            ListPickerKind::Parent { task } => Some(task),
+            ListPickerKind::ThreadFilter => None,
+        }
     }
 
     /// Fold the group `g` addresses: archived while the drawer is open and that
