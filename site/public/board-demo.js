@@ -2192,7 +2192,8 @@ import { parseCapture } from "./capture.js";
     const glyph = GLYPH[task.status] || "○";
     let header = `<div class="tsk-task-header ${focused ? "is-bold" : "dim"}"><span class="glyph">${glyph}</span> <span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy T${task.number}">T${task.number}</span> <span class="sec">${headTitle}</span><span class="tsk-state-slot">${esc(stateSlot)}</span></div><div class="tsk-task-rule" aria-hidden="true"></div>`;
     if (narrow && !editing) {
-      const room = terminalColumns() - 9 - stateSlot.length;
+      // Reserve 4 padding cells, a 6-cell glyph/ID prefix, and a cell before status.
+      const room = terminalColumns() - 11 - stateSlot.length;
       const titleRows = wrapText(task.title, room);
       const headerStatus =
         titleRows[0].length + 8 + stateSlot.length <= terminalColumns() - 2

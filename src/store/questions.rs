@@ -106,7 +106,29 @@ pub fn question_capability(explicit_state_dir: Option<&Path>) -> Result<(), Ques
     if personal
         .iter()
         .filter_map(|path| resolved_path(path))
-        .any(|path| selected.starts_with(path))
+        .any(|path| {
+            if selected.starts_with(&path) {
+                return true;
+            }
+            // Reserve personal-root case variants even before creation. Canonical
+            // parents keep existing symlink and parent-component semantics intact.
+            path.parent()
+                .zip(path.file_name())
+                .and_then(|(parent, name)| {
+                    selected
+                        .strip_prefix(parent)
+                        .ok()?
+                        .components()
+                        .next()
+                        .map(|first| {
+                            first
+                                .as_os_str()
+                                .as_encoded_bytes()
+                                .eq_ignore_ascii_case(name.as_encoded_bytes())
+                        })
+                })
+                .unwrap_or(false)
+        })
     {
         return Err(QuestionError::AgentStoreRequired);
     }
@@ -226,13 +248,17 @@ impl QuestionStore {
         }
         let record = self.read_private(reference)?;
         let directory = self.private_directory()?;
-        std::fs::File::open(directory.join(format!("{}.json", reference.revision)))
+        OpenOptions::new()
+            .write(true)
+            .open(directory.join(format!("{}.json", reference.revision)))
             .and_then(|file| file.sync_all())
             .map_err(|_| QuestionError::CommitUnknown)?;
         StdFilesystem
             .sync_directory(&directory)
             .map_err(|_| QuestionError::CommitUnknown)?;
-        std::fs::File::open(self.store.state_file())
+        OpenOptions::new()
+            .write(true)
+            .open(self.store.state_file())
             .and_then(|file| file.sync_all())
             .map_err(|_| QuestionError::CommitUnknown)?;
         StdFilesystem
@@ -394,7 +420,9 @@ impl QuestionStore {
                 {
                     return Err(QuestionError::NotSaved);
                 }
-                std::fs::File::open(&ignore)
+                OpenOptions::new()
+                    .write(true)
+                    .open(&ignore)
                     .and_then(|file| file.sync_all())
                     .map_err(|_| QuestionError::NotSaved)?;
             }

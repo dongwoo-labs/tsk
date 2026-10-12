@@ -34,6 +34,8 @@ the GitHub release notes verbatim.
 - Windows: characters typed with AltGr, such as `[ ] { } @` on a German layout, insert in every text field (quick-add, task editors, search, the palette, Help, and pickers) instead of being dropped. Thanks @LukasGold (#178).
 - `tsk list` orders tasks within each status like the board: ready by oldest pick, open by oldest capture, everything else by most recent status change. `--json` is that flat board order. With `--all`, human output still groups each status by scope, ordering the groups by their first row and keeping the board order inside each group. Thanks @dangerousdan.
 
+- Question commands also refuse case variants of personal-board roots and their child paths before those roots exist. Existing question records and trash backups use non-truncating write-capable sync handles, as Windows requires.
+
 ## v0.11.6
 
 ### Added

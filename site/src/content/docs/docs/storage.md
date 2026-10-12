@@ -33,7 +33,7 @@ Archived tasks stay in the task document with their existing status. [Archive an
 
 ## Agent questions and private records
 
-Question commands require an explicit Agent `--state-dir` or `TSK_STATE_DIR` that is not the personal default directory. They never fall back to the personal board. Shared `tsk.json` holds only a question UUID, display number, task UUID, kind, shareable summary, and immutable private-snapshot reference. Choose a non-sensitive summary: it is not automatically redacted.
+Question commands require an explicit Agent `--state-dir` or `TSK_STATE_DIR` that is not the personal default directory. They never fall back to the personal board. The personal-root names (`.tsk` under `HOME` or `USERPROFILE`, and `tsk` under `LOCALAPPDATA`) and their ASCII case variants are reserved, including child paths when that root does not exist yet. Existing symlinks and parent components resolve before the isolation check. Shared `tsk.json` holds only a question UUID, display number, task UUID, kind, shareable summary, and immutable private-snapshot reference. Choose a non-sensitive summary: it is not automatically redacted.
 
 Full questions, options, recommendations, impact, blocking scope, origin Thread, recipient, finding details/path, approval terms, answers and source metadata stay in `questions-private/`. This directory is excluded from Git. There is no new chmod protection, PIN, ACL, encryption, signature, or user authentication. A process running as the same OS user can impersonate a UI caller; confirmation records are not cryptographic identity evidence.
 

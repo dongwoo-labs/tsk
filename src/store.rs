@@ -826,7 +826,10 @@ impl TaskStore {
                     "trash backup must be a regular file",
                 )));
             }
-            File::open(&backup)?.sync_all()?;
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&backup)?
+                .sync_all()?;
             filesystem.sync_directory(&self.path)?;
         }
         let tmp = self.trash_tmp_path();
