@@ -1,18 +1,15 @@
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                            │                                                                 │
-│ board  ·  all ▾  ·  sort number ▾          │  ■ T5 Wire dispatch cleanup receipts            blocked · herdr │
+│ board  ·  all ▾  ·  sort number ▾          │  ● T1 Smoke-test worktree dispatch                  doing · tsk │
 │                                            │ ────────────────────────────────────────────────────────────────│
-│ NEEDS YOU ───────────────────────────────2 │   no notes yet                                                  │
+│ DOING ───────────────────────────────────4 │   no notes yet                                                  │
 │                                            │                                                                 │
-│▸ ■ T5 Wire dispatch cleanup receipts       │   parent  none · P to set                                       │
-│  ▲ T6 Docs refresh pass after F9 ships     │                                                                 │
-│                                            │   steps 0/0                                                     │
-│ IN MOTION ───────────────────────────────2 │    + step                                                       │
-│                                            │                                                                 │
-│  ● T1 Smoke-test worktree dispatch         │                                                                 │
+│▸ ● T1 Smoke-test worktree dispatch         │   parent  none · P to set                                       │
 │  ● T2 Edit target binding pin              │                                                                 │
+│  ● T5 Wire dispatch cleanup receipts       │   steps 0/0                                                     │
+│  ● T6 Docs refresh pass after F9 ships     │    + step                                                       │
 │                                            │                                                                 │
-│ ON DECK ─────────────────────────────────3 │                                                                 │
+│ TODO ────────────────────────────────────3 │                                                                 │
 │                                            │                                                                 │
 │  ○ T3 Prototype the queue-style board UI   │                                                                 │
 │  ○ T4 Cut rust-toolchain pin into CI docs  │                                                                 │
@@ -25,8 +22,11 @@
 │                                            │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
+│                                            │                                                                 │
 │                                            │   created 1062d ago · updated 1062d ago                         │
 │──────────────────────────────────────────────────────────────────────────────────────────────────────────────│
 │ all                                                                                                 → detail │
-│ enter open · ctrl+d done · ctrl+b unblock · ctrl+o inbox · + add · ? help                                    │
+│ enter open · ctrl+o todo · ctrl+d done · ? help                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

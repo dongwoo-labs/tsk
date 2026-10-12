@@ -2394,7 +2394,9 @@ mod tests {
             if detail {
                 focus_detail(&mut domain, &mut model);
             }
-            let area = Rect::new(0, 0, 130, 24);
+            // The narrowest split: the three-status todo footer still reaches past the
+            // two-fifths list column here, so one verb paints under the other column.
+            let area = Rect::new(0, 0, 110, 24);
             let hits = crate::ui::board::board_hit_map(area, &model);
             let focused = focused_mouse_area(&model, area);
             let verb = hits

@@ -2,20 +2,16 @@
 │                                                                                │
 │ board  ·  all ▾  ·  sort project ▾                                             │
 │                                                                                │
-│ NEEDS YOU ───────────────────────────────────────────────────────────────────2 │
-│                                                                                │
-│   herdr                                                                        │
-│▸ ■ T5 Wire dispatch cleanup receipts                                           │
-│  ▲ T6 Docs refresh pass after F9 ships                                         │
-│                                                                                │
-│ IN MOTION ───────────────────────────────────────────────────────────────────2 │
+│ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
 │   herdr                                                                        │
 │  ● T2 Edit target binding pin                                                  │
+│  ● T5 Wire dispatch cleanup receipts                                           │
+│  ● T6 Docs refresh pass after F9 ships                                         │
 │   tsk                                                                          │
-│  ● T1 Smoke-test worktree dispatch                                             │
+│▸ ● T1 Smoke-test worktree dispatch                                             │
 │                                                                                │
-│ ON DECK ─────────────────────────────────────────────────────────────────────3 │
+│ TODO ────────────────────────────────────────────────────────────────────────3 │
 │                                                                                │
 │   desk                                                                         │
 │  ○ T7 Global backlog note                                                      │
@@ -26,7 +22,11 @@
 │                                                                                │
 │                                                                                │
 │                                                                                │
+│                                                                                │
+│                                                                                │
+│                                                                                │
+│                                                                                │
 │────────────────────────────────────────────────────────────────────────────────│
 │ all                                                                            │
-│ enter open · ctrl+d done · ctrl+b unblock · ctrl+o inbox · + add · ? help      │
+│ enter open · ctrl+o todo · ctrl+d done · ? help                                │
 └────────────────────────────────────────────────────────────────────────────────┘

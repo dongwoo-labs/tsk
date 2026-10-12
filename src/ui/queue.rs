@@ -1335,9 +1335,11 @@ mod tests {
             &ThreadFilter::All,
             BoardSort::Number,
         );
+        // Board order is the task number, falling back to creation order for these
+        // unnumbered fixtures; a status change never moves a row to the top.
         assert_eq!(
             section_ids(&view, SectionKind::InMotion),
-            vec![Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(2)]
+            vec![Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(1)]
         );
         assert_eq!(
             section_ids(&view, SectionKind::OnDeck),
@@ -1419,11 +1421,7 @@ mod tests {
         );
         assert_eq!(
             section_ids(&nav, SectionKind::InMotion),
-            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
-        );
-        assert_eq!(
-            section_ids(&nav, SectionKind::InMotion),
-            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
+            vec![Uuid::from_u128(2), Uuid::from_u128(1)]
         );
         assert_eq!(
             section_ids(&nav, SectionKind::OnDeck),

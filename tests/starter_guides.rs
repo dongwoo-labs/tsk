@@ -270,6 +270,10 @@ fn t64_real_board_ctrl_q_exits_from_a_stored_task_page() {
 
     let mut session = pty::Session::spawn(root, &cwd, &[], &[], 24, 78);
     session.output_until("target");
+    // Number order puts T1 target above T2 at the bottom: `k` wraps from the first
+    // guide to T2, a second `k` lands on the target.
+    session.send(b"k");
+    std::thread::sleep(Duration::from_millis(100));
     session.send(b"k");
     std::thread::sleep(Duration::from_millis(100));
     session.send(b"\r");

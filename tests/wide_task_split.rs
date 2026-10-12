@@ -264,7 +264,7 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
         .iter()
         .filter(|hit| matches!(hit.target, QueueHitTarget::Verb(_)))
         .count();
-    assert_eq!(verbs, 6, "started row bar: {verbs}");
+    assert_eq!(verbs, 4, "doing row bar: {verbs}");
     assert!(verbs <= usize::from(STANDARD_VERB_BAR_ENTRY_BUDGET));
 
     focus(&mut domain, &mut model, WideStage::Task);

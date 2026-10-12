@@ -215,7 +215,7 @@ fn p_chooses_a_parent_by_search_and_enter_saves_it() {
 
     let (page, _) = render(&board.model, 80, 24);
     assert!(
-        page.contains("parent  ↑ T10 Ship the relationship view · open"),
+        page.contains("parent  ↑ T10 Ship the relationship view · todo"),
         "{page}"
     );
 
@@ -506,7 +506,7 @@ fn wide_detail_shows_the_relationship_and_a_picker_click_saves() {
     );
     let (frame, _) = render(&board.model, 130, 24);
     assert!(
-        frame.contains("parent  ↑ T10 Ship the relationship view · open"),
+        frame.contains("parent  ↑ T10 Ship the relationship view · todo"),
         "{frame}"
     );
 }
@@ -607,7 +607,7 @@ fn enter_opens_the_parent_and_a_child_and_esc_walks_back() {
     select_relation(&mut board, RelationTarget::Open(parent));
     let (page, _) = render(&board.model, 80, 24);
     assert!(
-        page.contains("▸ parent  ↑ T10 Ship the relationship view · open"),
+        page.contains("▸ parent  ↑ T10 Ship the relationship view · todo"),
         "the selected parent line carries the cursor: {page}"
     );
     assert_eq!(enter_relation(&mut board), IntentOutcome::None);
@@ -966,7 +966,7 @@ fn palette_keeps_an_off_list_page_target_after_a_sync_empties_the_list() {
     assert!(labels.contains(&"delete"), "{labels:?}");
     let index = labels
         .iter()
-        .position(|label| *label == "set status: started")
+        .position(|label| *label == "set status: doing")
         .expect("the page task's status commands stay offered");
     assert_eq!(
         apply(&mut board, BoardIntent::SelectCommand(index)),

@@ -128,7 +128,8 @@ fn fixture_flow(export: bool) {
         let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
         model.set_selected_project(None);
         let initial = capture(&model, width, "initial");
-        assert!(!initial.contains("DOING"));
+        // The v7 fixture already holds a doing task; ctrl+s below adds T13 to it.
+        assert!(initial.contains("DOING"));
         if width >= 110 {
             // Wide frames always pair the list with the selected task's detail.
             assert!(initial.contains("Confirm the wording before release."));
