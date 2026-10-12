@@ -95,30 +95,31 @@ for width in (40, 78, 109, 110):
         try:
             first = drain()
             deadline = time.monotonic() + 8
-            while b'NEEDS YOU' not in first and time.monotonic() < deadline:
+            # The fixture's former blocked task is Doing; wait for its board section.
+            while b'DOING' not in first and time.monotonic() < deadline:
                 first += drain()
-            assert b'NEEDS YOU' in first, repr(first)
+            assert b'DOING' in first, repr(first)
             key(b'1', 'initial')
-            assert 'ON DECK' in '\n'.join(screen.display)
+            assert 'TODO' in '\n'.join(screen.display)
             key(b'\x1b[C', 'peek-or-split')
             if width < 110:
                 assert '└─ tsk-parity' in '\n'.join(screen.display)
             key(b'\x1b[D', 'closed')
             key(b'\x1b[B', 'selected')
             key(b'\x13', 'started')
-            assert saved_task(13, lambda t: t['status'] == 'started')['status'] == 'started'
+            assert saved_task(13, lambda t: t['status'] == 'doing')['status'] == 'doing'
             key(b'\r', 'page')
             assert 'plain note' in '\n'.join(screen.display)
             key(b'\t', 'step-selected')
             key(b'\r', 'step-toggled')
             task = saved_task(13, lambda t: t['steps'][0]['done'])
-            assert task['steps'][0]['done'] and task['status'] == 'started'
+            assert task['steps'][0]['done'] and task['status'] == 'doing'
             key(b'\x01', 'step-add-editor')
             key(b'New step\r', 'step-added')
             assert len(saved_task(13, lambda t: len(t['steps']) == 3)['steps']) == 3
             key(b'\x1b', 'step-add-canceled')
             key(b'\x1b', 'back')
-            assert 'IN MOTION' in '\n'.join(screen.display)
+            assert 'DOING' in '\n'.join(screen.display)
             key(b'\x11', 'quit')
             child.wait(timeout=5)
             assert child.returncode == 0

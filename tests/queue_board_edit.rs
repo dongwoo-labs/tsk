@@ -159,7 +159,7 @@ fn open_edit_session_not_redirected_by_sync_from_domain_reorder() {
     assert_eq!(model.edit_target(), Some(a));
 
     // Simulate a domain reorder that would put B first (e.g., B updated later).
-    domain.set_status(b, HumanStatus::Started).expect("b doing");
+    domain.set_status(b, HumanStatus::Doing).expect("b doing");
     // Force a sync that reorders visible list.
     model.sync_from_domain(&domain);
     // Selection may move, but the edit binding must not.
@@ -1557,7 +1557,7 @@ fn title_edit_on_an_archived_task_persists_and_keeps_the_flag() {
     let task = reloaded.get(id).expect("task survives");
     assert_eq!(task.title, "Archived editable (kept)");
     assert!(task.archived, "the archived flag survives the save");
-    assert_eq!(task.status, HumanStatus::Open, "status is unchanged");
+    assert_eq!(task.status, HumanStatus::Todo, "status is unchanged");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

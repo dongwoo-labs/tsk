@@ -256,7 +256,7 @@ fn seed_pty_task(root: &std::path::Path, cwd: &std::path::Path, title: &str) {
         )
         .expect("seed PTY project task");
     state
-        .set_status(project_id, HumanStatus::Ready)
+        .set_status(project_id, HumanStatus::Todo)
         .expect("put PTY project task on deck");
     store.save(&state).expect("save PTY task");
 }

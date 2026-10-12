@@ -76,28 +76,28 @@ fn inbox_golden_tasks() -> Vec<Task> {
         task(
             50,
             "Ready planning pass",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             20 * 60,
         ),
         task(
             51,
             "Ready release check",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             10 * 60,
         ),
         task(
             52,
             "Inbox capture one",
-            HumanStatus::Open,
+            HumanStatus::Todo,
             TaskScope::Global,
             5 * 60,
         ),
         task(
             53,
             "Inbox capture two",
-            HumanStatus::Open,
+            HumanStatus::Todo,
             TaskScope::Global,
             2 * 60,
         ),
@@ -121,49 +121,49 @@ fn fixture_tasks() -> Vec<Task> {
         task(
             1,
             "Smoke-test worktree dispatch",
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/tsk"),
             3 * 60,
         ),
         task(
             2,
             "Edit target binding pin",
-            HumanStatus::Started,
+            HumanStatus::Doing,
             project("/repos/herdr"),
             12 * 60,
         ),
         task(
             10,
             "Prototype the queue-style board UI",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             3600,
         ),
         task(
             11,
             "Cut rust-toolchain pin into CI docs",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             86400,
         ),
         task(
             20,
             "Wire dispatch cleanup receipts",
-            HumanStatus::Blocked,
+            HumanStatus::Doing,
             project("/repos/herdr"),
             41 * 60,
         ),
         task(
             21,
             "Docs refresh pass after F9 ships",
-            HumanStatus::Review,
+            HumanStatus::Doing,
             project("/repos/herdr"),
             3 * 3600,
         ),
         task(
             30,
             "Global backlog note",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             2 * 86400,
         ),
@@ -287,25 +287,19 @@ fn palette_commands() -> Vec<PaletteCommandRow<'static>> {
         .collect();
     assert_eq!(
         labels,
-        vec![
-            "set status: ready",
-            "set status: open",
-            "set status: started",
-            "set status: blocked",
-            "set status: review",
-        ],
-        "the \"stat\" query against the real M1 catalog must narrow to exactly the five \
+        vec!["set status: todo", "set status: doing", "set status: done",],
+        "the \"stat\" query against the real M1 catalog must narrow to exactly the three \
          status commands (no dispatch, no other tail entry) -- if the product catalog \
          changed, this fixture must follow it, not be hand-patched"
     );
-    for _ in 0..3 {
+    for _ in 0..1 {
         apply_intent(&mut domain, &mut model, BoardIntent::CommandNext, None)
             .expect("command next");
     }
     assert_eq!(
         model.command_selected(),
-        Some(3),
-        "fixture must highlight \"set status: blocked\""
+        Some(1),
+        "fixture must highlight \"set status: doing\""
     );
     let selected = model.command_selected();
     model
@@ -701,12 +695,12 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        list.contains("IN MOTION"),
+        list.contains("DOING"),
         "list must include IN MOTION header:\n{list}"
     );
     assert!(
         list.lines()
-            .any(|line| line.trim_start().starts_with("ON DECK · desk ─")),
+            .any(|line| line.trim_start().starts_with("TODO · desk ─")),
         "desk tab must include the desk ON DECK header:\n{list}"
     );
     assert!(
@@ -729,7 +723,7 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
     // NEEDS YOU is the desk's global attention lane: the fixture's blocked/review
     // rows from /repos/herdr paint here with project attribution.
     assert!(
-        list.contains("NEEDS YOU") && list.contains("Wire dispatch cleanup receipts"),
+        list.contains("DOING") && list.contains("Wire dispatch cleanup receipts"),
         "desk NEEDS YOU must gather blocked/review from every live scope:\n{list}"
     );
     assert!(
@@ -765,8 +759,8 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
     assert!(
         verbs.contains("enter")
             && verbs.contains('?')
-            && verbs.contains("ctrl+n next")
-            && verbs.contains("ctrl+o inbox")
+            && verbs.contains("ctrl+d done")
+            && verbs.contains("ctrl+o todo")
             && !verbs.contains("+ add"),
         "in-motion bar keeps its status actions and help without a misleading add seat: {verbs:?}"
     );
@@ -784,7 +778,7 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         );
         if idx != 21 && idx != 0 {
             let rule_like = t.chars().filter(|&c| c == '─').count() >= 60
-                && !t.contains("IN MOTION")
+                && !t.contains("DOING")
                 && !t.contains("DONE")
                 && !t.chars().any(|c| c.is_ascii_digit());
             assert!(
@@ -810,10 +804,10 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             ProvenanceOrigin::Manual,
             None,
         )
-        .expect("started");
+        .expect("doing");
     domain
-        .set_status(started, HumanStatus::Started)
-        .expect("start");
+        .set_status(started, HumanStatus::Doing)
+        .expect("doing");
     let blocked = domain
         .create(
             "blocked desk",
@@ -822,9 +816,9 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             ProvenanceOrigin::Manual,
             None,
         )
-        .expect("blocked");
+        .expect("doing");
     domain
-        .set_status(blocked, HumanStatus::Blocked)
+        .set_status(blocked, HumanStatus::Doing)
         .expect("block");
     let review = domain
         .create(
@@ -834,23 +828,15 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             ProvenanceOrigin::Manual,
             None,
         )
-        .expect("review");
+        .expect("doing");
     domain
-        .set_status(review, HumanStatus::Review)
-        .expect("review");
+        .set_status(review, HumanStatus::Doing)
+        .expect("doing");
     let desk = BoardModel::from_domain(&domain, None);
     let desk_rows = board_rows(&desk, 78, 24).join("\n");
-    let needs = desk_rows.find("NEEDS YOU");
-    let motion = desk_rows.find("IN MOTION");
-    assert!(needs.is_some(), "desk must paint NEEDS YOU:\n{desk_rows}");
-    assert!(
-        motion.is_some(),
-        "desk must still paint IN MOTION:\n{desk_rows}"
-    );
-    assert!(
-        needs.expect("needs") < motion.expect("motion"),
-        "NEEDS YOU must sit above IN MOTION:\n{desk_rows}"
-    );
+    assert_eq!(desk_rows.matches("DOING").count(), 1, "{desk_rows}");
+    assert!(!desk_rows.contains("NEEDS YOU"), "{desk_rows}");
+    assert!(desk_rows.contains("started work"), "{desk_rows}");
     assert!(desk_rows.contains("blocked desk") && desk_rows.contains("review desk"));
 
     let mut domain = DomainState::new();
@@ -865,10 +851,10 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             ProvenanceOrigin::Manual,
             None,
         )
-        .expect("started");
+        .expect("doing");
     domain
-        .set_status(started, HumanStatus::Started)
-        .expect("start");
+        .set_status(started, HumanStatus::Doing)
+        .expect("doing");
     let blocked = domain
         .create(
             "blocked project",
@@ -877,9 +863,9 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
             ProvenanceOrigin::Manual,
             None,
         )
-        .expect("blocked");
+        .expect("doing");
     domain
-        .set_status(blocked, HumanStatus::Blocked)
+        .set_status(blocked, HumanStatus::Doing)
         .expect("block");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/tsk")));
     apply_intent(
@@ -905,7 +891,7 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
     .expect("focus project");
     let project_rows = board_rows(&model, 78, 24).join("\n");
     assert!(
-        project_rows.contains("NEEDS YOU"),
+        project_rows.contains("DOING"),
         "project focus must paint NEEDS YOU:\n{project_rows}"
     );
     assert!(project_rows.contains("blocked project"));
@@ -939,15 +925,14 @@ fn every_section_header_has_symmetric_spacing_and_scrolls_with_its_selected_task
     let desk_view = fixture_view(&tasks, true);
     let projects_view = fixture_view_projects(&tasks, true);
     let desk_cases = [
-        ("NEEDS YOU", Uuid::from_u128(20), "Wire dispatch cleanup"),
-        ("IN MOTION", Uuid::from_u128(1), "Smoke-test worktree"),
-        ("ON DECK · desk", Uuid::from_u128(30), "Global backlog note"),
+        ("DOING", Uuid::from_u128(1), "Smoke-test worktree"),
+        ("TODO · desk", Uuid::from_u128(30), "Global backlog note"),
         ("DONE", Uuid::from_u128(40), "Ship the queue board"),
     ];
     let project_cases = [
-        ("IN MOTION", Uuid::from_u128(1), "Smoke-test worktree"),
+        ("DOING", Uuid::from_u128(1), "Smoke-test worktree"),
         (
-            "ON DECK",
+            "TODO",
             Uuid::from_u128(10),
             "Prototype the queue-style board UI",
         ),
@@ -1332,7 +1317,7 @@ fn notice_task_page_header_derives_the_n_identifier_and_its_copy_hit() {
             "guide.page",
             "Guide page render",
             None,
-            HumanStatus::Review,
+            HumanStatus::Doing,
             TaskScope::Global,
             Vec::new(),
         )
@@ -1418,7 +1403,7 @@ fn task_page_header_shows_identifier_not_footer() {
         header_identifier: Some("T12".to_string()),
         header_identifier_task: Some(Uuid::from_u128(1)),
         title_cursor: None,
-        status_word: "ready",
+        status_word: "todo",
         notes_rows: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
@@ -1476,7 +1461,7 @@ fn numbered_board_at_40x10_paints_in_bounds_wraps_titles_and_keeps_tasks_reachab
             let mut task = task(
                 500 + index,
                 &format!("item {index} title wraps across the compact forty column boundary"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 index as u64,
             );
@@ -1524,7 +1509,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
         header_identifier: None,
         header_identifier_task: None,
         title_cursor: None,
-        status_word: "ready",
+        status_word: "todo",
         notes_rows: vec![
             "first draft note".to_string(),
             "second draft note".to_string(),
@@ -1557,7 +1542,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
             .join("\n");
         // The meta footer clips at the 40x10 floor, so "updated" is only required at the
         // 78-column standard width where the full line fits.
-        let mut expected = vec!["Rename this task", "ready", "first draft note", "created"];
+        let mut expected = vec!["Rename this task", "todo", "first draft note", "created"];
         if width >= 78 {
             expected.push("updated");
         }
@@ -1573,7 +1558,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
             "{width}x{height} task page must hide the selector row:\n{body}"
         );
         assert!(
-            !body.contains("IN MOTION"),
+            !body.contains("DOING"),
             "{width}x{height} task page must erase the base list in both tiers:\n{body}"
         );
         assert!(
@@ -1860,7 +1845,7 @@ fn notes_edit_shows_raw_markdown_markers_that_view_mode_strips() {
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let view = board_rows(&model, 80, 24).join("\n");
     assert!(
         !view.contains("*em*"),
@@ -1895,7 +1880,7 @@ fn task_page_view_leaves_fence_body_unparsed() {
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let view = board_rows(&model, 80, 24).join("\n");
     assert!(view.contains("```"), "page must show fence ticks:\n{view}");
     assert!(
@@ -1922,7 +1907,7 @@ fn task_page_fence_stays_closed_after_the_opener_scrolls_off() {
         )
         .expect("create");
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let _ = board_rows(&model, 80, 24);
     for _ in 0..30 {
         apply_intent(&mut domain, &mut model, BoardIntent::PageScrollDown, None).expect("scroll");
@@ -2005,7 +1990,7 @@ fn notes_edit_after_deep_stream_scroll_keeps_draft_and_caret_aligned() {
             .expect("add step");
     }
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     board_rows(&model, 80, 24);
     for _ in 0..20 {
         apply_intent(
@@ -2054,7 +2039,7 @@ fn shift_tab_from_scope_resets_notes_stream_origin_and_aligns_caret() {
         )
         .expect("create task");
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     board_rows(&model, 80, 24);
     for _ in 0..20 {
         apply_intent(
@@ -2371,7 +2356,7 @@ fn positioned_add_rows_scroll_into_view() {
             .expect("add step");
     }
     let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("todo");
     let _ = board_rows(&model, 40, 16);
     // Walk the cursor down until its step sits on the last painted steps row.
     apply_intent(&mut domain, &mut model, BoardIntent::SelectStep(0), None).expect("select");
@@ -2547,7 +2532,7 @@ fn plain_selection_on_a_task_below_the_fold_scrolls_it_into_view_in_both_tiers()
             task(
                 5000 + i,
                 &format!("Selection padding task {i}"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/repos/tsk"),
                 3600,
             )
@@ -2604,7 +2589,7 @@ fn compact_editors_stay_full_screen_takeovers() {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            !viewport2.contains("IN MOTION"),
+            !viewport2.contains("DOING"),
             "{w}x{h}: title editor takeover must erase the base list:\n{viewport2}"
         );
 
@@ -2617,7 +2602,7 @@ fn compact_editors_stay_full_screen_takeovers() {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            viewport3.contains("Smoke-test worktree dispatch") && viewport3.contains("IN MOTION"),
+            viewport3.contains("Smoke-test worktree dispatch") && viewport3.contains("DOING"),
             "{w}x{h}: closing must restore the base list:\n{viewport3}"
         );
         assert_eq!(
@@ -2790,7 +2775,7 @@ fn golden_scenes() -> Vec<GoldenScene> {
     let mut archived_one = task(
         7301,
         "Archived receipt sweep",
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         project("/repos/tsk"),
         45 * 60,
     );
@@ -2799,7 +2784,7 @@ fn golden_scenes() -> Vec<GoldenScene> {
     let mut archived_two = task(
         7302,
         "Archived vendored spike",
-        HumanStatus::Blocked,
+        HumanStatus::Doing,
         TaskScope::Global,
         50 * 60,
     );
@@ -2971,13 +2956,7 @@ fn palette_golden_scene_commands_are_bound_to_the_real_m1_catalog_and_exclude_di
     let labels: Vec<&str> = commands.iter().map(|command| command.label).collect();
     assert_eq!(
         labels,
-        vec![
-            "set status: ready",
-            "set status: open",
-            "set status: started",
-            "set status: blocked",
-            "set status: review",
-        ],
+        vec!["set status: todo", "set status: doing", "set status: done",],
         "the palette golden scene's command rows must be exactly what \
          `BoardModel::visible_commands` produces for the fixture's selection and query, not \
          a hand-rolled stand-in"
@@ -3055,7 +3034,7 @@ fn collapsed_threaded_rows_have_no_labels_or_extra_indent() {
     tasks.push(task(
         12,
         "Loose project task",
-        HumanStatus::Ready,
+        HumanStatus::Todo,
         project("/repos/tsk"),
         30,
     ));
@@ -3156,28 +3135,28 @@ fn board_with_thread_labels_paints_within_40x10_and_all_tasks_reachable() {
         task(
             100,
             "alpha first",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             40,
         ),
         task(
             101,
             "alpha second",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             30,
         ),
         task(
             102,
             "beta first",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             20,
         ),
         task(
             103,
             "beta second",
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             project("/repos/tsk"),
             10,
         ),
@@ -3270,7 +3249,7 @@ fn board_list_wraps_a_long_title_onto_a_continuation_row() {
     let rows = board_rows(&model, 80, 24);
     // The head row keeps the classic shape (gutter + glyph + title head).
     assert!(
-        rows.iter().any(|row| row.contains("◌ alpha")),
+        rows.iter().any(|row| row.contains("○ alpha")),
         "head row must keep the glyph + title shape:\n{}",
         rows.join("\n")
     );
@@ -3287,7 +3266,7 @@ fn board_list_wraps_a_long_title_onto_a_continuation_row() {
     // own tier budget is a different surface).
     let head = rows
         .iter()
-        .find(|row| row.contains("◌ alpha"))
+        .find(|row| row.contains("○ alpha"))
         .expect("head row");
     assert!(
         !head.contains('…') && !continuation.contains('…'),
@@ -3428,10 +3407,10 @@ fn task_page_caps_a_wrapped_header_inside_the_page_body() {
             None,
         )
         .expect("create task");
-    // The original geometry uses the five-column `ready` status word; new tasks default open.
+    // Doing retains the five-column status geometry this boundary test needs.
     domain
-        .set_status(id, HumanStatus::Ready)
-        .expect("keep the original ready header layout");
+        .set_status(id, HumanStatus::Doing)
+        .expect("keep the five-column header layout");
     let mut model = BoardModel::from_domain(&domain, None);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
 
@@ -3515,10 +3494,10 @@ fn edit_title_caret_parks_at_the_capped_headers_end() {
             None,
         )
         .expect("create task");
-    // The original geometry uses the five-column `ready` status word; new tasks default open.
+    // Doing retains the five-column status geometry this boundary test needs.
     domain
-        .set_status(id, HumanStatus::Ready)
-        .expect("keep the original ready header layout");
+        .set_status(id, HumanStatus::Doing)
+        .expect("keep the five-column header layout");
     let mut model = BoardModel::from_domain(&domain, None);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
     board_rows(&model, 40, 10);
@@ -3560,7 +3539,7 @@ fn overflowing_board_list_paints_a_scrollbar() {
             task(
                 7000 + i,
                 &format!("Scrollbar padding task {i}"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/repos/tsk"),
                 3600,
             )
@@ -3603,7 +3582,7 @@ fn overflowing_board_list_does_not_clip_task_rows_to_ellipsis() {
             task(
                 7100 + i,
                 &format!("ScrollbarNoBreakTitleThatMustWrapNotEllipsize{i:02}XXXXXXXXXXXXXXXX"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 project("/repos/tsk"),
                 3600,
             )
@@ -3638,7 +3617,7 @@ fn scrolled_list_pins_the_section_header_under_the_tabs() {
             task(
                 7200 + i,
                 &format!("Sticky header task {i}"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 3600,
             )
@@ -3671,7 +3650,7 @@ fn scrolled_done_section_pins_done_under_the_tabs() {
             task(
                 7300 + i,
                 &format!("Open sticky {i}"),
-                HumanStatus::Ready,
+                HumanStatus::Todo,
                 TaskScope::Global,
                 3600,
             )
@@ -3709,10 +3688,10 @@ fn scrolled_done_section_pins_done_under_the_tabs() {
 #[test]
 fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
     for status in [
-        HumanStatus::Ready,
-        HumanStatus::Started,
-        HumanStatus::Blocked,
-        HumanStatus::Review,
+        HumanStatus::Todo,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
         HumanStatus::Done,
     ] {
         let mut domain = DomainState::new();
@@ -3951,7 +3930,7 @@ fn expanded_archived_rows_are_dim_keep_glyph_and_identifier_and_are_selectable_a
         row_text.contains("T2"),
         "identifier prefix paints: {row_text}"
     );
-    assert!(row_text.contains('◌'), "status glyph is kept: {row_text}");
+    assert!(row_text.contains('○'), "status glyph is kept: {row_text}");
     for x in 0..80 {
         let symbol = buffer[(x, row_y)].symbol();
         if symbol == " " {
@@ -4032,7 +4011,7 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
         rows.join("\n")
     );
     assert!(
-        !rows.iter().any(|row| row.contains("ready")),
+        !rows.iter().any(|row| row.contains("todo")),
         "the status word must give way to archived:\n{}",
         rows.join("\n")
     );
@@ -4046,7 +4025,7 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
         rows.join("\n")
     );
     assert!(
-        !rows.iter().any(|row| row.contains("ready")),
+        !rows.iter().any(|row| row.contains("todo")),
         "wide status word must give way to archived:\n{}",
         rows.join("\n")
     );
@@ -4068,7 +4047,7 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open page");
     let rows = board_rows(&model, 80, 24);
     assert!(
-        rows.iter().any(|row| row.contains("open")),
+        rows.iter().any(|row| row.contains("todo")),
         "unarchived task keeps its status word:\n{}",
         rows.join("\n")
     );
@@ -4165,8 +4144,8 @@ fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
         )
         .expect("create");
     domain
-        .set_status(domain.tasks()[0].id, HumanStatus::Started)
-        .expect("started");
+        .set_status(domain.tasks()[0].id, HumanStatus::Doing)
+        .expect("doing");
     domain
         .create(
             "here task",
@@ -4758,7 +4737,7 @@ fn collapsed_short_panes_hide_project_and_thread_labels() {
     let mut item = task(
         991,
         "Scope row",
-        HumanStatus::Started,
+        HumanStatus::Doing,
         TaskScope::Project {
             path: "/repos/alpha".into(),
         },

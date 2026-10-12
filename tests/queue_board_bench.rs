@@ -56,10 +56,10 @@ const HEIGHT: u16 = 24;
 /// queue query does the same section/grouping work a real board this size would.
 fn build_domain_with_n_tasks(n: usize) -> DomainState {
     let statuses = [
-        HumanStatus::Ready,
-        HumanStatus::Started,
-        HumanStatus::Blocked,
-        HumanStatus::Review,
+        HumanStatus::Todo,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
+        HumanStatus::Doing,
         HumanStatus::Done,
     ];
     let projects = [
@@ -88,7 +88,7 @@ fn build_domain_with_n_tasks(n: usize) -> DomainState {
             )
             .expect("create bench fixture task");
         let status = statuses[i % statuses.len()];
-        if status != HumanStatus::Ready {
+        if status != HumanStatus::Todo {
             domain
                 .set_status(id, status)
                 .expect("set bench fixture status");
@@ -158,7 +158,7 @@ fn cold_start_to_first_frame_under_200ms_at_80x24_with_100_tasks() {
             "first frame must paint fixture tasks: {plain}"
         );
         assert!(
-            plain.contains("IN MOTION"),
+            plain.contains("DOING"),
             "first frame must paint a section header: {plain}"
         );
     }
@@ -203,7 +203,7 @@ fn keypress_to_repaint_p99_under_16ms_during_navigation_at_80x24_with_100_tasks(
     // BoardIntent::SelectNext unconditionally: select_next wraps modulo, so a
     // 500-frame run sweeps every listed row several times over -- and hits the wrap branch
     // for free -- at the same per-frame cost. Alternating SelectNext/SelectPrev instead
-    // ping-pongs between the first two IN MOTION rows for the whole run: 78 of 80 listed rows
+    // ping-pongs between the first two DOING rows for the whole run: 78 of 80 listed rows
     // would never be selected and any position-dependent cost in selected_index()'s linear
     // scan would never be timed.
     let mut step = |domain: &mut DomainState, model: &mut BoardModel| {
@@ -236,10 +236,10 @@ fn keypress_to_repaint_p99_under_16ms_during_navigation_at_80x24_with_100_tasks(
         "navigation frames must paint fixture tasks: {plain}"
     );
     // Scroll-aware since G-2: the viewport now follows the selection, so navigating to the end
-    // of a 100-task deck legitimately scrolls the IN MOTION header off the top. Assert that *a*
-    // section header is painted, not that a specific one is -- pinning `IN MOTION` here asserted
+    // of a 100-task deck legitimately scrolls the DOING header off the top. Assert that *a*
+    // section header is painted, not that a specific one is -- pinning `DOING` here asserted
     // the absence of follow-selection scrolling, which is the very defect G-2 fixed.
-    let has_section = ["IN MOTION", "ON DECK", "DONE"]
+    let has_section = ["DOING", "TODO", "DONE"]
         .iter()
         .any(|header| plain.contains(header))
         || ["tsk", "herdr", "alpha", "beta", "global"]

@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
+use tsk_tui::domain::{DomainState, ProvenanceOrigin, TaskScope};
 use tsk_tui::ui::board::{apply_intent, BoardInputMode, BoardModel};
 use tsk_tui::ui::input::{map_key, BoardIntent};
 
@@ -216,18 +216,12 @@ fn expected_intent(action: &str) -> Option<BoardIntent> {
     let action = action.to_lowercase();
     Some(if action.starts_with("edit title") {
         BoardIntent::BeginEditTitle
-    } else if action.starts_with("start") {
+    } else if action.starts_with("set doing") {
         BoardIntent::PrimaryVerb
-    } else if action.starts_with("set ready") {
-        BoardIntent::SetStatus(HumanStatus::Ready)
-    } else if action.starts_with("set open") {
+    } else if action.starts_with("set todo") {
         BoardIntent::Reopen
     } else if action.starts_with("mark done") {
         BoardIntent::Complete
-    } else if action.starts_with("toggle blocked") {
-        BoardIntent::ToggleBlock
-    } else if action.starts_with("toggle review") {
-        BoardIntent::ToggleReview
     } else if action.starts_with("delete") {
         BoardIntent::SoftDelete
     } else if action.starts_with("undo") {

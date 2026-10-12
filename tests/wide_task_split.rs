@@ -52,7 +52,7 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
         )
         .expect("create T12");
     domain
-        .set_status(started, HumanStatus::Started)
+        .set_status(started, HumanStatus::Doing)
         .expect("start T12");
     let ready = domain
         .create(
@@ -64,7 +64,7 @@ fn fixture_with_titles(first: &str, second: &str) -> (DomainState, BoardModel) {
         )
         .expect("create T15");
     domain
-        .set_status(ready, HumanStatus::Ready)
+        .set_status(ready, HumanStatus::Todo)
         .expect("ready T15");
     let mut tasks = domain.tasks().to_vec();
     tasks[0].number = Some(12);
@@ -250,9 +250,9 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
         "selector row: {}",
         list(1)
     );
-    assert!(list(3).starts_with(" IN MOTION ─"), "{}", list(3));
+    assert!(list(3).starts_with(" DOING ─"), "{}", list(3));
     assert!(list(5).starts_with("▸ ● T12 Frame the wide task view"));
-    assert!(list(7).starts_with(" ON DECK ─"), "{}", list(7));
+    assert!(list(7).starts_with(" TODO ─"), "{}", list(7));
     assert!(list(9).starts_with("  ○ T15 Renew domain"));
     assert_eq!(rows[5].chars().nth(geometry.rule.x as usize), Some('│'));
     // The detail shows the selected task beside the list.
@@ -300,7 +300,7 @@ fn detail_header_weight_follows_focus() {
             header.starts_with(" ● T12 Frame the wide task view"),
             "{header}"
         );
-        assert!(header.trim_end().ends_with("started · tsk"), "{header}");
+        assert!(header.trim_end().ends_with("doing · tsk"), "{header}");
         assert!(column_text(&rows, column, 2).chars().all(|c| c == '─'));
         let body = region_text(&rows, Rect::new(column.x, 3, column.width, 18));
         assert!(
@@ -921,9 +921,9 @@ fn stepping_fixture() -> (DomainState, BoardModel, [uuid::Uuid; 3]) {
     let mut domain = DomainState::new();
     let mut ids = [uuid::Uuid::nil(); 3];
     for (slot, (title, status)) in ids.iter_mut().zip([
-        ("first started", HumanStatus::Started),
-        ("second ready", HumanStatus::Ready),
-        ("third open", HumanStatus::Open),
+        ("first started", HumanStatus::Doing),
+        ("second ready", HumanStatus::Todo),
+        ("third open", HumanStatus::Todo),
     ]) {
         let id = domain
             .create(
@@ -988,7 +988,7 @@ fn j_and_k_follow_the_project_sort_order() {
         let id = domain
             .create(title, None, scope, ProvenanceOrigin::Manual, None)
             .expect("create");
-        domain.set_status(id, HumanStatus::Started).expect("start");
+        domain.set_status(id, HumanStatus::Doing).expect("start");
         id
     };
     let beta = make(
@@ -1715,7 +1715,7 @@ fn dirty_refusal_clears_after_save_and_the_detail_retargets_again() {
     assert!(model.message().is_none());
     assert!(!model.task_session_dirty());
     assert_eq!(domain.get(bound).expect("saved").title, draft);
-    assert!(header_title_row(&model).ends_with("started · tsk"));
+    assert!(header_title_row(&model).ends_with("doing · tsk"));
     press(&mut domain, &mut model, KeyCode::Left);
     press(&mut domain, &mut model, KeyCode::Char('j'));
     assert_ne!(
@@ -1918,7 +1918,7 @@ fn detail_header_derives_the_notice_n_identifier_and_its_copy_hit() {
             "guide.wide",
             "Wide guide header",
             None,
-            HumanStatus::Ready,
+            HumanStatus::Todo,
             TaskScope::Global,
             Vec::new(),
         )
@@ -2028,7 +2028,7 @@ fn expanded_quick_add_draft_paints_at_wide_widths_and_esc_returns_to_the_line() 
             "{width} cols: verb bar\n{text}"
         );
         assert!(
-            !text.contains("IN MOTION"),
+            !text.contains("DOING"),
             "{width} cols: board still painted\n{text}"
         );
     }
@@ -2036,7 +2036,7 @@ fn expanded_quick_add_draft_paints_at_wide_widths_and_esc_returns_to_the_line() 
     assert_eq!(model.input_mode(), BoardInputMode::QuickAdd);
     let (buffer, _) = render_buffer(&model, 140, 30);
     let text = rows_of(&buffer).join("\n");
-    assert!(text.contains("IN MOTION"), "board should be back\n{text}");
+    assert!(text.contains("DOING"), "board should be back\n{text}");
     assert!(text.contains("buy milk"));
 }
 
@@ -2051,8 +2051,8 @@ fn list_keeps_the_done_drawer_and_selects_the_open_done_task() {
         .create("Open work", None, scope(), ProvenanceOrigin::Manual, None)
         .expect("create started");
     domain
-        .set_status(started, HumanStatus::Started)
-        .expect("start");
+        .set_status(started, HumanStatus::Doing)
+        .expect("doing");
     let done = domain
         .create("Shipped fix", None, scope(), ProvenanceOrigin::Manual, None)
         .expect("create done");

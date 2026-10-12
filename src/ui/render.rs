@@ -867,11 +867,8 @@ fn local_rect(area: Rect, local: Rect) -> Rect {
 /// Status glyph for a human status (the: static; no agent spin).
 pub fn status_glyph(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Open => "◌",
-        HumanStatus::Ready => "○",
-        HumanStatus::Started => "●",
-        HumanStatus::Blocked => "■",
-        HumanStatus::Review => "▲",
+        HumanStatus::Todo => "○",
+        HumanStatus::Doing => "●",
         HumanStatus::Done => "✓",
     }
 }
@@ -4118,14 +4115,14 @@ fn paint_section_header(
 fn section_title(section: &QueueSection, surface: BoardSurface) -> String {
     match section.kind {
         SectionKind::NeedsYou => "NEEDS YOU".to_string(),
-        SectionKind::InMotion => "IN MOTION".to_string(),
+        SectionKind::InMotion => "DOING".to_string(),
         SectionKind::Done => "DONE".to_string(),
         SectionKind::Archived => "archived".to_string(),
         SectionKind::Inbox => "inbox".to_string(),
         SectionKind::OnDeck if surface == BoardSurface::Desk && section.project_label.is_none() => {
-            "ON DECK \u{b7} desk".to_string()
+            "TODO \u{b7} desk".to_string()
         }
-        SectionKind::OnDeck => "ON DECK".to_string(),
+        SectionKind::OnDeck => "TODO".to_string(),
     }
 }
 

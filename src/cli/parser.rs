@@ -336,11 +336,8 @@ pub fn parse_flag_status(args: &[String]) -> Result<FlagStatus, String> {
 
 fn parse_human_status(value: &str) -> Result<HumanStatus, String> {
     match value {
-        "open" => Ok(HumanStatus::Open),
-        "ready" => Ok(HumanStatus::Ready),
-        "start" | "started" => Ok(HumanStatus::Started),
-        "blocked" => Ok(HumanStatus::Blocked),
-        "review" => Ok(HumanStatus::Review),
+        "todo" => Ok(HumanStatus::Todo),
+        "doing" => Ok(HumanStatus::Doing),
         "done" => Ok(HumanStatus::Done),
         other => Err(format!("unknown status {other}")),
     }
@@ -501,7 +498,7 @@ mod tests {
             "tsk".into(),
             "status".into(),
             "T4".into(),
-            "blocked".into(),
+            "doing".into(),
             "--state-dir".into(),
             "/tmp/dir".into(),
         ])
@@ -510,7 +507,7 @@ mod tests {
             parsed,
             FlagStatus {
                 task: Some(TaskAddress::Number(4)),
-                status: Some(HumanStatus::Blocked),
+                status: Some(HumanStatus::Doing),
                 state_dir: Some(std::path::PathBuf::from("/tmp/dir")),
                 help: false,
             }
@@ -523,18 +520,18 @@ mod tests {
             "tsk".into(),
             "status".into(),
             "T4".into(),
-            "blocked".into(),
+            "doing".into(),
             "extra".into()
         ])
         .is_err());
         let parsed =
-            parse_flag_status(&["tsk".into(), "status".into(), "T4".into(), "start".into()])
+            parse_flag_status(&["tsk".into(), "status".into(), "T4".into(), "doing".into()])
                 .expect("start alias");
-        assert_eq!(parsed.status, Some(HumanStatus::Started));
+        assert_eq!(parsed.status, Some(HumanStatus::Doing));
         let parsed =
-            parse_flag_status(&["tsk".into(), "status".into(), "T4".into(), "open".into()])
+            parse_flag_status(&["tsk".into(), "status".into(), "T4".into(), "todo".into()])
                 .expect("open status");
-        assert_eq!(parsed.status, Some(HumanStatus::Open));
+        assert_eq!(parsed.status, Some(HumanStatus::Todo));
     }
 
     #[test]

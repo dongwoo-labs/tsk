@@ -3,7 +3,7 @@ title: Capture
 description: Add a task without leaving your work.
 ---
 
-Press `+` or click **+ add**. Type a title, then press `Enter`. On the website demo, the capture footer actions are clickable. New captures land in the **inbox** with status `open`.
+Press `+` or click **+ add**. Type a title, then press `Enter`. On the website demo, the capture footer actions are clickable. New captures land in **TODO** with status `todo`.
 
 ## Quick-add
 
@@ -14,7 +14,7 @@ Press `+` or click **+ add**. Type a title, then press `Enter`. On the website d
 | `Tab` | Open details |
 | `Esc` | Cancel |
 
-The board stays visible. A saved task flashes and becomes selected in the inbox. Invalid input stays open with an explanation.
+The board stays visible. A saved task flashes and becomes selected in Todo. Invalid input stays open with an explanation.
 
 Clicking a task while the quick-add line is open discards the draft and selects that task.
 
@@ -96,13 +96,13 @@ You can also invoke the popup explicitly:
 herdr plugin action invoke quick-capture --plugin herdr-tsk
 ```
 
-For the same capture flow in your terminal, run `tsk capture`. `TSK_MODE=capture tsk` is equivalent. Captured tasks start `open`.
+For the same capture flow in your terminal, run `tsk capture`. `TSK_MODE=capture tsk` is equivalent. Captured tasks start `todo`.
 
 ## From an agent or script
 
 ```sh
 tsk add -t "Fix login timeout" --thread auth
-# the new task starts open; use tsk status T<n> ready when you pick it
+# the new task starts todo; use tsk status T<n> doing when work begins
 ```
 
 [CLI options](/docs/cli/#add) · [Editing tasks](/docs/task-page/)

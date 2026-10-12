@@ -20,25 +20,25 @@ pub const CATALOG: [Guide; 4] = [
         notes: "Hi. This is your board. Every task you make lives here. Take a minute with this one.\n\
                 \n\
                 **One board, three scopes**\n\
-                - `p` picks the scope. `all` shows every task from every project and your desk. `desk` shows anything that needs you or is in motion, from every project, plus the ready and open tasks that belong to no project. A project name shows only that project.\n\
+                - `p` picks the scope. `all` shows every task from every project and your desk. `desk` shows Doing tasks from every project, plus Todo tasks that belong to no project. A project name shows only that project.\n\
                 - Rows follow task numbers. `S` groups them by project instead, and `S` again goes back.\n\
                 \n\
-                **Three sections, decided by status**\n\
-                - **NEEDS YOU** holds `blocked` and `review` tasks. Something is waiting on you. This task is in review, so it sits here until you act on it.\n\
-                - **IN MOTION** holds `started` tasks. Work you are doing right now.\n\
-                - **ON DECK** holds picked `ready` tasks first, then the expanded `inbox` of `open` tasks. New tasks land in the inbox.\n\
+                **Three human statuses**\n\
+                - **DOING** holds `doing` tasks. This task is Doing. Questions and agent execution status are separate.\n\
+                - Questions never turn a Task into a waiting status.\n\
+                - **TODO** holds `todo` tasks. New tasks land here.\n\
                 - `done` tasks leave the board for the drawer. Press `d` to open it, `d` again to close it.\n\
                 \n\
                 **Moving around**\n\
                 - `j` and `k` or the arrows move the selection. `Enter` opens a task, `Esc` comes back.\n\
                 - `/` searches whatever the board shows. `Enter` pins the filter, `Esc` clears it.\n\
-                - Status keys use Ctrl, so a stray letter never changes anything. `ctrl+s` starts, `ctrl+n` picks a task for ready, `ctrl+o` sends it to the inbox, `ctrl+b` blocks, `ctrl+r` marks review or takes it back to ready, and `ctrl+d` finishes.\n\
+                - Status keys use Ctrl, so a stray letter never changes anything. `ctrl+s` sets Doing from Todo, `ctrl+o` sets Todo (including reopening Done), and `ctrl+d` finishes.\n\
                 - `ctrl+u` undoes the last change.",
-        status: HumanStatus::Review,
+        status: HumanStatus::Doing,
         steps: &[
             ("Open this task with Enter", true),
             ("Press Esc, then p to try each scope", false),
-            ("Press ctrl+r and watch this task move to ON DECK", false),
+            ("Press ctrl+o and watch this task move to TODO", false),
         ],
     },
     Guide {
@@ -47,8 +47,8 @@ pub const CATALOG: [Guide; 4] = [
         notes: "A task holds a title, notes (the description), and steps. You set its status yourself. Optionally put it on a thread to group related work inside a project, and file it under a project (or leave it on your desk).\n\
                 \n\
                 **Make one**\n\
-                - Press `+`, type a title, press `Enter`. It lands in the ON DECK inbox as `open`.\n\
-                - Press `ctrl+n` when you pick it for the ready queue.\n\
+                - Press `+`, type a title, press `Enter`. It lands in TODO as `todo`.\n\
+                - Press `ctrl+s` when work begins.\n\
                 - Press `Tab` instead of `Enter` to open the full page first, where you can add notes, steps, a thread, and a project before you save.\n\
                 - Type `!p name` in the title to file it under a project the board already knows, by its folder name. A full path to an existing folder, like `!p ~/code/widget`, adds a new one. Bare `!p` keeps it on your desk.\n\
                 - Type `!t release` in the title to tag it with the thread `release`. Threads group related work inside one project, and the project board can filter by them.\n\
@@ -61,12 +61,12 @@ pub const CATALOG: [Guide; 4] = [
                 **Change one**\n\
                 - On the page, `ctrl+e` edits the title, then Tab moves to notes. The palette can also open notes editing. `shift+enter` saves.\n\
                 - `Enter` on a step checks it. The `+ step` row at the bottom adds one.\n\
-                - Steps never finish a task. Check every step below and this task stays `started` until you press `ctrl+d`. You decide when work is done.",
-        status: HumanStatus::Started,
+                - Steps never finish a task. Check every step below and this task stays `doing` until you press `ctrl+d`. You decide when work is done.",
+        status: HumanStatus::Doing,
         steps: &[
             ("Press Enter on this step to check it", false),
             ("Check this one too", false),
-            ("Notice the task is still started", false),
+            ("Notice the task is still doing", false),
             ("Press + and add a task of your own", false),
         ],
     },
@@ -78,24 +78,24 @@ pub const CATALOG: [Guide; 4] = [
                 ```\n\
                 tsk add -t \"Try the CLI\"\n\
                 tsk list\n\
-                tsk status T1 start\n\
+                tsk status T1 doing\n\
                 tsk steps T1 add \"First step\"\n\
                 tsk edit T1 --notes \"Written from the CLI\"\n\
                 ```\n\
                 \n\
                 Every task gets a `T` number, and that number is how each command finds it. Use the number `tsk list` prints for your new task in place of `T1`.\n\
                 \n\
-                `tsk list` shows the tasks of the project you are standing in, or your desk outside a repository. Add `--all` for every project, `--open` for the inbox, `--ready` for picked tasks, or `--json` for output another program can read.\n\
+                `tsk list` shows the tasks of the project you are standing in, or your desk outside a repository. Add `--all` for every project, `--todo` for captured tasks, `--doing` for work in progress, or `--json` for output another program can read.\n\
                 \n\
                 `tsk --help` lists every command and status. `tsk help list` explains one command: its flags, examples, and exit codes.\n\
                 \n\
                 **Let an agent work the board**\n\
-                Run `tsk setup` once: it finds the coding agents on your machine (Claude, Pi, Cursor, Codex, and others) and offers to install the tsk skill for each. `tsk setup claude` targets one. Then ask the agent in plain words. \"Add a task for each failing test.\" \"Mark T7 as review.\" `tsk guide` prints the same instructions if you want to read them yourself.",
-        status: HumanStatus::Ready,
+                Run `tsk setup` once: it finds the coding agents on your machine (Claude, Pi, Cursor, Codex, and others) and offers to install the tsk skill for each. `tsk setup claude` targets one. Then ask the agent in plain words. \"Add a task for each failing test.\" \"Set T7 to Doing.\" `tsk guide` prints the same instructions if you want to read them yourself.",
+        status: HumanStatus::Todo,
         steps: &[
             ("Run tsk add -t \"Try the CLI\" in another terminal", false),
-            ("Watch it appear in the ON DECK inbox", false),
-            ("Run tsk status T<n> start on it", false),
+            ("Watch it appear in TODO", false),
+            ("Run tsk status T<n> doing on it", false),
         ],
     },
     Guide {
@@ -117,7 +117,7 @@ pub const CATALOG: [Guide; 4] = [
                 - Something broke, or something is missing? Tell us at https://github.com/smarzban/tsk/issues\n\
                 - A star at https://github.com/smarzban/tsk helps other people find tsk.\n\
                 - Say hi at https://x.com/smarzbanX",
-        status: HumanStatus::Open,
+        status: HumanStatus::Todo,
         steps: &[
             ("Press ctrl+d on this task", false),
             ("Press d and find it in the drawer", false),
@@ -249,7 +249,7 @@ mod tests {
         assert!(seeded.iter().all(|task| task.number.is_none()));
         let start = seeded[0];
         assert_eq!(start.title, "Welcome to tsk, start here");
-        assert_eq!(start.status, HumanStatus::Review);
+        assert_eq!(start.status, HumanStatus::Doing);
         assert_eq!(
             start.steps.iter().map(|step| step.done).collect::<Vec<_>>(),
             vec![true, false, false]
@@ -257,7 +257,7 @@ mod tests {
         assert!(start
             .notes
             .as_deref()
-            .is_some_and(|notes| notes.contains("NEEDS YOU")));
+            .is_some_and(|notes| notes.contains("DOING")));
         assert_eq!(delivery::load(store.path()).guides, catalog_ids());
 
         assert_eq!(seed_on_open(&store), Ok(0));

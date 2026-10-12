@@ -80,9 +80,9 @@ fn reopen_batch(domain: &mut DomainState, targets: &[Uuid]) -> Result<bool, Doma
             return Err(DomainError::UnknownId(id));
         };
         let result = match status {
-            HumanStatus::Open => continue,
+            HumanStatus::Todo => continue,
             HumanStatus::Done => domain.reopen(id),
-            _ => domain.set_status(id, HumanStatus::Open),
+            _ => domain.set_status(id, HumanStatus::Todo),
         };
         if let Err(error) = result {
             *domain = baseline;
@@ -157,8 +157,6 @@ pub fn board_intent_may_persist(intent: &BoardIntent) -> bool {
             | BoardIntent::File
             | BoardIntent::LaunchUnarchive
             | BoardIntent::PrimaryVerb
-            | BoardIntent::ToggleBlock
-            | BoardIntent::ToggleReview
             | BoardIntent::ToggleStep
             | BoardIntent::MoveStepUp
             | BoardIntent::MoveStepDown
@@ -1710,8 +1708,8 @@ fn apply_board_intent(
                     model.set_message("that task is no longer here");
                     return Ok(IntentOutcome::None);
                 };
-                if matches!(status, HumanStatus::Open | HumanStatus::Ready) {
-                    if let Err(error) = domain.set_status(id, HumanStatus::Started) {
+                if matches!(status, HumanStatus::Todo) {
+                    if let Err(error) = domain.set_status(id, HumanStatus::Doing) {
                         *domain = baseline;
                         return Err(error);
                     }
@@ -1723,70 +1721,12 @@ fn apply_board_intent(
             // A marked set that held done tasks says so: start never reopens them.
             if bulk && skipped_done > 0 {
                 model.set_message(format!(
-                    "started {started} · skipped {skipped_done} done (ctrl+n or ctrl+o reopens them)"
+                    "doing {started} · skipped {skipped_done} done (ctrl+o reopens them)"
                 ));
             }
             if started == 0 {
                 return Ok(IntentOutcome::None);
             }
-        }
-        BoardIntent::ToggleBlock => {
-            model.close_popup();
-            let (targets, bulk) = take_verb_targets(model);
-            if targets.is_empty() {
-                model.set_message(NO_SELECTION);
-                return Ok(IntentOutcome::None);
-            }
-            if !bulk
-                && targets.iter().any(|id| {
-                    domain
-                        .get(*id)
-                        .is_some_and(|task| task.status == HumanStatus::Done)
-                })
-            {
-                model.set_message("completed tasks cannot be blocked");
-                return Ok(IntentOutcome::None);
-            }
-            let all_blocked = targets.iter().all(|id| {
-                domain
-                    .get(*id)
-                    .is_some_and(|task| task.status == HumanStatus::Blocked)
-            });
-            let status = if all_blocked {
-                HumanStatus::Ready
-            } else {
-                HumanStatus::Blocked
-            };
-            set_status_batch(domain, &targets, status)?;
-        }
-        BoardIntent::ToggleReview => {
-            model.close_popup();
-            let (targets, bulk) = take_verb_targets(model);
-            if targets.is_empty() {
-                model.set_message(NO_SELECTION);
-                return Ok(IntentOutcome::None);
-            }
-            if !bulk
-                && targets.iter().any(|id| {
-                    domain
-                        .get(*id)
-                        .is_some_and(|task| task.status == HumanStatus::Done)
-                })
-            {
-                model.set_message("completed tasks cannot go to review");
-                return Ok(IntentOutcome::None);
-            }
-            let all_review = targets.iter().all(|id| {
-                domain
-                    .get(*id)
-                    .is_some_and(|task| task.status == HumanStatus::Review)
-            });
-            let status = if all_review {
-                HumanStatus::Ready
-            } else {
-                HumanStatus::Review
-            };
-            set_status_batch(domain, &targets, status)?;
         }
         BoardIntent::FocusDetail => {
             focus_detail(domain, model);

@@ -55,7 +55,7 @@ fn board() -> Board {
         )
         .expect("create child");
     domain
-        .set_status(child, HumanStatus::Started)
+        .set_status(child, HumanStatus::Doing)
         .expect("start child");
     let other = domain
         .create(
@@ -385,7 +385,7 @@ fn a_deleted_parent_stays_on_the_child_as_not_found_and_other_edits_keep_it() {
         Some(board.parent),
         "deleting a parent never detaches or deletes its child"
     );
-    assert_eq!(child_before.status, HumanStatus::Started);
+    assert_eq!(child_before.status, HumanStatus::Doing);
 
     let id = board.child;
     open_page(&mut board, id);
@@ -449,7 +449,7 @@ fn list_badge_counts_direct_children_in_every_scope_and_status() {
     );
     assert_eq!(
         board.domain.get(board.parent).expect("parent").status,
-        HumanStatus::Open
+        HumanStatus::Todo
     );
 }
 
@@ -657,12 +657,12 @@ fn an_off_list_relation_keeps_the_lens_and_cursor_and_verbs_act_on_the_page() {
     // A status verb acts on the displayed task only.
     let child_before = board.domain.get(child).expect("child").clone();
     assert_eq!(
-        apply(&mut board, BoardIntent::SetStatus(HumanStatus::Blocked)),
+        apply(&mut board, BoardIntent::SetStatus(HumanStatus::Doing)),
         IntentOutcome::Persist
     );
     assert_eq!(
         board.domain.get(parent).expect("parent").status,
-        HumanStatus::Blocked
+        HumanStatus::Doing
     );
     assert_eq!(
         board.domain.get(child).expect("child").revision,
@@ -920,7 +920,7 @@ fn undo_on_an_archived_off_list_page_unarchives_that_task_only() {
     // A later change sits on top of the undo stack; ctrl+u must not pop it.
     board
         .domain
-        .set_status(other, HumanStatus::Started)
+        .set_status(other, HumanStatus::Doing)
         .expect("start other");
     board.model.sync_from_domain(&board.domain);
     assert!(!board.model.visible_ids().contains(&child));
@@ -937,7 +937,7 @@ fn undo_on_an_archived_off_list_page_unarchives_that_task_only() {
     assert!(!board.domain.get(parent).expect("parent").archived);
     assert_eq!(
         board.domain.get(other).expect("other").status,
-        HumanStatus::Started,
+        HumanStatus::Doing,
         "no global undo ran"
     );
 }
@@ -974,7 +974,7 @@ fn palette_keeps_an_off_list_page_target_after_a_sync_empties_the_list() {
     );
     assert_eq!(
         board.domain.get(parent).expect("parent").status,
-        HumanStatus::Started
+        HumanStatus::Doing
     );
 }
 

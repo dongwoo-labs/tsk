@@ -2,14 +2,14 @@
 │                                                                                │
 │ board  ·  desk ▾  ·  sort number ▾                                             │
 │                                                                                │
-│ ON DECK · desk ──────────────────────────────────────────────────────────────4 │
+│ TODO · desk ─────────────────────────────────────────────────────────────────4 │
 │                                                                                │
 │▸ ○ T50 Ready planning pass                                                     │
 │  ○ T51 Ready release check                                                     │
+│  ○ T52 Inbox capture one                                                       │
+│  ○ T53 Inbox capture two                                                       │
 │                                                                                │
-│ ▾ inbox · 2                                                                    │
-│  ◌ T52 Inbox capture one                                                       │
-│  ◌ T53 Inbox capture two                                                       │
+│                                                                                │
 │                                                                                │
 │                                                                                │
 │                                                                                │
@@ -22,5 +22,5 @@
 │                                                                                │
 │────────────────────────────────────────────────────────────────────────────────│
 │ desk                                                                           │
-│ enter open · ctrl+s start · ctrl+o inbox · ctrl+d done · + add · ? help        │
+│ enter open · ctrl+s doing · ctrl+d done · + add · ? help                       │
 └────────────────────────────────────────────────────────────────────────────────┘

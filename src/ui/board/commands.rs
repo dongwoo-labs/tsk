@@ -69,25 +69,14 @@ impl BoardModel {
             // No park / resume / link / dispatch entries.
             commands.extend_from_slice(&[
                 command(
-                    "set status: ready",
-                    BoardIntent::SetStatus(HumanStatus::Ready),
+                    "set status: todo",
+                    BoardIntent::SetStatus(HumanStatus::Todo),
                 ),
                 command(
-                    "set status: open",
-                    BoardIntent::SetStatus(HumanStatus::Open),
+                    "set status: doing",
+                    BoardIntent::SetStatus(HumanStatus::Doing),
                 ),
-                command(
-                    "set status: started",
-                    BoardIntent::SetStatus(HumanStatus::Started),
-                ),
-                command(
-                    "set status: blocked",
-                    BoardIntent::SetStatus(HumanStatus::Blocked),
-                ),
-                command(
-                    "set status: review",
-                    BoardIntent::SetStatus(HumanStatus::Review),
-                ),
+                command("set status: done", BoardIntent::Complete),
                 command("edit notes", BoardIntent::BeginEditNotes),
                 command("change scope", BoardIntent::BeginEditScope),
             ]);

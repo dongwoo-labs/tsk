@@ -19,17 +19,14 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Focus detail / list at 110+ columns | `→` / `←` or `l` / `h` |
 | Add task | `+` |
 | Edit title | `ctrl+e` |
-| Start open or ready task | `ctrl+s` |
-| Set ready, the picked queue | `ctrl+n` |
-| Set open, the inbox | `ctrl+o` |
+| Set Doing from Todo | `ctrl+s` |
+| Set Todo, including reopening Done | `ctrl+o` |
 | Mark done | `ctrl+d` |
-| Toggle blocked / ready | `ctrl+b` |
-| Toggle review / ready | `ctrl+r` |
 | Delete, with a second press to confirm | `ctrl+x` or `ctrl+Delete` |
 | Undo completion/deletion; restore an archived selection | `ctrl+u` |
 | Archive / restore selected task (archived tasks live in the done drawer's archived group) | `ctrl+f` |
 | Open / close done drawer | `d` |
-| Fold or unfold the group: the inbox, or archived in the done drawer | `g` |
+| Fold or unfold archived in the done drawer | `g` |
 | Board tab, list focus | `1` |
 | Scope picker: all, desk, or a project | `p` |
 | Sort by number / by project | `S` |
@@ -47,7 +44,7 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 
 `Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a scope change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
-When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` starts each eligible open or ready task and leaves started, blocked, and review tasks unchanged. Marked done tasks are skipped too, and the status row says so: `started N · skipped M done (ctrl+n or ctrl+o reopens them)`. Bulk block and review toggles send every target to blocked or review unless all targets already have that status, in which case they all return to ready. `ctrl+n` and `ctrl+o` can send done tasks directly to ready or open. One `ctrl+u` reverses an entire marked completion or deletion.
+When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` changes Todo tasks to Doing and leaves Doing tasks unchanged. Marked Done tasks are skipped, and the status row says so: `doing N · skipped M done (ctrl+o reopens them)`. `ctrl+o` sets Todo, including for Done tasks. The old `ctrl+n`, `ctrl+b`, and `ctrl+r` status shortcuts are removed. One `ctrl+u` reverses an entire marked completion or deletion.
 
 ## Task page
 

@@ -128,7 +128,7 @@ fn fixture_flow(export: bool) {
         let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
         model.set_selected_project(None);
         let initial = capture(&model, width, "initial");
-        assert!(!initial.contains("IN MOTION"));
+        assert!(!initial.contains("DOING"));
         if width >= 110 {
             // Wide frames always pair the list with the selected task's detail.
             assert!(initial.contains("Confirm the wording before release."));
@@ -170,7 +170,7 @@ fn fixture_flow(export: bool) {
             KeyModifiers::CONTROL,
             width,
         );
-        assert!(capture(&model, width, "started").contains("IN MOTION"));
+        assert!(capture(&model, width, "doing").contains("DOING"));
         key(
             &mut state,
             &mut model,
@@ -190,7 +190,7 @@ fn fixture_flow(export: bool) {
             .iter()
             .find(|task| task.number == Some(13))
             .unwrap();
-        assert_eq!(task.status, tsk_tui::domain::HumanStatus::Started);
+        assert_eq!(task.status, tsk_tui::domain::HumanStatus::Doing);
         apply_intent(&mut state, &mut model, BoardIntent::BeginAddStep, None).unwrap();
         for ch in "New step".chars() {
             apply_intent(&mut state, &mut model, BoardIntent::EditInsert(ch), None).unwrap();
@@ -227,7 +227,7 @@ fn fixture_flow(export: bool) {
             KeyModifiers::NONE,
             width,
         );
-        assert!(capture(&model, width, "back").contains("IN MOTION"));
+        assert!(capture(&model, width, "back").contains("DOING"));
         // `S` regroups the same rows by project without changing any task.
         key(
             &mut state,
@@ -271,7 +271,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
     );
     let frame = capture(&model, 78, "selection-style");
     assert!(
-        frame.contains("▸ ■ T12"),
+        frame.contains("▸ ● T12"),
         "selection arrow must retain status and number: {frame}"
     );
     let tab_row = buffer

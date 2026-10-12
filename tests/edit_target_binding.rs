@@ -1066,7 +1066,7 @@ fn background_sync_cannot_redirect_a_bound_task_form_while_its_scope_dropdown_is
 
     // The same refresh shape the idle loop uses: Bravo moves ahead in queue order.
     domain
-        .set_status(bravo, tsk_tui::domain::HumanStatus::Started)
+        .set_status(bravo, tsk_tui::domain::HumanStatus::Doing)
         .expect("move Bravo");
     model.sync_from_domain(&domain);
     assert_eq!(model.edit_target(), Some(alpha));

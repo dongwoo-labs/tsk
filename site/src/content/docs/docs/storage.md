@@ -3,7 +3,7 @@ title: Storage
 description: Task data, backups, deleted tasks, and update checks.
 ---
 
-The board, CLI, and Herdr plugin share one store. The current store format is v6. Each task can store one optional `parent_task_id` UUID. Missing fields in older tasks and trash entries mean no parent. Relationships use the same locked, revision-checked atomic save path as other task fields; child counts are calculated and are not stored.
+The board, CLI, and Herdr plugin share one store. The current store format is v7. Task statuses are strictly `todo`, `doing`, and `done`. The v6 → v7 migration maps open/ready to todo, started/blocked/review to doing, and done to done without adding history events or changing revisions, steps, archive flags, parent links, or Task.thread. Each task can store one optional `parent_task_id` UUID. Missing fields in older tasks and trash entries mean no parent. Relationships use the same locked, revision-checked atomic save path as other task fields; child counts are calculated and are not stored.
 
 ## Location
 
@@ -25,15 +25,29 @@ Herdr's plugin-specific state/config directories do not override these locations
 | `tsk.json.v<N>` | Backup made when migrating an older store format, such as `tsk.json.v4` for the v4 → v5 migration |
 | `delivery.json` | Which starter tasks this install has received or dismissed, and the newest release note it has seen |
 
-An older binary refuses a newer or unversioned store instead of rewriting it. Use a compatible tsk version to open it. On first save, v5 stores migrate to v6 with no parent by default, keeping task data, history, undo, and trash. The original document is saved as `tsk.json.v5`. Older stores keep their own original-version backup; the v4 to v5 step still enables batch undo. Earlier stores still run through each migration in order, including the v3 to v4 move from ready to open.
+An older binary refuses a newer or unversioned store instead of rewriting it. Use a compatible tsk version to open it. On first save, v5 stores migrate through v6 (no parent by default) to v7, keeping task data, history, undo, and trash. The original document is saved as `tsk.json.v5`. Older stores keep their own original-version backup; the v4 to v5 step still enables batch undo. Earlier stores still run through each migration in order, including the v3 to v4 move from ready to open.
+
+Legacy trash statuses are normalized before parsing. Before the first trash rewrite, the original bytes are saved as `trash.jsonl.pre-v7`; a backup failure refuses the rewrite. To roll back, stop all writers and restore the matching `tsk.json.v<N>` and `trash.jsonl.pre-v7` together. Keep private question snapshots unchanged. A live backup alone is not a complete rollback after trash conversion.
 
 Archived tasks stay in the task document with their existing status. [Archive and restore](/docs/board/#archive).
+
+## Agent questions and private records
+
+Question commands require an explicit Agent `--state-dir` or `TSK_STATE_DIR` that is not the personal default directory. They never fall back to the personal board. The personal-root names (`.tsk` under `HOME` or `USERPROFILE`, and `tsk` under `LOCALAPPDATA`) and their ASCII case variants are reserved, including child paths when that root does not exist yet. Existing symlinks and parent components resolve before the isolation check. Shared `tsk.json` holds only a question UUID, display number, task UUID, kind, shareable summary, and immutable private-snapshot reference. Choose a non-sensitive summary: it is not automatically redacted.
+
+Full questions, options, recommendations, impact, blocking scope, origin Thread, recipient, finding details/path, approval terms, answers and source metadata stay in `questions-private/`. This directory is excluded from Git. There is no new chmod protection, PIN, ACL, encryption, signature, or user authentication. A process running as the same OS user can impersonate a UI caller; confirmation records are not cryptographic identity evidence.
+
+The existing store lock serializes task and question writes. A new private snapshot and its directory entries are synced before the shared reference is replaced. Missing or corrupt referenced records refuse mutation. Replies and corrections use the expected question revision; corrections append a new answer linked by `corrects_revision`. A question does not change its task's status. Imported actors, history and approvals never issue current approval authority.
+
+A saved reply is separate from its Herdr notification. Registration notifies the recipient; answers and corrections notify the origin Thread. If that Thread ended or notification failed, the Lead can read and resolve the same Q UUID from the same Agent store. Read back the revision before acting; do not apply the same answer twice. A visible post-rename readback after a sync failure is **durability uncertain**, not durable success. Retry notification separately, without saving another answer. No delivery database, message server, or Linear comment replica is maintained.
+
+For deployment or irreversible changes, approval binds to the exact target, action, Git H (40 hexadecimal digits) or plan digest (64 hexadecimal digits), scope, and rollback description. Only a confirmed User UI choice or a Lead record that preserves and verifies the original user-chat approval issues authority. An ordinary Agent CLI reply does not approve an action.
 
 ## Starter guides and release notes
 
 The four starter tasks (`N1`… on your desk) are seeded once per state directory on the first board open. Mark one done, archive it, or delete it and it never returns. Deleting `delivery.json` seeds any starter catalog id the task document no longer holds.
 
-After an upgrade, the first board open adds one `What's new in tsk` task to your desk (in `review`, under NEEDS YOU) when the new version bundles release notes you have not seen. That includes upgrading from a build that only had starter tasks. Every missed release lands in that one task, newest first, with its changelog link in the notes. The notes ship inside the binary; a blank first install records them as seen and shows none. Clear it like any starter task.
+After an upgrade, the first board open adds one `What's new in tsk` task to your desk (in `doing`, under DOING) when the new version bundles release notes you have not seen. That includes upgrading from a build that only had starter tasks. Every missed release lands in that one task, newest first, with its changelog link in the notes. The notes ship inside the binary; a blank first install records them as seen and shows none. Clear it like any starter task.
 
 ## Deleted tasks
 

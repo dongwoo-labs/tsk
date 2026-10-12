@@ -221,7 +221,7 @@ for (const width of [40, 78, 109, 110]) {
   }, info) => {
     await open(page, width);
     await expect(page.locator(".tsk-attribution")).toHaveCount(0);
-    await expect(page.locator(".tsk-sec")).not.toContainText(["IN MOTION"]);
+    await expect(page.locator(".tsk-sec")).toContainText(["DOING"]);
     await capture(page, info, "initial");
     await page.keyboard.press("ArrowDown");
     await expect(row(page, 13)).toHaveClass(/is-sel/);
@@ -251,11 +251,11 @@ for (const width of [40, 78, 109, 110]) {
     await page.keyboard.press("s");
     await expect(row(page, 13).locator(".tsk-row-glyph")).toHaveText("●");
     await expect(row(page, 13)).toHaveClass(/is-sel/);
-    await capture(page, info, "started");
+    await capture(page, info, "doing");
     await page.keyboard.press("Enter");
     await expect(page.locator(".tsk-task-column")).toHaveAttribute(
       "data-status",
-      "started",
+      "doing",
     );
     await expect(page.locator(".tsk-page-notes")).toHaveText(
       "A plain note for the first matched task-page flow.",
@@ -434,7 +434,7 @@ test("projects overview opens a live project preview and keeps its task seat", a
   await page.keyboard.press("Enter");
   await expect(page.locator(".tsk-task-column")).toHaveAttribute(
     "data-status",
-    "blocked",
+    "doing",
   );
   await page.keyboard.press("ArrowLeft");
   await expect(page.locator(".tsk-project-preview.is-live")).toBeVisible();

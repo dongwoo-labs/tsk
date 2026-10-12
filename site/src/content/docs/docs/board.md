@@ -12,7 +12,7 @@ The top row holds the **board** tab, a scope control, and a sort control. Press 
 | Scope | Contents |
 | --- | --- |
 | **all** | Every live task: your desk and every live project |
-| **desk** | Blocked/review and started tasks across all live projects; ready and open tasks from your desk |
+| **desk** | Doing tasks across all live projects; Todo tasks from your desk |
 | *project name* | Tasks in that project |
 
 Launching inside a Git repository opens that project. Outside Git, tsk opens **all**.
@@ -54,30 +54,25 @@ Assign threads when [capturing](/docs/capture/#title-tokens) or [editing a task]
 
 | Section | Status |
 | --- | --- |
-| **NEEDS YOU** | `blocked`, `review` |
-| **IN MOTION** | `started` |
-| **ON DECK** | `ready`, `open` |
-| ↳ **inbox** | `open` |
+| **DOING** | `doing` |
+| **TODO** | `todo` |
 | Done drawer | `done` |
 
-On your desk, **ON DECK** contains only desk tasks. On a project board, it contains that project's ready and open tasks. Ready tasks are the picked queue; open tasks are the untriaged inbox below it. Notice tasks lead within each group. The **inbox** group starts expanded; press `Enter` on its heading or `g` while the done drawer is closed to fold or unfold it. With the drawer open and archived tasks available, `g` addresses its archived group; otherwise it addresses the inbox. Use the thread filter to narrow the tasks.
+Questions do not create a blocked Task status. Human progress is independent of Herdr execution status. On the desk, **DOING** includes live project tasks and **TODO** contains only desk tasks. A project board shows its own tasks. Notice tasks lead within each group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group. Use the thread filter to narrow the tasks.
 
 Every section lists its rows in board order: `N` tasks first, then ascending `T` number, with tasks not yet numbered last. Editing a task, ticking a step, or setting a status never reorders a section; a status change only moves the task to its new section.
 
 Move the cursor with `↑`/`↓` or `j`/`k`. Press `Shift+M` to enter multi-select. While it is active, press `Space` to toggle the cursored task, hold `Shift` with `↑`/`↓` to mark the current task before moving, or click a task to toggle it. Marked rows show `▪`; the cursor remains `▸`. Removing the last mark leaves the mode active. `Shift+M` again while the board owns input, a task action, `Esc`, or a view change such as folding a group or switching scope, threads, or the done drawer exits the mode and clears the session-only set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
-On a task-board list, `ctrl+s`, `ctrl+n`, `ctrl+o`, `ctrl+d`, `ctrl+b`, `ctrl+r`, `ctrl+x`, and `ctrl+f` act on the marked set when it is non-empty. With no marks they act on the cursor. `Enter`, `ctrl+e`, and actions from the task page always use only the cursor.
+On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act on the marked set when it is non-empty. With no marks they act on the cursor. `Enter`, `ctrl+e`, and task-page actions remain cursor-only.
 
 | Key | Action |
 | --- | --- |
-| `ctrl+s` | Start an open or ready task |
-| `ctrl+n` | Set ready, the picked on-deck queue |
-| `ctrl+o` | Set open, the inbox |
-| `ctrl+d` | Mark done |
-| `ctrl+b` | Set blocked; press again to return to ready |
-| `ctrl+r` | Set review; press again to return to ready |
+| `ctrl+s` | Move Todo tasks to Doing |
+| `ctrl+o` | Set Todo, including reopening Done |
+| `ctrl+d` | Mark Done |
 
-`ctrl+s` starts each eligible open or ready task and leaves started, blocked, and review tasks unchanged. Marked done tasks are skipped, and the status row names them: `started N · skipped M done (ctrl+n or ctrl+o reopens them)`. Bulk block and review toggles are all-or-nothing: if every target already has that status they all return to ready, otherwise they all move to that status. Other status verbs are absolute, so repeating the current status does nothing. Done tasks can be sent directly to ready or open.
+Doing and Done tasks are skipped by `ctrl+s`; the status row reports skipped Done tasks. Repeating an absolute status does nothing. The old next, block and review status shortcuts are removed.
 
 Agents can set any status with [the CLI](/docs/cli/#status). Task status does not change automatically when steps are checked or an agent stops.
 
@@ -124,7 +119,7 @@ Narrowing the pane shows one surface, the one that had focus; widening it restor
 
 ## Completed tasks
 
-Press `d` to open or close the done drawer. Select a done task and press `ctrl+n` to return it to ready, or `ctrl+o` to send it to the inbox.
+Press `d` to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
 
 The drawer's **archived** group starts closed. Click its heading or press `Enter` on it to expand. `g` folds or unfolds the group while the drawer is open.
 
@@ -164,11 +159,11 @@ Press `:` on the board or a task page and type to find an action. Use arrows or 
 | Available actions | When |
 | --- | --- |
 | New task, undo, done drawer, help, quit | Always |
-| Set open/ready/started/blocked/review, edit notes, change scope, delete | A task is selected |
+| Set todo/doing/done, edit notes, change scope, delete | A task is selected |
 | Move step up, move step down | A task-page step is selected |
 | Retry save, cancel save | A save has failed |
 
-Search matches letters in order: `ssr` finds `set status: review`.
+Search matches letters in order: `ssd` finds `set status: doing`.
 
 ## Help
 
