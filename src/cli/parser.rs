@@ -49,6 +49,62 @@ pub fn parse_task_address(value: &str) -> Result<TaskAddress, String> {
         .map_err(|_| format!("invalid task id {value}"))
 }
 
+/// Parsed `tsk sync [--init [<remote-url>]]` input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagSync {
+    pub init: bool,
+    /// Remote URL given to `--init`.
+    pub remote: Option<String>,
+    pub json: bool,
+    pub state_dir: Option<PathBuf>,
+    pub help: bool,
+}
+
+/// Parse `tsk sync` arguments, including argv0 and the `sync` subcommand. The one
+/// positional is the remote URL and is accepted only with `--init`.
+pub fn parse_flag_sync(args: &[String]) -> Result<FlagSync, String> {
+    if args.get(1).map(String::as_str) != Some("sync") {
+        return Err("expected sync command".into());
+    }
+    let mut parsed = FlagSync {
+        init: false,
+        remote: None,
+        json: false,
+        state_dir: None,
+        help: false,
+    };
+    let mut index = 2;
+    while let Some(flag) = args.get(index).map(String::as_str) {
+        match flag {
+            "--help" => parsed.help = true,
+            "--init" => parsed.init = true,
+            "--json" => parsed.json = true,
+            flag if flag.starts_with("--state-dir=") => {
+                parsed.state_dir = Some(PathBuf::from(flag["--state-dir=".len()..].to_owned()));
+            }
+            "--state-dir" => match args.get(index + 1) {
+                Some(value) if !value.starts_with('-') => {
+                    parsed.state_dir = Some(PathBuf::from(value));
+                    index += 1;
+                }
+                _ => return Err("missing value for --state-dir".into()),
+            },
+            flag if flag.starts_with('-') => return Err(format!("unknown sync argument {flag}")),
+            url => {
+                if parsed.remote.is_some() {
+                    return Err(format!("unexpected sync argument {url}"));
+                }
+                parsed.remote = Some(url.to_owned());
+            }
+        }
+        index += 1;
+    }
+    if parsed.remote.is_some() && !parsed.init && !parsed.help {
+        return Err("a remote URL is accepted only with --init".into());
+    }
+    Ok(parsed)
+}
+
 /// Parsed `trash` input. Positionals are the action (`restore`) and the task address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagTrash {

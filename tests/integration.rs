@@ -10,6 +10,7 @@ mod cli_help;
 mod cli_router_process;
 mod cli_status;
 mod cli_steps;
+mod cli_sync;
 mod cli_terminal_escape;
 mod cli_trash;
 mod docs_parity;

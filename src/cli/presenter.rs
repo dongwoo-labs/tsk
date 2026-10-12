@@ -124,7 +124,8 @@ pub fn top_level_help() -> String {
         "  archive    keep a task off the working views\n",
         "  unarchive  put an archived task back\n",
         "  project    archive or unarchive a project\n",
-        "  trash      restore a trashed task\n\n",
+        "  trash      restore a trashed task\n",
+        "  sync       share the board through git\n\n",
         "Setup\n",
         "  setup    register herdr, or install the agent skill\n",
         "  update   install the latest stable release\n",
@@ -1112,6 +1113,187 @@ pub fn trash_rejected(error: TrashCliError) -> CliOutput {
         stdout: String::new(),
         stderr: format!("tsk trash: {detail}\n"),
         code,
+    }
+}
+
+const SYNC_USAGE: &str = "tsk sync [--init [<remote-url>]] [--json] [--state-dir <dir>]";
+
+pub fn sync_help() -> CliOutput {
+    help(HelpDoc {
+        usage: vec![SYNC_USAGE.into()],
+        purpose: "Share the board through git. --init makes the state directory a git repository with a merge driver for tsk.json; a plain sync commits local changes, then fetches, merges, and pushes when a remote exists. Nothing syncs in the background.".into(),
+        groups: vec![
+            group(
+                "Output",
+                &[("--json", "print one result object")],
+            ),
+            group(
+                "Values",
+                &[
+                    ("--init", "set up or repair sync in the state directory; safe to re-run"),
+                    ("<remote-url>", "with --init, add it as the remote origin"),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk sync --init git@github.com:me/board.git".into(),
+            "tsk sync".into(),
+            "TSK_STATE_DIR=~/board tsk sync --init".into(),
+        ],
+        refusals: vec![
+            "not set up for sync, or the state directory is inside or tracks another repository".into(),
+            "origin already points elsewhere".into(),
+            "the remote board cannot be merged or loaded; the board here is unchanged".into(),
+        ],
+        exit: [
+            "0 synced or set up",
+            "1 refused, the board here is unchanged",
+            "2 usage, nothing changed",
+            "3 git or store failure partway, run tsk sync again",
+        ]
+        .join(" · "),
+    })
+}
+
+pub fn sync_usage(reason: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk sync: {}\nusage: {SYNC_USAGE}\n", human_reason(reason)),
+        code: 2,
+    }
+}
+
+pub fn sync_initialized(report: crate::sync::InitReport, json: bool) -> CliOutput {
+    let stdout = if json {
+        let mut text = serde_json::json!({
+            "initialized": true,
+            "dir": report.dir.to_string_lossy(),
+            "created_repo": report.created_repo,
+            "remote": report.remote,
+            "commit": report.commit,
+        })
+        .to_string();
+        text.push('\n');
+        text
+    } else {
+        let mut text = format!(
+            "{} sync in {}\n",
+            if report.created_repo {
+                "set up"
+            } else {
+                "checked"
+            },
+            human_reason(&report.dir.to_string_lossy())
+        );
+        if let Some(remote) = &report.remote {
+            text.push_str(&format!("remote origin {}\n", human_reason(remote)));
+        }
+        match &report.commit {
+            Some(commit) => text.push_str(&format!("committed {commit}\n")),
+            None => text.push_str("nothing to commit\n"),
+        }
+        text.push_str(if report.remote.is_some() {
+            "run tsk sync to share the board\n"
+        } else {
+            "no remote yet: run tsk sync --init <remote-url> to add one\n"
+        });
+        text
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn synced(report: crate::sync::SyncReport, json: bool) -> CliOutput {
+    let stdout = if json {
+        let mut text = serde_json::json!({
+            "committed": report.commit.is_some(),
+            "commit": report.commit,
+            "upstream": report.upstream,
+            "merged": report.merged,
+            "pushed": report.pushed,
+            "tasks": {
+                "added": report.added,
+                "updated": report.updated,
+                "removed": report.removed,
+            },
+        })
+        .to_string();
+        text.push('\n');
+        text
+    } else {
+        let mut text = match &report.commit {
+            Some(commit) => format!("committed local changes ({commit})\n"),
+            None => "no local changes\n".to_string(),
+        };
+        match &report.upstream {
+            None => text.push_str("no remote: changes stay in this state directory\n"),
+            Some(upstream) => {
+                let upstream = human_reason(upstream);
+                if report.merged {
+                    text.push_str(&format!(
+                        "merged {upstream}: {} added, {} updated, {} removed\n",
+                        report.added, report.updated, report.removed
+                    ));
+                } else {
+                    text.push_str(&format!("nothing new on {upstream}\n"));
+                }
+                if report.pushed {
+                    text.push_str(&format!("pushed to {upstream}\n"));
+                } else {
+                    text.push_str("nothing to push\n");
+                }
+            }
+        }
+        text
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn sync_rejected(error: crate::sync::SyncError) -> CliOutput {
+    let (stderr, code) = match error {
+        crate::sync::SyncError::Refused(message) => {
+            (format!("tsk sync: {}\n", human_reason(&message)), 1)
+        }
+        crate::sync::SyncError::Failed(message) => (
+            format!(
+                "tsk sync: {}\nstate is indeterminate, run tsk sync again\n",
+                human_reason(&message)
+            ),
+            3,
+        ),
+    };
+    CliOutput {
+        stdout: String::new(),
+        stderr,
+        code,
+    }
+}
+
+/// `tsk merge-driver` is git's hook, not a user verb: one usage line, no reference page.
+pub fn merge_driver_usage(reason: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!(
+            "tsk merge-driver: {}\nusage: tsk merge-driver <base> <ours> <theirs>\n",
+            human_reason(reason)
+        ),
+        code: 2,
+    }
+}
+
+pub fn merge_driver_failed(reason: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk merge-driver: {}\n", human_reason(reason)),
+        code: 1,
     }
 }
 

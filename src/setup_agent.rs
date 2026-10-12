@@ -1119,7 +1119,7 @@ mod tests {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         assert_eq!(
-            hash, 0xee98_27ca_9331_d3bf,
+            hash, 0xdb19_be43_44c0_5755,
             "skills/tsk-cli/SKILL.md changed: refresh this hash pin, and bump `version:` only if this is the first skill edit since the last release"
         );
     }

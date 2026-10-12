@@ -29,14 +29,17 @@ fn main() -> ExitCode {
         | Surface::Trash
         | Surface::Archive
         | Surface::Unarchive
-        | Surface::Project => match tsk_tui::store::require_home_or_override(&args) {
+        | Surface::Project
+        | Surface::Sync => match tsk_tui::store::require_home_or_override(&args) {
             Ok(()) => headless_main(args),
             Err(message) => {
                 eprintln!("tsk: {message}");
                 ExitCode::from(1)
             }
         },
-        Surface::Setup | Surface::Guide | Surface::Help => headless_main(args),
+        Surface::Setup | Surface::Guide | Surface::Help | Surface::MergeDriver => {
+            headless_main(args)
+        }
         Surface::Board | Surface::Capture => match tsk_tui::store::require_home_or_override(&args)
             .map_err(|message| message.into())
             .and_then(|()| tsk_tui::run(args))

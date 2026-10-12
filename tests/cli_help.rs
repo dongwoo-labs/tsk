@@ -115,6 +115,18 @@ verb_help_test!(
     ]
 );
 verb_help_test!(
+    sync_help_has_reference_sections,
+    ["sync", "--help"],
+    [
+        "usage:",
+        "Output",
+        "Values",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
     archive_help_has_reference_sections,
     ["archive", "--help"],
     [

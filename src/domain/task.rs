@@ -11,6 +11,9 @@ use uuid::Uuid;
 use super::{ProvenanceOrigin, TaskEvent, TaskEventKind, UndoEntry, UNDO_CAP};
 use crate::scope::paths_equivalent;
 
+mod merge;
+pub use merge::{merge_documents, MergeError};
+
 /// Human-facing task progress. Source of truth for board state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

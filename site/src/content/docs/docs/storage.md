@@ -1,6 +1,6 @@
 ---
 title: Storage
-description: Task data, backups, deleted tasks, and update checks.
+description: Task data, backups, deleted tasks, git sync, and update checks.
 ---
 
 The board, CLI, and Herdr plugin share one store. The current store format is v5.
@@ -45,6 +45,49 @@ tsk trash restore T12
 ```
 
 The list includes both recently deleted tasks still in the main store and tasks in trash. Restore reads trash; use board undo for a recent deletion that has not moved there yet.
+
+## Share through git
+
+`tsk sync` shares one board between machines, and with agents that run elsewhere, through a git repository. The state directory becomes that repository: `tsk.json` and `trash.jsonl` are committed, and machine-local files (`tsk.json.lock`, `tsk.json.1`, `tsk.json.v<N>`, temp files, `delivery.json`, `update.json`) are ignored.
+
+1. Create an empty **private** repository on your git host. The board holds your task titles and notes.
+2. On the first machine, set up sync and push the board:
+
+   ```sh
+   tsk sync --init git@github.com:me/tsk-board.git
+   tsk sync
+   ```
+
+3. On every other machine, or for an agent with its own checkout, clone it and run init once in the clone. Init installs the merge driver, which a clone does not carry:
+
+   ```sh
+   git clone git@github.com:me/tsk-board.git ~/tsk-board
+   TSK_STATE_DIR=~/tsk-board tsk sync --init
+   TSK_STATE_DIR=~/tsk-board tsk sync
+   ```
+
+4. Use the board as usual with the same `TSK_STATE_DIR` (`tsk list`, `tsk add`, `tsk status`, the board itself), and run `tsk sync` to publish your changes and pick up everyone else's. An agent runs `tsk sync` before reading and after writing.
+
+`tsk sync --init <url>` on a machine that already has its own board joins the remote board: the next `tsk sync` merges the two, and tasks from both keep unique numbers. Re-running `tsk sync --init` is safe; it repairs `.gitignore`, `.gitattributes`, and the merge-driver config without duplicating anything. It refuses a state directory that sits inside another git repository or already tracks other files, and it never changes an existing `origin`.
+
+There is no background sync: changes travel only when someone runs `tsk sync`. Git uses your usual credentials; sync never prompts for them.
+
+### How boards merge
+
+When both sides changed `tsk.json`, git runs `tsk merge-driver` (configured by init, hidden from help), which merges by task:
+
+| Case | Result |
+| --- | --- |
+| New on one side | Kept |
+| Changed on one side | That side's version |
+| Changed on both sides | The later edit (`updated_at`); a tie keeps the local version |
+| Deleted (trashed) on one side, untouched on the other | Deleted |
+| Deleted on one side, changed on the other | The changed task is kept |
+| Two tasks with the same number | The task that had it first keeps it; the other gets the next free number, so `T` numbers stay unique |
+
+Archived projects from both sides are kept. Undo history stays per machine. `trash.jsonl` keeps the lines of both sides.
+
+Every machine must run the same store format. If the remote board was written by a newer tsk, or the merged board would not load, sync refuses with exit 1 and leaves your board as it was; upgrade tsk and run `tsk sync` again. The board before each merge is kept as `tsk.json.1`.
 
 ## Update check
 

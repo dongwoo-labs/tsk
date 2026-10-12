@@ -70,6 +70,8 @@ where
         Some("edit") => run_edit(args),
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
+        Some("sync") => run_sync(args),
+        Some("merge-driver") => run_merge_driver(args),
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -79,7 +81,7 @@ where
             run_archive(args, verb, archive)
         }
         _ => presenter::usage(
-            "expected add, steps, list, status, edit, trash, archive, unarchive, or project command",
+            "expected add, steps, list, status, edit, trash, archive, unarchive, project, or sync command",
         ),
     }
 }
@@ -101,6 +103,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "archive" => presenter::archive_help("archive"),
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
+            "sync" => presenter::sync_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),
@@ -210,6 +213,49 @@ fn run_project(args: Vec<String>) -> CliOutput {
     match archive::run_project(name, archive, input.state_dir) {
         Ok(result) => presenter::project_archived(result, verb),
         Err(error) => presenter::archive_rejected(error, verb),
+    }
+}
+
+fn run_sync(args: Vec<String>) -> CliOutput {
+    let input = match parser::parse_flag_sync(&args) {
+        Ok(input) => input,
+        Err(reason) => return presenter::sync_usage(&reason),
+    };
+    if input.help {
+        return presenter::sync_help();
+    }
+    let dir = input
+        .state_dir
+        .unwrap_or_else(crate::store::default_state_dir);
+    if input.init {
+        match crate::sync::init(&dir, input.remote.as_deref()) {
+            Ok(report) => presenter::sync_initialized(report, input.json),
+            Err(error) => presenter::sync_rejected(error),
+        }
+    } else {
+        match crate::sync::sync(&dir) {
+            Ok(report) => presenter::synced(report, input.json),
+            Err(error) => presenter::sync_rejected(error),
+        }
+    }
+}
+
+/// Git's merge driver for `tsk.json`; hidden from help.
+fn run_merge_driver(args: Vec<String>) -> CliOutput {
+    let [base, ours, theirs] = args.get(2..).unwrap_or(&[]) else {
+        return presenter::merge_driver_usage("expected <base> <ours> <theirs>");
+    };
+    match crate::sync::merge_driver(
+        std::path::Path::new(base),
+        std::path::Path::new(ours),
+        std::path::Path::new(theirs),
+    ) {
+        Ok(()) => CliOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            code: 0,
+        },
+        Err(reason) => presenter::merge_driver_failed(&reason),
     }
 }
 
