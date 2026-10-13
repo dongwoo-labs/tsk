@@ -97,7 +97,7 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | `PgUp` / `PgDn` or the wheel | Scroll the page |
 | `Esc` | Back to the list; at the list, quit |
 
-The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, `r resends`) to act as that key does. Every footer key is a button too, so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
+The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, `r resends`) to act as that key does. Every footer action is a button too (the `j/k` pair only names the keys), so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
 
 A page opens at its top. Scrolling never moves the chosen option or the check; choosing an option, checking, or typing brings that line back into view above the `↓ n more rows` line.
 

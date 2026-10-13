@@ -599,6 +599,8 @@ import { parseCapture } from "./capture.js";
       task
         ? `T${task.number} ${task.title} · t opens`
         : `${q.taskId} not found`,
+      "",
+      'data-q-key="t"',
     );
     indented("from    ", `${q.origin} → ${audienceWord(q)}`);
     if (q.leadRecipient) indented("lead    ", q.leadRecipient, "dim");
@@ -656,6 +658,7 @@ import { parseCapture } from "./capture.js";
             ? "enter saves the correction · the earlier answer stays in history"
             : "enter saves the answer",
         "dim",
+        'data-q-key="Enter"',
       );
     } else if (isOpen(q) && !q.audience) {
       blank();
@@ -665,7 +668,7 @@ import { parseCapture } from "./capture.js";
       );
     } else if (isOpen(q) && q.kind === "question" && !state.q.answer) {
       blank();
-      push("enter writes an answer", "dim");
+      push("enter writes an answer", "dim", 'data-q-key="Enter"');
     }
     if (state.q.answer?.id === q.id) {
       blank();
@@ -681,9 +684,14 @@ import { parseCapture } from "./capture.js";
         push(
           "r resends the run request · it never creates another task",
           "dim",
+          'data-q-key="r"',
         );
       if (q.kind !== "approval" && state.q.correcting !== q.id)
-        push("c corrects · the earlier answer stays in history", "dim");
+        push(
+          "c corrects · the earlier answer stays in history",
+          "dim",
+          'data-q-key="c"',
+        );
     }
     if (state.q.report[q.id]) {
       blank();
@@ -1901,6 +1909,25 @@ import { parseCapture } from "./capture.js";
       )
       .join("<span> · </span>");
   }
+  // The key a questions footer entry names; the `j/k` pair only names keys.
+  function questionFooterKey(token) {
+    if (token === "enter" || token === "enter/→") return "Enter";
+    if (token === "esc") return "Escape";
+    if (token === "space") return " ";
+    if (token === "J/K") return "J";
+    return [...token].length === 1 ? token : null;
+  }
+  function questionFooterButtons(hint) {
+    return hint
+      .split(" · ")
+      .map((entry) => {
+        const key = questionFooterKey(entry.split(" ")[0]);
+        return key
+          ? `<button type="button" class="tsk-verb" data-q-key="${esc(key)}">${esc(entry)}</button>`
+          : `<span>${esc(entry)}</span>`;
+      })
+      .join("<span> · </span>");
+  }
   function hintBar(items) {
     return items
       .map(
@@ -1915,7 +1942,7 @@ import { parseCapture } from "./capture.js";
     let hint = "";
     let verbs;
     if (state.tab === "questions") {
-      verbs = esc(questionFooterHint(wide));
+      verbs = questionFooterButtons(questionFooterHint(wide));
     } else if (state.edit || steps.editor || steps.dirty) {
       verbs = "shift+enter save · tab next field · esc cancel";
     } else if (state.page) {
@@ -2717,17 +2744,30 @@ import { parseCapture } from "./capture.js";
       state.sort = state.sort === "number" ? "project" : "number";
     } else if (hit("[data-waiting]")) {
       selectTab("questions");
-    } else if ((node = hit("[data-q-option]"))) {
+    } else if ((node = hit("[data-q-option], [data-q-check], [data-q-key]"))) {
+      // A click on the wide preview opens that record before it acts.
+      const shown = node.closest("[data-q-page]")?.dataset.qPage;
+      if (shown && state.q.page !== shown) openQuestion(shown);
+      const key = node.dataset.qCheck ? " " : node.dataset.qKey;
       const q = questionById(state.q.page);
-      if (q) state.q.options[q.id] = Number(node.dataset.qOption);
-    } else if (hit("[data-q-check]")) {
-      handleQuestionsKey({
-        key: " ",
-        ctrlKey: false,
-        metaKey: false,
-        altKey: false,
-        preventDefault() {},
-      });
+      if (node.dataset.qOption !== undefined) {
+        if (q && choosing(q) && !state.q.answer)
+          state.q.options[q.id] = Number(node.dataset.qOption);
+      } else if (state.q.answer && key === "Enter") {
+        state.q.answer.text = root.querySelector("#tsk-answer")?.value ?? "";
+        questionEnter();
+      } else if (state.q.answer && key === "Escape") {
+        state.q.answer = null;
+        if (state.q.correcting) state.q.correcting = null;
+      } else if (!state.q.answer) {
+        handleQuestionsKey({
+          key,
+          ctrlKey: false,
+          metaKey: false,
+          altKey: false,
+          preventDefault() {},
+        });
+      }
     } else if ((node = hit("[data-question]"))) {
       openQuestion(node.dataset.question);
     } else if ((node = hit("[data-copy-task]")) && !state.markMode) {
