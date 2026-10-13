@@ -3474,6 +3474,32 @@ mod tests {
     }
 
     #[test]
+    fn question_page_dims_field_labels_and_indents_the_original() {
+        use crate::ui::questions::{page_rows, QuestionsState};
+        let record = open_question_with_options();
+        let rows = page_rows(&QuestionsState::default(), &record, &[], 60);
+        let from = rows
+            .iter()
+            .find(|row| row.text.starts_with("from "))
+            .expect("from field");
+        assert_eq!(
+            &from.text[..from.label],
+            "from    ",
+            "the label alone is dim"
+        );
+        let heading = rows
+            .iter()
+            .position(|row| row.text == "local original · never shared")
+            .expect("original heading");
+        assert_eq!(
+            rows[heading + 1].text,
+            "  body",
+            "the original reads indented"
+        );
+        assert_eq!(rows[heading + 1].label, 0);
+    }
+
+    #[test]
     fn question_page_options_and_footer_keys_answer_by_mouse_at_every_width() {
         use crate::ui::questions::{PageClick, QuestionFeed, QuestionIntent};
         use crate::ui::render::QueueHitTarget;
