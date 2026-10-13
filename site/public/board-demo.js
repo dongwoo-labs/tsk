@@ -310,6 +310,7 @@ import { parseCapture } from "./capture.js";
       returnQuestion: null,
       returnDepth: 0,
       closedOpen: false,
+      comments: {},
     },
   };
   const steps = new TaskSteps();
