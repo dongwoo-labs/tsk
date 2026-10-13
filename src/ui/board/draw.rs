@@ -404,9 +404,62 @@ fn build_task_page_overlay<'a>(
         .flatten();
     let mut header_rows: Vec<String> = Vec::new();
     let mut title_cursor = None;
-    // The wide column paints its own two-row header (`draw_task_column`), so the in-page
-    // header rows are only built for the single-pane page that actually consumes them.
-    if !column {
+    // The wide column paints its own header (`draw_task_column`): its rows are the bare
+    // wrapped title, without the glyph prefix, at the room the identifier and state slot
+    // leave. They are capped so one body row survives under the header rule.
+    if column {
+        let editing = editing_title && model.focused_surface() == tier::FocusedSurface::Task;
+        let glyph_w = render::display_width(glyph);
+        let id_w = bound_task
+            .and_then(|task| task.board_identifier())
+            .as_deref()
+            .map(render::display_width)
+            .unwrap_or(0);
+        // The painted state slot keeps one trailing pad cell.
+        let state_w = bound_task
+            .map(|task| render::display_width(&task_header_state(model, form, task)))
+            .unwrap_or(0)
+            + 1;
+        let room = render::task_header_title_room(width, glyph_w, id_w, state_w).max(1);
+        let header_cap = render::task_column_title_cap(&page_geo);
+        form.title_wrap_width.set(room);
+        if editing {
+            let (mut rows, cursor_row, cursor_col) = wrapped_edit_rows(&form.title, room);
+            let overflowed = rows.len() > header_cap;
+            rows.truncate(header_cap);
+            if overflowed {
+                if let Some(last) = rows.last_mut() {
+                    *last = present_line(last, room.saturating_sub(1));
+                }
+            }
+            let shown_cursor_row = cursor_row.min(rows.len().saturating_sub(1));
+            let shown_cursor_col = if cursor_row > shown_cursor_row {
+                rows.last()
+                    .map(|last| render::display_width(last))
+                    .unwrap_or(0)
+            } else {
+                cursor_col
+            };
+            title_cursor = Some((
+                u16::try_from(shown_cursor_row).unwrap_or(u16::MAX),
+                u16::try_from(shown_cursor_col).unwrap_or(u16::MAX),
+            ));
+            header_rows = rows;
+        } else {
+            let mut rows: Vec<String> = wrap_text(form.title.value(), room)
+                .iter()
+                .map(|row| row.text.clone())
+                .collect();
+            let overflowed = rows.len() > header_cap;
+            rows.truncate(header_cap);
+            if overflowed {
+                if let Some(last) = rows.last_mut() {
+                    *last = present_line(last, room.saturating_sub(1));
+                }
+            }
+            header_rows = rows;
+        }
+    } else {
         let word_cells = status_word.chars().count() + 1;
         let identifier_cells = header_identifier
             .as_deref()
@@ -477,7 +530,7 @@ fn build_task_page_overlay<'a>(
         }
     }
     let lay = if column {
-        render::task_column_layout(&page_geo)
+        render::task_column_layout(&page_geo, header_rows.len().max(1) as u16)
     } else {
         render::task_page_layout(
             &page_geo,
@@ -1562,41 +1615,29 @@ fn draw_wide_board(
     });
     let header_identifier = header_task.and_then(|(_, task)| task.board_identifier());
     let header_state = header_task.map(|(form, task)| task_header_state(model, form, task));
-    let editing_title = task_focus && model.input_mode() == BoardInputMode::EditTitle;
-    let header_title: Option<(String, Option<u16>)> = header_task.map(|(form, task)| {
-        if editing_title {
-            let width = task_geo.map(|geo| geo.row_width as usize).unwrap_or(0);
-            let glyph_w = render::display_width(render::status_glyph(task.status));
-            let id_w = header_identifier
-                .as_deref()
-                .map(render::display_width)
-                .unwrap_or(0);
-            // The painted state slot keeps one trailing pad cell.
-            let state_w = header_state
-                .as_deref()
-                .map(render::display_width)
-                .unwrap_or(0)
-                + 1;
-            let room = render::task_header_title_room(width, glyph_w, id_w, state_w);
-            let (text, cursor) = escaped_line_window(&form.title, room.max(1));
-            (text, Some(cursor))
-        } else {
-            (form.title.value().to_string(), None)
-        }
-    });
-    let header = header_title
-        .as_ref()
-        .map(|(title, cursor)| render::TaskColumnHeader {
-            glyph: header_task
-                .map(|(_, task)| render::status_glyph(task.status))
-                .unwrap_or("○"),
-            identifier: header_identifier.as_deref(),
-            identifier_task: header_task.and_then(|(form, _)| form.task_id()),
-            title,
-            title_cursor_col: *cursor,
-            state: header_state.as_deref().unwrap_or_default(),
-            bold: task_focus,
-        });
+    // The page builder wrapped the title for this column (and mapped the caret while the
+    // title is edited), so the header and the body layout count the same rows.
+    let header_title = match &task_overlay {
+        QueueOverlay::TaskPage {
+            header_rows,
+            title_cursor,
+            ..
+        } => Some((header_rows.as_slice(), *title_cursor)),
+        _ => None,
+    };
+    let header = header_task
+        .zip(header_title)
+        .map(
+            |((form, task), (title_rows, title_cursor))| render::TaskColumnHeader {
+                glyph: render::status_glyph(task.status),
+                identifier: header_identifier.as_deref(),
+                identifier_task: form.task_id(),
+                title_rows,
+                title_cursor,
+                state: header_state.as_deref().unwrap_or_default(),
+                bold: task_focus,
+            },
+        );
 
     let board_frame = QueueFrameModel {
         tasks: &model.tasks,

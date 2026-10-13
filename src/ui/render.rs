@@ -549,7 +549,8 @@ pub enum QueueOverlay<'a> {
     TaskPage {
         /// The title's wrapped rows. Row 0 carries the status glyph; later rows are
         /// bare segments the painter indents under it. View mode wraps the stored
-        /// title; edit mode wraps the draft.
+        /// title; edit mode wraps the draft. A wide column carries bare rows (no glyph)
+        /// that [`draw_task_column`] paints in its own header.
         header_rows: Vec<String>,
         /// Dim leading identifier on a persisted task page in view mode only.
         header_identifier: Option<String>,
@@ -949,8 +950,8 @@ pub fn task_header_title_room(width: usize, glyph_w: usize, id_w: usize, state_w
         .saturating_sub(state_w)
 }
 
-/// Two-row header of the wide task column: `● T12 title … started · tsk` on the selector
-/// row, then a full-width dash rule on the row under it.
+/// Header of the wide task column: `● T12 title … started · tsk` on the selector row, the
+/// title's further wrapped rows indented under its first cell, then a full-width dash rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskColumnHeader<'a> {
     /// Status glyph (`●`, `○`, …) restored before the identifier.
@@ -959,10 +960,11 @@ pub struct TaskColumnHeader<'a> {
     pub identifier: Option<&'a str>,
     /// Task the identifier copies, for its hit region.
     pub identifier_task: Option<Uuid>,
-    /// Title text (the draft, windowed, while the title is being edited).
-    pub title: &'a str,
-    /// Caret column inside `title` while the title editor is active.
-    pub title_cursor_col: Option<u16>,
+    /// Wrapped title rows (the draft's, while the title is being edited), already wrapped
+    /// to [`task_header_title_room`] and capped by [`task_column_title_cap`].
+    pub title_rows: &'a [String],
+    /// Caret (row, col) inside `title_rows` while the title editor is active.
+    pub title_cursor: Option<(u16, u16)>,
     /// Right state slot: `status · project`, `editing <field>`, or `unsaved`.
     pub state: &'a str,
     /// BOLD in the task-owned stages, DIM for the stage A preview.
@@ -988,14 +990,24 @@ pub fn draw_task_column(
         return hits;
     }
     frame.render_widget(Clear, surface);
-    let lay = task_column_layout(geo);
+    let title_rows = header
+        .map(|header| header.title_rows.len().max(1) as u16)
+        .unwrap_or(1);
+    let lay = task_column_layout(geo, title_rows);
     let header_row = lay.title_y;
     let weight = |bold: bool| if bold { style_bold() } else { style_dim() };
-    let rule_y = header_row.saturating_add(1);
+    // The layout clamps the title rows; the rule sits right above the body.
+    let title_rows = lay
+        .notes_y
+        .saturating_sub(header_row)
+        .saturating_sub(1)
+        .max(1);
+    let rule_y = header_row.saturating_add(title_rows);
     match header {
         Some(header) => {
-            // Title row: glyph, identifier, title, and the right state slot. The dash rule
-            // lives on the row under it, and the body starts below that.
+            // First title row: glyph, identifier, title, and the right state slot. Further
+            // wrapped rows indent under the title's first cell; the dash rule lives on the
+            // row under the last one, and the body starts below that.
             let state = format!("{} ", header.state);
             let state_w = display_width(&state);
             let glyph_w = display_width(header.glyph);
@@ -1006,7 +1018,8 @@ pub fn draw_task_column(
             // Chrome cap, not task text: the title yields to one gap cell and the state.
             let title_room =
                 task_header_title_room(width as usize, glyph_w, display_width(identifier), state_w);
-            let title = present_line(header.title, title_room);
+            let first = header.title_rows.first().map(String::as_str).unwrap_or("");
+            let title = present_line(first, title_room);
             let title_w = display_width(&title);
             let pad_w = (width as usize).saturating_sub(lead_w + title_w + state_w);
             let spans = vec![
@@ -1026,6 +1039,45 @@ pub fn draw_task_column(
                 width,
                 bound_line(Line::from(spans), width as usize),
             );
+            let title_x = u16::try_from(lead_w).unwrap_or(u16::MAX);
+            let mut copyable = Vec::new();
+            if title_w > 0 {
+                copyable.push(Rect::new(
+                    title_x,
+                    header_row,
+                    u16::try_from(title_w).unwrap_or(u16::MAX),
+                    1,
+                ));
+            }
+            for (offset, row_text) in header.title_rows.iter().enumerate().skip(1) {
+                let y = header_row.saturating_add(offset as u16);
+                if offset as u16 >= title_rows || y >= lay.bottom {
+                    break;
+                }
+                let row = present_line(row_text, title_room);
+                let row_w = display_width(&row);
+                put_line(
+                    frame,
+                    surface,
+                    y,
+                    width,
+                    bound_line(
+                        Line::from(vec![
+                            Span::styled(" ".repeat(lead_w), style_plain()),
+                            Span::styled(row, weight(header.bold)),
+                        ]),
+                        width as usize,
+                    ),
+                );
+                if row_w > 0 {
+                    copyable.push(Rect::new(
+                        title_x,
+                        y,
+                        u16::try_from(row_w).unwrap_or(u16::MAX),
+                        1,
+                    ));
+                }
+            }
             if rule_y < lay.bottom {
                 put_line(frame, surface, rule_y, width, paint_rule_row(width));
             }
@@ -1034,7 +1086,7 @@ pub fn draw_task_column(
             // first, so the narrower hits must be pushed last or the title row shadows them.
             hits.push(
                 QueueHitTarget::FormTitle,
-                Rect::new(0, header_row, width, 1),
+                Rect::new(0, header_row, width, title_rows),
             );
             if let (Some(task), false) = (header.identifier_task, identifier.is_empty()) {
                 hits.push(
@@ -1047,23 +1099,22 @@ pub fn draw_task_column(
                     ),
                 );
             }
-            let title_x = u16::try_from(lead_w).unwrap_or(u16::MAX);
-            if title_w > 0 {
-                hits.push_copyable(Rect::new(
-                    title_x,
-                    header_row,
-                    u16::try_from(title_w).unwrap_or(u16::MAX),
-                    1,
-                ));
+            for area in copyable {
+                hits.push_copyable(area);
             }
-            if let Some(col) = header.title_cursor_col {
+            if let Some((row, col)) = header.title_cursor {
                 place_edit_cursor_at(
                     frame,
                     local_rect(
                         surface,
-                        Rect::new(title_x, header_row, width.saturating_sub(title_x), 1),
+                        Rect::new(
+                            title_x,
+                            header_row,
+                            width.saturating_sub(title_x),
+                            title_rows,
+                        ),
                     ),
-                    0,
+                    row.min(title_rows.saturating_sub(1)),
                     col.min(width.saturating_sub(title_x).saturating_sub(1)),
                 );
             }
@@ -2716,19 +2767,37 @@ pub fn task_page_layout(
     }
 }
 
-/// Layout for the task page painted as a wide column: the header rule owns the selector row,
-/// the body starts on the row after it, and the meta footer keeps the last row above the
-/// shared footer. There is no in-page title block and no divider.
-pub fn task_column_layout(geo: &TierGeometry) -> TaskPageLayout {
+fn task_column_bounds(geo: &TierGeometry) -> (u16, u16) {
     let bottom = [geo.rule_row, geo.status_row, geo.verb_row]
         .into_iter()
         .flatten()
         .min()
         .unwrap_or(geo.height);
     let title_y = geo.selector_row.unwrap_or(0).min(bottom.saturating_sub(1));
-    // The header is two rows: the title (glyph, identifier, state slot) on the selector
-    // row and its dash rule directly under it. The body starts on the row below the rule.
-    let notes_y = title_y.saturating_add(2).min(bottom);
+    (title_y, bottom)
+}
+
+/// Most wrapped title rows the wide column header may take: the header rule and one body
+/// row must still fit above the shared footer chrome, so a pathological title cannot eat
+/// the column.
+pub fn task_column_title_cap(geo: &TierGeometry) -> usize {
+    let (title_y, bottom) = task_column_bounds(geo);
+    bottom.saturating_sub(title_y).saturating_sub(2).max(1) as usize
+}
+
+/// Layout for the task page painted as a wide column: the header (`title_rows` wrapped
+/// title rows from the selector row, then its rule) belongs to [`draw_task_column`], the
+/// body starts on the row after the rule, and the meta footer keeps the last row above the
+/// shared footer. There is no in-page title block and no divider.
+pub fn task_column_layout(geo: &TierGeometry, title_rows: u16) -> TaskPageLayout {
+    let (title_y, bottom) = task_column_bounds(geo);
+    let title_rows = title_rows.clamp(1, task_column_title_cap(geo) as u16);
+    // The title rows (glyph, identifier, state slot on the first) start on the selector
+    // row and the dash rule sits directly under the last. The body starts below the rule.
+    let notes_y = title_y
+        .saturating_add(title_rows)
+        .saturating_add(1)
+        .min(bottom);
     let meta_y = (bottom >= notes_y.saturating_add(2)).then(|| bottom - 1);
     let content_end = meta_y.unwrap_or(bottom);
     TaskPageLayout {
@@ -2815,7 +2884,7 @@ fn paint_task_page(
     // used, so both sides of the payload/paint seam budget the same notes floor.
     let title_row_count = header_rows.len().max(1) as u16;
     let lay = if column {
-        task_column_layout(geo)
+        task_column_layout(geo, title_row_count)
     } else {
         task_page_layout(
             geo,
