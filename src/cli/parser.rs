@@ -350,11 +350,14 @@ pub struct FlagEdit {
     pub parent: Option<Option<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
+    pub project: Option<String>,
+    pub global: bool,
     pub state_dir: Option<PathBuf>,
     pub help: bool,
 }
 
-/// Parse `tsk edit <task> [--title <title>] [--notes <notes>]` arguments, including argv0.
+/// Parse `tsk edit <task> [--title <title>] [--notes <notes>] [-p <project> | --desk]`
+/// arguments, including argv0.
 pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
     if args.get(1).map(String::as_str) != Some("edit") {
         return Err("expected edit command".into());
@@ -365,6 +368,8 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
         parent: None,
         title: None,
         notes: None,
+        project: None,
+        global: false,
         state_dir: None,
         help: false,
     };
@@ -390,6 +395,18 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
             "-n" | "--notes" => {
                 parsed.notes = Some(value(flag)?);
                 index += 2;
+            }
+            flag if flag.starts_with("--project=") => {
+                parsed.project = Some(flag["--project=".len()..].to_owned());
+                index += 1;
+            }
+            "-p" | "--project" => {
+                parsed.project = Some(value(flag)?);
+                index += 2;
+            }
+            "--desk" => {
+                parsed.global = true;
+                index += 1;
             }
             "--parent" | "--no-parent" => {
                 if parsed.parent.is_some() {
@@ -430,6 +447,9 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
                 index += 1;
             }
         }
+    }
+    if parsed.global && parsed.project.is_some() {
+        return Err("--desk cannot be used with --project".into());
     }
     Ok(parsed)
 }
@@ -551,6 +571,8 @@ mod tests {
                 task: Some(TaskAddress::Number(12)),
                 title: Some("-fix parser".into()),
                 notes: Some("-5 degrees".into()),
+                project: None,
+                global: false,
                 state_dir: None,
                 help: false,
             }

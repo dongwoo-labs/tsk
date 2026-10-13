@@ -1,10 +1,12 @@
-//! Headless title and notes edits.
+//! Headless title, notes, parent, and project edits.
 
 use std::path::PathBuf;
 
 use crate::cli::add::has_c0_control;
 use crate::cli::parser::TaskAddress;
+use crate::context::snapshot_from_env;
 use crate::domain::{DomainError, DomainState, TaskScope};
+use crate::scope::resolve_flag_scope;
 use crate::store::{default_state_dir, TaskStore};
 use uuid::Uuid;
 
@@ -14,6 +16,10 @@ pub struct EditFields {
     pub parent: Option<Option<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
+    /// Move to this project (name or path), resolved like `add`.
+    pub project: Option<String>,
+    /// Move to the desk.
+    pub global: bool,
 }
 
 /// A successful edit, including an idempotent repeat.
@@ -32,6 +38,8 @@ pub enum EditError {
     InvalidTitle,
     InvalidParent,
     ParentCycle,
+    UnknownProject(String),
+    ProjectArchived(String),
     Store(String),
 }
 
@@ -44,14 +52,17 @@ impl EditError {
             Self::InvalidTitle => "invalid-title",
             Self::InvalidParent => "invalid-parent",
             Self::ParentCycle => "parent-cycle",
+            Self::UnknownProject(_) => "unknown-project",
+            Self::ProjectArchived(_) => "project-archived",
             Self::Store(_) => "store-error",
         }
     }
 }
 
-/// Replace the supplied title and/or notes, keeping scope.
+/// Replace the supplied title, notes, parent, and/or scope.
 ///
-/// Whitespace-only notes clear the field. Repeating the stored values writes nothing.
+/// Scope changes only on an explicit `--project` or `--desk`. Whitespace-only notes clear
+/// the field. Repeating the stored values writes nothing.
 pub fn run(
     target: TaskAddress,
     fields: EditFields,
@@ -67,8 +78,21 @@ pub fn run(
     }
 
     let store = TaskStore::new(state_dir.unwrap_or_else(default_state_dir));
+    let snapshot = snapshot_from_env();
     store
         .locked_transition_if_changed(|state: &mut DomainState| {
+            let scope = if fields.project.is_some() || fields.global {
+                match resolve_flag_scope(fields.project.as_deref(), fields.global, state, &snapshot)
+                {
+                    Ok(scope) => Some(scope),
+                    Err(error) => {
+                        let token = fields.project.as_deref().unwrap_or_default();
+                        return Ok((Err(EditError::UnknownProject(error.message(token))), false));
+                    }
+                }
+            } else {
+                None
+            };
             let found = state
                 .tasks()
                 .iter()
@@ -82,7 +106,7 @@ pub fn run(
                     soft_deleted: task.soft_deleted,
                     parent_task_id: task.parent_task_id,
                 });
-            Ok(apply(state, found, &fields))
+            Ok(apply(state, found, &fields, scope))
         })
         .map_err(EditError::Store)?
 }
@@ -101,6 +125,7 @@ fn apply(
     state: &mut DomainState,
     found: Option<Found>,
     fields: &EditFields,
+    scope: Option<TaskScope>,
 ) -> (Result<EditResult, EditError>, bool) {
     let Some(found) = found else {
         return (Err(EditError::UnknownTask), false);
@@ -130,9 +155,19 @@ fn apply(
             _ => return (Err(EditError::InvalidParent), false),
         },
     };
+    let next_scope = scope.unwrap_or_else(|| found.scope.clone());
+    if next_scope != found.scope {
+        if let TaskScope::Project { path } = &next_scope {
+            if state.is_project_archived(path) {
+                let short = crate::ui::render::short_project(path).to_string();
+                return (Err(EditError::ProjectArchived(short)), false);
+            }
+        }
+    }
     if next_title == found.title
         && next_notes == found.notes
         && parent_task_id == found.parent_task_id
+        && next_scope == found.scope
     {
         return (
             Ok(EditResult {
@@ -146,7 +181,7 @@ fn apply(
         found.id,
         &next_title,
         next_notes,
-        found.scope,
+        next_scope,
         parent_task_id,
     ) {
         Ok(()) => (

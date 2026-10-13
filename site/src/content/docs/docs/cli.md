@@ -76,7 +76,7 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 | `tsk add` | Add a task or JSON plan |
 | `tsk list` | Read tasks |
 | `tsk status` | Set task status |
-| `tsk edit` | Replace title or notes |
+| `tsk edit` | Replace title, notes, or parent, or move to another project |
 | `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
 | `tsk ui-answer` | Record the user's answer from another interface (not for agents) |
 | `tsk steps` | Add, toggle, rename, move, or remove steps |
@@ -245,12 +245,14 @@ tsk edit T12 --title "Fix timeout on slow connections"
 tsk edit T12 --notes "Reproduced with a delayed response"
 ```
 
-Requires at least one of `--title`, `--notes`, `--parent <task>`, or `--no-parent`. Scope stays unchanged. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
+Requires at least one of `--title`, `--notes`, `--parent <task>`, `--no-parent`, `-p <project>`, or `--desk`. Scope changes only with `-p`/`--project` or `--desk`, which move the task to that project or the desk. The destination resolves like [`add`](#scope): a bare name must match one known project, a new project needs an existing absolute directory, and an archived project refuses with `project-archived`. `-p` and `--desk` cannot be combined. Moving keeps the task's number, status, notes, steps, and parent. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
 
 ```sh
 tsk add -t "Implement parser" --desk --parent T10
 tsk edit T12 --parent T11
 tsk edit T12 --no-parent
+tsk edit T12 -p ~/src/atlas
+tsk edit T12 --desk
 ```
 
 Each task has at most one parent, stored by UUID, not its display number. Duplicate adds leave the existing task and its parent unchanged. Changing a parent's status, archiving it, or deleting it never changes its children. A deleted or missing parent is shown as unresolved while its UUID stays on the child. Parents are never reassigned automatically. Child completion never completes a parent.
@@ -467,7 +469,7 @@ After an uncertain add, inspect `tsk list --all --json`. Also check `--done` and
 | Add | `empty-title`, `invalid-title`, `invalid-item`, `unknown-project`, `project-archived` |
 | Steps | `empty-step-text`, `invalid-step-text`, `unknown-task`, `soft-deleted-task`, `unknown-step`, `ambiguous-step`, `same-step` |
 | Status | `unknown-task`, `soft-deleted-task` |
-| Edit | `unknown-task`, `soft-deleted-task`, `empty-title`, `invalid-title` |
+| Edit | `unknown-task`, `soft-deleted-task`, `empty-title`, `invalid-title`, `invalid-parent`, `parent-cycle`, `unknown-project`, `project-archived` |
 | Archive / unarchive | `unknown-task`, `soft-deleted-task` |
 | UI answer | `stale-revision`, `unknown-question`, `unrouted-question`, `finding-board-action`, `approval-refused`, `invalid-correction`, `invalid-input` ([full list](#ui-answer)) |
 | Import | `missing-api-key`, `linear-error`, `unsupported-platform`, `unknown-project`, `project-archived` |

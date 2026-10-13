@@ -43,8 +43,8 @@ alias are usage errors, not alternate spellings.
    close it. Never mark tasks done from your own progress.
 2. **Use a known project name or a full path.** A bare `-p name` must resolve to one existing
    project; unknown or ambiguous names refuse. An existing absolute directory is the only way to
-   create a new project destination. `tsk edit` cannot move a task: re-add in the right scope and
-   archive the stray.
+   create a new project destination. `tsk edit T12 -p <project>` (or `--desk`) moves a task filed
+   under the wrong scope; it resolves the destination the same way.
 3. **Read JSON, not presentation.** Always add `--json` to `tsk list`. Human output is for showing
    the user or troubleshooting interactively. Mutation acknowledgements may be human-only: trust
    the exit and refusal codes, then verify state with `tsk list … --json`.
