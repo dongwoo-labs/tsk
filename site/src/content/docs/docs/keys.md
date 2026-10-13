@@ -120,6 +120,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Correct an answer | `c` |
 | Open the task | `t` |
 | Resend a lead request | `r` |
+| Show or hide answered records (CLOSED) | `z` |
 | Next / previous record | `J` / `K` |
 | Scroll a record page | `PgUp` / `PgDn` |
 | Board tab | `1` |

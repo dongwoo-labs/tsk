@@ -3473,6 +3473,92 @@ mod tests {
             .unwrap_or_else(|| panic!("{target:?} is painted as a click target"))
     }
 
+    fn numbered_question(n: u128, answered: bool) -> crate::domain::QuestionRecord {
+        let mut record = open_question_with_options();
+        record.reference.id = uuid::Uuid::from_u128(100 + n);
+        record.reference.number = n as u64;
+        if answered {
+            record.answers.push(crate::domain::QuestionAnswer {
+                revision: uuid::Uuid::from_u128(200 + n),
+                created_task_id: None,
+                corrects_revision: None,
+                text: "first".into(),
+                actor: "user".into(),
+                origin: crate::domain::AnswerOrigin::UserUi,
+                at: std::time::SystemTime::now(),
+                approval: None,
+                user_chat: None,
+                source: None,
+                action: None,
+            });
+        }
+        record
+    }
+
+    #[test]
+    fn closed_questions_fold_by_default_and_a_save_returns_to_the_list_slot() {
+        use crate::ui::questions::{QuestionFeed, QuestionsState};
+        let id = |n: u128| uuid::Uuid::from_u128(100 + n);
+        let mut state = QuestionsState::default();
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, false),
+            numbered_question(3, false),
+            numbered_question(9, true),
+        ]));
+        // Answered records are folded away: the walk holds only what still waits.
+        assert_eq!(state.order(), vec![id(1), id(2), id(3)]);
+        state.toggle_closed();
+        assert_eq!(state.order(), vec![id(1), id(2), id(3), id(9)]);
+        state.cursor = Some(id(9));
+        state.toggle_closed();
+        assert_eq!(state.cursor, Some(id(1)), "the cursor leaves a folded row");
+
+        // Q2 is answered on its page: the save lands, the list returns, and the cursor
+        // keeps Q2's place, now held by Q3.
+        state.open(id(2));
+        let slot = state.order().iter().position(|row| *row == id(2));
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, true),
+            numbered_question(3, false),
+            numbered_question(9, true),
+        ]));
+        state.back_to_list(id(2), slot);
+        assert_eq!(state.page, None);
+        assert_eq!(state.cursor, Some(id(3)));
+        // The last waiting row answered: the cursor takes the row above.
+        state.open(id(3));
+        let slot = state.order().iter().position(|row| *row == id(3));
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, true),
+            numbered_question(3, true),
+            numbered_question(9, true),
+        ]));
+        state.back_to_list(id(3), slot);
+        assert_eq!(state.cursor, Some(id(1)));
+
+        // With CLOSED unfolded the saved record stays listed below, yet the cursor still
+        // moves on to the waiting row that took its place.
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, false),
+            numbered_question(3, false),
+        ]));
+        state.toggle_closed();
+        state.open(id(2));
+        let slot = state.order().iter().position(|row| *row == id(2));
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, true),
+            numbered_question(3, false),
+        ]));
+        state.back_to_list(id(2), slot);
+        assert!(state.order().contains(&id(2)));
+        assert_eq!(state.cursor, Some(id(3)));
+    }
+
     #[test]
     fn question_page_dims_field_labels_and_indents_the_original() {
         use crate::ui::questions::{page_rows, QuestionsState};

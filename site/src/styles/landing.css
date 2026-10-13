@@ -2837,7 +2837,7 @@ html[data-theme="light"] .pane {
 .tsk-q-row > span { display: block; white-space: pre; }
 .tsk-q-page { padding-top: 1lh; }
 .tsk-q-line { white-space: pre; min-height: 1lh; }
-.tsk-q-line[data-q-option], .tsk-q-line[data-q-check], .tsk-q-line[data-q-key] { cursor: pointer; }
+.tsk-q-line[data-q-option], .tsk-q-line[data-q-check], .tsk-q-line[data-q-key], .tsk-q-group[data-q-key] { cursor: pointer; }
 .tsk-q-line.is-chosen { color: var(--bg); background: var(--ink); width: max-content; max-width: 100%; }
 .tsk-q-line.is-chosen:has(input) { color: inherit; background: none; display: flex; width: auto; }
 .tsk-q-line input.tsk-field { flex: 1 1 auto; min-width: 0; }
