@@ -86,7 +86,7 @@ test("rows carry question marks and the child count; the waiting line opens tab 
     " FINDINGS 1",
     " WITH LEAD 1",
     " target unknown · route with tsk route 1",
-    " CLOSED 1",
+    " CLOSED 1 · z shows",
   ]);
 });
 
@@ -104,10 +104,16 @@ test("an approval needs the check before y, and is sample only", async ({
   await page.keyboard.press("Space");
   await expect(page.locator("[data-q-check]")).toContainText("[x]");
   await page.keyboard.press("y");
-  await expect(page.locator("#tsk-demo")).toContainText(
+  await expect(page.locator("#tsk-demo")).toContainText("Q1 approved · sample");
+  await expect(page.locator('[data-question="q2"]')).toContainText("▸ Q2");
+  await expect(page.locator(".tsk-q-group").last()).toHaveText(
+    " CLOSED 2 · z shows",
+  );
+  await page.keyboard.press("z");
+  await page.locator('[data-question="q1"]').click();
+  await expect(page.locator(".tsk-q-page")).toContainText(
     "sample: approved in this demo only · it authorizes nothing",
   );
-  await expect(page.locator(".tsk-q-group").last()).toContainText("CLOSED 2");
 });
 
 test("answers, a finding, J/K, t, and the unrouted refusal", async ({
@@ -121,10 +127,9 @@ test("answers, a finding, J/K, t, and the unrouted refusal", async ({
     "postgres table · recommended",
   );
   await page.keyboard.press("Enter");
-  await expect(page.locator(".tsk-q-page")).toContainText(
-    "answer  postgres table",
-  );
-  await page.locator('[data-question="q3"]').click();
+  await expect(page.locator("#tsk-demo")).toContainText("Q2 saved · sample");
+  await expect(page.locator('[data-question="q3"]')).toContainText("▸ Q3");
+  await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   const answer = page.locator("#tsk-answer");
   await answer.press("y");
@@ -132,6 +137,14 @@ test("answers, a finding, J/K, t, and the unrouted refusal", async ({
   await answer.press("c");
   await expect(answer).toHaveValue("ync");
   await answer.press("Enter");
+  await expect(page.locator("#tsk-demo")).toContainText("Q3 saved · sample");
+  await page.locator("#board-demo").focus();
+  await page.keyboard.press("z");
+  await page.locator('[data-question="q2"]').click();
+  await expect(page.locator(".tsk-q-page")).toContainText(
+    "answer  postgres table",
+  );
+  await page.locator('[data-question="q3"]').click();
   await expect(page.locator(".tsk-q-page")).toContainText("answer  ync");
 
   await page.locator('[data-question="q4"]').click();
@@ -141,6 +154,8 @@ test("answers, a finding, J/K, t, and the unrouted refusal", async ({
   );
   const created = await page.locator(".tsk-q-page").textContent();
   const number = created.match(/created (T\d+) \(doing\)/)[1];
+  await expect(page.locator('[data-question="q4"]')).toContainText("▸ Q4");
+  await page.keyboard.press("Enter");
   await page.keyboard.press("c");
   await page.keyboard.press("j");
   await page.keyboard.press("Enter");
