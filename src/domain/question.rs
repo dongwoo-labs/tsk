@@ -8,6 +8,58 @@ pub enum QuestionKind {
     Question,
     Approval,
     Finding,
+    /// The user types a secret on the board, which hands it to `fnox set`. The value is
+    /// never stored, printed, or readable by an agent; the answer is only `set`.
+    Secret,
+}
+
+/// Where a secret question's value goes: one `fnox set` target. It names the key only and
+/// never carries a value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretTarget {
+    /// Environment-style key: `[A-Za-z_][A-Za-z0-9_]*`.
+    pub key: String,
+    /// fnox profile (`[A-Za-z0-9_-]+`); absent means fnox's default profile.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Absolute path to an existing regular (non-symlink) `fnox.toml`; absent means the
+    /// global config (`fnox set -g`).
+    #[serde(default)]
+    pub config: Option<String>,
+}
+
+impl SecretTarget {
+    /// Whether the key, profile, and config path are well formed. Pure: a stored record
+    /// stays readable even after its config file goes away.
+    pub fn is_well_formed(&self) -> bool {
+        let key = self.key.as_bytes();
+        let key_ok = key
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            && key
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        let profile_ok = self.profile.as_deref().is_none_or(|profile| {
+            !profile.is_empty()
+                && profile
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        });
+        let config_ok = self
+            .config
+            .as_deref()
+            .is_none_or(|config| std::path::Path::new(config).is_absolute());
+        key_ok && profile_ok && config_ok
+    }
+
+    /// Whether the named config, if any, is a regular file (not a symlink) right now.
+    /// Checked when asked and again right before the board runs fnox.
+    pub fn config_present(&self) -> bool {
+        self.config.as_deref().is_none_or(|config| {
+            std::fs::symlink_metadata(config).is_ok_and(|meta| meta.file_type().is_file())
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +160,9 @@ pub struct QuestionDraft {
     /// not set; `recipient` and `origin_thread` are never used in its place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead_recipient: Option<String>,
+    /// A secret question's `fnox set` target. Only `kind: secret` carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<SecretTarget>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

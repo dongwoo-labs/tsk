@@ -1226,11 +1226,15 @@ fn questions_own_keyboard(model: &BoardModel, mode: BoardInputMode) -> bool {
 fn board_paste_intent(area: Rect, model: &mut BoardModel, text: &str) -> Option<BoardIntent> {
     let mode = resolve_board_surface(area, model);
     if questions_own_keyboard(model, mode) {
-        // Only an open answer field takes pasted text; line breaks become spaces.
-        return model.questions().answer.as_ref().map(|_| {
-            BoardIntent::Question(crate::ui::questions::QuestionIntent::AnswerInsert(
-                text.replace(['\r', '\n'], " "),
-            ))
+        // Only an open answer field takes pasted text; line breaks become spaces. A secret
+        // drops them instead, so a copied trailing newline never becomes part of the value.
+        return model.questions().answer.as_ref().map(|input| {
+            let text = if input.secret {
+                text.replace(['\r', '\n'], "")
+            } else {
+                text.replace(['\r', '\n'], " ")
+            };
+            BoardIntent::Question(crate::ui::questions::QuestionIntent::AnswerInsert(text))
         });
     }
     let intent = map_edit_paste(mode, text)?;
@@ -3455,6 +3459,7 @@ mod tests {
                 source: None,
                 audience: Some(Audience::User),
                 lead_recipient: None,
+                secret: None,
             },
             created_at: std::time::SystemTime::now(),
             answers: Vec::new(),
@@ -3665,6 +3670,7 @@ mod tests {
             revision: uuid::Uuid::from_u128(8),
             corrects: None,
             text: "half an answer".into(),
+            secret: false,
         });
         // While the answer is typed, the text entry owns ctrl+q and ctrl+c.
         for key in ['q', 'c'] {
@@ -5673,6 +5679,27 @@ mod tests {
         let intent = board_paste_intent(RESIZE_AREA, &mut model, "more")
             .expect("a paste still reaches the open editor down to 40x10");
         assert_eq!(intent, BoardIntent::EditInsertText("more".to_string()));
+    }
+
+    /// A paste into a secret's masked input drops line breaks rather than turning them into
+    /// spaces, so a copied trailing newline never becomes part of the value.
+    #[test]
+    fn a_paste_into_a_secret_input_drops_line_breaks() {
+        use crate::ui::questions::{AnswerInput, QuestionIntent};
+        let area = Rect::new(0, 0, 120, 40);
+        let domain = DomainState::new();
+        let mut model = BoardModel::from_domain(&domain, None);
+        model.questions_mut().active = true;
+        model.questions_mut().answer = Some(AnswerInput::secret(
+            uuid::Uuid::from_u128(2),
+            uuid::Uuid::from_u128(1),
+        ));
+        assert_eq!(
+            board_paste_intent(area, &mut model, "tok\r\nen\n"),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "token".into()
+            )))
+        );
     }
 
     /// pasting into the open palette narrows the query exactly as typing it would.

@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use super::{parser::parse_task_address, CliOutput};
 use crate::domain::{
-    AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, QuestionRecord, RouteDraft,
+    AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, QuestionKind, QuestionRecord,
+    RouteDraft,
 };
 use crate::store::{notify_question, QuestionDurability, QuestionError, QuestionStore, TaskStore};
 
@@ -166,6 +167,19 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         "answer" => {
             let operand = operand.ok_or_else(|| ("Q number or UUID required".into(), 2))?;
             let id = resolve(&store, &operand, None)?;
+            // A secret is typed on the board, which hands it to fnox. No CLI answer exists.
+            if store
+                .read(id)
+                .map_err(|error| (error.to_string(), 1))?
+                .reference
+                .kind
+                == QuestionKind::Secret
+            {
+                return Err((
+                    format!("secret-needs-board: {}", QuestionError::SecretNeedsBoard),
+                    1,
+                ));
+            }
             let draft: AnswerDraft = serde_json::from_slice(&read_input()?)
                 .map_err(|_| ("invalid answer JSON".into(), 2))?;
             if draft.origin == AnswerOrigin::UserUi {

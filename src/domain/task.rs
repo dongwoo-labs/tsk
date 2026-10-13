@@ -148,7 +148,7 @@ fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 8;
+pub const STORE_FORMAT_VERSION: u32 = 9;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]

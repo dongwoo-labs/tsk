@@ -8,6 +8,7 @@ pub mod cli;
 pub mod context;
 pub mod delivery;
 pub mod domain;
+pub mod fnox;
 pub(crate) mod fsperm;
 pub mod guides;
 pub mod question_actions;

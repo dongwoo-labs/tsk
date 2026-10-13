@@ -11,6 +11,9 @@ use crate::domain::*;
 
 const PRIVATE_DIR: &str = "questions-private";
 
+/// The only answer text a secret question records: fnox took the value.
+pub const SECRET_SET: &str = "set";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuestionDurability {
@@ -41,6 +44,10 @@ pub enum QuestionError {
     StoreUnavailable,
     /// A finding's history links several distinct created tasks.
     LinkAmbiguous,
+    /// A secret is typed on the board, which hands it to fnox; no other path answers it.
+    SecretNeedsBoard,
+    /// A secret question's shape or fnox target is invalid.
+    InvalidSecret,
 }
 
 impl std::fmt::Display for QuestionError {
@@ -65,6 +72,12 @@ impl std::fmt::Display for QuestionError {
             Self::StoreUnavailable => "question store is unavailable",
             Self::LinkAmbiguous => {
                 "finding history links several created tasks; nothing was created"
+            }
+            Self::InvalidSecret => {
+                "a secret question needs audience user, no options, approval, or finding, and secret {key, profile, config}: key [A-Za-z_][A-Za-z0-9_]*, profile [A-Za-z0-9_-]+ or null, config an absolute path to an existing regular (non-symlink) fnox.toml or null for global"
+            }
+            Self::SecretNeedsBoard => {
+                "a secret is entered only in the tsk board questions tab, which hands it to fnox"
             }
         })
     }
@@ -188,6 +201,9 @@ impl QuestionStore {
 
     pub fn ask(&self, draft: QuestionDraft) -> Result<QuestionSaveResult, QuestionError> {
         validate_question(&draft)?;
+        if draft.kind == QuestionKind::Secret && !valid_secret_question(&draft) {
+            return Err(QuestionError::InvalidSecret);
+        }
         let _guard = self
             .store
             .lock_exclusive()
@@ -304,6 +320,10 @@ impl QuestionStore {
         if draft.expected_revision != record.reference.revision {
             return Err(QuestionError::StaleRevision);
         }
+        // Only the user's board can take a secret; it never moves to the lead.
+        if record.draft.kind == QuestionKind::Secret && draft.audience != Audience::User {
+            return Err(QuestionError::InvalidSecret);
+        }
         record.draft.audience = Some(draft.audience);
         if let Some(name) = draft.lead_recipient.clone() {
             record.draft.lead_recipient = Some(name);
@@ -370,6 +390,15 @@ impl QuestionStore {
             _ => {}
         }
         validate_answer(&record, &draft)?;
+        // The board records `set` only after fnox took the value; nothing else answers it.
+        if record.draft.kind == QuestionKind::Secret
+            && (draft.origin != AnswerOrigin::UserUi
+                || draft.text != SECRET_SET
+                || draft.corrects_revision.is_some()
+                || draft.approve)
+        {
+            return Err(QuestionError::SecretNeedsBoard);
+        }
         if draft.action.is_some() && record.draft.kind != QuestionKind::Finding {
             return Err(QuestionError::InvalidInput);
         }
@@ -573,6 +602,9 @@ fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
     {
         return Err(QuestionError::InvalidInput);
     }
+    if draft.secret.is_some() && draft.kind != QuestionKind::Secret {
+        return Err(QuestionError::InvalidSecret);
+    }
     if !agent_name(&draft.origin_thread)
         || !agent_name(&draft.recipient)
         || draft
@@ -604,8 +636,32 @@ fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
         QuestionKind::Question if draft.approval.is_some() || draft.finding.is_some() => {
             Err(QuestionError::InvalidInput)
         }
+        // A secret goes to the user's board only, as one fnox target and nothing to pick.
+        QuestionKind::Secret
+            if draft.audience != Some(Audience::User)
+                || !draft.options.is_empty()
+                || draft.approval.is_some()
+                || draft.finding.is_some()
+                || draft
+                    .secret
+                    .as_ref()
+                    .is_none_or(|target| !target.is_well_formed()) =>
+        {
+            Err(QuestionError::InvalidSecret)
+        }
         _ => Ok(()),
     }
+}
+
+/// Whether the draft is a well-formed secret question whose config is present now:
+/// checked at ask time and again right before the board runs fnox.
+pub fn valid_secret_question(draft: &QuestionDraft) -> bool {
+    draft.kind == QuestionKind::Secret
+        && validate_question(draft).is_ok()
+        && draft
+            .secret
+            .as_ref()
+            .is_some_and(SecretTarget::config_present)
 }
 
 pub fn agent_name(name: &str) -> bool {

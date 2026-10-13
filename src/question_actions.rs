@@ -13,8 +13,8 @@ use crate::domain::{
     ProvenanceOrigin, QuestionKind, QuestionRecord, TaskScope,
 };
 use crate::store::{
-    default_state_dir, notify_question, QuestionDurability, QuestionError, QuestionNotification,
-    QuestionSaveResult, QuestionStore, TaskStore,
+    default_state_dir, notify_question, valid_secret_question, QuestionDurability, QuestionError,
+    QuestionNotification, QuestionSaveResult, QuestionStore, TaskStore, SECRET_SET,
 };
 use crate::threads::herdr;
 use crate::ui::board::BoardModel;
@@ -201,8 +201,17 @@ pub fn handle(
             model.questions().follow.set(true);
         }
         QuestionIntent::AnswerCancel => {
-            model.questions_mut().answer = None;
-            model.set_message("answer discarded · nothing saved");
+            // Dropping a secret input wipes its buffer.
+            let secret = model
+                .questions_mut()
+                .answer
+                .take()
+                .is_some_and(|input| input.secret);
+            model.set_message(if secret {
+                "secret discarded · nothing sent to fnox · nothing saved"
+            } else {
+                "answer discarded · nothing saved"
+            });
         }
         QuestionIntent::Enter => {
             enter(store, domain, model);
@@ -289,6 +298,10 @@ fn correct(model: &mut BoardModel) {
         model.set_message("an approval is not corrected · ask a new question for new terms");
         return;
     }
+    if record.reference.kind == QuestionKind::Secret {
+        model.set_message("a secret is not corrected · ask a new secret question to set it again");
+        return;
+    }
     let id = record.reference.id;
     let revision = record.reference.revision;
     let questions = model.questions_mut();
@@ -298,6 +311,7 @@ fn correct(model: &mut BoardModel) {
             revision,
             corrects: Some(current.revision),
             text: String::new(),
+            secret: false,
         });
     } else {
         questions.correcting = Some((id, revision));
@@ -322,6 +336,10 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
         return;
     }
     if pending_elsewhere(model, id) || refuse_unrouted(model, &record) {
+        return;
+    }
+    if record.reference.kind == QuestionKind::Secret {
+        secret(store, domain, model, &record);
         return;
     }
     if let Some(input) = model.questions().answer.clone() {
@@ -395,9 +413,106 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
             revision: record.reference.revision,
             corrects: None,
             text: String::new(),
+            secret: false,
         });
         model.set_message("type the answer · enter saves · esc cancels");
     }
+}
+
+/// `Enter` on a secret question: open the masked input, or hand the typed value to fnox
+/// and record only `set`. The value never reaches the store, a message, or a log.
+fn secret(
+    store: &TaskStore,
+    domain: &mut DomainState,
+    model: &mut BoardModel,
+    record: &QuestionRecord,
+) {
+    let id = record.reference.id;
+    let number = record.reference.number;
+    let typing = model
+        .questions()
+        .answer
+        .as_ref()
+        .filter(|input| input.id == id && input.secret)
+        .map(|input| input.text.is_empty());
+    match typing {
+        None => {
+            if record.is_open() {
+                model.questions_mut().answer =
+                    Some(AnswerInput::secret(id, record.reference.revision));
+                model.set_message(
+                    "type the secret · shown as • · enter hands it to fnox set · esc cancels",
+                );
+            }
+            return;
+        }
+        Some(true) => {
+            model.set_message("type the secret first · esc cancels");
+            return;
+        }
+        Some(false) => {}
+    }
+    // The input leaves the page now: whatever happens next, its buffer is wiped on drop.
+    let Some(input) = model.questions_mut().answer.take() else {
+        return;
+    };
+    let Some(questions) = question_store(model) else {
+        return;
+    };
+    let handed = hand_to_fnox(&questions, &input, &crate::fnox::binary());
+    drop(input);
+    let fresh = match handed {
+        Ok(fresh) => fresh,
+        Err(reason) => {
+            model.set_message(format!("Q{number}: {reason} · nothing saved"));
+            reload(model);
+            return;
+        }
+    };
+    save(
+        store,
+        domain,
+        model,
+        &fresh,
+        draft(fresh.reference.revision, SECRET_SET.to_string()),
+        FollowUp::NotifyOrigin,
+        None,
+    );
+    if model
+        .questions()
+        .feed
+        .get(id)
+        .is_some_and(QuestionRecord::is_open)
+    {
+        let reason = model.message().unwrap_or_default().to_string();
+        model.set_message(format!("fnox set the secret, but {reason}"));
+    }
+}
+
+/// Read the secret question back, re-check its revision and fnox target, then run
+/// `fnox set` with the typed value on stdin. Returns the record the answer must go to.
+/// Errors are short reasons for the status row; none carries the value or fnox output.
+pub(crate) fn hand_to_fnox(
+    questions: &QuestionStore,
+    input: &AnswerInput,
+    bin: &std::ffi::OsStr,
+) -> Result<QuestionRecord, String> {
+    let fresh = questions
+        .read(input.id)
+        .map_err(|error| format!("read back failed: {error}"))?;
+    if fresh.reference.revision != input.revision || !fresh.is_open() {
+        return Err("the question changed since you read it · read it again".to_string());
+    }
+    let target = fresh
+        .draft
+        .secret
+        .as_ref()
+        .filter(|_| valid_secret_question(&fresh.draft))
+        .ok_or_else(|| {
+            "the fnox target is no longer valid (config missing or not a regular file)".to_string()
+        })?;
+    crate::fnox::set(bin, target, input.text.as_bytes()).map_err(|failure| failure.to_string())?;
+    Ok(fresh)
 }
 
 fn decide_approval(
@@ -912,6 +1027,7 @@ mod tests {
                 source: None,
                 audience: None,
                 lead_recipient: Some("lead-x".into()),
+                secret: None,
             },
             created_at: std::time::SystemTime::now(),
             answers,
@@ -989,5 +1105,263 @@ mod tests {
             request_lead(&closed),
             "run request not sent: the current answer is not create-and-run"
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod secret_tests {
+    use super::*;
+    use crate::domain::{Audience, QuestionDraft, SecretTarget};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    const VALUE: &str = "s3cr3t-Value-9f1c";
+
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new(label: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("tsk-secret-{label}-{nanos}-{seq}"));
+            std::fs::create_dir_all(dir.join("state")).expect("state dir");
+            std::fs::create_dir_all(dir.join("record")).expect("record dir");
+            Self(dir)
+        }
+        fn state(&self) -> PathBuf {
+            self.0.join("state")
+        }
+        fn record(&self) -> PathBuf {
+            self.0.join("record")
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A fake fnox that records its argv and stdin outside the state dir, then exits `code`.
+    fn fake_fnox(temp: &Temp, code: i32) -> PathBuf {
+        let script = temp.0.join("fnox");
+        let record = temp.record();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{argv}'\ncat > '{stdin}'\necho noisy-stdout\necho noisy-stderr >&2\nexit {code}\n",
+                argv = record.join("argv").display(),
+                stdin = record.join("stdin").display(),
+            ),
+        )
+        .expect("write fake fnox");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake fnox");
+        script
+    }
+
+    fn ask_secret(temp: &Temp, target: SecretTarget) -> (QuestionStore, QuestionRecord) {
+        let store = TaskStore::new(temp.state());
+        let mut domain = DomainState::new();
+        let task = domain
+            .create(
+                "needs a key",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+            )
+            .expect("task");
+        store.save(&domain).expect("seed store");
+        let questions = QuestionStore::new(temp.state()).expect("agent store");
+        let saved = questions
+            .ask(QuestionDraft {
+                task_id: task,
+                kind: QuestionKind::Secret,
+                summary: "API key for staging".into(),
+                origin_thread: "thr-a".into(),
+                recipient: "lead-a".into(),
+                text: "Paste the staging API key".into(),
+                options: Vec::new(),
+                recommendation: None,
+                impact: None,
+                blocking_scope: None,
+                approval: None,
+                finding: None,
+                source: None,
+                audience: Some(Audience::User),
+                lead_recipient: None,
+                secret: Some(target),
+            })
+            .expect("ask secret");
+        (questions, saved.record)
+    }
+
+    fn typed(record: &QuestionRecord) -> AnswerInput {
+        let mut input = AnswerInput::secret(record.reference.id, record.reference.revision);
+        input.text.push_str(VALUE);
+        input
+    }
+
+    fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
+        let mut hits = Vec::new();
+        for entry in std::fs::read_dir(dir).expect("read dir").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                hits.extend(files_containing(&path, needle));
+            } else if std::fs::read(&path)
+                .expect("read file")
+                .windows(needle.len())
+                .any(|window| window == needle)
+            {
+                hits.push(path);
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn the_board_hands_the_value_to_fnox_on_stdin_and_records_only_set() {
+        let temp = Temp::new("ok");
+        let config = temp.0.join("fnox.toml");
+        std::fs::write(&config, "").expect("config");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "STAGING_API_KEY".into(),
+                profile: Some("stage".into()),
+                config: Some(config.to_string_lossy().into_owned()),
+            },
+        );
+        let fnox = fake_fnox(&temp, 0);
+        let fresh = hand_to_fnox(&questions, &typed(&record), fnox.as_os_str()).expect("fnox ok");
+        let argv = std::fs::read_to_string(temp.record().join("argv")).expect("argv");
+        assert_eq!(
+            argv.lines().collect::<Vec<_>>(),
+            [
+                "set",
+                "-c",
+                config.to_str().expect("utf8"),
+                "--profile",
+                "stage",
+                "STAGING_API_KEY"
+            ]
+        );
+        assert!(!argv.contains(VALUE), "the value never rides argv");
+        assert_eq!(
+            std::fs::read(temp.record().join("stdin")).expect("stdin"),
+            VALUE.as_bytes(),
+            "the value is exactly the child's stdin"
+        );
+        let saved = questions
+            .answer(
+                fresh.reference.id,
+                draft(fresh.reference.revision, SECRET_SET.to_string()),
+            )
+            .expect("record set");
+        assert_eq!(saved.record.answers.len(), 1);
+        assert_eq!(saved.record.answers[0].text, "set");
+        assert!(!saved.record.is_open());
+        assert_eq!(
+            files_containing(&temp.state(), VALUE.as_bytes()),
+            Vec::<PathBuf>::new(),
+            "no file in the state dir holds the value"
+        );
+    }
+
+    #[test]
+    fn a_global_target_runs_fnox_set_g_without_a_profile() {
+        let temp = Temp::new("global");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "TOKEN".into(),
+                profile: None,
+                config: None,
+            },
+        );
+        let fnox = fake_fnox(&temp, 0);
+        hand_to_fnox(&questions, &typed(&record), fnox.as_os_str()).expect("fnox ok");
+        let argv = std::fs::read_to_string(temp.record().join("argv")).expect("argv");
+        assert_eq!(argv.lines().collect::<Vec<_>>(), ["set", "-g", "TOKEN"]);
+    }
+
+    #[test]
+    fn a_failed_fnox_records_nothing_and_says_only_that_it_failed() {
+        let temp = Temp::new("fail");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "TOKEN".into(),
+                profile: None,
+                config: None,
+            },
+        );
+        let fnox = fake_fnox(&temp, 3);
+        let reason =
+            hand_to_fnox(&questions, &typed(&record), fnox.as_os_str()).expect_err("fnox fails");
+        assert_eq!(reason, "fnox set failed · exit 3");
+        let after = questions.read(record.reference.id).expect("read back");
+        assert!(after.is_open(), "the question stays open");
+        assert_eq!(after.reference.revision, record.reference.revision);
+        assert!(files_containing(&temp.state(), VALUE.as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn a_vanished_config_or_a_moved_revision_never_runs_fnox() {
+        let temp = Temp::new("recheck");
+        let config = temp.0.join("fnox.toml");
+        std::fs::write(&config, "").expect("config");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "TOKEN".into(),
+                profile: None,
+                config: Some(config.to_string_lossy().into_owned()),
+            },
+        );
+        let fnox = fake_fnox(&temp, 0);
+        let mut stale = typed(&record);
+        stale.revision = Uuid::from_u128(1);
+        assert!(hand_to_fnox(&questions, &stale, fnox.as_os_str()).is_err());
+        // A symlink in place of the config is refused right before the run.
+        std::fs::remove_file(&config).expect("remove config");
+        std::os::unix::fs::symlink(temp.0.join("elsewhere.toml"), &config).expect("symlink");
+        std::fs::write(temp.0.join("elsewhere.toml"), "").expect("target");
+        let reason =
+            hand_to_fnox(&questions, &typed(&record), fnox.as_os_str()).expect_err("refused");
+        assert!(reason.contains("no longer valid"), "{reason}");
+        assert!(
+            !temp.record().join("argv").exists(),
+            "fnox never ran for a stale or invalid target"
+        );
+    }
+
+    #[test]
+    fn no_other_answer_closes_a_secret_question() {
+        let temp = Temp::new("guard");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "TOKEN".into(),
+                profile: None,
+                config: None,
+            },
+        );
+        let mut agent = draft(record.reference.revision, SECRET_SET.to_string());
+        agent.origin = AnswerOrigin::Agent;
+        assert_eq!(
+            questions.answer(record.reference.id, agent).err(),
+            Some(QuestionError::SecretNeedsBoard)
+        );
+        let typed_value = draft(record.reference.revision, VALUE.to_string());
+        assert_eq!(
+            questions.answer(record.reference.id, typed_value).err(),
+            Some(QuestionError::SecretNeedsBoard),
+            "a UserUi answer other than `set` would store a value"
+        );
+        assert!(files_containing(&temp.state(), VALUE.as_bytes()).is_empty());
     }
 }
