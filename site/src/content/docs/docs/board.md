@@ -97,6 +97,8 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | `PgUp` / `PgDn` or the wheel | Scroll the page |
 | `Esc` | Back to the list; at the list, quit |
 
+The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, `r resends`) to act as that key does. Every footer key is a button too, so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
+
 A page opens at its top. Scrolling never moves the chosen option or the check; choosing an option, checking, or typing brings that line back into view above the `↓ n more rows` line.
 
 A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.

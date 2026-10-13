@@ -124,6 +124,8 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Scroll a record page | `PgUp` / `PgDn` |
 | Board tab | `1` |
 
+Clicks follow the keys: an option click chooses without saving, the check line checks, a line or footer entry naming a key acts as that key.
+
 These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels; `ctrl+q` and `ctrl+c` do not quit.
 
 ## Quick-add

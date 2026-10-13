@@ -704,6 +704,14 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::Question(id)) => Some(BoardIntent::Question(
                 crate::ui::questions::QuestionIntent::Row(id),
             )),
+            Some(QueueHitTarget::QuestionPage(click)) => Some(BoardIntent::Question(
+                crate::ui::questions::QuestionIntent::Page(click),
+            )),
+            Some(QueueHitTarget::QuestionKey(code)) => crate::ui::questions::map_key(
+                model.questions(),
+                model.frame_wide(),
+                crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+            ),
             _ => None,
         };
     }

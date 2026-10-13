@@ -710,6 +710,10 @@ pub enum QueueHitTarget {
     NavTab(NavTab),
     /// One painted questions-tab row.
     Question(Uuid),
+    /// An action line on the shown question page (an option, the check, a key hint).
+    QuestionPage(super::questions::PageClick),
+    /// One key of the questions-tab footer: the click maps exactly as that key press does.
+    QuestionKey(crossterm::event::KeyCode),
     /// The board's waiting-on-you line: opens the questions tab.
     Waiting,
     /// The scope control (`p`).

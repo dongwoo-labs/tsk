@@ -20,8 +20,8 @@ use crate::threads::herdr;
 use crate::ui::board::BoardModel;
 use crate::ui::links::{task_links, TaskLink, ThreadRef};
 use crate::ui::questions::{
-    choices, AnswerAttempt, AnswerInput, FollowUp, PendingCommit, QuestionFeed, QuestionIntent,
-    FINDING_ACTIONS,
+    choices, AnswerAttempt, AnswerInput, FollowUp, PageClick, PendingCommit, QuestionFeed,
+    QuestionIntent, FINDING_ACTIONS,
 };
 
 /// The answering actor the board records. Origin `UserUi` carries the authority.
@@ -131,6 +131,32 @@ pub fn handle(
                 questions.return_task = None;
                 questions.open(id);
             }
+        }
+        QuestionIntent::Page(click) => {
+            // At 110 and up the detail previews the cursor's record: open it first.
+            if model.questions().page.is_none() {
+                let Some(id) = model.questions().shown(wide).map(|r| r.reference.id) else {
+                    return;
+                };
+                if crate::ui::board::refuse_answer_elsewhere(model, id) {
+                    return;
+                }
+                let questions = model.questions_mut();
+                questions.return_task = None;
+                questions.open(id);
+            }
+            let next = match click {
+                PageClick::Option(index) => {
+                    model.questions_mut().choose(index);
+                    return;
+                }
+                PageClick::Enter => QuestionIntent::Enter,
+                PageClick::Check => QuestionIntent::ToggleCheck,
+                PageClick::OpenTask => QuestionIntent::OpenTask,
+                PageClick::Correct => QuestionIntent::Correct,
+                PageClick::Resend => QuestionIntent::Resend,
+            };
+            handle(store, domain, model, next);
         }
         QuestionIntent::Back => back(model),
         QuestionIntent::Step(forward) => {

@@ -185,9 +185,29 @@ pub enum QuestionIntent {
     FromTask(Uuid),
     /// A reference line on a task page (`task`, index into its links).
     Link(Uuid, usize),
+    /// A click on an action line of the shown page; at 110 and up it opens the cursor's
+    /// preview first, so the click acts on the record the user saw.
+    Page(PageClick),
     AnswerInsert(String),
     AnswerBackspace,
     AnswerCancel,
+}
+
+/// The action lines a question page paints as click targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageClick {
+    /// Choose this option (index into the page's choices); it does not save.
+    Option(usize),
+    /// The `enter` line: write, save, decide, or confirm, as `Enter` does.
+    Enter,
+    /// The approval check line, as `Space` does.
+    Check,
+    /// The task line, as `t` does.
+    OpenTask,
+    /// The `c corrects` line.
+    Correct,
+    /// The `r resends` line.
+    Resend,
 }
 
 /// The groups of the list, in paint order. `Unrouted` is the compatibility block for open
@@ -606,6 +626,18 @@ impl QuestionsState {
         self.scroll_page(forward);
     }
 
+    /// A click on an option: choose it on the open page. It never saves.
+    pub fn choose(&mut self, index: usize) {
+        let Some(record) = self.page.and_then(|id| self.feed.get(id)).cloned() else {
+            return;
+        };
+        if self.answer.is_some() || !self.choosing(&record) || index >= choices(&record).len() {
+            return;
+        }
+        self.options.insert(record.reference.id, index);
+        self.follow.set(true);
+    }
+
     pub fn toggle_check(&mut self) -> Option<&'static str> {
         let record = self.page.and_then(|id| self.feed.get(id))?;
         if record.reference.kind != QuestionKind::Approval
@@ -675,6 +707,8 @@ pub struct PageRow {
     pub style: RowStyle,
     /// The row the scroll must keep in view (the chosen option, the check, the input).
     pub focus: bool,
+    /// What a click on this row does, if anything.
+    pub click: Option<QueueHitTarget>,
 }
 
 struct PageBuilder {
@@ -703,6 +737,7 @@ impl PageBuilder {
                     text: format!("{prefix}{}", row.text),
                     style,
                     focus: focus && first,
+                    click: None,
                 });
                 first = false;
             }
@@ -712,7 +747,15 @@ impl PageBuilder {
                 text: lead.to_string(),
                 style,
                 focus,
+                click: None,
             });
+        }
+    }
+
+    /// Make every row pushed since `from` a click target.
+    fn click_from(&mut self, from: usize, click: PageClick) {
+        for row in &mut self.rows[from..] {
+            row.click = Some(QueueHitTarget::QuestionPage(click));
         }
     }
 
@@ -721,6 +764,7 @@ impl PageBuilder {
             text: String::new(),
             style: RowStyle::Plain,
             focus: false,
+            click: None,
         });
     }
 }
@@ -755,7 +799,9 @@ pub fn page_rows(
             )
         })
         .unwrap_or_else(|| format!("{} not found", record.reference.task_id));
+    let at = page.rows.len();
     page.indented("task    ", &task_text, RowStyle::Plain, false);
+    page.click_from(at, PageClick::OpenTask);
     page.indented(
         "from    ",
         &format!("{} → {}", draft.origin_thread, audience_word(record)),
@@ -800,6 +846,7 @@ pub fn page_rows(
         page.indented("undo      ", &terms.rollback, RowStyle::Plain, false);
         if record.is_open() && record.draft.audience.is_some() {
             let checked = state.checked(record);
+            let at = page.rows.len();
             page.push(
                 &format!(
                     "{} I checked the target, scope, and revision (space)",
@@ -812,6 +859,7 @@ pub fn page_rows(
                 },
                 true,
             );
+            page.click_from(at, PageClick::Check);
             page.push(
                 if checked {
                     "y approves · n rejects · no answer keeps waiting"
@@ -847,6 +895,7 @@ pub fn page_rows(
             } else {
                 label.clone()
             };
+            let at = page.rows.len();
             page.indented(
                 mark,
                 &text,
@@ -857,7 +906,9 @@ pub fn page_rows(
                 },
                 index == chosen,
             );
+            page.click_from(at, PageClick::Option(index));
         }
+        let at = page.rows.len();
         page.push(
             if record.reference.kind == QuestionKind::Finding {
                 "enter decides"
@@ -869,6 +920,7 @@ pub fn page_rows(
             RowStyle::Dim,
             false,
         );
+        page.click_from(at, PageClick::Enter);
     } else if record.draft.audience.is_none() {
         page.blank();
         page.push(
@@ -881,7 +933,9 @@ pub fn page_rows(
         && state.answer.is_none()
     {
         page.blank();
+        let at = page.rows.len();
         page.push("enter writes an answer", RowStyle::Dim, false);
+        page.click_from(at, PageClick::Enter);
     }
 
     if let Some(input) = state
@@ -906,21 +960,25 @@ pub fn page_rows(
             page.indented("task    ", &task_label(tasks, id), RowStyle::Plain, false);
         }
         if answer.action == Some(FindingAction::CreateAndRun) {
+            let at = page.rows.len();
             page.push(
                 "r resends the run request · it never creates another task",
                 RowStyle::Dim,
                 false,
             );
+            page.click_from(at, PageClick::Resend);
         }
         if record.reference.kind != QuestionKind::Approval
             && state.correcting.is_none()
             && record.draft.audience.is_some()
         {
+            let at = page.rows.len();
             page.push(
                 "c corrects · the earlier answer stays in history",
                 RowStyle::Dim,
                 false,
             );
+            page.click_from(at, PageClick::Correct);
         }
     }
 
@@ -943,7 +1001,9 @@ pub fn page_rows(
                 "save result unknown · enter reads the record back first · nothing retries"
             }
         };
+        let at = page.rows.len();
         page.push(text, RowStyle::Bold, true);
+        page.click_from(at, PageClick::Enter);
     }
 
     page.blank();
@@ -1023,6 +1083,24 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
         return "t task · J/K next · esc back";
     }
     "c correct · t task · J/K next · esc back"
+}
+
+/// The key a footer entry names, or none for a pair that only moves (`j/k`).
+fn footer_key(token: &str) -> Option<KeyCode> {
+    match token {
+        "enter" | "enter/→" => Some(KeyCode::Enter),
+        "esc" => Some(KeyCode::Esc),
+        "space" => Some(KeyCode::Char(' ')),
+        // `J/K next`: a click steps forward.
+        "J/K" => Some(KeyCode::Char('J')),
+        _ => {
+            let mut chars = token.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(KeyCode::Char(c)),
+                _ => None,
+            }
+        }
+    }
 }
 
 /// Map one key while tab 2 owns the keyboard.
@@ -1134,6 +1212,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 text: text.to_string(),
                 style: RowStyle::Dim,
                 focus: false,
+                click: None,
             },
         )
     };
@@ -1169,6 +1248,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 text: String::new(),
                 style: RowStyle::Plain,
                 focus: false,
+                click: None,
             },
         ));
         rows.push((
@@ -1181,6 +1261,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                     RowStyle::Bold
                 },
                 focus: false,
+                click: None,
             },
         ));
         for record in members {
@@ -1213,6 +1294,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                             RowStyle::Plain
                         },
                         focus: selected && index == 0,
+                        click: None,
                     },
                 ));
             }
@@ -1289,6 +1371,9 @@ fn paint_rows(
             );
             hits.push_copyable(Rect::new(rect.x, y, rect.width, 1));
         } else if !row.text.is_empty() {
+            if let Some(click) = row.click {
+                hits.push(click, Rect::new(rect.x, y, rect.width, 1));
+            }
             hits.push_copyable(Rect::new(rect.x, y, rect.width, 1));
         }
     }
@@ -1454,14 +1539,27 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
         );
     }
     if let Some(row) = geo.verb_row {
-        put(
-            out,
-            area.x,
-            area.y + row,
-            width,
-            &format!(" {}", footer_hint(state, wide)),
-            RowStyle::Dim,
-        );
+        let y = area.y + row;
+        let hint = footer_hint(state, wide);
+        put(out, area.x, y, width, &format!(" {hint}"), RowStyle::Dim);
+        // Each `key label` entry is a button that maps as its key does.
+        let mut x = area.x + 1;
+        for (index, entry) in hint.split(" · ").enumerate() {
+            if index > 0 {
+                x = x.saturating_add(3);
+            }
+            let entry_w = render::display_width(entry) as u16;
+            let end = (area.x + width).min(x.saturating_add(entry_w));
+            if let Some(code) = entry.split(' ').next().and_then(footer_key) {
+                if end > x {
+                    hits.push(
+                        QueueHitTarget::QuestionKey(code),
+                        Rect::new(x, y, end - x, 1),
+                    );
+                }
+            }
+            x = x.saturating_add(entry_w);
+        }
     }
     hits
 }
@@ -1479,6 +1577,7 @@ mod tests {
                         text: format!("row {index}"),
                         style: RowStyle::Plain,
                         focus: index == focus,
+                        click: None,
                     },
                 )
             })
