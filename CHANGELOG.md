@@ -46,6 +46,7 @@ the GitHub release notes verbatim.
 
 ### Fixed
 
+- At 110 columns or wider, a long task title wraps onto more rows in the detail's header, while viewing and while editing it, instead of being cut off with `…`. The status and project stay on the first row.
 - At 110 columns or wider, the Task view's narrow board rail keeps an open done drawer and the archived group's fold state, like Split does, so a done task opened from the drawer stays selected beside its page instead of vanishing from the rail. Thanks @LukasGold (#174).
 - A form editor that receives `Shift+Enter` as `ctrl+j` (a terminal binding that sends a plain line feed, such as Ghostty's `shift+enter=text:\n`) says so on the status row instead of ignoring the key. Thanks @WAWLixiong and @Rag0n.
 - `tsk setup herdr` follows a symlinked Herdr `config.toml` (or `herdr` config directory), as dotfiles managers create, instead of failing with `Too many levels of symbolic links`. It edits the target in place, keeps the link, and backs up beside the target; a dangling or looping link is refused with a clear message.

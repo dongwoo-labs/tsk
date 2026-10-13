@@ -534,15 +534,79 @@ fn title_edit_window_matches_the_painted_header_room_with_a_long_identifier() {
         BoardIntent::EditInsertText("x".repeat(200)),
     );
     let (rows, _) = render(&model, 130, 24);
-    let header = column_text(
-        &rows,
-        resolve_responsive(130, 24, WideStage::Task).task_content(),
-        1,
-    );
+    let column = resolve_responsive(130, 24, WideStage::Task).task_content();
+    let header = column_text(&rows, column, 1);
     assert!(header.contains("T123456"), "{header}");
-    assert!(header.contains('x'), "the windowed draft paints: {header}");
-    assert!(!header.contains('…'), "caret window overflow: {header}");
     assert!(header.trim_end().ends_with("editing title"), "{header}");
+    // The draft wraps under the first row; every wrapped row fits the painted room.
+    let rule_y = (2..21u16)
+        .find(|y| {
+            let row = column_text(&rows, column, *y);
+            !row.trim().is_empty() && row.chars().all(|c| c == '─')
+        })
+        .expect("header rule");
+    let wrapped = (1..rule_y)
+        .map(|y| column_text(&rows, column, y))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(wrapped.matches('x').count(), 200, "{wrapped}");
+    assert!(!wrapped.contains('…'), "caret window overflow: {wrapped}");
+    // The caret follows the draft's end onto the last wrapped row.
+    let mut terminal = Terminal::new(TestBackend::new(130, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            draw_board(frame, &model);
+        })
+        .expect("draw board");
+    let cursor = terminal.get_cursor_position().expect("cursor position");
+    let last = column_text(&rows, column, rule_y - 1);
+    assert_eq!(cursor.y, rule_y - 1, "caret on the last title row");
+    assert_eq!(
+        cursor.x,
+        column.x + last.trim_end().chars().count() as u16,
+        "caret after the last x: {last}"
+    );
+}
+
+/// A long title wraps onto further header rows instead of truncating with `…`; the dash
+/// rule moves under the last title row and the state slot stays on the first row.
+#[test]
+fn long_detail_title_wraps_in_the_header_without_an_ellipsis() {
+    let title = "Frame the wide task view so a long title wraps across several header rows \
+                 instead of hiding its tail behind an ellipsis at the column edge";
+    for stage in STAGES {
+        let (mut domain, mut model) = fixture_with_titles(title, "Renew domain");
+        focus(&mut domain, &mut model, stage);
+        let column = resolve_responsive(130, 24, stage).task_content();
+        let (rows, _) = render(&model, 130, 24);
+        let first = column_text(&rows, column, 1);
+        assert!(first.starts_with(" ● T12 Frame the wide"), "{first}");
+        assert!(first.trim_end().ends_with("doing · tsk"), "{first}");
+        let rule_y = (2..21u16)
+            .find(|y| {
+                let row = column_text(&rows, column, *y);
+                !row.trim().is_empty() && row.chars().all(|c| c == '─')
+            })
+            .expect("header rule");
+        assert!(rule_y > 2, "{stage:?}: the title wraps onto more rows");
+        let header = (1..rule_y)
+            .map(|y| column_text(&rows, column, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!header.contains('…'), "{stage:?}: truncated: {header}");
+        let words = header
+            .replace("doing · tsk", "")
+            .split_whitespace()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(words, title, "{stage:?}: {header}");
+        assert!(
+            region_text(&rows, Rect::new(column.x, rule_y + 1, column.width, 3))
+                .contains("Rework the wide split"),
+            "{stage:?}: body starts under the rule"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
