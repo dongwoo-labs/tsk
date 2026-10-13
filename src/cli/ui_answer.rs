@@ -87,6 +87,8 @@ fn store_refusal(error: QuestionError) -> Refusal {
         QuestionError::CommitUnknown => "commit-unknown",
         QuestionError::StoreUnavailable => "store-unavailable",
         QuestionError::LinkAmbiguous => "link-ambiguous",
+        QuestionError::InvalidSecret => "invalid-secret",
+        QuestionError::SecretNeedsBoard => "secret-needs-board",
     };
     Refusal {
         code,
@@ -165,6 +167,10 @@ fn execute(args: &[String], stdin: &mut dyn Read) -> Result<CliOutput, Refusal> 
 /// The board's answer for the same pick: a plain answer stays plain, an approval carries
 /// the exact terms the user saw, and the store re-checks both under its lock.
 fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, Refusal> {
+    // A secret never travels through this entrypoint: only the board hands it to fnox.
+    if record.reference.kind == QuestionKind::Secret {
+        return Err(store_refusal(QuestionError::SecretNeedsBoard));
+    }
     // A stale read refuses before any shape check, so the caller always learns to reread.
     if input.expected_revision != record.reference.revision {
         return Err(store_refusal(QuestionError::StaleRevision));
@@ -208,6 +214,7 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
         action: None,
     };
     match record.reference.kind {
+        QuestionKind::Secret => Err(store_refusal(QuestionError::SecretNeedsBoard)),
         QuestionKind::Finding => Err(Refusal {
             code: "finding-board-action",
             message: "a finding is decided on the board".into(),

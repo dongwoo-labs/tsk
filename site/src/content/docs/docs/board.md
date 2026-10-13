@@ -75,7 +75,7 @@ The **2 questions** tab lists the questions, approvals, and findings agents file
 | Group | Contents |
 | --- | --- |
 | **NEEDS APPROVAL** | Open approvals addressed to you |
-| **FOR YOU** | Open questions addressed to you |
+| **FOR YOU** | Open questions and secret requests addressed to you |
 | **FINDINGS** | Open findings addressed to you |
 | **WITH LEAD** | Open records addressed to the lead; shown, never counted |
 | **CLOSED** | Answered, approved, rejected, or closed records; folded until `z` or a click on its heading shows them |
@@ -88,6 +88,7 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | --- | --- |
 | `j` / `k`, then `Enter` | Choose an option and save it as the answer |
 | `Enter` | On a question without options, type an answer; `Enter` saves, `Esc` cancels |
+| `Enter` | On a secret, type the value (shown as `•`); `Enter` hands it to fnox, `Esc` cancels and wipes it |
 | `Space` | Check the approval's exact target, scope, and revision |
 | `y` / `n` | Approve (only once checked) / reject an approval |
 | `c` | Correct a saved answer; it becomes a new revision |
@@ -102,6 +103,8 @@ The mouse does the same. Click an option to choose it; choosing never saves. Cli
 Once an answer, approval, rejection, or decision is saved, the page closes and the list comes back with the cursor in the same place, now on the next record still waiting; the status line names the save and its hint. A record opened from a task page returns to that task page instead. A save the store cannot prove durable stays on the page until `Enter` confirms it. Answered records fold into **CLOSED**, so `j`/`k` and `J`/`K` walk only what still waits; `z` shows or hides them for the session.
 
 A page opens at its top. Scrolling never moves the chosen option or the check; choosing an option, checking, or typing brings that line back into view above the `↓ n more rows` line.
+
+A secret request names where its value goes: the fnox `key`, `profile` (`default` when none), and `config` (`global` when none). `Enter` (or a click on `enter types the secret`) opens a masked line: each character shows as `•`, a paste drops its line breaks, and `Esc` discards it. `Enter` re-reads the request, checks that it is unchanged and its config is still a regular file, then runs `fnox set` with the value on standard input and fnox's output discarded. On success the answer is recorded as `set`, nothing else; the value is never saved, shown, or sent to the agent. When fnox fails, the status row says `fnox set failed` (with its exit code), nothing is saved, and the request stays open. A secret is never corrected; the agent asks again to replace it. Set `TSK_FNOX_BIN` to run a different fnox binary.
 
 A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
 

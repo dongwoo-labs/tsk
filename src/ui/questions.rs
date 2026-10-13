@@ -61,13 +61,50 @@ pub struct ApprovalCheck {
     pub terms: ApprovalTerms,
 }
 
-/// A free-text answer being typed for a question without options.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A free-text answer being typed for a question without options, or a secret's value.
+#[derive(Clone, PartialEq, Eq)]
 pub struct AnswerInput {
     pub id: Uuid,
     pub revision: Uuid,
     pub corrects: Option<Uuid>,
     pub text: String,
+    /// A secret question's value: painted as `•`, handed only to fnox, wiped on drop.
+    pub secret: bool,
+}
+
+impl AnswerInput {
+    /// An empty masked input for a secret question at `revision`.
+    pub fn secret(id: Uuid, revision: Uuid) -> Self {
+        Self {
+            id,
+            revision,
+            corrects: None,
+            // Room up front, so typing rarely reallocates and leaves copies behind.
+            text: String::with_capacity(256),
+            secret: true,
+        }
+    }
+}
+
+impl std::fmt::Debug for AnswerInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text: &dyn std::fmt::Debug = if self.secret { &"<secret>" } else { &self.text };
+        f.debug_struct("AnswerInput")
+            .field("id", &self.id)
+            .field("revision", &self.revision)
+            .field("corrects", &self.corrects)
+            .field("text", text)
+            .field("secret", &self.secret)
+            .finish()
+    }
+}
+
+impl Drop for AnswerInput {
+    fn drop(&mut self) {
+        if self.secret {
+            crate::fnox::wipe(&mut self.text);
+        }
+    }
 }
 
 /// What a confirmed commit still owes once it is known to be durable.
@@ -260,7 +297,7 @@ pub fn group_of(record: &QuestionRecord) -> QuestionGroup {
         Some(Audience::Lead) => QuestionGroup::WithLead,
         Some(Audience::User) => match record.reference.kind {
             QuestionKind::Approval => QuestionGroup::NeedsApproval,
-            QuestionKind::Question => QuestionGroup::ForYou,
+            QuestionKind::Question | QuestionKind::Secret => QuestionGroup::ForYou,
             QuestionKind::Finding => QuestionGroup::Findings,
         },
     }
@@ -408,6 +445,7 @@ pub fn state_label(record: &QuestionRecord, tasks: &[Task]) -> String {
             (FindingLink::None, _) => "answered".to_string(),
         },
         QuestionKind::Question => "answered".to_string(),
+        QuestionKind::Secret => "set in fnox".to_string(),
     }
 }
 
@@ -732,6 +770,7 @@ fn kind_word(record: &QuestionRecord) -> String {
     match record.reference.kind {
         QuestionKind::Approval => "approval".to_string(),
         QuestionKind::Question => "question".to_string(),
+        QuestionKind::Secret => "secret".to_string(),
         QuestionKind::Finding => match record.draft.finding.as_ref().map(|finding| finding.kind) {
             Some(FindingKind::Issue) => "finding · issue".to_string(),
             Some(FindingKind::Opportunity) => "finding · opportunity".to_string(),
@@ -885,6 +924,20 @@ pub fn page_rows(
     if let Some(scope) = draft.blocking_scope.as_deref() {
         page.field("blocks  ", scope, RowStyle::Plain);
     }
+    if let Some(target) = draft.secret.as_ref() {
+        // Where the value goes. The value itself is never stored, so never shown.
+        page.field("key     ", &target.key, RowStyle::Bold);
+        page.field(
+            "profile ",
+            target.profile.as_deref().unwrap_or("default"),
+            RowStyle::Plain,
+        );
+        page.field(
+            "config  ",
+            target.config.as_deref().unwrap_or("global"),
+            RowStyle::Plain,
+        );
+    }
     page.blank();
     page.push(&record.reference.summary, RowStyle::Bold, false);
     page.push("local original · never shared", RowStyle::Dim, false);
@@ -1004,6 +1057,18 @@ pub fn page_rows(
         let at = page.rows.len();
         page.push("enter writes an answer", RowStyle::Dim, false);
         page.click_from(at, PageClick::Enter);
+    } else if record.is_open()
+        && record.reference.kind == QuestionKind::Secret
+        && state.answer.is_none()
+    {
+        page.blank();
+        let at = page.rows.len();
+        page.push(
+            "enter types the secret · tsk hands it to fnox set, never stores or shows it",
+            RowStyle::Dim,
+            false,
+        );
+        page.click_from(at, PageClick::Enter);
     }
 
     if let Some(input) = state
@@ -1012,13 +1077,24 @@ pub fn page_rows(
         .filter(|input| input.id == record.reference.id)
     {
         page.blank();
-        page.indented(
-            "answer  ",
-            &format!("{}▏", input.text),
-            RowStyle::Selected,
-            true,
-        );
-        page.push("enter saves · esc cancels", RowStyle::Dim, false);
+        if input.secret {
+            // One `•` per character typed: the length shows, the value never does.
+            let mask = "•".repeat(input.text.chars().count());
+            page.indented("secret  ", &format!("{mask}▏"), RowStyle::Selected, true);
+            page.push(
+                "enter hands it to fnox set · esc cancels and wipes it",
+                RowStyle::Dim,
+                false,
+            );
+        } else {
+            page.indented(
+                "answer  ",
+                &format!("{}▏", input.text),
+                RowStyle::Selected,
+                true,
+            );
+            page.push("enter saves · esc cancels", RowStyle::Dim, false);
+        }
     }
 
     if let Some(answer) = record.current_answer() {
@@ -1036,8 +1112,10 @@ pub fn page_rows(
             );
             page.click_from(at, PageClick::Resend);
         }
-        if record.reference.kind != QuestionKind::Approval
-            && state.correcting.is_none()
+        if !matches!(
+            record.reference.kind,
+            QuestionKind::Approval | QuestionKind::Secret
+        ) && state.correcting.is_none()
             && record.draft.audience.is_some()
         {
             let at = page.rows.len();
@@ -1122,8 +1200,12 @@ fn route_text(route: &crate::domain::QuestionRoute) -> String {
 
 /// The footer key hint of the tab's current state.
 pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
-    if state.answer.is_some() {
-        return "enter save · esc cancel";
+    if let Some(input) = state.answer.as_ref() {
+        return if input.secret {
+            "enter fnox set · esc cancel"
+        } else {
+            "enter save · esc cancel"
+        };
     }
     let Some(record) = state.page.and_then(|id| state.feed.get(id)) else {
         return if wide {
@@ -1147,7 +1229,10 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
     if record.is_open() {
         return "enter answer · J/K next · t task · esc back";
     }
-    if record.reference.kind == QuestionKind::Approval {
+    if matches!(
+        record.reference.kind,
+        QuestionKind::Approval | QuestionKind::Secret
+    ) {
         return "t task · J/K next · esc back";
     }
     "c correct · t task · J/K next · esc back"
@@ -1716,5 +1801,119 @@ mod tests {
         );
         // Explicit scrolls past the end still clamp to the last page.
         assert_eq!(page_scroll(&page, 10, 99, false), 30);
+    }
+    fn secret_record() -> QuestionRecord {
+        use crate::domain::{QuestionDraft, QuestionRef, SecretTarget};
+        let task = Uuid::from_u128(3);
+        QuestionRecord {
+            reference: QuestionRef {
+                id: Uuid::from_u128(2),
+                number: 5,
+                task_id: task,
+                kind: QuestionKind::Secret,
+                summary: "staging key".into(),
+                revision: Uuid::from_u128(1),
+            },
+            draft: QuestionDraft {
+                task_id: task,
+                kind: QuestionKind::Secret,
+                summary: "staging key".into(),
+                origin_thread: "thr-a".into(),
+                recipient: "lead-a".into(),
+                text: "Paste the key".into(),
+                options: Vec::new(),
+                recommendation: None,
+                impact: None,
+                blocking_scope: None,
+                approval: None,
+                finding: None,
+                source: None,
+                audience: Some(Audience::User),
+                lead_recipient: None,
+                secret: Some(SecretTarget {
+                    key: "STAGING_KEY".into(),
+                    profile: None,
+                    config: None,
+                }),
+            },
+            created_at: std::time::SystemTime::now(),
+            answers: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_secret_page_shows_its_target_and_masks_the_typed_value() {
+        let record = secret_record();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let texts = |state: &QuestionsState| -> Vec<String> {
+            page_rows(state, &record, &[], 80)
+                .into_iter()
+                .map(|row| row.text)
+                .collect()
+        };
+        let before = texts(&state).join("\n");
+        assert!(before.contains("Q5 · secret · open · for you"), "{before}");
+        assert!(before.contains("key     STAGING_KEY"), "{before}");
+        assert!(before.contains("profile default"), "{before}");
+        assert!(before.contains("config  global"), "{before}");
+        assert!(before.contains("enter types the secret"), "{before}");
+        assert_eq!(group_of(&record), QuestionGroup::ForYou);
+
+        let mut input = AnswerInput::secret(id, record.reference.revision);
+        input.text.push_str("hunter2");
+        state.answer = Some(input);
+        let typed = texts(&state).join("\n");
+        assert!(!typed.contains("hunter2"), "{typed}");
+        assert!(typed.contains("secret  •••••••▏"), "{typed}");
+        assert_eq!(footer_hint(&state, false), "enter fnox set · esc cancel");
+        let debug = format!("{state:?}");
+        assert!(!debug.contains("hunter2"), "Debug never prints the value");
+        // Every printable key is text while the masked input is open.
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('q'))),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "q".into()
+            )))
+        );
+    }
+
+    #[test]
+    fn a_set_secret_offers_no_correction() {
+        let mut record = secret_record();
+        record.answers.push(crate::domain::QuestionAnswer {
+            revision: Uuid::from_u128(9),
+            created_task_id: None,
+            corrects_revision: None,
+            text: "set".into(),
+            actor: "user".into(),
+            origin: crate::domain::AnswerOrigin::UserUi,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: None,
+        });
+        record.reference.revision = Uuid::from_u128(9);
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let page = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(page.contains("set in fnox"), "{page}");
+        assert!(!page.contains("c corrects"), "{page}");
+        assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
     }
 }

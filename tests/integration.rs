@@ -8,6 +8,7 @@ mod cli_edit;
 mod cli_guide;
 mod cli_help;
 mod cli_import;
+mod cli_question_secret;
 mod cli_router_process;
 mod cli_status;
 mod cli_steps;

@@ -104,6 +104,21 @@ with `tsk route <Q> --file` and the current `expected_revision`; routing keeps t
 answers. A finding that may need follow-up work carries `lead_recipient`, the exact live Lead name
 the board sends its run request to. Routing and that address grant no approval or execution authority.
 
+**Ask for a secret.** Never ask the user to paste a key into chat, and never put one in a
+question. File a secret question; the user types the value on the board, which hands it to
+`fnox set` itself:
+
+```json
+{"task_id": "<task UUID>", "kind": "secret", "summary": "staging API key", "origin_thread": "thr-a", "recipient": "lead-a", "text": "Why the key is needed", "options": [], "recommendation": null, "impact": null, "blocking_scope": null, "approval": null, "finding": null, "source": null, "audience": "user", "secret": {"key": "STAGING_API_KEY", "profile": null, "config": null}}
+```
+
+`key` matches `[A-Za-z_][A-Za-z0-9_]*`; `profile` is a fnox profile or `null` (default);
+`config` is the absolute path of an existing `fnox.toml` or `null` (global, `fnox set -g`).
+`audience` must be `user`. Wait until `tsk questions Q<n>` shows the answer `set`; it is the
+only thing tsk records, and no tsk command can show the value. Then read it only inside your
+own process with `fnox exec -- <command>` or `fnox get <KEY>` piped straight into its use,
+never echoed to output. `tsk answer` refuses it with `secret-needs-board`.
+
 **Plan as steps.** When the user wants order of work tracked on the task: `tsk steps T12 add
 "…"` per step, in order. Do not add steps for your own bookkeeping. To fit a step into an existing
 list, `add "…" --after <short_id>` (or `--before`); to reorder, `tsk steps T12 move <short_id>

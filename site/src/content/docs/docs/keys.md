@@ -115,6 +115,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Quit from the list | `Esc` |
 | Choose an option | `j` / `k` on the record |
 | Save the chosen option, or start / save a typed answer | `Enter` |
+| Type a secret, then hand it to fnox | `Enter` |
 | Check an approval | `Space` |
 | Approve / reject | `y` / `n` |
 | Correct an answer | `c` |
@@ -127,7 +128,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 
 Clicks follow the keys: an option click chooses without saving, the check line checks, a line or footer entry naming a key acts as that key (the `j/k` pair only names the keys).
 
-These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels; `ctrl+q` and `ctrl+c` do not quit.
+These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels; `ctrl+q` and `ctrl+c` do not quit. A secret's value types the same way but shows only `•`, and `Enter` runs `fnox set` instead of saving text.
 
 ## Quick-add
 
