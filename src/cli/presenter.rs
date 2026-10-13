@@ -119,10 +119,11 @@ pub fn questions_help() -> CliOutput {
             "tsk answer <Q-number|UUID> --file <answer.json> --state-dir <Agent-dir>".into(),
             "tsk route <Q-number|UUID> --file <route.json> --state-dir <Agent-dir>".into(),
             "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
+            "tsk ui-answer <Q-number|UUID> --file <answer.json|-> --state-dir <Agent-dir>".into(),
         ],
-        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval.".into(),
+        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval. ui-answer records the user's pick from another interface with origin user_ui; agents never call it.".into(),
         groups: vec![group("Options", &[
-            ("--file <path>", "Full JSON question, answer, or route input; no text truncation"),
+            ("--file <path>", "Full JSON question, answer, or route input; no text truncation; - reads stdin"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
             ("--task <T-number|UUID>", "Filter question readback by Task"),
             ("--json", "Full JSON readback (also the default for questions)"),
@@ -150,7 +151,8 @@ pub fn top_level_help() -> String {
         "  ask        save a full-text question from JSON\n",
         "  answer     append an answer or correction with expected revision\n",
         "  route      set who acts on a question (user or lead) with expected revision\n",
-        "  questions  read full questions and answer history as JSON\n\n",
+        "  questions  read full questions and answer history as JSON\n",
+        "  ui-answer  record the user's answer from another interface (not for agents)\n\n",
         "Board\n",
         "  archive    keep a task off the working views\n",
         "  unarchive  put an archived task back\n",
@@ -502,6 +504,18 @@ fn append_direct_details(
         if has_prior {
             output.push('\n');
         }
+        let done = steps.iter().filter(|step| step.done).count();
+        append_wrapped(
+            output,
+            &detail_prefix,
+            &detail_prefix,
+            &format!(
+                "Steps: {done}/{} done ({}%)",
+                steps.len(),
+                done * 100 / steps.len()
+            ),
+            output_width,
+        );
         append_step_lines(output, steps, indent, output_width);
     }
 }

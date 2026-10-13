@@ -33,19 +33,37 @@ tsk questions --task T12 --state-dir /local/agent-board --json
 tsk questions Q1 --state-dir /local/agent-board --json
 tsk answer Q1 --file answer.json --state-dir /local/agent-board
 tsk route Q1 --file route.json --state-dir /local/agent-board
+tsk ui-answer Q1 --file - --state-dir /local/agent-board
 ```
+
+`--file -` reads the JSON input from stdin.
 
 `ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, or `finding`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, and the optional `audience` (`user` or `lead`) and `lead_recipient`. Nullable fields can be `null`; options defaults to an empty array. Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
 
 `answer` takes `expected_revision`, `text`, `actor`, `origin`, `corrects_revision`, `approve`, `confirmed`, `approval`, `user_chat`, and `source`. Ordinary answers use `origin: "agent"`, `approve: false`, and null approval/evidence. A correction names the current answer's revision in `corrects_revision`; it appends instead of replacing history. A stale expected revision refuses without applying another answer. Use `questions` after every uncertain result and before a retry.
 
-Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. CLI refuses `origin: "user_ui"`; only the UI API can submit that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
+Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. `tsk answer` refuses `origin: "user_ui"`; only the board's questions tab and [`ui-answer`](#ui-answer) record that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
 
 Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullable `path`. A finding's answer can carry an `action`: `create_and_run`, `create_only`, or `close`; the board sets it. Optional private source metadata preserves original system, question UUID, comment ID, URL, answer ID, parent question ID, actor, time, revision and applied uncertainty. Historical source approvals never issue current authority.
 
 Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means Herdr accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
 
 <span id="route"></span>`route` takes `expected_revision`, `audience` (`user` or `lead`), and an optional `lead_recipient` (a Herdr agent name; omitted or `null` keeps the current one). It writes a new revision under the same Q UUID and number and keeps the text, answers, and history; an answered question stays answered. A stale revision refuses and changes nothing. It sends no notification and returns `{ "saved": ... }`.
+
+<span id="ui-answer"></span>`ui-answer` records the answer the user gave in another interface, such as the option they picked or the text they typed in a Claude Code ask prompt, with origin `user_ui` and actor `user`. It is the entrypoint for that interface's own process; agents never call it. Its JSON object takes `expected_revision` (the revision the user was shown) and exactly one of:
+
+| Field | For | Saved as |
+| --- | --- | --- |
+| `choice` | a question with options | the zero-based option's text |
+| `text` | a question | the trimmed text |
+| `approve: true` with `approval` | an approval | `approved`, with the terms, only when `approval` equals the stored target, action, `h`, scope, and rollback exactly |
+| `reject: true` | an approval | `rejected` |
+
+`corrects_revision` names the current answer's revision to correct a question's answer; an approval is never corrected (ask a new question for new terms). Approval terms on anything but an approve are refused: a plain answer never becomes an approval. A finding is decided on the board and is refused here, as is a question without an `audience`. Unknown fields are refused.
+
+It prints one JSON line, `{"question_id", "number", "task_id", "revision", "status": "durable" | "uncertain", "notification": {"status": "notified" | "failed" | "not_attempted"}}`, and sends the origin Thread the same identifier-only hint as `answer`. `uncertain` exits 1: read the record back before acting on it. A refusal prints `tsk ui-answer: <code>: <message>` on stderr and saves nothing; exit 2 for `usage` and `invalid-input` (bad arguments, JSON, or pick), exit 1 for `stale-revision`, `unknown-question`, `unrouted-question`, `finding-board-action`, `approval-refused`, `invalid-correction`, `agent-store-required`, `private-record-unavailable`, `input-unavailable`, `not-saved`, `commit-unknown`, `store-unavailable`, and `link-ambiguous`. After `stale-revision`, read the question again and show the user its current state; never resend the old pick on a new revision. After `commit-unknown`, read back before retrying.
+
+**Trust boundary.** `ui-answer` is a local entrypoint, not authentication. Any process running as the same OS user can call it, as it can run the board. Keep agents' tool calls away from it with a hook: a Claude Code `PreToolUse` hook that refuses `tsk answer` and `tsk ui-answer` in every session but the Lead's. The Claude Code mod that shows the ask prompt calls it from its own process, outside any agent's tools.
 
 `questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task. Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
 
@@ -60,6 +78,7 @@ Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncer
 | `tsk status` | Set task status |
 | `tsk edit` | Replace title or notes |
 | `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
+| `tsk ui-answer` | Record the user's answer from another interface (not for agents) |
 | `tsk steps` | Add, toggle, rename, move, or remove steps |
 | `tsk archive` / `tsk unarchive` | Hide or restore a task |
 | `tsk project archive` / `tsk project unarchive` | Hide or restore a project |
@@ -199,7 +218,7 @@ A direct task address searches the main store, including done, archived, and rec
 
 Human output groups by status in `DOING`, `TODO` order. Todo rows use oldest capture first; Doing and Done use most recent status change first. This order is separate from the board, which lists rows by task number or groups them by project. JSON is that flat order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, and archived marks use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
 
-Single-task output presents notes and steps as separate blocks. A blank line separates adjacent blocks that exist. Human step rows show state and text without machine-oriented short IDs.
+Single-task output presents notes and steps as separate blocks. A blank line separates adjacent blocks that exist. The steps block opens with its progress, such as `Steps: 1/3 done (33%)` (rounded down; counted, not saved; it never completes the task). Human step rows show state and text without machine-oriented short IDs.
 
 JSON returns an array with `id`, `number`, `title`, `status`, and `project`. Direct lookup returns the complete task, including `notes` (`null` when absent) and `steps` (an empty array when absent). Its fields are ordered `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `parent_task_id`, `parent`, `children_done`, `children_total`, `children`; each JSON step retains its `short_id` for step commands. Archived listings include an `archived` mark: `archived` or `project archived`.
 
@@ -450,6 +469,7 @@ After an uncertain add, inspect `tsk list --all --json`. Also check `--done` and
 | Status | `unknown-task`, `soft-deleted-task` |
 | Edit | `unknown-task`, `soft-deleted-task`, `empty-title`, `invalid-title` |
 | Archive / unarchive | `unknown-task`, `soft-deleted-task` |
+| UI answer | `stale-revision`, `unknown-question`, `unrouted-question`, `finding-board-action`, `approval-refused`, `invalid-correction`, `invalid-input` ([full list](#ui-answer)) |
 | Import | `missing-api-key`, `linear-error`, `unsupported-platform`, `unknown-project`, `project-archived` |
 
 A refusal prints as `tsk <command>: <code>: <message>` on stderr, for example `tsk status: unknown-task: T99 is not on the board`. Branch on the code; the message is for people and may change.

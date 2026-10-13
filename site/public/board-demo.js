@@ -1581,6 +1581,13 @@ import { parseCapture } from "./capture.js";
     return `<div class="tsk-tabs">${html}</div>`;
   }
 
+  // `steps 1/3 · 33%`, rounded down like the board; no steps keeps `steps 0/0`.
+  function stepsHeading(rows) {
+    const done = rows.filter((s) => s.done).length;
+    if (!rows.length) return "steps 0/0";
+    return `steps ${done}/${rows.length} · ${Math.floor((done * 100) / rows.length)}%`;
+  }
+
   function renderTaskRow(row, width) {
     const task = row.task;
     const selected = task.id === state.selectedId;
@@ -1720,7 +1727,7 @@ import { parseCapture } from "./capture.js";
     const editor = `<textarea id="tsk-step-edit" class="tsk-field" aria-label="Step text" rows="${wrapText(steps.editor?.text ?? "", stepWidth).length}">${esc(steps.editor?.text ?? "")}</textarea><span class="tsk-step-refusal">${esc(steps.refusal)}</span>`;
     const stepSelected = (id) =>
       edit ? field === `step:${id}` : steps.selected === id;
-    const stepList = `<div class="tsk-steps"><div class="tsk-steps-heading dim">steps ${stepRows.filter((s) => s.done).length}/${stepRows.length}</div>${stepRows
+    const stepList = `<div class="tsk-steps"><div class="tsk-steps-heading dim">${stepsHeading(stepRows)}</div>${stepRows
       .map(
         (step) =>
           `<div class="tsk-step" data-step="${esc(step.id)}" role="option" aria-selected="${stepSelected(step.id)}"><span class="tsk-step-glyph">${stepSelected(step.id) ? "▸ " : "  "}${steps.marked === step.id ? "✗" : step.done ? "✓" : "▪"} </span>${

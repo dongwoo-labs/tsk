@@ -25,7 +25,7 @@ use crate::ui::questions::{
 };
 
 /// The answering actor the board records. Origin `UserUi` carries the authority.
-const USER: &str = "user";
+pub(crate) const USER: &str = "user";
 
 /// Read the board's question records once.
 pub fn load_feed() -> QuestionFeed {

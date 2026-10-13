@@ -1,12 +1,15 @@
 //! Full-text JSON input/output for Agent questions.
+use std::io::Read;
 use std::path::PathBuf;
 
 use serde::Serialize;
 use uuid::Uuid;
 
 use super::{parser::parse_task_address, CliOutput};
-use crate::domain::{AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, RouteDraft};
-use crate::store::{notify_question, QuestionDurability, QuestionStore, TaskStore};
+use crate::domain::{
+    AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, QuestionRecord, RouteDraft,
+};
+use crate::store::{notify_question, QuestionDurability, QuestionError, QuestionStore, TaskStore};
 
 pub fn help() -> CliOutput {
     super::presenter::questions_help()
@@ -31,18 +34,31 @@ fn json(value: &impl Serialize, code: u8) -> CliOutput {
     }
 }
 
-pub fn run(args: Vec<String>) -> CliOutput {
+pub fn run(args: Vec<String>, stdin: &mut dyn Read) -> CliOutput {
     if args.iter().skip(2).any(|argument| argument == "--help") {
         return help();
     }
-    match execute(&args) {
+    if args.get(1).map(String::as_str) == Some("ui-answer") {
+        return super::ui_answer::run(&args, stdin);
+    }
+    match parse(&args).and_then(|parsed| execute(parsed, stdin)) {
         Ok(output) => output,
         Err((message, code)) => rejected(message, code),
     }
 }
 
-fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
-    let verb = args.get(1).map(String::as_str).unwrap_or("");
+/// The arguments every question verb shares.
+pub(super) struct Parsed {
+    pub verb: String,
+    pub state_dir: Option<PathBuf>,
+    /// `-` reads the JSON input from stdin.
+    pub file: Option<PathBuf>,
+    pub operand: Option<String>,
+    pub task: Option<super::parser::TaskAddress>,
+}
+
+pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
+    let verb = args.get(1).cloned().unwrap_or_default();
     let mut state_dir = std::env::var_os("TSK_STATE_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
@@ -56,7 +72,9 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
             "--state-dir" | "--file" | "--task" => {
                 let value = args
                     .get(index + 1)
-                    .filter(|value| !value.starts_with('-'))
+                    .filter(|value| {
+                        !value.starts_with('-') || (argument == "--file" && *value == "-")
+                    })
                     .ok_or_else(|| (format!("missing value for {argument}"), 2))?;
                 match argument.as_str() {
                     "--state-dir" => state_dir = Some(PathBuf::from(value)),
@@ -80,6 +98,24 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
             }
         }
     }
+    Ok(Parsed {
+        verb,
+        state_dir,
+        file,
+        operand,
+        task,
+    })
+}
+
+fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u8)> {
+    let Parsed {
+        verb,
+        state_dir,
+        file,
+        operand,
+        task,
+    } = parsed;
+    let verb = verb.as_str();
     let state_dir =
         state_dir.ok_or_else(|| ("explicit Agent state directory required".into(), 1))?;
     let store = QuestionStore::new(state_dir.clone()).map_err(|error| (error.to_string(), 1))?;
@@ -101,10 +137,11 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
     if verb != "questions" && task_id.is_some() {
         return Err(("--task is a questions filter".into(), 2));
     }
-    let read_input = || -> Result<Vec<u8>, (String, u8)> {
-        fs_read(
+    let mut read_input = || -> Result<Vec<u8>, (String, u8)> {
+        read_file(
             file.as_ref()
                 .ok_or_else(|| ("--file is required".into(), 2))?,
+            stdin,
         )
     };
     match verb {
@@ -191,8 +228,46 @@ fn execute(args: &[String]) -> Result<CliOutput, (String, u8)> {
     }
 }
 
-fn fs_read(path: &PathBuf) -> Result<Vec<u8>, (String, u8)> {
+/// The JSON input: a file, or stdin for `-`.
+pub(super) fn read_file(path: &PathBuf, stdin: &mut dyn Read) -> Result<Vec<u8>, (String, u8)> {
+    if path.as_os_str() == "-" {
+        let mut input = Vec::new();
+        stdin
+            .read_to_end(&mut input)
+            .map_err(|_| ("input unavailable on stdin".to_string(), 1))?;
+        return Ok(input);
+    }
     std::fs::read(path).map_err(|_| ("input file unavailable".into(), 1))
+}
+
+/// How a Q address failed to resolve.
+pub(super) enum Lookup {
+    /// Not a Q number or UUID.
+    Syntax,
+    Store(QuestionError),
+}
+
+/// A Q UUID or Q number in this store, read back with its record.
+pub(super) fn lookup(
+    store: &QuestionStore,
+    operand: &str,
+    task_id: Option<Uuid>,
+) -> Result<QuestionRecord, Lookup> {
+    if let Ok(id) = Uuid::parse_str(operand) {
+        return store.read(id).map_err(Lookup::Store);
+    }
+    let number = operand
+        .strip_prefix('Q')
+        .or_else(|| operand.strip_prefix('q'))
+        .unwrap_or(operand)
+        .parse::<u64>()
+        .map_err(|_| Lookup::Syntax)?;
+    store
+        .list(task_id)
+        .map_err(Lookup::Store)?
+        .into_iter()
+        .find(|record| record.reference.number == number)
+        .ok_or(Lookup::Store(QuestionError::UnknownQuestion))
 }
 
 fn resolve(
@@ -200,24 +275,12 @@ fn resolve(
     operand: &str,
     task_id: Option<Uuid>,
 ) -> Result<Uuid, (String, u8)> {
-    if let Ok(id) = Uuid::parse_str(operand) {
-        let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
-        if task_id.is_some_and(|task| task != record.reference.task_id) {
-            return Err(("question belongs to another task".into(), 1));
-        }
-        return Ok(id);
+    let record = lookup(store, operand, task_id).map_err(|error| match error {
+        Lookup::Syntax => ("invalid Q number or UUID".to_string(), 2),
+        Lookup::Store(error) => (error.to_string(), 1),
+    })?;
+    if task_id.is_some_and(|task| task != record.reference.task_id) {
+        return Err(("question belongs to another task".into(), 1));
     }
-    let number = operand
-        .strip_prefix('Q')
-        .or_else(|| operand.strip_prefix('q'))
-        .unwrap_or(operand)
-        .parse::<u64>()
-        .map_err(|_| ("invalid Q number or UUID".into(), 2))?;
-    store
-        .list(task_id)
-        .map_err(|error| (error.to_string(), 1))?
-        .iter()
-        .find(|record| record.reference.number == number)
-        .map(|record| record.reference.id)
-        .ok_or_else(|| ("unknown question".into(), 1))
+    Ok(record.reference.id)
 }

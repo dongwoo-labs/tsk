@@ -18,6 +18,7 @@ pub mod router;
 pub mod status;
 pub mod steps;
 pub mod trash;
+pub mod ui_answer;
 pub mod update;
 
 /// Captured process output, used by the binary and headless integration tests.
@@ -73,7 +74,9 @@ where
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
         Some("import") => run_import(args),
-        Some("ask" | "answer" | "route" | "questions") => questions::run(args),
+        Some("ask" | "answer" | "route" | "questions" | "ui-answer") => {
+            questions::run(args, &mut stdin)
+        }
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -106,7 +109,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
             "import" => presenter::import_help(),
-            "ask" | "answer" | "route" | "questions" => questions::help(),
+            "ask" | "answer" | "route" | "questions" | "ui-answer" => questions::help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),

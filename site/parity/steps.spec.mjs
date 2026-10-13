@@ -13,7 +13,9 @@ async function open(page, width) {
 for (const width of [40, 78, 109, 110])
   test(`task page and step actions at ${width}`, async ({ page }, info) => {
     await open(page, width);
-    await expect(page.locator(".tsk-steps-heading")).toHaveText("steps 1/2");
+    await expect(page.locator(".tsk-steps-heading")).toHaveText(
+      "steps 1/2 · 50%",
+    );
     await expect(page.locator("[data-step]")).toHaveCount(2);
     const reference = await readReference(`steps-${width}`);
     expect(
@@ -52,7 +54,9 @@ for (const width of [40, 78, 109, 110])
       "true",
     );
     await page.keyboard.press("Enter");
-    await expect(page.locator(".tsk-steps-heading")).toHaveText("steps 2/2");
+    await expect(page.locator(".tsk-steps-heading")).toHaveText(
+      "steps 2/2 · 100%",
+    );
     await expect(page.locator(".tsk-task-column")).toHaveAttribute(
       "data-status",
       "doing",
