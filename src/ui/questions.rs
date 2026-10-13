@@ -709,6 +709,8 @@ pub struct PageRow {
     pub focus: bool,
     /// What a click on this row does, if anything.
     pub click: Option<QueueHitTarget>,
+    /// Bytes of `text` that are a field label, painted dim before the value.
+    pub label: usize,
 }
 
 struct PageBuilder {
@@ -738,6 +740,7 @@ impl PageBuilder {
                     style,
                     focus: focus && first,
                     click: None,
+                    label: 0,
                 });
                 first = false;
             }
@@ -748,7 +751,17 @@ impl PageBuilder {
                 style,
                 focus,
                 click: None,
+                label: 0,
             });
+        }
+    }
+
+    /// A `label  value` field: the label paints dim so the value reads first.
+    fn field(&mut self, label: &str, text: &str, style: RowStyle) {
+        let at = self.rows.len();
+        self.indented(label, text, style, false);
+        if let Some(row) = self.rows.get_mut(at) {
+            row.label = label.len();
         }
     }
 
@@ -765,9 +778,13 @@ impl PageBuilder {
             style: RowStyle::Plain,
             focus: false,
             click: None,
+            label: 0,
         });
     }
 }
+
+/// Lead of the question's original text under its `local original` heading.
+const BODY_INDENT: &str = "  ";
 
 /// The question page's rows at `width`, from the snapshot only.
 pub fn page_rows(
@@ -800,36 +817,37 @@ pub fn page_rows(
         })
         .unwrap_or_else(|| format!("{} not found", record.reference.task_id));
     let at = page.rows.len();
-    page.indented("task    ", &task_text, RowStyle::Plain, false);
+    page.field("task    ", &task_text, RowStyle::Plain);
     page.click_from(at, PageClick::OpenTask);
-    page.indented(
+    page.field(
         "from    ",
         &format!("{} → {}", draft.origin_thread, audience_word(record)),
         RowStyle::Plain,
-        false,
     );
     if let Some(lead) = draft.lead_recipient.as_deref() {
-        page.indented("lead    ", lead, RowStyle::Dim, false);
+        page.field("lead    ", lead, RowStyle::Plain);
     }
     if let Some(path) = draft
         .finding
         .as_ref()
         .and_then(|finding| finding.path.as_deref())
     {
-        page.indented("file    ", path, RowStyle::Plain, false);
+        page.field("file    ", path, RowStyle::Plain);
     }
     if let Some(scope) = draft.blocking_scope.as_deref() {
-        page.indented("blocks  ", scope, RowStyle::Plain, false);
+        page.field("blocks  ", scope, RowStyle::Plain);
     }
     page.blank();
     page.push(&record.reference.summary, RowStyle::Bold, false);
     page.push("local original · never shared", RowStyle::Dim, false);
-    page.push(&draft.text, RowStyle::Plain, false);
+    // The original sits indented under its heading so it reads as one quoted block.
+    page.indented(BODY_INDENT, &draft.text, RowStyle::Plain, false);
     if let Some(finding) = draft.finding.as_ref() {
-        page.push(&finding.detail, RowStyle::Plain, false);
+        page.indented(BODY_INDENT, &finding.detail, RowStyle::Plain, false);
     }
     if let Some(impact) = draft.impact.as_deref() {
-        page.indented("impact  ", impact, RowStyle::Plain, false);
+        page.blank();
+        page.field("impact  ", impact, RowStyle::Plain);
     }
 
     if let Some(terms) = draft.approval.as_ref() {
@@ -839,13 +857,15 @@ pub fn page_rows(
             RowStyle::Bold,
             false,
         );
-        page.indented("action    ", &terms.action, RowStyle::Plain, false);
-        page.indented("target    ", &terms.target, RowStyle::Plain, false);
-        page.indented("scope     ", &terms.scope, RowStyle::Plain, false);
-        page.indented("revision  ", &terms.h, RowStyle::Plain, false);
-        page.indented("undo      ", &terms.rollback, RowStyle::Plain, false);
+        // What is being approved reads bold; how far it reaches and how to undo it, plain.
+        page.field("action    ", &terms.action, RowStyle::Bold);
+        page.field("target    ", &terms.target, RowStyle::Bold);
+        page.field("scope     ", &terms.scope, RowStyle::Plain);
+        page.field("revision  ", &terms.h, RowStyle::Bold);
+        page.field("undo      ", &terms.rollback, RowStyle::Plain);
         if record.is_open() && record.draft.audience.is_some() {
             let checked = state.checked(record);
+            page.blank();
             let at = page.rows.len();
             page.push(
                 &format!(
@@ -955,9 +975,9 @@ pub fn page_rows(
 
     if let Some(answer) = record.current_answer() {
         page.blank();
-        page.indented("answer  ", &answer.text, RowStyle::Plain, false);
+        page.field("answer  ", &answer.text, RowStyle::Plain);
         if let FindingLink::One(id) = record.finding_link() {
-            page.indented("task    ", &task_label(tasks, id), RowStyle::Plain, false);
+            page.field("task    ", &task_label(tasks, id), RowStyle::Plain);
         }
         if answer.action == Some(FindingAction::CreateAndRun) {
             let at = page.rows.len();
@@ -1213,6 +1233,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 style: RowStyle::Dim,
                 focus: false,
                 click: None,
+                label: 0,
             },
         )
     };
@@ -1249,6 +1270,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 style: RowStyle::Plain,
                 focus: false,
                 click: None,
+                label: 0,
             },
         ));
         rows.push((
@@ -1262,6 +1284,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 },
                 focus: false,
                 click: None,
+                label: 0,
             },
         ));
         for record in members {
@@ -1295,6 +1318,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                         },
                         focus: selected && index == 0,
                         click: None,
+                        label: 0,
                     },
                 ));
             }
@@ -1363,7 +1387,21 @@ fn paint_rows(
             );
             break;
         }
-        put(out, rect.x, y, rect.width, &row.text, row.style);
+        if row.label > 0 && row.label <= row.text.len() {
+            let (label, value) = row.text.split_at(row.label);
+            let label_w = (render::display_width(label) as u16).min(rect.width);
+            put(out, rect.x, y, label_w, label, RowStyle::Dim);
+            put(
+                out,
+                rect.x + label_w,
+                y,
+                rect.width - label_w,
+                value,
+                row.style,
+            );
+        } else {
+            put(out, rect.x, y, rect.width, &row.text, row.style);
+        }
         if let Some(id) = id {
             hits.push(
                 QueueHitTarget::Question(*id),
@@ -1378,6 +1416,15 @@ fn paint_rows(
         }
     }
     scroll
+}
+
+/// A question page keeps one blank column on its left, as the list's rows do.
+fn page_gutter(rect: Rect) -> Rect {
+    if rect.width > 1 {
+        Rect::new(rect.x + 1, rect.y, rect.width - 1, rect.height)
+    } else {
+        rect
+    }
 }
 
 /// The keys that scroll a page: `j`/`k` unless they choose an option or edit an answer.
@@ -1466,13 +1513,18 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
             geo.viewport_top + body_h,
         );
         if let Some(record) = shown.as_ref() {
+            // The detail column starts under the tab row.
+            let rect = page_gutter(Rect::new(
+                detail_rect.x,
+                body_top,
+                detail_rect.width,
+                body_h,
+            ));
             let page: Vec<(Option<Uuid>, PageRow)> =
-                page_rows(state, record, frame.tasks, detail_rect.width as usize)
+                page_rows(state, record, frame.tasks, rect.width as usize)
                     .into_iter()
                     .map(|row| (None, row))
                     .collect();
-            // The detail column starts under the tab row.
-            let rect = Rect::new(detail_rect.x, body_top, detail_rect.width, body_h);
             let at = (state.scroll.get(), state.follow.get());
             let scroll = paint_rows(out, rect, &page, at, scroll_hint(state, record), &mut hits);
             state.scroll.set(scroll);
@@ -1487,9 +1539,9 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
             );
         }
     } else if let Some(record) = shown.as_ref() {
-        let rect = Rect::new(area.x, body_top, width, body_h);
+        let rect = page_gutter(Rect::new(area.x, body_top, width, body_h));
         let page: Vec<(Option<Uuid>, PageRow)> =
-            page_rows(state, record, frame.tasks, width as usize)
+            page_rows(state, record, frame.tasks, rect.width as usize)
                 .into_iter()
                 .map(|row| (None, row))
                 .collect();
@@ -1578,6 +1630,7 @@ mod tests {
                         style: RowStyle::Plain,
                         focus: index == focus,
                         click: None,
+                        label: 0,
                     },
                 )
             })

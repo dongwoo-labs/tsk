@@ -592,9 +592,15 @@ import { parseCapture } from "./capture.js";
       );
     };
     const blank = () => push("");
+    // A `label  value` field: the label paints dim so the value reads first.
+    const field = (lead, text, cls = "", attrs = "") => {
+      const at = rows.length;
+      indented(lead, text, cls, attrs);
+      if (rows[at]) rows[at].label = lead.length;
+    };
     const task = taskById(q.taskId);
     push(`Q${q.number} · ${kindWord(q)} · ${stateLabel(q)}`, "is-bold");
-    indented(
+    field(
       "task    ",
       task
         ? `T${task.number} ${task.title} · t opens`
@@ -602,25 +608,26 @@ import { parseCapture } from "./capture.js";
       "",
       'data-q-key="t"',
     );
-    indented("from    ", `${q.origin} → ${audienceWord(q)}`);
-    if (q.leadRecipient) indented("lead    ", q.leadRecipient, "dim");
-    if (q.finding?.path) indented("file    ", q.finding.path);
-    if (q.blocks) indented("blocks  ", q.blocks);
+    field("from    ", `${q.origin} → ${audienceWord(q)}`);
+    if (q.leadRecipient) field("lead    ", q.leadRecipient);
+    if (q.finding?.path) field("file    ", q.finding.path);
+    if (q.blocks) field("blocks  ", q.blocks);
     blank();
     indented("", q.summary, "is-bold");
     push("sample text · this demo holds no private records", "dim");
-    indented("", q.text);
-    if (q.finding) indented("", q.finding.detail);
+    indented("  ", q.text);
+    if (q.finding) indented("  ", q.finding.detail);
     if (q.approval) {
       blank();
       push("hard to undo · check the target, scope, and revision", "is-bold");
-      indented("action    ", q.approval.action);
-      indented("target    ", q.approval.target);
-      indented("scope     ", q.approval.scope);
-      indented("revision  ", q.approval.h);
-      indented("undo      ", q.approval.rollback);
+      field("action    ", q.approval.action, "is-bold");
+      field("target    ", q.approval.target, "is-bold");
+      field("scope     ", q.approval.scope);
+      field("revision  ", q.approval.h, "is-bold");
+      field("undo      ", q.approval.rollback);
       if (isOpen(q) && q.audience) {
         const on = checked(q);
+        blank();
         push(
           `${on ? "[x]" : "[ ]"} I checked the target, scope, and revision (space)`,
           on ? "is-chosen" : "",
@@ -678,8 +685,8 @@ import { parseCapture } from "./capture.js";
     const answer = currentAnswer(q);
     if (answer) {
       blank();
-      indented("answer  ", answer.text);
-      if (q.createdTask) indented("task    ", taskLabel(q.createdTask));
+      field("answer  ", answer.text);
+      if (q.createdTask) field("task    ", taskLabel(q.createdTask));
       if (answer.action === "create_and_run")
         push(
           "r resends the run request · it never creates another task",
@@ -1866,6 +1873,9 @@ import { parseCapture } from "./capture.js";
       .map((row) => {
         if (row.input)
           return `<div class="tsk-q-line is-chosen"><span>answer  </span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="Answer" /></div>`;
+        // A field paints its label dim and only its value in the row's style.
+        if (row.label)
+          return `<div class="tsk-q-line" ${row.attrs}><span class="dim">${esc(row.text.slice(0, row.label))}</span><span class="${row.cls}">${esc(row.text.slice(row.label))}</span></div>`;
         return `<div class="tsk-q-line ${row.cls}" ${row.attrs}>${esc(row.text) || " "}</div>`;
       })
       .join("")}</div>`;
