@@ -248,7 +248,13 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
                     .get(choice)
                     .cloned()
                     .ok_or_else(|| invalid("choice is not one of the question's options"))?,
-                (None, Some(text)) => text.trim().to_string(),
+                (None, Some(text)) => {
+                    let text = text.trim();
+                    if text.is_empty() {
+                        return Err(invalid("text is blank"));
+                    }
+                    text.to_string()
+                }
                 (None, None) => unreachable!("one pick is present"),
             };
             Ok(answer)

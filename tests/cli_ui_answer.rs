@@ -335,6 +335,13 @@ fn usage_errors_exit_2() {
         &json!({"expected_revision": revision, "choice": 0, "origin": "agent"}),
     );
     assert_eq!(unknown.code, 2);
+    let blank = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "text": "   "}),
+    );
+    assert_eq!(blank.code, 2);
+    assert!(blank.stderr.contains("invalid-input"), "{}", blank.stderr);
     let missing = cli(&["ui-answer", "Q1", "--state-dir", &dir.state()]);
     assert_eq!(missing.code, 2);
     assert!(missing.stderr.contains("usage"), "{}", missing.stderr);
