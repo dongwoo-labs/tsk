@@ -113,23 +113,25 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Open a record | `Enter` (also `→` / `l` at 110+ columns) |
 | Back to the list | `Esc` (also `←` / `h` at 110+ columns) |
 | Quit from the list | `Esc` |
-| Choose an option | `j` / `k` on the record |
-| Save the chosen option, or start / save a typed answer | `Enter` |
-| Type a secret, then hand it to fnox | `Enter` |
-| Check an approval | `Space` |
-| Approve / reject | `y` / `n` |
-| Write or edit a comment beside an approval's decision | `m` |
+| Move the highlighted choice | `↑` / `↓` or `k` / `j` on the record |
+| Pick the highlighted choice | `Enter` |
+| Pick a choice by number | `1`–`9` |
+| Open the `Type something…` field | type on that row, or `Enter` |
+| Save a typed answer, or hand a secret to fnox | `Enter` in the field |
+| Leave a field (the draft stays; a secret is wiped) | `Esc` in the field |
+| Approve / reject an approval | `1` / `2` |
+| Write or edit a comment beside an approval's decision | `3` or `m` |
 | Correct an answer | `c` |
 | Open the task | `t` |
 | Resend a lead request | `r` |
 | Show or hide answered records (CLOSED) | `z` |
 | Next / previous record | `J` / `K` |
 | Scroll a record page | `PgUp` / `PgDn` |
-| Board tab | `1` |
+| Board tab | `1` (from the list, or a page without choices) |
 
-Clicks follow the keys: an option click chooses without saving, the check line checks, a line or footer entry naming a key acts as that key (the `j/k` pair only names the keys).
+Clicks follow the keys: a click on a choice picks it at once, and a line or footer entry naming a key acts as that key (`↑↓ move` and `1-n pick` only name the keys).
 
-These bare keys save answers on purpose: the tab owns the keyboard, and `y` approves only after `Space` checked the exact revision. While an answer is being typed, every key is text, `Enter` saves, and `Esc` cancels; `ctrl+q` and `ctrl+c` do not quit. A secret's value types the same way but shows only `•`, and `Enter` runs `fnox set` instead of saving text.
+These bare keys save answers on purpose: the tab owns the keyboard, and a pick submits at once, the way Claude Code's answer form does. Approve saves only the exact terms the page showed; if the record changed, it refuses and shows the new terms. On the `Type something…` row letters type (`j` / `k` / `J` / `K` and digits keep their meaning). While a field is open, every key is text, `Enter` saves, and `Esc` leaves the field; `ctrl+q` and `ctrl+c` do not quit. A secret's value types the same way but shows only `•`, and `Enter` runs `fnox set` instead of saving text.
 
 ## Quick-add
 

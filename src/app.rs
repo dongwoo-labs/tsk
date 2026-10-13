@@ -1226,10 +1226,11 @@ fn questions_own_keyboard(model: &BoardModel, mode: BoardInputMode) -> bool {
 fn board_paste_intent(area: Rect, model: &mut BoardModel, text: &str) -> Option<BoardIntent> {
     let mode = resolve_board_surface(area, model);
     if questions_own_keyboard(model, mode) {
-        // Only an open answer field takes pasted text; line breaks become spaces. A secret
-        // drops them instead, so a copied trailing newline never becomes part of the value.
-        return model.questions().answer.as_ref().map(|input| {
-            let text = if input.secret {
+        // Only an answer field takes pasted text (a focused one, or the highlighted text row,
+        // which the paste opens); line breaks become spaces. A secret drops them instead, so
+        // a copied trailing newline never becomes part of the value.
+        return crate::ui::questions::paste_target(model.questions()).map(|secret| {
+            let text = if secret {
                 text.replace(['\r', '\n'], "")
             } else {
                 text.replace(['\r', '\n'], " ")
@@ -3592,7 +3593,7 @@ mod tests {
     }
 
     #[test]
-    fn question_page_options_and_footer_keys_answer_by_mouse_at_every_width() {
+    fn question_page_choices_and_footer_keys_answer_by_mouse_at_every_width() {
         use crate::ui::questions::{PageClick, QuestionFeed, QuestionIntent};
         use crate::ui::render::QueueHitTarget;
         let temp = TempStore::new("question-mouse");
@@ -3612,14 +3613,20 @@ mod tests {
             let area = Rect::new(0, 0, width, 40);
             let hits = board_hit_map(area, &model);
 
-            // A click on an option chooses it, and opens the previewed record first.
-            let option = question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Option(1)));
-            let intent = map_responsive_board_mouse(&model, &hits, area, click_at(option))
-                .expect("option click maps");
+            // Every numbered row is a click target that picks it at once, as its digit does.
+            let option = question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Choice(1)));
             assert_eq!(
-                intent,
-                BoardIntent::Question(QuestionIntent::Page(PageClick::Option(1)))
+                map_responsive_board_mouse(&model, &hits, area, click_at(option)),
+                Some(BoardIntent::Question(QuestionIntent::Page(
+                    PageClick::Choice(1)
+                ))),
+                "width {width}"
             );
+            // The last row, `4. Type something…`, opens the inline field (opening the
+            // previewed record first) and saves nothing.
+            let other = question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Choice(3)));
+            let intent = map_responsive_board_mouse(&model, &hits, area, click_at(other))
+                .expect("text row click maps");
             handle_board_intent(
                 &temp.store,
                 &mut domain,
@@ -3628,16 +3635,31 @@ mod tests {
                 &mut recovery,
                 false,
             )
-            .expect("choose");
+            .expect("open the field");
             assert_eq!(model.questions().page, Some(id), "width {width}");
-            assert_eq!(
-                model.questions().choice(&record),
-                1,
-                "the clicked option is chosen at width {width}"
+            assert!(
+                model.questions().typing().is_some(),
+                "the text row is a focused field at width {width}"
             );
-            assert!(model.questions().answer.is_none(), "choosing never saves");
+            assert!(
+                model
+                    .questions()
+                    .answer
+                    .as_ref()
+                    .is_some_and(|a| a.text.is_empty()),
+                "a click on the text row saves nothing"
+            );
+            handle_board_intent(
+                &temp.store,
+                &mut domain,
+                &mut model,
+                BoardIntent::Question(QuestionIntent::AnswerCancel),
+                &mut recovery,
+                false,
+            )
+            .expect("leave the field");
 
-            // The footer's `enter save` maps as the Enter key does on that page.
+            // The footer's `enter pick` maps as the Enter key does on that page.
             let hits = board_hit_map(area, &model);
             let save = question_hit(&hits, QueueHitTarget::QuestionKey(KeyCode::Enter));
             assert_eq!(
@@ -3651,8 +3673,6 @@ mod tests {
                 Some(BoardIntent::Question(QuestionIntent::Back)),
                 "width {width}"
             );
-            // The page's own `enter saves the answer` line is a target too.
-            question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Enter));
         }
     }
 
@@ -3673,7 +3693,9 @@ mod tests {
             text: "half an answer".into(),
             secret: false,
             comment: false,
+            focused: true,
         });
+        model.questions_mut().page = Some(id);
         // While the answer is typed, the text entry owns ctrl+q and ctrl+c.
         for key in ['q', 'c'] {
             let intent = crate::ui::questions::map_key(
@@ -5696,6 +5718,7 @@ mod tests {
             uuid::Uuid::from_u128(2),
             uuid::Uuid::from_u128(1),
         ));
+        model.questions_mut().page = Some(uuid::Uuid::from_u128(2));
         assert_eq!(
             board_paste_intent(area, &mut model, "tok\r\nen\n"),
             Some(BoardIntent::Question(QuestionIntent::AnswerInsert(

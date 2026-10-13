@@ -20,8 +20,8 @@ use crate::threads::herdr;
 use crate::ui::board::BoardModel;
 use crate::ui::links::{task_links, TaskLink, ThreadRef};
 use crate::ui::questions::{
-    choices, AnswerAttempt, AnswerInput, FollowUp, PageClick, PendingCommit, QuestionFeed,
-    QuestionIntent, FINDING_ACTIONS,
+    form, lone_field, AnswerAttempt, AnswerInput, ApprovalCheck, Choice, FollowUp, PageClick,
+    PendingCommit, QuestionFeed, QuestionIntent, FINDING_ACTIONS,
 };
 
 /// The answering actor the board records. Origin `UserUi` carries the authority.
@@ -124,6 +124,11 @@ pub fn handle(
             }
             let questions = model.questions_mut();
             if wide && questions.cursor != Some(id) {
+                // Leaving the page for a preview: an empty field goes with it (one with
+                // text was refused above).
+                if questions.answer.as_ref().is_some_and(|a| a.text.is_empty()) {
+                    questions.answer = None;
+                }
                 questions.cursor = Some(id);
                 questions.page = None;
                 questions.scroll.set(0);
@@ -147,15 +152,10 @@ pub fn handle(
                 questions.open(id);
             }
             let next = match click {
-                PageClick::Option(index) => {
-                    model.questions_mut().choose(index);
-                    return;
-                }
+                PageClick::Choice(index) => QuestionIntent::Pick(index),
                 PageClick::Enter => QuestionIntent::Enter,
-                PageClick::Check => QuestionIntent::ToggleCheck,
                 PageClick::OpenTask => QuestionIntent::OpenTask,
                 PageClick::Correct => QuestionIntent::Correct,
-                PageClick::Comment => QuestionIntent::Comment,
                 PageClick::Resend => QuestionIntent::Resend,
             };
             handle(store, domain, model, next);
@@ -166,16 +166,22 @@ pub fn handle(
                 model.set_message(message);
             }
         }
-        QuestionIntent::ToggleCheck => {
-            if let Some(message) = model.questions_mut().toggle_check() {
-                model.set_message(message);
-            }
-        }
         QuestionIntent::Correct => {
             correct(model);
             model.questions().follow.set(true);
         }
         QuestionIntent::Comment => {
+            if let Some(record) = page_record(model) {
+                if let Some(index) = form(model.questions(), &record)
+                    .iter()
+                    .position(|choice| *choice == Choice::Comment)
+                {
+                    model
+                        .questions_mut()
+                        .highlight
+                        .insert(record.reference.id, index);
+                }
+            }
             comment(model);
             model.questions().follow.set(true);
         }
@@ -195,6 +201,10 @@ pub fn handle(
         }
         QuestionIntent::Link(task, index) => link(domain, model, task, index),
         QuestionIntent::AnswerInsert(text) => {
+            // A character on the highlighted text row (or a lone field) opens the field.
+            if model.questions().typing().is_none() && !focus_text(model) {
+                return;
+            }
             if let Some(input) = model.questions_mut().answer.as_mut() {
                 input.text.push_str(&text);
             }
@@ -206,41 +216,81 @@ pub fn handle(
             }
             model.questions().follow.set(true);
         }
-        QuestionIntent::AnswerCancel => {
-            // Dropping a secret input wipes its buffer. A comment edit leaves whatever was
-            // staged before untouched: Esc discards the edit, not the earlier text.
-            let input = model.questions_mut().answer.take();
-            model.set_message(match input {
-                Some(input) if input.secret => {
-                    "secret discarded · nothing sent to fnox · nothing saved"
-                }
-                Some(input) if input.comment => "comment edit discarded · earlier text kept",
-                _ => "answer discarded · nothing saved",
-            });
-        }
+        QuestionIntent::AnswerCancel => leave_field(model),
         QuestionIntent::Enter => {
             enter(store, domain, model);
             model.questions().follow.set(true);
         }
-        QuestionIntent::Approve => decide_approval(store, domain, model, true),
-        QuestionIntent::Reject => decide_approval(store, domain, model, false),
+        QuestionIntent::Pick(index) => {
+            pick(store, domain, model, index);
+            model.questions().follow.set(true);
+        }
         QuestionIntent::Resend => resend(model),
         QuestionIntent::ToggleClosed => model.questions_mut().toggle_closed(),
     }
 }
 
+/// `Esc` on a text field: leave it. A typed answer's draft stays on the page; a comment
+/// stays staged for the decision; a secret is wiped, since its value is never kept.
+fn leave_field(model: &mut BoardModel) {
+    let questions = model.questions_mut();
+    let Some(input) = questions.answer.as_mut() else {
+        return;
+    };
+    if input.secret {
+        // Dropping a secret input wipes its buffer.
+        questions.answer = None;
+        model.set_message("secret discarded · nothing sent to fnox · nothing saved");
+        return;
+    }
+    if input.comment {
+        stage_comment(model);
+        return;
+    }
+    input.focused = false;
+    let empty = input.text.is_empty();
+    model.set_message(if empty {
+        "left the field · nothing typed"
+    } else {
+        "left the field · the draft stays · esc again discards it"
+    });
+}
+
+/// Stage the focused comment beside the decision (or clear it when blank) and close it.
+fn stage_comment(model: &mut BoardModel) {
+    let questions = model.questions_mut();
+    let Some(input) = questions.answer.take() else {
+        return;
+    };
+    let text = input.text.trim().to_string();
+    if text.is_empty() {
+        questions.comments.remove(&input.id);
+        model.set_message("comment cleared");
+    } else {
+        questions.comments.insert(input.id, text);
+        model.set_message("comment kept · 1 approves · 2 rejects, either carries it");
+    }
+}
+
 fn back(model: &mut BoardModel) {
     let questions = model.questions_mut();
-    if questions.answer.is_some() {
+    if questions
+        .answer
+        .as_ref()
+        .is_some_and(|input| !input.text.is_empty())
+    {
         questions.answer = None;
+        model.set_message("answer discarded · nothing saved");
         return;
     }
     if questions.correcting.is_some() {
         questions.correcting = None;
+        questions.answer = None;
         return;
     }
+    questions.answer = None;
     questions.page = None;
-    questions.check = None;
+    questions.seen = None;
     if questions.return_task.take().is_some() {
         // The task page the question came from is still parked on the board.
         questions.active = false;
@@ -309,18 +359,12 @@ fn correct(model: &mut BoardModel) {
     }
     let id = record.reference.id;
     let revision = record.reference.revision;
+    let current = current.revision;
     let questions = model.questions_mut();
-    if choices(&record).is_empty() {
-        questions.answer = Some(AnswerInput {
-            id,
-            revision,
-            corrects: Some(current.revision),
-            text: String::new(),
-            secret: false,
-            comment: false,
-        });
-    } else {
-        questions.correcting = Some((id, revision));
+    questions.correcting = Some((id, revision));
+    questions.highlight.remove(&id);
+    if lone_field(&form(questions, &record)) {
+        questions.answer = Some(AnswerInput::typed(id, revision, Some(current)));
     }
     model.set_message(format!(
         "correcting Q{} · the new answer is a new revision, the earlier one stays",
@@ -328,8 +372,9 @@ fn correct(model: &mut BoardModel) {
     ));
 }
 
-/// `m`: write or edit the comment staged beside an open approval's y/n decision. The text
-/// is kept in session state until `y`/`n` saves it, or the record moves past this revision.
+/// The comment row (or `m`): write or edit the comment staged beside an open approval's
+/// decision. The text is kept in session state until approve or reject saves it, or the
+/// record closes.
 fn comment(model: &mut BoardModel) {
     let Some(record) = page_record(model) else {
         return;
@@ -360,7 +405,7 @@ fn comment(model: &mut BoardModel) {
         .cloned()
         .unwrap_or_default();
     model.questions_mut().answer = Some(AnswerInput::comment(id, revision, staged));
-    model.set_message("type a comment for this decision · enter stages it · esc discards the edit");
+    model.set_message("type a comment for this decision · enter or esc keeps it");
 }
 
 fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -379,74 +424,104 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
     if pending_elsewhere(model, id) || refuse_unrouted(model, &record) {
         return;
     }
-    if record.reference.kind == QuestionKind::Secret {
-        secret(store, domain, model, &record);
-        return;
-    }
-    if let Some(input) = model.questions().answer.clone() {
-        if input.comment {
-            // A comment never saves on its own: it stages beside the still-open decision
-            // until `y`/`n` writes it with the approve/reject answer.
-            let text = input.text.trim().to_string();
-            let questions = model.questions_mut();
-            questions.answer = None;
-            if text.is_empty() {
-                questions.comments.remove(&input.id);
-                model.set_message("comment cleared");
-            } else {
-                questions.comments.insert(input.id, text);
-                model.set_message("comment staged · y approves · n rejects, either carries it");
-            }
-            return;
-        }
-        if input.text.trim().is_empty() {
-            model.set_message("type an answer first · esc cancels");
-            return;
-        }
-        let mut answer = draft(input.revision, input.text.trim().to_string());
-        answer.corrects_revision = input.corrects;
-        save(
-            store,
-            domain,
-            model,
-            &record,
-            answer,
-            FollowUp::NotifyOrigin,
-            None,
-        );
+    if model.questions().typing().is_some() {
+        submit_typed(store, domain, model, &record);
         return;
     }
     let questions = model.questions();
-    if record.reference.kind == QuestionKind::Approval {
-        if record.is_open() {
-            model.set_message("space checks the terms · y approves · n rejects · m comments");
-        }
+    if !form(questions, &record).is_empty() {
+        let index = questions.highlighted(&record);
+        pick(store, domain, model, index);
+    }
+}
+
+/// `Enter` in a focused field: stage a comment, hand a secret to fnox, or save the answer.
+fn submit_typed(
+    store: &TaskStore,
+    domain: &mut DomainState,
+    model: &mut BoardModel,
+    record: &QuestionRecord,
+) {
+    let Some(input) = model.questions().answer.clone() else {
+        return;
+    };
+    if input.comment {
+        // A comment never saves on its own: it stages beside the still-open decision
+        // until approve or reject writes it with that answer.
+        stage_comment(model);
         return;
     }
-    if questions.choosing(&record) {
-        let choice = questions.choice(&record);
-        let corrects = questions
-            .correcting
-            .filter(|(cid, _)| *cid == id)
-            .and_then(|_| record.current_answer().map(|answer| answer.revision));
-        if record.reference.kind == QuestionKind::Finding {
-            let (action, label) = FINDING_ACTIONS[choice];
-            let mut answer = draft(record.reference.revision, label.to_string());
-            answer.action = Some(action);
-            answer.corrects_revision = corrects;
-            let follow = if action == FindingAction::CreateAndRun {
-                FollowUp::NotifyOriginAndLead
-            } else {
-                FollowUp::NotifyOrigin
-            };
-            let create = match action {
-                FindingAction::Close => None,
-                FindingAction::CreateAndRun => Some(true),
-                FindingAction::CreateOnly => Some(false),
-            };
-            save(store, domain, model, &record, answer, follow, create);
-        } else {
-            let Some(text) = record.draft.options.get(choice).cloned() else {
+    if input.secret {
+        drop(input);
+        secret(store, domain, model, record);
+        return;
+    }
+    if input.text.trim().is_empty() {
+        model.set_message("type an answer first · esc leaves the field");
+        return;
+    }
+    let mut answer = draft(input.revision, input.text.trim().to_string());
+    answer.corrects_revision = input.corrects;
+    save(
+        store,
+        domain,
+        model,
+        record,
+        answer,
+        FollowUp::NotifyOrigin,
+        None,
+    );
+}
+
+/// Pick one row of the open page's form at once: `1`-`9`, `Enter` on the highlight, or a
+/// click. Options and finding actions save, the text and comment rows open their field,
+/// and Approve saves only for the exact terms the page showed.
+fn pick(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel, index: usize) {
+    let Some(record) = page_record(model) else {
+        return;
+    };
+    let id = record.reference.id;
+    if pending_elsewhere(model, id) || refuse_unrouted(model, &record) {
+        return;
+    }
+    if model
+        .questions()
+        .pending
+        .is_some_and(|pending| pending.id() == id)
+    {
+        model.set_message("confirm the pending save first (enter)");
+        return;
+    }
+    let rows = form(model.questions(), &record);
+    let Some(choice) = rows.get(index).copied() else {
+        return;
+    };
+    {
+        let questions = model.questions_mut();
+        questions.highlight.insert(id, index);
+        // A pick of another row leaves a focused comment staged, never lost.
+        if questions
+            .answer
+            .as_ref()
+            .is_some_and(|input| input.comment && choice != Choice::Comment)
+        {
+            stage_comment(model);
+        }
+    }
+    let corrects = model
+        .questions()
+        .correcting
+        .filter(|(cid, _)| *cid == id)
+        .and_then(|_| record.current_answer().map(|answer| answer.revision));
+    match choice {
+        Choice::Text => {
+            focus_text(model);
+        }
+        Choice::Comment => comment(model),
+        Choice::Approve => approve(store, domain, model, &record),
+        Choice::Reject => reject(store, domain, model, &record),
+        Choice::Option(at) => {
+            let Some(text) = record.draft.options.get(at).cloned() else {
                 return;
             };
             let mut answer = draft(record.reference.revision, text);
@@ -461,23 +536,71 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
                 None,
             );
         }
-        return;
-    }
-    if record.is_open() && record.reference.kind == QuestionKind::Question {
-        model.questions_mut().answer = Some(AnswerInput {
-            id,
-            revision: record.reference.revision,
-            corrects: None,
-            text: String::new(),
-            secret: false,
-            comment: false,
-        });
-        model.set_message("type the answer · enter saves · esc cancels");
+        Choice::Finding(at) => {
+            let (action, label) = FINDING_ACTIONS[at];
+            let mut answer = draft(record.reference.revision, label.to_string());
+            answer.action = Some(action);
+            answer.corrects_revision = corrects;
+            let follow = if action == FindingAction::CreateAndRun {
+                FollowUp::NotifyOriginAndLead
+            } else {
+                FollowUp::NotifyOrigin
+            };
+            let create = match action {
+                FindingAction::Close => None,
+                FindingAction::CreateAndRun => Some(true),
+                FindingAction::CreateOnly => Some(false),
+            };
+            save(store, domain, model, &record, answer, follow, create);
+        }
     }
 }
 
-/// `Enter` on a secret question: open the masked input, or hand the typed value to fnox
-/// and record only `set`. The value never reaches the store, a message, or a log.
+/// Focus the open page's text field: the draft kept on it, or a new one (masked for a
+/// secret, carrying the corrected revision under a correction). Returns whether a field
+/// now owns the keyboard.
+fn focus_text(model: &mut BoardModel) -> bool {
+    let Some(record) = page_record(model) else {
+        return false;
+    };
+    let id = record.reference.id;
+    let questions = model.questions();
+    let rows = form(questions, &record);
+    if rows.get(questions.highlighted(&record)) != Some(&Choice::Text) {
+        return false;
+    }
+    if model.questions().pending.is_some() {
+        model.set_message("resolve the pending save first (enter)");
+        return false;
+    }
+    let correcting = model
+        .questions()
+        .correcting
+        .is_some_and(|(cid, _)| cid == id);
+    let corrects = record
+        .current_answer()
+        .map(|answer| answer.revision)
+        .filter(|_| correcting);
+    let questions = model.questions_mut();
+    match questions.answer.as_mut() {
+        Some(input) if input.id == id && !input.comment => input.focused = true,
+        _ if record.reference.kind == QuestionKind::Secret => {
+            questions.answer = Some(AnswerInput::secret(id, record.reference.revision));
+        }
+        _ => {
+            questions.answer = Some(AnswerInput::typed(id, record.reference.revision, corrects));
+        }
+    }
+    model.set_message(if record.reference.kind == QuestionKind::Secret {
+        "type the secret · shown as • · enter hands it to fnox set · esc cancels"
+    } else {
+        "type the answer · enter saves · esc leaves the field"
+    });
+    true
+}
+
+/// `Enter` in a focused secret field: hand the typed value to fnox and record only `set`.
+/// The value never reaches the store, a message, or a log.
 fn secret(
     store: &TaskStore,
     domain: &mut DomainState,
@@ -493,16 +616,7 @@ fn secret(
         .filter(|input| input.id == id && input.secret)
         .map(|input| input.text.is_empty());
     match typing {
-        None => {
-            if record.is_open() {
-                model.questions_mut().answer =
-                    Some(AnswerInput::secret(id, record.reference.revision));
-                model.set_message(
-                    "type the secret · shown as • · enter hands it to fnox set · esc cancels",
-                );
-            }
-            return;
-        }
+        None => return,
         Some(true) => {
             model.set_message("type the secret first · esc cancels");
             return;
@@ -572,49 +686,101 @@ pub(crate) fn hand_to_fnox(
     Ok(fresh)
 }
 
-fn decide_approval(
+/// Approve these exact terms: the terms the page showed must still be the snapshot's and a
+/// fresh read's, at the same revision, or nothing is saved and the page rebinds to the
+/// terms now shown so the user reads them before picking again.
+fn approve(
     store: &TaskStore,
     domain: &mut DomainState,
     model: &mut BoardModel,
-    approve: bool,
+    record: &QuestionRecord,
 ) {
-    let Some(record) = page_record(model) else {
-        return;
-    };
     if record.reference.kind != QuestionKind::Approval || !record.is_open() {
         return;
     }
-    if pending_elsewhere(model, record.reference.id) || refuse_unrouted(model, &record) {
+    let number = record.reference.number;
+    if !model.questions().seen_matches(record) {
+        model.questions_mut().rebind_seen(record);
+        model.set_message(format!(
+            "Q{number} changed since you read it · nothing saved · read the terms shown, then pick 1 again"
+        ));
         return;
     }
-    if model
-        .questions()
-        .pending
-        .is_some_and(|pending| pending.id() == record.reference.id)
-    {
-        model.set_message("confirm the pending save first (enter)");
+    let Some(questions) = question_store(model) else {
         return;
-    }
-    let mut answer = draft(
-        record.reference.revision,
-        if approve { "approved" } else { "rejected" }.to_string(),
-    );
-    if approve {
-        if !model.questions().checked(&record) {
-            model.set_message("check the target, scope, and revision first (space)");
+    };
+    let fresh = match questions.read(record.reference.id) {
+        Ok(fresh) => fresh,
+        Err(error) => {
+            model.set_message(format!("read back failed: {error} · nothing saved"));
             return;
         }
-        answer.approve = true;
-        answer.confirmed = true;
-        answer.approval = record.draft.approval.clone();
-    }
+    };
+    let Some(mut answer) = approval_draft(model.questions().seen.as_ref(), record, &fresh) else {
+        reload(model);
+        if let Some(shown) = page_record(model) {
+            model.questions_mut().rebind_seen(&shown);
+        }
+        model.set_message(format!(
+            "Q{number} changed since you read it · nothing saved · read the terms shown, then pick 1 again"
+        ));
+        return;
+    };
     // A staged comment rides the decision either way; it is never itself an approval.
     answer.comment = model.questions_mut().comments.remove(&record.reference.id);
     save(
         store,
         domain,
         model,
-        &record,
+        record,
+        answer,
+        FollowUp::NotifyOrigin,
+        None,
+    );
+}
+
+/// The approve answer for exactly the terms the page showed (`seen`), or none when the
+/// shown snapshot or the fresh read differs from them in revision or any term, or the
+/// record is no longer open.
+fn approval_draft(
+    seen: Option<&ApprovalCheck>,
+    shown: &QuestionRecord,
+    fresh: &QuestionRecord,
+) -> Option<AnswerDraft> {
+    let seen = seen?;
+    let same = |record: &QuestionRecord| {
+        record.reference.id == seen.id
+            && record.reference.revision == seen.revision
+            && record.draft.approval.as_ref() == Some(&seen.terms)
+            && record.reference.kind == QuestionKind::Approval
+            && record.is_open()
+    };
+    if !same(shown) || !same(fresh) {
+        return None;
+    }
+    let mut answer = draft(seen.revision, "approved".to_string());
+    answer.approve = true;
+    answer.confirmed = true;
+    answer.approval = Some(seen.terms.clone());
+    Some(answer)
+}
+
+fn reject(
+    store: &TaskStore,
+    domain: &mut DomainState,
+    model: &mut BoardModel,
+    record: &QuestionRecord,
+) {
+    if record.reference.kind != QuestionKind::Approval || !record.is_open() {
+        return;
+    }
+    let mut answer = draft(record.reference.revision, "rejected".to_string());
+    answer.comment = model.questions_mut().comments.remove(&record.reference.id);
+    save(
+        store,
+        domain,
+        model,
+        record,
         answer,
         FollowUp::NotifyOrigin,
         None,
@@ -674,7 +840,7 @@ fn save(
                 let questions = model.questions_mut();
                 questions.answer = None;
                 questions.correcting = None;
-                questions.check = None;
+                questions.seen = None;
             }
             match saved.durability {
                 QuestionDurability::Durable => {
@@ -711,16 +877,17 @@ fn save(
         Err(QuestionError::StaleRevision) => {
             // The typed text and the revision it was written against stay as they were:
             // nothing retargets it to the newer record, and only Esc discards it.
+            // The terms the page showed stay bound: a pick of Approve after this reload
+            // refuses until the user has the new terms on screen.
             let questions = model.questions_mut();
             questions.correcting = None;
-            questions.check = None;
             // The comment was pulled off the staged map to attempt this save; restore it
             // since nothing was actually written.
             if let Some(text) = comment.clone() {
                 questions.comments.insert(id, text);
             }
             let kept = if questions.answer.is_some() {
-                " · your text stays · esc discards it"
+                " · your text stays · esc leaves it, esc again discards it"
             } else {
                 ""
             };
@@ -1068,6 +1235,51 @@ mod tests {
             state.get(created).map(|task| &task.scope),
             Some(&TaskScope::Global)
         );
+    }
+
+    #[test]
+    fn approve_saves_only_the_exact_terms_the_page_showed() {
+        let mut shown = finding(Vec::new(), Vec::new());
+        shown.reference.kind = QuestionKind::Approval;
+        shown.draft.kind = QuestionKind::Approval;
+        shown.draft.audience = Some(crate::domain::Audience::User);
+        shown.draft.approval = Some(crate::domain::ApprovalTerms {
+            target: "prod".into(),
+            action: "deploy".into(),
+            h: "a".repeat(40),
+            scope: "web".into(),
+            rollback: "redeploy".into(),
+        });
+        let seen = ApprovalCheck {
+            id: shown.reference.id,
+            revision: shown.reference.revision,
+            terms: shown.draft.approval.clone().expect("terms"),
+        };
+        let answer = approval_draft(Some(&seen), &shown, &shown).expect("same terms approve");
+        assert!(answer.approve && answer.confirmed);
+        assert_eq!(answer.approval.as_ref(), Some(&seen.terms));
+        assert_eq!(answer.expected_revision, seen.revision);
+        // No binding, a moved revision, a changed term, or a closed record: nothing.
+        assert!(approval_draft(None, &shown, &shown).is_none());
+        let mut moved = shown.clone();
+        moved.reference.revision = Uuid::from_u128(77);
+        assert!(approval_draft(Some(&seen), &shown, &moved).is_none());
+        let mut retargeted = shown.clone();
+        if let Some(terms) = retargeted.draft.approval.as_mut() {
+            terms.target = "prod\u{200b}".into();
+        }
+        assert!(approval_draft(Some(&seen), &shown, &retargeted).is_none());
+        assert!(approval_draft(Some(&seen), &retargeted, &shown).is_none());
+        let mut closed = shown.clone();
+        closed.answers.push(answer_for_approval());
+        closed.reference.revision = shown.reference.revision;
+        assert!(approval_draft(Some(&seen), &shown, &closed).is_none());
+    }
+
+    fn answer_for_approval() -> QuestionAnswer {
+        let mut answer = answer("rejected", FindingAction::Close, AnswerOrigin::UserUi);
+        answer.action = None;
+        answer
     }
 
     fn finding(answers: Vec<QuestionAnswer>, routes: Vec<QuestionRoute>) -> QuestionRecord {

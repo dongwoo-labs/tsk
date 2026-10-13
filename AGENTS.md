@@ -209,10 +209,14 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   task only, never a marked set, refuse a dirty draft, and stay text in every input. Two
   more user-confirmed exceptions: the task page's bare `e`/`a` only open the title editor
   or a new step row (the same as `ctrl+e`/`ctrl+a`; nothing saves until the editor does),
-  and the questions tab (`2`) owns the keyboard, so its bare `Enter`, `Space`, `y`, `n`,
-  `c`, `t`, `r` answer, check, approve, reject, correct, open the task, and resend. `y`
-  refuses until `Space` checked the exact target, scope, and revision on screen. Do not
-  add another non-Ctrl mutating chord.
+  and the questions tab (`2`) owns the keyboard with one answer form per record, like
+  Claude Code's (user-confirmed 2026-10-14, the "일괄변경" request): on an open page bare
+  `Enter` and the digits `1`-`9` pick a choice at once (approve, reject, an option, a
+  finding action), letters on the `Type something…` row open its field, and `m`, `c`, `t`,
+  `r` comment, correct, open the task, and resend. Approve saves only the terms and
+  revision the page showed, re-read and compared against the store before the save; a
+  mismatch refuses and rebinds. There is no `Space`/`y`/`n`. Do not add another non-Ctrl
+  mutating chord.
 - Mono modifiers only, no colour, at every width. There is no theme module.
 - Text wraps, never truncates. One wrap engine (`edit::wrap_text`) feeds every surface;
   `escaped_draft_rows` remains only for the single-line Title editor.

@@ -53,7 +53,9 @@ impl QuestionFeed {
     }
 }
 
-/// The approval check (`Space`), bound to the exact revision and terms the user read.
+/// The approval terms the page showed when it opened, bound to their exact revision.
+/// Picking **Approve these exact terms** saves only while the snapshot and a fresh read of
+/// the record both still match them; a mismatch refuses and rebinds to the terms now shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovalCheck {
     pub id: Uuid,
@@ -71,9 +73,12 @@ pub struct AnswerInput {
     pub text: String,
     /// A secret question's value: painted as `•`, handed only to fnox, wiped on drop.
     pub secret: bool,
-    /// Free text beside an approval's y/n decision: `Enter` stages it for `y`/`n`, it is
-    /// never itself an answer and never saved on its own.
+    /// Free text beside an approval's decision: `Enter` or `Esc` stages it for the next
+    /// approve or reject pick, it is never itself an answer and never saved on its own.
     pub comment: bool,
+    /// Whether the field owns the keyboard. `Esc` leaves a typed answer's field and keeps the
+    /// draft on the page; secret and comment inputs exist only while focused.
+    pub focused: bool,
 }
 
 impl AnswerInput {
@@ -87,6 +92,21 @@ impl AnswerInput {
             text: String::with_capacity(256),
             secret: true,
             comment: false,
+            focused: true,
+        }
+    }
+
+    /// An empty, focused answer field for a question at `revision`; `corrects` names the
+    /// answer revision a correction replaces.
+    pub fn typed(id: Uuid, revision: Uuid, corrects: Option<Uuid>) -> Self {
+        Self {
+            id,
+            revision,
+            corrects,
+            text: String::new(),
+            secret: false,
+            comment: false,
+            focused: true,
         }
     }
 
@@ -100,6 +120,7 @@ impl AnswerInput {
             text,
             secret: false,
             comment: true,
+            focused: true,
         }
     }
 }
@@ -114,6 +135,7 @@ impl std::fmt::Debug for AnswerInput {
             .field("text", text)
             .field("secret", &self.secret)
             .field("comment", &self.comment)
+            .field("focused", &self.focused)
             .finish()
     }
 }
@@ -188,9 +210,10 @@ pub struct QuestionsState {
     pub cursor: Option<Uuid>,
     /// The open question: a full page below 110 columns, the focused detail at 110 and up.
     pub page: Option<Uuid>,
-    /// Option (or finding action) chosen per question, by index.
-    pub options: BTreeMap<Uuid, usize>,
-    pub check: Option<ApprovalCheck>,
+    /// The highlighted row of each record's answer form, by index into [`form`].
+    pub highlight: BTreeMap<Uuid, usize>,
+    /// The approval terms the open page showed (see [`ApprovalCheck`]).
+    pub seen: Option<ApprovalCheck>,
     /// A correction in progress: (question, the revision it was read at).
     pub correcting: Option<(Uuid, Uuid)>,
     pub answer: Option<AnswerInput>,
@@ -201,9 +224,9 @@ pub struct QuestionsState {
     pub return_question: Option<Uuid>,
     /// First painted row of the open question page.
     pub scroll: Cell<usize>,
-    /// Whether the next paint scrolls the focus row (chosen option, check, input) into
-    /// view. A selection change sets it; an explicit scroll (wheel, `PgUp`/`PgDn`, `j`/`k`
-    /// on a page without choices) clears it so rows above or below the focus stay readable.
+    /// Whether the next paint scrolls the focus row (highlighted choice, input) into view.
+    /// A highlight change sets it; an explicit scroll (wheel, `PgUp`/`PgDn`, `j`/`k` on a
+    /// page without choices) clears it so rows above or below the focus stay readable.
     pub follow: Cell<bool>,
     /// The last save's hint outcome for one question, shown on its page.
     pub report: Option<(Uuid, String)>,
@@ -212,8 +235,9 @@ pub struct QuestionsState {
     pub closed_open: bool,
     /// The pending save's list slot from before it, so its confirmation keeps that place.
     pub pending_slot: Option<usize>,
-    /// Comment text staged for an open approval, by question id: typed with `m`, kept
-    /// until `y`/`n` saves it beside the decision or the record moves past this revision.
+    /// Comment text staged for an open approval, by question id: typed on the form's
+    /// comment row (or `m`), kept until approve or reject saves it beside the decision or
+    /// the record closes.
     pub comments: BTreeMap<Uuid, String>,
 }
 
@@ -221,9 +245,9 @@ pub struct QuestionsState {
 /// the app boundary, which owns the store and the Herdr hints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuestionIntent {
-    /// `j`/`k`/arrows: the list cursor, the chosen option, or the page scroll.
+    /// `j`/`k`/arrows: the list cursor, the highlighted choice, or the page scroll.
     Move(bool),
-    /// The wheel: the list cursor, or the page scroll (never the chosen option).
+    /// The wheel: the list cursor, or the page scroll (never the highlight).
     Scroll(bool),
     /// `Enter`/`l`/`→` on the list.
     Open,
@@ -231,17 +255,14 @@ pub enum QuestionIntent {
     Back,
     /// `J`/`K`: the next or previous question in the list's own order.
     Step(bool),
-    /// `Enter` on a page: save the chosen answer, decide a finding, or confirm a pending save.
+    /// `Enter` on a page: pick the highlighted choice, save a typed answer, or confirm a
+    /// pending save.
     Enter,
-    /// `Space`: the approval check.
-    ToggleCheck,
-    /// `y`.
-    Approve,
-    /// `n`.
-    Reject,
+    /// `1`-`9`, or a click on a choice: pick that row of the form at once.
+    Pick(usize),
     /// `c`: correct the current answer as a new revision.
     Correct,
-    /// `m`: write or edit a comment staged beside an open approval's y/n decision.
+    /// `m`: the approval form's comment row, as picking it does.
     Comment,
     /// `t`: open the question's task.
     OpenTask,
@@ -266,20 +287,34 @@ pub enum QuestionIntent {
 /// The action lines a question page paints as click targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageClick {
-    /// Choose this option (index into the page's choices); it does not save.
-    Option(usize),
-    /// The `enter` line: write, save, decide, or confirm, as `Enter` does.
+    /// Pick this row of the form (index into [`form`]) at once, as its digit does.
+    Choice(usize),
+    /// The pending-save line, as `Enter` does.
     Enter,
-    /// The approval check line, as `Space` does.
-    Check,
     /// The task line, as `t` does.
     OpenTask,
     /// The `c corrects` line.
     Correct,
-    /// The comment line, as `m` does.
-    Comment,
     /// The `r resends` line.
     Resend,
+}
+
+/// One row of a record's answer form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    /// The question's option at this index.
+    Option(usize),
+    /// The free-text row (`Type something…`), or the lone field of a question without
+    /// options or a secret.
+    Text,
+    /// Approve these exact terms.
+    Approve,
+    /// Reject the approval.
+    Reject,
+    /// The comment beside an approval's decision.
+    Comment,
+    /// The finding action at this index into [`FINDING_ACTIONS`].
+    Finding(usize),
 }
 
 /// The groups of the list, in paint order. `Unrouted` is the compatibility block for open
@@ -477,26 +512,52 @@ pub fn state_label(record: &QuestionRecord, tasks: &[Task]) -> String {
     }
 }
 
-/// The question's actionable choices: its options, or the three finding actions.
-pub fn choices(record: &QuestionRecord) -> Vec<String> {
-    if record.reference.kind == QuestionKind::Finding {
-        return FINDING_ACTIONS
-            .iter()
-            .map(|(_, label)| (*label).to_string())
-            .collect();
-    }
-    record.draft.options.clone()
-}
-
 pub const FINDING_ACTIONS: [(FindingAction, &str); 3] = [
     (FindingAction::CreateAndRun, "create the task and run it"),
     (FindingAction::CreateOnly, "create the task only (todo)"),
     (FindingAction::Close, "close · no task"),
 ];
 
-/// The choice index the page starts on: the recommendation when it names an option.
-fn default_choice(record: &QuestionRecord) -> usize {
-    if record.reference.kind == QuestionKind::Finding {
+/// What the finding form's rows read; the saved answer text stays [`FINDING_ACTIONS`].
+const FINDING_LABELS: [&str; 3] = [
+    "Create the task and run it",
+    "Create the task only",
+    "Close",
+];
+
+/// The record's answer form: every row a pick can submit, in paint order. Empty when the
+/// record is read-only (answered and not under correction, lead-addressed, or with no
+/// target). A question without options and a secret have one row, their lone text field.
+pub fn form(state: &QuestionsState, record: &QuestionRecord) -> Vec<Choice> {
+    if record.draft.audience.is_none() {
+        return Vec::new();
+    }
+    let correcting = state
+        .correcting
+        .is_some_and(|(id, _)| id == record.reference.id);
+    let open = record.is_open();
+    match record.reference.kind {
+        QuestionKind::Approval if open => vec![Choice::Approve, Choice::Reject, Choice::Comment],
+        QuestionKind::Secret if open => vec![Choice::Text],
+        QuestionKind::Finding if open || correcting => {
+            (0..FINDING_ACTIONS.len()).map(Choice::Finding).collect()
+        }
+        QuestionKind::Question if open || correcting => (0..record.draft.options.len())
+            .map(Choice::Option)
+            .chain(std::iter::once(Choice::Text))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether the form is one text field and nothing else (no numbered choices).
+pub fn lone_field(form: &[Choice]) -> bool {
+    form == [Choice::Text]
+}
+
+/// The form row the page starts on: the recommendation when it names an option.
+fn default_highlight(record: &QuestionRecord) -> usize {
+    if record.reference.kind != QuestionKind::Question {
         return 0;
     }
     record
@@ -580,27 +641,25 @@ impl QuestionsState {
                 self.page = None;
                 self.answer = None;
                 self.correcting = None;
+                self.seen = None;
             }
         }
         self.reset_stale_check();
     }
 
-    /// Replace the snapshot. The approval check survives only for the same revision and terms.
+    /// Replace the snapshot. The terms the page showed survive it, so a pick of Approve
+    /// after the terms changed refuses instead of approving terms the user never read.
     pub fn set_feed(&mut self, feed: QuestionFeed) {
         self.feed = feed;
         self.reanchor();
     }
 
     fn reset_stale_check(&mut self) {
-        let keep = self.check.as_ref().is_some_and(|check| {
-            self.feed.get(check.id).is_some_and(|record| {
-                record.reference.revision == check.revision
-                    && record.draft.approval.as_ref() == Some(&check.terms)
-                    && record.is_open()
-            })
+        let keep = self.seen.as_ref().is_some_and(|seen| {
+            self.page == Some(seen.id) && self.feed.get(seen.id).is_some_and(|r| r.is_open())
         });
         if !keep {
-            self.check = None;
+            self.seen = None;
         }
         let keep_correction = self.correcting.is_some_and(|(id, revision)| {
             self.feed
@@ -626,35 +685,40 @@ impl QuestionsState {
             || !self.comments.is_empty()
     }
 
-    /// The typed answer opening `id` would discard: one in progress on another question.
+    /// The typed answer opening `id` would discard: text in progress on another question.
+    /// An empty field is no work and never blocks.
     pub fn answer_elsewhere(&self, id: Uuid) -> Option<Uuid> {
         self.answer
             .as_ref()
-            .filter(|input| input.id != id)
+            .filter(|input| input.id != id && !input.text.is_empty())
             .map(|input| input.id)
     }
 
-    pub fn choice(&self, record: &QuestionRecord) -> usize {
-        let count = choices(record).len();
-        self.options
+    /// The text field that owns the keyboard: a focused input on the open page.
+    pub fn typing(&self) -> Option<&AnswerInput> {
+        self.answer
+            .as_ref()
+            .filter(|input| input.focused && self.page == Some(input.id))
+    }
+
+    /// The highlighted row of the record's form (index into [`form`]).
+    pub fn highlighted(&self, record: &QuestionRecord) -> usize {
+        let count = form(self, record).len();
+        self.highlight
             .get(&record.reference.id)
             .copied()
-            .unwrap_or_else(|| default_choice(record))
+            .unwrap_or_else(|| default_highlight(record))
             .min(count.saturating_sub(1))
     }
 
-    /// Whether the page offers its choices right now (open, or under correction).
-    pub fn choosing(&self, record: &QuestionRecord) -> bool {
-        record.reference.kind != QuestionKind::Approval
-            && !choices(record).is_empty()
-            && ((record.is_open() && record.draft.audience.is_some())
-                || self
-                    .correcting
-                    .is_some_and(|(id, _)| id == record.reference.id))
+    /// The highlighted row's choice on the open page, if it has a form.
+    pub fn highlighted_choice(&self) -> Option<Choice> {
+        let record = self.page.and_then(|id| self.feed.get(id))?;
+        form(self, record).get(self.highlighted(record)).copied()
     }
 
     fn clear_page_state(&mut self) {
-        self.check = None;
+        self.seen = None;
         self.correcting = None;
         self.answer = None;
         self.scroll.set(0);
@@ -674,11 +738,41 @@ impl QuestionsState {
     }
 
     pub fn open(&mut self, id: Uuid) {
-        if self.page != Some(id) {
+        let fresh = self.page != Some(id);
+        if fresh {
             self.clear_page_state();
         }
         self.cursor = Some(id);
         self.page = Some(id);
+        if fresh {
+            self.arm(id);
+        }
+    }
+
+    /// A page just opened: bind an approval to the terms it shows, and focus the lone field
+    /// of a question without options or a secret, as the answer form opens.
+    fn arm(&mut self, id: Uuid) {
+        let Some(record) = self.feed.get(id) else {
+            return;
+        };
+        if record.draft.audience.is_none() || !record.is_open() {
+            return;
+        }
+        let revision = record.reference.revision;
+        match record.reference.kind {
+            QuestionKind::Approval => {
+                self.seen = record.draft.approval.clone().map(|terms| ApprovalCheck {
+                    id,
+                    revision,
+                    terms,
+                });
+            }
+            QuestionKind::Secret => self.answer = Some(AnswerInput::secret(id, revision)),
+            QuestionKind::Question if record.draft.options.is_empty() => {
+                self.answer = Some(AnswerInput::typed(id, revision, None));
+            }
+            _ => {}
+        }
     }
 
     /// Move the list cursor; returns a refusal message at either end.
@@ -725,68 +819,42 @@ impl QuestionsState {
         Some(format!("{} / {}", next + 1, order.len()))
     }
 
-    /// `j`/`k` on a page: move the chosen option, else scroll.
+    /// `j`/`k` on a page: move the highlighted choice, else scroll.
     pub fn move_on_page(&mut self, forward: bool) {
         let Some(record) = self.page.and_then(|id| self.feed.get(id)).cloned() else {
             return;
         };
-        if self.answer.is_none() && self.choosing(&record) {
-            let count = choices(&record).len();
-            let current = self.choice(&record);
+        let rows = form(self, &record);
+        if !rows.is_empty() && !lone_field(&rows) {
+            let current = self.highlighted(&record);
             let next = if forward {
-                (current + 1).min(count - 1)
+                (current + 1).min(rows.len() - 1)
             } else {
                 current.saturating_sub(1)
             };
-            self.options.insert(record.reference.id, next);
+            self.highlight.insert(record.reference.id, next);
             self.follow.set(true);
             return;
         }
         self.scroll_page(forward);
     }
 
-    /// A click on an option: choose it on the open page. It never saves.
-    pub fn choose(&mut self, index: usize) {
-        let Some(record) = self.page.and_then(|id| self.feed.get(id)).cloned() else {
-            return;
-        };
-        if self.answer.is_some() || !self.choosing(&record) || index >= choices(&record).len() {
-            return;
-        }
-        self.options.insert(record.reference.id, index);
-        self.follow.set(true);
+    /// Whether `seen` still names exactly the terms and revision `record` shows.
+    pub fn seen_matches(&self, record: &QuestionRecord) -> bool {
+        self.seen.as_ref().is_some_and(|seen| {
+            seen.id == record.reference.id
+                && seen.revision == record.reference.revision
+                && record.draft.approval.as_ref() == Some(&seen.terms)
+        })
     }
 
-    pub fn toggle_check(&mut self) -> Option<&'static str> {
-        let record = self.page.and_then(|id| self.feed.get(id))?;
-        if record.reference.kind != QuestionKind::Approval
-            || !record.is_open()
-            || record.draft.audience.is_none()
-        {
-            return None;
-        }
-        let terms = record.draft.approval.clone()?;
-        let check = ApprovalCheck {
+    /// Bind the approval to the terms `record` shows now (after a refusal showed them).
+    pub fn rebind_seen(&mut self, record: &QuestionRecord) {
+        self.seen = record.draft.approval.clone().map(|terms| ApprovalCheck {
             id: record.reference.id,
             revision: record.reference.revision,
             terms,
-        };
-        self.follow.set(true);
-        if self.check.as_ref() == Some(&check) {
-            self.check = None;
-            Some("check cleared")
-        } else {
-            self.check = Some(check);
-            Some("checked · y approves this exact revision")
-        }
-    }
-
-    pub fn checked(&self, record: &QuestionRecord) -> bool {
-        self.check.as_ref().is_some_and(|check| {
-            check.id == record.reference.id
-                && check.revision == record.reference.revision
-                && record.draft.approval.as_ref() == Some(&check.terms)
-        })
+        });
     }
 }
 
@@ -997,102 +1065,21 @@ pub fn page_rows(
         page.field("scope     ", &terms.scope, RowStyle::Plain);
         page.field("revision  ", &terms.h, RowStyle::Bold);
         page.field("undo      ", &terms.rollback, RowStyle::Plain);
-        if record.is_open() && record.draft.audience.is_some() {
-            let checked = state.checked(record);
-            page.blank();
-            let at = page.rows.len();
-            page.push(
-                &format!(
-                    "{} I checked the target, scope, and revision (space)",
-                    if checked { "[x]" } else { "[ ]" }
-                ),
-                if checked {
-                    RowStyle::Selected
-                } else {
-                    RowStyle::Plain
-                },
-                true,
-            );
-            page.click_from(at, PageClick::Check);
-            page.push(
-                if checked {
-                    "y approves · n rejects · no answer keeps waiting"
-                } else {
-                    "y approves once checked · n rejects · no answer keeps waiting"
-                },
-                RowStyle::Dim,
-                false,
-            );
-            if state.answer.as_ref().is_none_or(|input| !input.comment) {
-                let at = page.rows.len();
-                match state.comments.get(&record.reference.id) {
-                    Some(text) => {
-                        page.indented("comment ", text, RowStyle::Plain, false);
-                        page.click_from(at, PageClick::Comment);
-                        page.push(
-                            "m edits the comment · it saves with y or n, either way",
-                            RowStyle::Dim,
-                            false,
-                        );
-                    }
-                    None => {
-                        page.push("m adds a comment beside the decision", RowStyle::Dim, false);
-                        page.click_from(at, PageClick::Comment);
-                    }
-                }
-            }
-        }
     }
 
-    let choosing = state.choosing(record) && state.answer.is_none();
-    if choosing {
-        let list = choices(record);
-        let chosen = state.choice(record);
-        page.blank();
-        let heading = if record.reference.kind == QuestionKind::Finding {
-            "decide"
-        } else {
-            "options"
-        };
-        page.push(heading, RowStyle::Dim, false);
-        for (index, label) in list.iter().enumerate() {
-            let mark = if index == chosen { "(•) " } else { "( ) " };
-            let recommended = draft
-                .recommendation
-                .as_deref()
-                .is_some_and(|rec| rec.trim() == label.trim())
-                && record.reference.kind != QuestionKind::Finding;
-            let text = if recommended {
-                format!("{label} · recommended")
-            } else {
-                label.clone()
-            };
-            let at = page.rows.len();
-            page.indented(
-                mark,
-                &text,
-                if index == chosen {
-                    RowStyle::Selected
-                } else {
-                    RowStyle::Plain
-                },
-                index == chosen,
-            );
-            page.click_from(at, PageClick::Option(index));
-        }
-        let at = page.rows.len();
-        page.push(
-            if record.reference.kind == QuestionKind::Finding {
-                "enter decides"
-            } else if state.correcting.is_some() {
-                "enter saves the correction · the earlier answer stays in history"
-            } else {
-                "enter saves the answer"
-            },
-            RowStyle::Dim,
-            false,
-        );
-        page.click_from(at, PageClick::Enter);
+    let rows = form(state, record);
+    let typing = state
+        .answer
+        .as_ref()
+        .filter(|input| input.id == record.reference.id);
+    let correcting = state
+        .correcting
+        .is_some_and(|(id, _)| id == record.reference.id);
+    if lone_field(&rows) || (rows.is_empty() && typing.is_some_and(|input| !input.comment)) {
+        // A draft refused because the record moved on stays visible until `Esc` drops it.
+        form_field(&mut page, record, typing, correcting);
+    } else if !rows.is_empty() {
+        form_choices(&mut page, state, record, &rows, typing, correcting);
     } else if record.draft.audience.is_none() {
         page.blank();
         page.push(
@@ -1100,64 +1087,6 @@ pub fn page_rows(
             RowStyle::Dim,
             false,
         );
-    } else if record.is_open()
-        && record.reference.kind == QuestionKind::Question
-        && state.answer.is_none()
-    {
-        page.blank();
-        let at = page.rows.len();
-        page.push("enter writes an answer", RowStyle::Dim, false);
-        page.click_from(at, PageClick::Enter);
-    } else if record.is_open()
-        && record.reference.kind == QuestionKind::Secret
-        && state.answer.is_none()
-    {
-        page.blank();
-        let at = page.rows.len();
-        page.push(
-            "enter types the secret · tsk hands it to fnox set, never stores or shows it",
-            RowStyle::Dim,
-            false,
-        );
-        page.click_from(at, PageClick::Enter);
-    }
-
-    if let Some(input) = state
-        .answer
-        .as_ref()
-        .filter(|input| input.id == record.reference.id)
-    {
-        page.blank();
-        if input.secret {
-            // One `•` per character typed: the length shows, the value never does.
-            let mask = "•".repeat(input.text.chars().count());
-            page.indented("secret  ", &format!("{mask}▏"), RowStyle::Selected, true);
-            page.push(
-                "enter hands it to fnox set · esc cancels and wipes it",
-                RowStyle::Dim,
-                false,
-            );
-        } else if input.comment {
-            page.indented(
-                "comment ",
-                &format!("{}▏", input.text),
-                RowStyle::Selected,
-                true,
-            );
-            page.push(
-                "enter stages it for y/n · esc discards the edit",
-                RowStyle::Dim,
-                false,
-            );
-        } else {
-            page.indented(
-                "answer  ",
-                &format!("{}▏", input.text),
-                RowStyle::Selected,
-                true,
-            );
-            page.push("enter saves · esc cancels", RowStyle::Dim, false);
-        }
     }
 
     if let Some(answer) = record.current_answer() {
@@ -1261,6 +1190,143 @@ pub fn page_rows(
     page.rows
 }
 
+/// The lone text field of a question without options or a secret.
+fn form_field(
+    page: &mut PageBuilder,
+    record: &QuestionRecord,
+    input: Option<&AnswerInput>,
+    correcting: bool,
+) {
+    let secret = record.reference.kind == QuestionKind::Secret;
+    let lead = if secret { "secret  " } else { "answer  " };
+    page.blank();
+    let at = page.rows.len();
+    match input.filter(|input| !input.comment) {
+        Some(input) if input.secret => {
+            // One `•` per character typed: the length shows, the value never does.
+            let mask = "•".repeat(input.text.chars().count());
+            page.indented(lead, &format!("{mask}▏"), RowStyle::Selected, true);
+        }
+        Some(input) if input.focused => {
+            page.indented(lead, &format!("{}▏", input.text), RowStyle::Selected, true);
+        }
+        Some(input) if !input.text.is_empty() => {
+            page.indented(lead, &input.text, RowStyle::Bold, true);
+        }
+        _ if secret => page.indented(lead, "Type the value…", RowStyle::Dim, true),
+        _ => page.indented(lead, "Type something…", RowStyle::Dim, true),
+    }
+    page.click_from(at, PageClick::Choice(0));
+    let focused = input.is_some_and(|input| input.focused);
+    page.push(
+        match (secret, focused, correcting) {
+            (true, true, _) => "enter hands it to fnox set · esc cancels and wipes it",
+            (true, false, _) => {
+                "enter opens the field · tsk hands it to fnox set, never stores or shows it"
+            }
+            (false, true, true) => {
+                "enter saves the correction · the earlier answer stays in history · esc leaves the field"
+            }
+            (false, true, false) => "enter saves · esc leaves the field, the draft stays",
+            (false, false, _) => "enter opens the field",
+        },
+        RowStyle::Dim,
+        false,
+    );
+}
+
+/// The numbered choices of a question with options, an approval, or a finding.
+fn form_choices(
+    page: &mut PageBuilder,
+    state: &QuestionsState,
+    record: &QuestionRecord,
+    rows: &[Choice],
+    input: Option<&AnswerInput>,
+    correcting: bool,
+) {
+    let highlighted = state.highlighted(record);
+    let draft = &record.draft;
+    page.blank();
+    page.push(
+        match record.reference.kind {
+            QuestionKind::Approval | QuestionKind::Finding => "decide",
+            _ => "options",
+        },
+        RowStyle::Dim,
+        false,
+    );
+    for (index, choice) in rows.iter().enumerate() {
+        let on = index == highlighted;
+        let mut style = if on {
+            RowStyle::Selected
+        } else {
+            RowStyle::Plain
+        };
+        let text = match *choice {
+            Choice::Option(at) => {
+                let label = draft.options.get(at).cloned().unwrap_or_default();
+                let recommended = draft
+                    .recommendation
+                    .as_deref()
+                    .is_some_and(|rec| rec.trim() == label.trim());
+                if recommended {
+                    format!("{label} · recommended")
+                } else {
+                    label
+                }
+            }
+            Choice::Text => match input.filter(|input| !input.comment && !input.secret) {
+                Some(input) if input.focused => {
+                    style = RowStyle::Selected;
+                    format!("{}▏", input.text)
+                }
+                Some(input) if !input.text.is_empty() => input.text.clone(),
+                _ => "Type something…".to_string(),
+            },
+            Choice::Approve => "Approve these exact terms".to_string(),
+            Choice::Reject => "Reject".to_string(),
+            Choice::Comment => match input.filter(|input| input.comment) {
+                Some(input) => {
+                    style = RowStyle::Selected;
+                    format!("{}▏", input.text)
+                }
+                None => match state.comments.get(&record.reference.id) {
+                    Some(text) => format!("Comment · {text}"),
+                    None => "Add a comment…".to_string(),
+                },
+            },
+            Choice::Finding(at) => FINDING_LABELS[at].to_string(),
+        };
+        let marker = if on { "▸ " } else { "  " };
+        let at = page.rows.len();
+        page.indented(&format!("{marker}{}. ", index + 1), &text, style, on);
+        page.click_from(at, PageClick::Choice(index));
+    }
+    let n = rows.len();
+    let hint = match (input.map(|input| (input.focused, input.comment)), correcting) {
+        (Some((true, true)), _) => {
+            "enter or esc keeps the comment · it saves with approve or reject, either way"
+                .to_string()
+        }
+        (Some((true, false)), true) => {
+            "enter saves the correction · the earlier answer stays in history · esc leaves the field"
+                .to_string()
+        }
+        (Some((true, false)), false) => {
+            "enter saves · esc leaves the field, the draft stays".to_string()
+        }
+        (_, true) => format!(
+            "enter or 1-{n} saves the correction · the earlier answer stays in history"
+        ),
+        _ if record.reference.kind == QuestionKind::Approval => {
+            "1 approves exactly these terms · a comment rides approve or reject · no answer keeps waiting"
+                .to_string()
+        }
+        _ => format!("enter or 1-{n} picks at once"),
+    };
+    page.push(&hint, RowStyle::Dim, false);
+}
+
 fn route_text(route: &crate::domain::QuestionRoute) -> String {
     let to = match route.audience {
         Audience::User => "you",
@@ -1270,45 +1336,50 @@ fn route_text(route: &crate::domain::QuestionRoute) -> String {
 }
 
 /// The footer key hint of the tab's current state.
-pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
-    if let Some(input) = state.answer.as_ref() {
+pub fn footer_hint(state: &QuestionsState, wide: bool) -> String {
+    if let Some(input) = state.typing() {
         return if input.secret {
             "enter fnox set · esc cancel"
         } else if input.comment {
-            "enter stage · esc cancel"
+            "enter keep · esc keep"
         } else {
-            "enter save · esc cancel"
-        };
+            "enter save · esc leave"
+        }
+        .to_string();
     }
     let Some(record) = state.page.and_then(|id| state.feed.get(id)) else {
         return if wide {
             "enter/→ open · j/k move · z closed · 1 board · ? keys"
         } else {
             "enter open · j/k move · z closed · 1 board · ? keys"
-        };
+        }
+        .to_string();
     };
     if state.pending.is_some_and(|p| p.id() == record.reference.id) {
-        return "enter confirm · J/K next · esc back";
+        return "enter confirm · J/K next · esc back".to_string();
     }
     if record.draft.audience.is_none() {
-        return "J/K next · t task · esc back";
+        return "J/K next · t task · esc back".to_string();
     }
-    if record.reference.kind == QuestionKind::Approval && record.is_open() {
-        return "space check · y approve · n reject · m comment · J/K next · esc back";
+    let rows = form(state, record);
+    if lone_field(&rows) {
+        return "enter type · J/K next · t task · esc back".to_string();
     }
-    if state.choosing(record) {
-        return "j/k choose · enter save · J/K next · t task · esc back";
-    }
-    if record.is_open() {
-        return "enter answer · J/K next · t task · esc back";
+    if !rows.is_empty() {
+        let n = rows.len();
+        // On the text row letters type, so `t` is text there and the footer drops it.
+        if rows.get(state.highlighted(record)) == Some(&Choice::Text) {
+            return format!("↑↓ move · enter type · 1-{n} pick · J/K next · esc back");
+        }
+        return format!("↑↓ move · enter pick · 1-{n} pick · J/K next · t task · esc back");
     }
     if matches!(
         record.reference.kind,
         QuestionKind::Approval | QuestionKind::Secret
     ) {
-        return "t task · J/K next · esc back";
+        return "t task · J/K next · esc back".to_string();
     }
-    "c correct · t task · J/K next · esc back"
+    "c correct · t task · J/K next · esc back".to_string()
 }
 
 /// The key a footer entry names, or none for a pair that only moves (`j/k`).
@@ -1316,7 +1387,6 @@ fn footer_key(token: &str) -> Option<KeyCode> {
     match token {
         "enter" | "enter/→" => Some(KeyCode::Enter),
         "esc" => Some(KeyCode::Esc),
-        "space" => Some(KeyCode::Char(' ')),
         // `J/K next`: a click steps forward.
         "J/K" => Some(KeyCode::Char('J')),
         _ => {
@@ -1338,8 +1408,8 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
     let ctrl = mods.contains(KeyModifiers::CONTROL);
     let extra = mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
     let q = |intent| Some(BoardIntent::Question(intent));
-    // Text entry owns every key: only Enter saves and Esc cancels, so no chord quits here.
-    if state.answer.is_some() {
+    // Text entry owns every key: only Enter saves and Esc leaves, so no chord quits here.
+    if state.typing().is_some() {
         return match key.code {
             KeyCode::Esc => q(QuestionIntent::AnswerCancel),
             KeyCode::Enter if !extra => q(QuestionIntent::Enter),
@@ -1353,6 +1423,26 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
     }
     if extra {
         return None;
+    }
+    // The open page's answer form: a digit picks its row at once, and on the highlighted
+    // `Type something…` row a typed character opens the field with it. A lone field left
+    // with `Esc` reopens on `Enter`, so its page keys (`t`, `J`/`K`) keep their meaning.
+    if let (Some(record), KeyCode::Char(c)) =
+        (state.page.and_then(|id| state.feed.get(id)), key.code)
+    {
+        let rows = form(state, record);
+        let lone = lone_field(&rows);
+        if let Some(digit) = c.to_digit(10).filter(|d| (1..=9).contains(d)) {
+            let index = digit as usize - 1;
+            if !lone && index < rows.len() {
+                return q(QuestionIntent::Pick(index));
+            }
+        }
+        let on_text = !lone && rows.get(state.highlighted(record)) == Some(&Choice::Text);
+        let moves = matches!(c, 'j' | 'k' | 'J' | 'K');
+        if on_text && !moves && !c.is_ascii_digit() {
+            return q(QuestionIntent::AnswerInsert(c.to_string()));
+        }
     }
     match key.code {
         KeyCode::Char('1') => return Some(BoardIntent::SelectNavTab(NavTab::Board)),
@@ -1382,15 +1472,23 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
         KeyCode::Char('J') => q(QuestionIntent::Step(true)),
         KeyCode::Char('K') => q(QuestionIntent::Step(false)),
         KeyCode::Enter => q(QuestionIntent::Enter),
-        KeyCode::Char(' ') => q(QuestionIntent::ToggleCheck),
-        KeyCode::Char('y') => q(QuestionIntent::Approve),
-        KeyCode::Char('n') => q(QuestionIntent::Reject),
         KeyCode::Char('c') => q(QuestionIntent::Correct),
         KeyCode::Char('m') => q(QuestionIntent::Comment),
         KeyCode::Char('t') => q(QuestionIntent::OpenTask),
         KeyCode::Char('r') => q(QuestionIntent::Resend),
         _ => None,
     }
+}
+
+/// Where a paste goes on the tab: `Some(secret)` when a field takes it (the focused one,
+/// or the open page's highlighted text row, which a paste opens), `None` otherwise.
+pub fn paste_target(state: &QuestionsState) -> Option<bool> {
+    if let Some(input) = state.typing() {
+        return Some(input.secret);
+    }
+    let record = state.page.and_then(|id| state.feed.get(id))?;
+    (state.highlighted_choice() == Some(Choice::Text))
+        .then_some(record.reference.kind == QuestionKind::Secret)
 }
 
 /// The text the selector row paints for the two tabs.
@@ -1649,9 +1747,10 @@ fn page_gutter(rect: Rect) -> Rect {
     }
 }
 
-/// The keys that scroll a page: `j`/`k` unless they choose an option or edit an answer.
+/// The keys that scroll a page: `j`/`k` unless they move a highlight or edit an answer.
 fn scroll_hint(state: &QuestionsState, record: &QuestionRecord) -> &'static str {
-    if state.answer.is_none() && !state.choosing(record) {
+    let rows = form(state, record);
+    if state.typing().is_none() && (rows.is_empty() || lone_field(&rows)) {
         "j/k"
     } else {
         "pgup/pgdn"
@@ -1815,6 +1914,7 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
     if let Some(row) = geo.verb_row {
         let y = area.y + row;
         let hint = footer_hint(state, wide);
+        let hint = hint.as_str();
         put(out, area.x, y, width, &format!(" {hint}"), RowStyle::Dim);
         // Each `key label` entry is a button that maps as its key does.
         let mut x = area.x + 1;
@@ -1937,12 +2037,19 @@ mod tests {
         assert!(before.contains("key     STAGING_KEY"), "{before}");
         assert!(before.contains("profile default"), "{before}");
         assert!(before.contains("config  global"), "{before}");
-        assert!(before.contains("enter types the secret"), "{before}");
+        // The page opens on one masked field, already focused: no numbered choices.
+        assert!(before.contains("secret  ▏"), "{before}");
+        assert!(before.contains("enter hands it to fnox set"), "{before}");
+        assert!(!before.contains("1. "), "{before}");
+        assert!(state.typing().is_some_and(|input| input.secret));
         assert_eq!(group_of(&record), QuestionGroup::ForYou);
 
-        let mut input = AnswerInput::secret(id, record.reference.revision);
-        input.text.push_str("hunter2");
-        state.answer = Some(input);
+        state
+            .answer
+            .as_mut()
+            .expect("armed secret field")
+            .text
+            .push_str("hunter2");
         let typed = texts(&state).join("\n");
         assert!(!typed.contains("hunter2"), "{typed}");
         assert!(typed.contains("secret  •••••••▏"), "{typed}");
@@ -2035,7 +2142,7 @@ mod tests {
     }
 
     #[test]
-    fn m_stages_a_comment_beside_an_open_approval_and_it_rides_either_decision() {
+    fn an_approval_form_offers_approve_reject_and_comment_and_no_check_keys() {
         let record = approval_record();
         let id = record.reference.id;
         let mut state = QuestionsState {
@@ -2044,57 +2151,64 @@ mod tests {
             ..QuestionsState::default()
         };
         state.open(id);
-        // `m` is a page-level key, mapped only once the terms are checked (mirroring the
-        // page's own gate); the key itself maps independent of that gate.
+        let text = |state: &QuestionsState| {
+            page_rows(state, &record, &[], 80)
+                .into_iter()
+                .map(|row| row.text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let page = text(&state);
+        // The exact terms come first, then the three numbered choices.
+        let terms = page.find("target    prod").expect("terms shown");
+        let first = page
+            .find("▸ 1. Approve these exact terms")
+            .expect("approve row");
+        assert!(terms < first, "{page}");
+        assert!(page.contains("  2. Reject"), "{page}");
+        assert!(page.contains("  3. Add a comment…"), "{page}");
+        assert!(!page.contains("[ ]"), "no check line: {page}");
         assert_eq!(
-            map_key(&state, false, KeyEvent::from(KeyCode::Char('m'))),
+            form(&state, &record),
+            vec![Choice::Approve, Choice::Reject, Choice::Comment]
+        );
+        let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
+        // Digits pick at once; the old check and decide keys are gone.
+        assert_eq!(
+            key(&state, KeyCode::Char('1')),
+            Some(BoardIntent::Question(QuestionIntent::Pick(0)))
+        );
+        assert_eq!(
+            key(&state, KeyCode::Char('3')),
+            Some(BoardIntent::Question(QuestionIntent::Pick(2)))
+        );
+        assert_eq!(key(&state, KeyCode::Char('4')), None);
+        for gone in [' ', 'y', 'n'] {
+            assert_eq!(key(&state, KeyCode::Char(gone)), None, "{gone:?}");
+        }
+        assert_eq!(
+            key(&state, KeyCode::Char('m')),
             Some(BoardIntent::Question(QuestionIntent::Comment))
         );
-
-        // Before any comment is staged, the page offers to add one.
-        let before = page_rows(&state, &record, &[], 80)
-            .into_iter()
-            .map(|row| row.text)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            before.contains("m adds a comment beside the decision"),
-            "{before}"
+        assert_eq!(
+            footer_hint(&state, false),
+            "↑↓ move · enter pick · 1-3 pick · J/K next · t task · esc back"
         );
 
-        // Typing stages the draft text in the input, shown live on the page.
+        // The comment row is an inline field; once kept, the row shows it.
+        state.highlight.insert(id, 2);
         state.answer = Some(AnswerInput::comment(
             id,
             record.reference.revision,
             "looks safe".into(),
         ));
-        let typing = page_rows(&state, &record, &[], 80)
-            .into_iter()
-            .map(|row| row.text)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(typing.contains("comment looks safe▏"), "{typing}");
-        assert_eq!(footer_hint(&state, false), "enter stage · esc cancel");
-
-        // Once staged (as `enter` on the input does in question_actions::handle), the page
-        // shows the pending comment and offers `m` to edit it, and the approval footer
-        // names the key.
+        let typing = text(&state);
+        assert!(typing.contains("▸ 3. looks safe▏"), "{typing}");
+        assert_eq!(footer_hint(&state, false), "enter keep · esc keep");
         state.answer = None;
         state.comments.insert(id, "looks safe".into());
-        let staged = page_rows(&state, &record, &[], 80)
-            .into_iter()
-            .map(|row| row.text)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(staged.contains("comment looks safe"), "{staged}");
-        assert!(
-            staged.contains("m edits the comment · it saves with y or n, either way"),
-            "{staged}"
-        );
-        assert_eq!(
-            footer_hint(&state, false),
-            "space check · y approve · n reject · m comment · J/K next · esc back"
-        );
+        let staged = text(&state);
+        assert!(staged.contains("3. Comment · looks safe"), "{staged}");
 
         // A closed record's stale staged comment is dropped on reload.
         let mut closed = record.clone();
@@ -2113,10 +2227,199 @@ mod tests {
             comment: Some("looks safe".into()),
         });
         closed.reference.revision = Uuid::from_u128(9);
-        state.set_feed(QuestionFeed::Loaded(vec![closed]));
+        state.set_feed(QuestionFeed::Loaded(vec![closed.clone()]));
         assert!(
             state.comments.is_empty(),
             "a decided approval's stale staged comment is pruned, not resurfaced"
         );
+        assert!(
+            form(&state, &closed).is_empty(),
+            "a decided approval is read-only"
+        );
+    }
+
+    #[test]
+    fn approve_stays_bound_to_the_terms_the_page_showed_across_a_reload() {
+        let record = approval_record();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        assert!(state.seen_matches(&record), "opening binds the shown terms");
+        // An agent re-asks with a new target while the page is open: the reload shows the
+        // new terms, but the binding still names the old ones, so a pick of 1 refuses.
+        let mut moved = record.clone();
+        moved.reference.revision = Uuid::from_u128(4);
+        if let Some(terms) = moved.draft.approval.as_mut() {
+            terms.target = "prod-eu".into();
+        }
+        state.set_feed(QuestionFeed::Loaded(vec![moved.clone()]));
+        assert!(!state.seen_matches(&moved), "changed terms never pass");
+        // The refusal rebinds to what is now on screen; the next pick may approve those.
+        state.rebind_seen(&moved);
+        assert!(state.seen_matches(&moved));
+        // Same revision, changed terms: still refused.
+        let mut swapped = moved.clone();
+        if let Some(terms) = swapped.draft.approval.as_mut() {
+            terms.scope = "everything".into();
+        }
+        assert!(!state.seen_matches(&swapped));
+    }
+
+    fn options_record() -> QuestionRecord {
+        let mut record = secret_record();
+        record.reference.kind = QuestionKind::Question;
+        record.draft.kind = QuestionKind::Question;
+        record.draft.secret = None;
+        record.draft.options = vec!["alpha".into(), "beta".into()];
+        record.draft.recommendation = Some("beta".into());
+        record
+    }
+
+    #[test]
+    fn a_question_form_numbers_its_options_then_a_text_row_and_starts_on_the_recommendation() {
+        let record = options_record();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let page = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(page.contains("  1. alpha"), "{page}");
+        assert!(page.contains("▸ 2. beta · recommended"), "{page}");
+        assert!(page.contains("  3. Type something…"), "{page}");
+        assert!(state.typing().is_none(), "no field is focused yet");
+        let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
+        assert_eq!(
+            key(&state, KeyCode::Char('1')),
+            Some(BoardIntent::Question(QuestionIntent::Pick(0)))
+        );
+        assert_eq!(
+            key(&state, KeyCode::Enter),
+            Some(BoardIntent::Question(QuestionIntent::Enter))
+        );
+        // A letter on an option row is no answer; on the text row it opens the field.
+        assert_eq!(key(&state, KeyCode::Char('x')), None);
+        state.move_on_page(true);
+        assert_eq!(state.highlighted_choice(), Some(Choice::Text));
+        state.move_on_page(true);
+        assert_eq!(state.highlighted(&record), 2);
+        assert_eq!(
+            footer_hint(&state, false),
+            "↑↓ move · enter type · 1-3 pick · J/K next · esc back"
+        );
+        assert_eq!(
+            key(&state, KeyCode::Char('x')),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "x".into()
+            )))
+        );
+        assert_eq!(
+            key(&state, KeyCode::Char('k')),
+            Some(BoardIntent::Question(QuestionIntent::Move(false))),
+            "j/k still move off the text row"
+        );
+        assert_eq!(
+            paste_target(&state),
+            Some(false),
+            "a paste opens the text row"
+        );
+        // An unfocused draft stays on its row.
+        let mut draft = AnswerInput::typed(id, record.reference.revision, None);
+        draft.text.push_str("gamma");
+        draft.focused = false;
+        state.answer = Some(draft);
+        let kept = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(kept.contains("▸ 3. gamma"), "{kept}");
+        assert!(state.has_unsaved_work());
+        // On the list, digits switch tabs as before.
+        state.page = None;
+        assert_eq!(
+            key(&state, KeyCode::Char('1')),
+            Some(BoardIntent::SelectNavTab(NavTab::Board))
+        );
+    }
+
+    #[test]
+    fn a_question_without_options_opens_on_its_focused_field() {
+        let mut record = options_record();
+        record.draft.options.clear();
+        record.draft.recommendation = None;
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        assert_eq!(form(&state, &record), vec![Choice::Text]);
+        assert!(state.typing().is_some_and(|input| !input.secret));
+        let page = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(page.contains("answer  ▏"), "{page}");
+        assert!(!page.contains("1. "), "{page}");
+        // Every printable key, digits included, is text in the field.
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('1'))),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "1".into()
+            )))
+        );
+        assert_eq!(footer_hint(&state, false), "enter save · esc leave");
+        // An empty field never blocks opening another record.
+        assert_eq!(state.answer_elsewhere(Uuid::from_u128(77)), None);
+        // Left with Esc, the lone field reopens on Enter and page keys work again.
+        state.answer.as_mut().expect("field").focused = false;
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('t'))),
+            Some(BoardIntent::Question(QuestionIntent::OpenTask))
+        );
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Enter)),
+            Some(BoardIntent::Question(QuestionIntent::Enter))
+        );
+        assert_eq!(
+            footer_hint(&state, false),
+            "enter type · J/K next · t task · esc back"
+        );
+    }
+
+    #[test]
+    fn a_finding_form_names_its_three_actions() {
+        let mut record = options_record();
+        record.reference.kind = QuestionKind::Finding;
+        record.draft.kind = QuestionKind::Finding;
+        record.draft.options.clear();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let page = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(page.contains("▸ 1. Create the task and run it"), "{page}");
+        assert!(page.contains("  2. Create the task only"), "{page}");
+        assert!(page.contains("  3. Close"), "{page}");
     }
 }
