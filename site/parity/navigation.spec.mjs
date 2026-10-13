@@ -90,20 +90,22 @@ test("rows carry question marks and the child count; the waiting line opens tab 
   ]);
 });
 
-test("an approval needs the check before y, and is sample only", async ({
+test("an approval is a numbered form, 1 approves, and is sample only", async ({
   page,
 }) => {
   await page.goto(LANDING);
   await page.locator("#board-demo").focus();
   await page.keyboard.press("2");
   await page.keyboard.press("Enter");
-  await page.keyboard.press("y");
-  await expect(page.locator("#tsk-demo")).toContainText(
-    "check the target, scope, and revision first · space",
-  );
+  const form = page.locator(".tsk-q-page");
+  await expect(form).toContainText("▸ 1. Approve these exact terms");
+  await expect(form).toContainText("2. Reject");
+  await expect(form).toContainText("3. Add a comment…");
+  // The old check and decide keys are gone: nothing is saved.
   await page.keyboard.press("Space");
-  await expect(page.locator("[data-q-check]")).toContainText("[x]");
   await page.keyboard.press("y");
+  await expect(form).toContainText("Q1 · approval");
+  await page.keyboard.press("1");
   await expect(page.locator("#tsk-demo")).toContainText("Q1 approved · sample");
   await expect(page.locator('[data-question="q2"]')).toContainText("▸ Q2");
   await expect(page.locator(".tsk-q-group").last()).toHaveText(
@@ -171,6 +173,10 @@ test("answers, a finding, J/K, t, and the unrouted refusal", async ({
   );
   await page.keyboard.press("K");
   await expect(page.locator(".tsk-q-page")).toContainText("Q5 · question");
+  // Q5 has no options: it opens on its focused field, as in the app, so `t` is text
+  // there until Esc leaves the field.
+  await expect(page.locator("#tsk-answer")).toBeFocused();
+  await page.locator("#tsk-answer").press("Escape");
   await page.keyboard.press("t");
   await expect(page.locator('[data-tab="board"]')).toHaveClass(/is-on/);
   await expect(page.locator(".tsk-task-column")).toContainText(
