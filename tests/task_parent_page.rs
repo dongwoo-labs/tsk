@@ -1087,3 +1087,35 @@ fn parent_picker_continuation_rows_select_the_same_option_after_a_filter_and_the
         Some(long)
     );
 }
+
+#[test]
+fn the_step_header_adds_a_percent_and_changes_nothing() {
+    let mut board = board();
+    let parent = board.parent;
+    let first = board.domain.add_step(parent, "draft").expect("first step");
+    board
+        .domain
+        .add_step(parent, "review")
+        .expect("second step");
+    board.domain.add_step(parent, "ship").expect("third step");
+    board.domain.toggle_step(parent, first).expect("first done");
+    board.model.sync_from_domain(&board.domain);
+    let before = board.domain.get(parent).expect("parent").clone();
+
+    open_page(&mut board, parent);
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(page.contains("  steps 1/3 · 33%"), "{page}");
+    assert_eq!(
+        board.domain.get(parent),
+        Some(&before),
+        "counted, not saved"
+    );
+
+    // A task without steps keeps the bare header and no percent.
+    apply(&mut board, BoardIntent::CloseLayer);
+    let child = board.child;
+    open_page(&mut board, child);
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(page.contains("  steps 0/0 "), "{page}");
+    assert!(!page.contains('%'), "{page}");
+}

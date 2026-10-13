@@ -13,6 +13,7 @@ mod cli_status;
 mod cli_steps;
 mod cli_terminal_escape;
 mod cli_trash;
+mod cli_ui_answer;
 mod docs_parity;
 mod e2e_persist;
 mod edit_target_binding;

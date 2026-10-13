@@ -889,7 +889,7 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n"
+        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   Steps: 0/1 done (0%)\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n"
     );
     assert!(
         output.stdout.lines().all(|line| line.len() <= 50),
@@ -1458,7 +1458,7 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         output.stdout,
-        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   [x] First step\n   [ ] Second step\n",
+        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   Steps: 1/2 done (50%)\n   [x] First step\n   [ ] Second step\n",
         "direct detail separates notes and steps"
     );
     assert!(

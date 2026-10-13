@@ -2555,6 +2555,15 @@ pub enum StepsSection {
 
 /// Classify the page's steps section from its payload facts: steps alone
 /// decide it.
+/// The task page's step header: `steps 1/3 · 33%`, the percent rounded down so 100% means
+/// every stored step is done. Counted on read, never saved; no steps keeps `steps 0/0`.
+fn steps_header(done: usize, total: usize) -> String {
+    if total == 0 {
+        return "  steps 0/0".to_string();
+    }
+    format!("  steps {done}/{total} \u{b7} {}%", done * 100 / total)
+}
+
 pub fn steps_section(steps: usize) -> StepsSection {
     if steps > 0 {
         StepsSection::Steps
@@ -3052,7 +3061,7 @@ fn paint_task_page(
                 y,
                 content_width,
                 paint_bounded_line(
-                    &format!("  steps {done}/{stored_step_count}"),
+                    &steps_header(done, stored_step_count),
                     content_width,
                     style_dim(),
                 ),
