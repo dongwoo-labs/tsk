@@ -210,7 +210,7 @@ fn edit_without_fields_is_usage() {
     assert_eq!(output.code, 2);
     assert!(output
         .stderr
-        .contains("title, notes, or parent is required"));
+        .contains("title, notes, parent, or project is required"));
 }
 
 #[test]
@@ -238,4 +238,94 @@ fn edit_help_names_title_notes_and_equals_forms() {
             "edit help should contain {term:?}"
         );
     }
+}
+
+#[test]
+fn edit_moves_task_between_projects_and_desk() {
+    let dir = temp_state_dir("move");
+    let _guard = TempDirGuard(dir.clone());
+    let project = dir.join("repos").join("atlas");
+    fs::create_dir_all(&project).expect("project dir");
+    let project_path = project.to_string_lossy().into_owned();
+    assert_eq!(add_task(&dir, "move me").code, 0);
+
+    let moved = edit(&dir, &["T1", "-p", &project_path]);
+    assert_eq!(moved.code, 0, "{:?}", moved.stderr);
+    assert_eq!(moved.stdout, "edited T1 move me\n");
+    let state = TaskStore::new(&dir).load().expect("load");
+    let task = &state.tasks()[0];
+    assert_eq!(
+        task.scope,
+        TaskScope::Project {
+            path: project_path.clone()
+        }
+    );
+    assert_eq!(task.title, "move me");
+    assert_eq!(task.notes.as_deref(), Some("original notes"));
+    let revision = task.revision;
+
+    let repeat = edit(&dir, &["T1", "--project=atlas"]);
+    assert_eq!(repeat.code, 0, "{:?}", repeat.stderr);
+    let state = TaskStore::new(&dir).load().expect("load");
+    assert_eq!(
+        state.tasks()[0].revision,
+        revision,
+        "same scope writes nothing"
+    );
+
+    let desk = edit(&dir, &["T1", "--desk"]);
+    assert_eq!(desk.code, 0, "{:?}", desk.stderr);
+    let state = TaskStore::new(&dir).load().expect("load");
+    assert_eq!(state.tasks()[0].scope, TaskScope::Global);
+}
+
+#[test]
+fn edit_project_refuses_unknown_archived_and_combined_destinations() {
+    let dir = temp_state_dir("move-refuse");
+    let _guard = TempDirGuard(dir.clone());
+    let project = dir.join("repos").join("atlas");
+    fs::create_dir_all(&project).expect("project dir");
+    let project_path = project.to_string_lossy().into_owned();
+    assert_eq!(add_task(&dir, "stay put").code, 0);
+
+    let unknown = edit(&dir, &["T1", "-p", "atlss"]);
+    assert_eq!(unknown.code, 1);
+    assert!(
+        unknown.stderr.contains("unknown-project"),
+        "{}",
+        unknown.stderr
+    );
+
+    let both = edit(&dir, &["T1", "-p", &project_path, "--desk"]);
+    assert_eq!(both.code, 2);
+
+    let store = TaskStore::new(&dir);
+    let mut state = store.load().expect("load");
+    state
+        .create(
+            "anchor",
+            None,
+            TaskScope::Project {
+                path: project_path.clone(),
+            },
+            ProvenanceOrigin::Manual,
+        )
+        .expect("anchor");
+    state.archive_project(&project_path).expect("archive");
+    store.save(&state).expect("save");
+
+    let archived = edit(&dir, &["T1", "-p", &project_path]);
+    assert_eq!(archived.code, 1);
+    assert!(
+        archived.stderr.contains("project-archived"),
+        "{}",
+        archived.stderr
+    );
+    let state = TaskStore::new(&dir).load().expect("load");
+    let task = state
+        .tasks()
+        .iter()
+        .find(|task| task.title == "stay put")
+        .expect("task");
+    assert_eq!(task.scope, TaskScope::Global);
 }

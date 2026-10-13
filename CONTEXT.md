@@ -5,7 +5,7 @@ Canonical terms for this repo. No implementation detail.
 - **add command**: headless `tsk add` subcommand that creates tasks without opening a TUI.
 - **list command**: headless `tsk list` subcommand that prints tasks from the board store without changing them.
 - **status command**: headless `tsk status` subcommand that sets a task's human status to open, ready, started, blocked, review, or done. `start` is an alias for `started`.
-- **edit command**: headless `tsk edit` subcommand that updates a task's title and/or notes without changing scope or thread.
+- **edit command**: headless `tsk edit` subcommand that updates a task's title, notes, or parent, and moves it to another scope only with an explicit `-p`/`--desk`.
 - **import command**: headless `tsk import linear` subcommand that reads Linear issues and creates a task for each one without a **Linear copy**. One-way: nothing is written back to Linear. Fetching finishes before any write, so a missing key or Linear error is a refusal (exit `1`) that persisted nothing; exit `3` stays store I/O.
 - **Linear copy**: the live (not soft-deleted) task, in any scope or status, whose notes contain a line starting with `Linear: <IDENTIFIER> `. At most one per issue; `import` leaves it untouched unless `--update` is given.
 - **bulk add**: one `add` invocation that accepts many items, reports each, and makes one durable write of the successes.

@@ -144,7 +144,7 @@ pub fn top_level_help() -> String {
         "  add      create one task or apply a JSON plan\n",
         "  list     inspect tasks\n",
         "  status   set a task's human status\n",
-        "  edit     update a task's title, notes, or parent\n",
+        "  edit     update a task's title, notes, parent, or project\n",
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
         "  import   import Linear issues as tasks (one way)\n\n",
         "Agent questions (explicit non-personal state directory)\n",
@@ -1030,9 +1030,9 @@ pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
 pub fn edit_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--state-dir <dir>]".into(),
+            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [-p <project> | --desk] [--state-dir <dir>]".into(),
         ],
-        purpose: "Update a task's title, notes, or direct parent without changing its scope.".into(),
+        purpose: "Update a task's title, notes, direct parent, or project.".into(),
         groups: vec![group(
             "Values",
             &[
@@ -1041,16 +1041,19 @@ pub fn edit_help() -> CliOutput {
                 ("--notes <notes>", "replace notes, or clear them when blank"),
                 ("--parent <task>", "replace the direct parent by task number or UUID"),
                 ("--no-parent", "clear the direct parent"),
+                ("-p, --project <project>", "move to a project, resolved like add"),
+                ("--desk", "move to the desk"),
                 ("--state-dir <dir>", "use another board store"),
                 (
                     "--flag=<value>",
-                    "use --title=<value>, --notes=<value>, or --state-dir=<dir> for dash-leading values",
+                    "use --title=<value>, --notes=<value>, --project=<value>, or --state-dir=<dir> for dash-leading values",
                 ),
             ],
         )],
         examples: vec![
             "tsk edit T12 --title \"Fix timeout on slow connections\"".into(),
             "tsk edit T12 --notes \"Reproduced with a delayed response\"".into(),
+            "tsk edit T12 -p ~/src/atlas".into(),
         ],
         refusals: vec![
             "unknown-task".into(),
@@ -1059,6 +1062,8 @@ pub fn edit_help() -> CliOutput {
             "invalid-title".into(),
             "invalid-parent".into(),
             "parent-cycle".into(),
+            "unknown-project".into(),
+            "project-archived".into(),
         ],
         exit: exit_line(
             "fields written, or already had the values",
@@ -1084,7 +1089,7 @@ pub fn edit_usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--state-dir <dir>]\n",
+            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [-p <project> | --desk] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,
@@ -1094,6 +1099,18 @@ pub fn edit_usage(reason: &str) -> CliOutput {
 pub fn edit_rejected(error: EditError, task: TaskAddress) -> CliOutput {
     let (detail, code) = match error {
         EditError::Store(detail) => (detail, 3),
+        EditError::UnknownProject(detail) => {
+            (format!("unknown-project: {}", terminal_text(&detail)), 1)
+        }
+        EditError::ProjectArchived(name) => {
+            let name = terminal_text(&name);
+            (
+                format!(
+                    "project-archived: project {name} is archived. Use --desk, -p <other project>, or tsk project unarchive {name}"
+                ),
+                1,
+            )
+        }
         other => (task_refusal_message(other.code(), task), 1),
     };
     CliOutput {
