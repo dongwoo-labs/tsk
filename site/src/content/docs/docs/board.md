@@ -78,7 +78,7 @@ The **2 questions** tab lists the questions, approvals, and findings agents file
 | **FOR YOU** | Open questions addressed to you |
 | **FINDINGS** | Open findings addressed to you |
 | **WITH LEAD** | Open records addressed to the lead; shown, never counted |
-| **CLOSED** | Answered, approved, rejected, or closed records |
+| **CLOSED** | Answered, approved, rejected, or closed records; folded until `z` or a click on its heading shows them |
 
 A record from an older agent that names no audience shows apart as *target unknown · route with tsk route*. tsk never guesses its target, offers no answer or correction on it (answered or not), and leaves it out of the tab number and row marks; an agent sets the audience with [`tsk route`](/docs/cli/#route).
 
@@ -98,6 +98,8 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | `Esc` | Back to the list; at the list, quit |
 
 The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, `r resends`) to act as that key does. Every footer action is a button too (the `j/k` pair only names the keys), so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
+
+Once an answer, approval, rejection, or decision is saved, the page closes and the list comes back with the cursor in the same place, now on the next record still waiting; the status line names the save and its hint. A record opened from a task page returns to that task page instead. A save the store cannot prove durable stays on the page until `Enter` confirms it. Answered records fold into **CLOSED**, so `j`/`k` and `J`/`K` walk only what still waits; `z` shows or hides them for the session.
 
 A page opens at its top. Scrolling never moves the chosen option or the check; choosing an option, checking, or typing brings that line back into view above the `↓ n more rows` line.
 

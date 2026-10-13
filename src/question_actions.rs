@@ -211,6 +211,7 @@ pub fn handle(
         QuestionIntent::Approve => decide_approval(store, domain, model, true),
         QuestionIntent::Reject => decide_approval(store, domain, model, false),
         QuestionIntent::Resend => resend(model),
+        QuestionIntent::ToggleClosed => model.questions_mut().toggle_closed(),
     }
 }
 
@@ -482,6 +483,9 @@ fn save(
         }),
     };
     let number = record.reference.number;
+    // Where the record sat in the list, so the cursor keeps that place once it leaves.
+    let slot = model.questions().order().iter().position(|row| *row == id);
+    let mut landed = false;
     if let (Err(QuestionError::InvalidInput), Some(reason)) = (&result, refusal) {
         model.set_message(format!("Q{number}: {reason} · nothing saved"));
         reload(model);
@@ -499,7 +503,8 @@ fn save(
                 QuestionDurability::Durable => {
                     let report = follow_up(&saved, follow);
                     record_report(model, id, format!("saved · {report}"));
-                    model.set_message(format!("Q{number} saved · hints below"));
+                    model.set_message(format!("Q{number} saved · {report}"));
+                    landed = true;
                 }
                 QuestionDurability::Uncertain => {
                     model.questions_mut().pending = Some(PendingCommit::Uncertain {
@@ -542,6 +547,9 @@ fn save(
         Err(error) => model.set_message(format!("Q{number}: {error}")),
     }
     reload(model);
+    if landed {
+        model.questions_mut().back_to_list(id, slot);
+    }
     if create.is_some() {
         reload_tasks(store, domain, model);
     }
@@ -586,6 +594,12 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
     let Some(questions) = question_store(model) else {
         return;
     };
+    let mut landed = None;
+    let slot = model
+        .questions()
+        .order()
+        .iter()
+        .position(|row| *row == pending.id());
     match pending {
         PendingCommit::Uncertain {
             id,
@@ -597,9 +611,10 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
                 let report = follow_up(&saved, follow);
                 record_report(model, id, format!("durable · {report}"));
                 model.set_message(format!(
-                    "Q{} durable · hints below",
+                    "Q{} durable · {report}",
                     saved.record.reference.number
                 ));
+                landed = Some(id);
             }
             Err(QuestionError::StaleRevision) => {
                 model.questions_mut().pending = None;
@@ -644,6 +659,9 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
         },
     }
     reload(model);
+    if let Some(id) = landed {
+        model.questions_mut().back_to_list(id, slot);
+    }
     reload_tasks(store, domain, model);
 }
 

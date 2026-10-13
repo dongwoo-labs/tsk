@@ -149,6 +149,9 @@ pub struct QuestionsState {
     pub follow: Cell<bool>,
     /// The last save's hint outcome for one question, shown on its page.
     pub report: Option<(Uuid, String)>,
+    /// Whether the CLOSED group lists its records. Folded by default: answered records
+    /// leave the walk of `j`/`k` and `J`/`K` until `z` (or a header click) unfolds them.
+    pub closed_open: bool,
 }
 
 /// One questions-tab action. Pure moves apply on [`QuestionsState`]; the rest go through
@@ -179,6 +182,8 @@ pub enum QuestionIntent {
     OpenTask,
     /// `r`: resend the run request of a finding decided as create-and-run.
     Resend,
+    /// `z` on the list, or a click on the CLOSED header: fold or unfold answered records.
+    ToggleClosed,
     /// A row click.
     Row(Uuid),
     /// A question line on a task page.
@@ -445,8 +450,42 @@ impl QuestionsState {
         self.feed.records()
     }
 
+    /// The listed rows in paint order; a folded CLOSED group lists none of its records.
     pub fn order(&self) -> Vec<Uuid> {
-        list_order(self.records())
+        if self.closed_open {
+            return list_order(self.records());
+        }
+        grouped(self.records())
+            .into_iter()
+            .filter(|(group, _)| *group != QuestionGroup::Closed)
+            .flat_map(|(_, members)| members.into_iter().map(|record| record.reference.id))
+            .collect()
+    }
+
+    /// Fold or unfold the CLOSED group; the cursor never rests on a hidden row.
+    pub fn toggle_closed(&mut self) {
+        self.closed_open = !self.closed_open;
+        self.reanchor();
+    }
+
+    /// After a save lands: back to the list, the cursor on the row that now holds the
+    /// answered record's slot (the next one waiting), or the task page it came from.
+    /// `slot` is the record's index in the list before the save.
+    pub fn back_to_list(&mut self, id: Uuid, slot: Option<usize>) {
+        self.page = None;
+        self.clear_page_state();
+        if self.return_task.take().is_some() {
+            // Opened from a task page: the answer done, that page is where the user was.
+            self.active = false;
+        }
+        let order = self.order();
+        self.cursor = if order.contains(&id) {
+            Some(id)
+        } else {
+            slot.and_then(|slot| order.get(slot.min(order.len().saturating_sub(1))))
+                .copied()
+                .or_else(|| order.first().copied())
+        };
     }
 
     /// The question the detail shows: the open page, else (wide only) the cursor's row.
@@ -1079,9 +1118,9 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
     }
     let Some(record) = state.page.and_then(|id| state.feed.get(id)) else {
         return if wide {
-            "enter/→ open · j/k move · 1 board · ? keys"
+            "enter/→ open · j/k move · z closed · 1 board · ? keys"
         } else {
-            "enter open · j/k move · 1 board · ? keys"
+            "enter open · j/k move · z closed · 1 board · ? keys"
         };
     };
     if state.pending.is_some_and(|p| p.id() == record.reference.id) {
@@ -1152,6 +1191,7 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
         KeyCode::Char('1') => return Some(BoardIntent::SelectNavTab(NavTab::Board)),
         KeyCode::Char('2') => return Some(BoardIntent::SelectNavTab(NavTab::Questions)),
         KeyCode::Char('?') => return Some(BoardIntent::OpenHelp),
+        KeyCode::Char('z') => return q(QuestionIntent::ToggleClosed),
         _ => {}
     }
     if state.page.is_none() {
@@ -1273,20 +1313,34 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 label: 0,
             },
         ));
+        let folded = group == QuestionGroup::Closed && !state.closed_open;
+        let header = match (group, folded) {
+            (QuestionGroup::Closed, true) => {
+                format!(" {} {} · z shows", group.title(), members.len())
+            }
+            (QuestionGroup::Closed, false) => {
+                format!(" {} {} · z hides", group.title(), members.len())
+            }
+            _ => format!(" {} {}", group.title(), members.len()),
+        };
         rows.push((
             None,
             PageRow {
-                text: format!(" {} {}", group.title(), members.len()),
+                text: header,
                 style: if group == QuestionGroup::Unrouted {
                     RowStyle::Dim
                 } else {
                     RowStyle::Bold
                 },
                 focus: false,
-                click: None,
+                click: (group == QuestionGroup::Closed)
+                    .then_some(QueueHitTarget::QuestionKey(KeyCode::Char('z'))),
                 label: 0,
             },
         ));
+        if folded {
+            continue;
+        }
         for record in members {
             let id = record.reference.id;
             let selected = state.cursor == Some(id);

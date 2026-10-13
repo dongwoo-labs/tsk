@@ -309,6 +309,7 @@ import { parseCapture } from "./capture.js";
       returnTask: null,
       returnQuestion: null,
       returnDepth: 0,
+      closedOpen: false,
     },
   };
   const steps = new TaskSteps();
@@ -501,8 +502,40 @@ import { parseCapture } from "./capture.js";
         .sort((a, b) => a.number - b.number),
     ]).filter(([, , members]) => members.length);
   }
+  // A folded CLOSED group lists none of its records, so j/k and J/K skip them.
   const questionOrder = () =>
-    grouped().flatMap(([, , members]) => members.map((q) => q.id));
+    grouped()
+      .filter(([key]) => key !== "closed" || state.q.closedOpen)
+      .flatMap(([, , members]) => members.map((q) => q.id));
+  function toggleClosed() {
+    state.q.closedOpen = !state.q.closedOpen;
+    const order = questionOrder();
+    if (!order.includes(state.q.cursor)) state.q.cursor = order[0] ?? null;
+  }
+  // Leave the page: back to the task page it came from, else to the list.
+  function leaveQuestionPage() {
+    if (state.q.returnTask && taskById(state.q.returnTask)) {
+      const task = taskById(state.q.returnTask);
+      state.q.returnTask = null;
+      state.q.page = null;
+      state.tab = "board";
+      if (listTaskIds().includes(task.id)) {
+        state.selectedId = task.id;
+        state.trail = [];
+      } else state.trail = [task.id];
+      state.page = true;
+      steps.reset();
+    } else state.q.page = null;
+  }
+  // A saved answer returns to the list; the cursor keeps the record's place, now held by
+  // the next record still waiting.
+  function backToList(q, slot) {
+    leaveQuestionPage();
+    const order = questionOrder();
+    state.q.cursor = order.includes(q.id)
+      ? q.id
+      : (order[Math.min(slot, order.length - 1)] ?? order[0] ?? null);
+  }
   function waiting() {
     const out = { approval: 0, question: 0, finding: 0, unrouted: 0 };
     for (const q of state.questions || []) {
@@ -721,8 +754,8 @@ import { parseCapture } from "./capture.js";
     if (state.q.answer) return "enter save · esc cancel";
     if (!q)
       return wide
-        ? "enter/→ open · j/k move · 1 board · ? keys"
-        : "enter open · j/k move · 1 board · ? keys";
+        ? "enter/→ open · j/k move · z closed · 1 board · ? keys"
+        : "enter open · j/k move · z closed · 1 board · ? keys";
     if (isOpen(q) && !q.audience) return "J/K next · t task · esc back";
     if (q.kind === "approval" && isOpen(q))
       return "space check · y approve · n reject · J/K next · esc back";
@@ -739,11 +772,13 @@ import { parseCapture } from "./capture.js";
   }
   function saveAnswer(q, text, extra = {}) {
     const correction = state.q.correcting === q.id;
+    const slot = Math.max(0, questionOrder().indexOf(q.id));
     q.answers.push({ actor: "user", text, ...extra });
     state.q.correcting = null;
     state.q.answer = null;
     state.q.check = null;
     state.message = `Q${q.number} saved · sample`;
+    backToList(q, slot);
     return correction;
   }
   function decideFinding(q) {
@@ -826,6 +861,7 @@ import { parseCapture } from "./capture.js";
       state.message = "check the target, scope, and revision first · space";
       return;
     }
+    const slot = Math.max(0, questionOrder().indexOf(q.id));
     q.answers.push({
       actor: "user",
       text: approved ? "approved" : "rejected",
@@ -839,6 +875,7 @@ import { parseCapture } from "./capture.js";
         ? "sample: approved in this demo only · it authorizes nothing"
         : "sample: rejected in this demo only",
     );
+    backToList(q, slot);
   }
   function questionCorrect() {
     const q = questionById(state.q.page);
@@ -1506,6 +1543,7 @@ import { parseCapture } from "./capture.js";
       returnTask: null,
       returnQuestion: null,
       returnDepth: 0,
+      closedOpen: false,
     };
     steps.reset();
   }
@@ -1860,6 +1898,8 @@ import { parseCapture } from "./capture.js";
               .join("")}</button>`;
           })
           .join("");
+        if (key === "closed")
+          return `<div class="tsk-q-group is-bold" data-q-key="z"> ${esc(title)} ${members.length} · z ${state.q.closedOpen ? "hides" : "shows"}</div>${state.q.closedOpen ? rows : ""}`;
         return `<div class="tsk-q-group ${key === "unrouted" ? "dim" : "is-bold"}"> ${esc(title)} ${members.length}</div>${rows}`;
       })
       .join("");
@@ -2326,6 +2366,11 @@ import { parseCapture } from "./capture.js";
     const wide = isWide();
     const page = questionById(state.q.page);
     if (!plain(e)) return false;
+    if (e.key === "z") {
+      e.preventDefault();
+      toggleClosed();
+      return true;
+    }
     if (e.key === "1" || e.key === "2") {
       e.preventDefault();
       selectTab(e.key === "1" ? "board" : "questions");
@@ -2363,18 +2408,7 @@ import { parseCapture } from "./capture.js";
       case "ArrowLeft":
       case "h":
         if (e.key !== "Escape" && !wide) return false;
-        if (state.q.returnTask && taskById(state.q.returnTask)) {
-          const task = taskById(state.q.returnTask);
-          state.q.returnTask = null;
-          state.q.page = null;
-          state.tab = "board";
-          if (listTaskIds().includes(task.id)) {
-            state.selectedId = task.id;
-            state.trail = [];
-          } else state.trail = [task.id];
-          state.page = true;
-          steps.reset();
-        } else state.q.page = null;
+        leaveQuestionPage();
         break;
       case "ArrowDown":
       case "j":
