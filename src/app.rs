@@ -3427,6 +3427,117 @@ mod tests {
         }
     }
 
+    fn open_question_with_options() -> crate::domain::QuestionRecord {
+        use crate::domain::{Audience, QuestionDraft, QuestionKind, QuestionRecord, QuestionRef};
+        let task = uuid::Uuid::from_u128(3);
+        QuestionRecord {
+            reference: QuestionRef {
+                id: uuid::Uuid::from_u128(2),
+                number: 4,
+                task_id: task,
+                kind: QuestionKind::Question,
+                summary: "pick one".into(),
+                revision: uuid::Uuid::from_u128(1),
+            },
+            draft: QuestionDraft {
+                task_id: task,
+                kind: QuestionKind::Question,
+                summary: "pick one".into(),
+                origin_thread: "thr-x".into(),
+                recipient: "user".into(),
+                text: "body".into(),
+                options: vec!["first".into(), "second".into(), "third".into()],
+                recommendation: Some("first".into()),
+                impact: None,
+                blocking_scope: None,
+                approval: None,
+                finding: None,
+                source: None,
+                audience: Some(Audience::User),
+                lead_recipient: None,
+            },
+            created_at: std::time::SystemTime::now(),
+            answers: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    fn question_hit(
+        hits: &crate::ui::render::QueueHitMap,
+        target: crate::ui::render::QueueHitTarget,
+    ) -> Rect {
+        hits.regions
+            .iter()
+            .find(|hit| hit.target == target)
+            .map(|hit| hit.area)
+            .unwrap_or_else(|| panic!("{target:?} is painted as a click target"))
+    }
+
+    #[test]
+    fn question_page_options_and_footer_keys_answer_by_mouse_at_every_width() {
+        use crate::ui::questions::{PageClick, QuestionFeed, QuestionIntent};
+        use crate::ui::render::QueueHitTarget;
+        let temp = TempStore::new("question-mouse");
+        let record = open_question_with_options();
+        let id = record.reference.id;
+        for (width, opened) in [(80u16, true), (120, true), (120, false)] {
+            let mut domain = DomainState::new();
+            temp.store.save(&domain).expect("seed store");
+            let mut model = BoardModel::from_domain(&domain, None);
+            let mut recovery = SaveRecovery::new();
+            model.set_question_feed(QuestionFeed::Loaded(vec![record.clone()]));
+            let questions = model.questions_mut();
+            questions.active = true;
+            questions.cursor = Some(id);
+            // At 120 the detail previews the cursor's record before it is opened.
+            questions.page = opened.then_some(id);
+            let area = Rect::new(0, 0, width, 40);
+            let hits = board_hit_map(area, &model);
+
+            // A click on an option chooses it, and opens the previewed record first.
+            let option = question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Option(1)));
+            let intent = map_responsive_board_mouse(&model, &hits, area, click_at(option))
+                .expect("option click maps");
+            assert_eq!(
+                intent,
+                BoardIntent::Question(QuestionIntent::Page(PageClick::Option(1)))
+            );
+            handle_board_intent(
+                &temp.store,
+                &mut domain,
+                &mut model,
+                intent,
+                &mut recovery,
+                false,
+            )
+            .expect("choose");
+            assert_eq!(model.questions().page, Some(id), "width {width}");
+            assert_eq!(
+                model.questions().choice(&record),
+                1,
+                "the clicked option is chosen at width {width}"
+            );
+            assert!(model.questions().answer.is_none(), "choosing never saves");
+
+            // The footer's `enter save` maps as the Enter key does on that page.
+            let hits = board_hit_map(area, &model);
+            let save = question_hit(&hits, QueueHitTarget::QuestionKey(KeyCode::Enter));
+            assert_eq!(
+                map_responsive_board_mouse(&model, &hits, area, click_at(save)),
+                Some(BoardIntent::Question(QuestionIntent::Enter)),
+                "width {width}"
+            );
+            let back = question_hit(&hits, QueueHitTarget::QuestionKey(KeyCode::Esc));
+            assert_eq!(
+                map_responsive_board_mouse(&model, &hits, area, click_at(back)),
+                Some(BoardIntent::Question(QuestionIntent::Back)),
+                "width {width}"
+            );
+            // The page's own `enter saves the answer` line is a target too.
+            question_hit(&hits, QueueHitTarget::QuestionPage(PageClick::Enter));
+        }
+    }
+
     #[test]
     fn question_answer_and_unresolved_save_hold_quit_on_every_tab() {
         use crate::ui::questions::{AnswerInput, FollowUp, PendingCommit};
