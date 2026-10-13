@@ -149,16 +149,17 @@ test("answers, a finding, J/K, t, and the unrouted refusal", async ({
 
   await page.locator('[data-question="q4"]').click();
   await page.keyboard.press("Enter");
+  await expect(page.locator("#tsk-demo")).toContainText("Q4 saved · sample");
+  await page.locator('[data-question="q4"]').click();
   await expect(page.locator(".tsk-q-page")).toContainText(
     "no run request is sent",
   );
   const created = await page.locator(".tsk-q-page").textContent();
   const number = created.match(/created (T\d+) \(doing\)/)[1];
-  await expect(page.locator('[data-question="q4"]')).toContainText("▸ Q4");
-  await page.keyboard.press("Enter");
   await page.keyboard.press("c");
   await page.keyboard.press("j");
   await page.keyboard.press("Enter");
+  await page.locator('[data-question="q4"]').click();
   await expect(page.locator(".tsk-q-page")).toContainText(
     `the linked task ${number} stays · no second task`,
   );

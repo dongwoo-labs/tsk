@@ -152,6 +152,8 @@ pub struct QuestionsState {
     /// Whether the CLOSED group lists its records. Folded by default: answered records
     /// leave the walk of `j`/`k` and `J`/`K` until `z` (or a header click) unfolds them.
     pub closed_open: bool,
+    /// The pending save's list slot from before it, so its confirmation keeps that place.
+    pub pending_slot: Option<usize>,
 }
 
 /// One questions-tab action. Pure moves apply on [`QuestionsState`]; the rest go through
@@ -455,6 +457,11 @@ impl QuestionsState {
         if self.closed_open {
             return list_order(self.records());
         }
+        self.waiting_order()
+    }
+
+    /// The listed rows outside CLOSED, in list order.
+    fn waiting_order(&self) -> Vec<Uuid> {
         grouped(self.records())
             .into_iter()
             .filter(|(group, _)| *group != QuestionGroup::Closed)
@@ -478,13 +485,15 @@ impl QuestionsState {
             // Opened from a task page: the answer done, that page is where the user was.
             self.active = false;
         }
-        let order = self.order();
-        self.cursor = if order.contains(&id) {
+        // A record that just closed gives its place to the waiting row now in its slot,
+        // even when CLOSED is unfolded and the record is still listed below.
+        let waiting = self.waiting_order();
+        self.cursor = if waiting.contains(&id) {
             Some(id)
         } else {
-            slot.and_then(|slot| order.get(slot.min(order.len().saturating_sub(1))))
+            slot.and_then(|slot| waiting.get(slot.min(waiting.len().saturating_sub(1))))
                 .copied()
-                .or_else(|| order.first().copied())
+                .or_else(|| self.order().first().copied())
         };
     }
 

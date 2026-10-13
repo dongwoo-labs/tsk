@@ -531,10 +531,15 @@ import { parseCapture } from "./capture.js";
   // the next record still waiting.
   function backToList(q, slot) {
     leaveQuestionPage();
-    const order = questionOrder();
-    state.q.cursor = order.includes(q.id)
+    // A record that just closed gives its place to the waiting row now in its slot.
+    const waiting = grouped()
+      .filter(([key]) => key !== "closed")
+      .flatMap(([, , members]) => members.map((r) => r.id));
+    state.q.cursor = waiting.includes(q.id)
       ? q.id
-      : (order[Math.min(slot, order.length - 1)] ?? order[0] ?? null);
+      : (waiting[Math.min(slot, waiting.length - 1)] ??
+        questionOrder()[0] ??
+        null);
   }
   function waiting() {
     const out = { approval: 0, question: 0, finding: 0, unrouted: 0 };

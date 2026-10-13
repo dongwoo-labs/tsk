@@ -3538,6 +3538,25 @@ mod tests {
         ]));
         state.back_to_list(id(3), slot);
         assert_eq!(state.cursor, Some(id(1)));
+
+        // With CLOSED unfolded the saved record stays listed below, yet the cursor still
+        // moves on to the waiting row that took its place.
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, false),
+            numbered_question(3, false),
+        ]));
+        state.toggle_closed();
+        state.open(id(2));
+        let slot = state.order().iter().position(|row| *row == id(2));
+        state.set_feed(QuestionFeed::Loaded(vec![
+            numbered_question(1, false),
+            numbered_question(2, true),
+            numbered_question(3, false),
+        ]));
+        state.back_to_list(id(2), slot);
+        assert!(state.order().contains(&id(2)));
+        assert_eq!(state.cursor, Some(id(3)));
     }
 
     #[test]

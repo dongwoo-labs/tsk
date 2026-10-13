@@ -507,6 +507,7 @@ fn save(
                     landed = true;
                 }
                 QuestionDurability::Uncertain => {
+                    model.questions_mut().pending_slot = slot;
                     model.questions_mut().pending = Some(PendingCommit::Uncertain {
                         id,
                         revision: saved.record.reference.revision,
@@ -519,6 +520,7 @@ fn save(
             }
         }
         Err(QuestionError::CommitUnknown) => {
+            model.questions_mut().pending_slot = slot;
             model.questions_mut().pending = Some(PendingCommit::Unknown {
                 id,
                 prior_revision: record.reference.revision,
@@ -595,11 +597,8 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
         return;
     };
     let mut landed = None;
-    let slot = model
-        .questions()
-        .order()
-        .iter()
-        .position(|row| *row == pending.id());
+    // The slot from before the first save: the reload since may have closed the record.
+    let slot = model.questions().pending_slot;
     match pending {
         PendingCommit::Uncertain {
             id,
