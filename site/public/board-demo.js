@@ -310,6 +310,7 @@ import { parseCapture } from "./capture.js";
       returnQuestion: null,
       returnDepth: 0,
       closedOpen: false,
+      comments: {},
     },
   };
   const steps = new TaskSteps();
@@ -677,6 +678,22 @@ import { parseCapture } from "./capture.js";
             : "y approves once checked · n rejects · no answer keeps waiting",
           "dim",
         );
+        if (!state.q.answer?.comment) {
+          const staged = state.q.comments[q.id];
+          if (staged) {
+            field("comment ", staged, "", 'data-q-key="m"');
+            push(
+              "m edits the comment · it saves with y or n, either way",
+              "dim",
+            );
+          } else {
+            push(
+              "m adds a comment beside the decision",
+              "dim",
+              'data-q-key="m"',
+            );
+          }
+        }
       }
     }
     if (choosing(q) && !state.q.answer) {
@@ -718,12 +735,18 @@ import { parseCapture } from "./capture.js";
     if (state.q.answer?.id === q.id) {
       blank();
       rows.push({ input: true });
-      push("enter saves · esc cancels", "dim");
+      push(
+        state.q.answer.comment
+          ? "enter stages it for y/n · esc discards the edit"
+          : "enter saves · esc cancels",
+        "dim",
+      );
     }
     const answer = currentAnswer(q);
     if (answer) {
       blank();
       field("answer  ", answer.text);
+      if (answer.comment) field("comment ", answer.comment);
       if (q.createdTask) field("task    ", taskLabel(q.createdTask));
       if (answer.action === "create_and_run")
         push(
@@ -748,7 +771,7 @@ import { parseCapture } from "./capture.js";
     q.answers.forEach((a, i) =>
       indented(
         "",
-        `${a.actor}${i && q.kind !== "approval" ? " (correction)" : ""} · ${a.text}`,
+        `${a.actor}${i && q.kind !== "approval" ? " (correction)" : ""} · ${a.text}${a.comment ? ` · ${a.comment}` : ""}`,
       ),
     );
     return rows;
@@ -756,14 +779,17 @@ import { parseCapture } from "./capture.js";
 
   function questionFooterHint(wide) {
     const q = questionById(state.q.page);
-    if (state.q.answer) return "enter save · esc cancel";
+    if (state.q.answer)
+      return state.q.answer.comment
+        ? "enter stage · esc cancel"
+        : "enter save · esc cancel";
     if (!q)
       return wide
         ? "enter/→ open · j/k move · z closed · 1 board · ? keys"
         : "enter open · j/k move · z closed · 1 board · ? keys";
     if (isOpen(q) && !q.audience) return "J/K next · t task · esc back";
     if (q.kind === "approval" && isOpen(q))
-      return "space check · y approve · n reject · J/K next · esc back";
+      return "space check · y approve · n reject · m comment · J/K next · esc back";
     if (choosing(q))
       return "j/k choose · enter save · J/K next · t task · esc back";
     if (isOpen(q)) return "enter answer · J/K next · t task · esc back";
@@ -828,6 +854,21 @@ import { parseCapture } from "./capture.js";
     const q = questionById(state.q.page);
     if (!q) return;
     if (state.q.answer) {
+      if (state.q.answer.comment) {
+        // A comment never saves on its own: it stages beside the still-open decision.
+        const text = state.q.answer.text.trim();
+        const id = state.q.answer.id;
+        state.q.answer = null;
+        if (text) {
+          state.q.comments[id] = text;
+          state.message =
+            "comment staged · y approves · n rejects, either carries it";
+        } else {
+          delete state.q.comments[id];
+          state.message = "comment cleared";
+        }
+        return;
+      }
       const text = state.q.answer.text.trim();
       if (!text) {
         state.message = "an answer needs text";
@@ -867,10 +908,13 @@ import { parseCapture } from "./capture.js";
       return;
     }
     const slot = Math.max(0, questionOrder().indexOf(q.id));
+    const comment = state.q.comments[q.id];
+    delete state.q.comments[q.id];
     q.answers.push({
       actor: "user",
       text: approved ? "approved" : "rejected",
       approved,
+      ...(comment ? { comment } : {}),
     });
     state.q.check = null;
     state.message = `Q${q.number} ${approved ? "approved" : "rejected"} · sample`;
@@ -881,6 +925,17 @@ import { parseCapture } from "./capture.js";
         : "sample: rejected in this demo only",
     );
     backToList(q, slot);
+  }
+  function questionComment() {
+    const q = questionById(state.q.page);
+    if (!q || q.kind !== "approval" || !isOpen(q) || !q.audience) return;
+    state.q.answer = {
+      id: q.id,
+      text: state.q.comments[q.id] || "",
+      comment: true,
+    };
+    state.message =
+      "type a comment for this decision · enter stages it · esc discards the edit";
   }
   function questionCorrect() {
     const q = questionById(state.q.page);
@@ -1549,6 +1604,7 @@ import { parseCapture } from "./capture.js";
       returnQuestion: null,
       returnDepth: 0,
       closedOpen: false,
+      comments: {},
     };
     steps.reset();
   }
@@ -1584,6 +1640,12 @@ import { parseCapture } from "./capture.js";
     ["questions", "j / k", "choose an option", "answer"],
     ["questions", "space", "check an approval's terms", "approve"],
     ["questions", "y / n", "approve once checked / reject", "approve"],
+    [
+      "questions",
+      "m",
+      "write or edit a comment beside the decision",
+      "approve",
+    ],
     ["questions", "c", "correct an answer", "answer"],
     ["questions", "t", "open the question's task", "task"],
     ["questions", "r", "resend a lead request", "finding"],
@@ -1924,7 +1986,7 @@ import { parseCapture } from "./capture.js";
     )
       .map((row) => {
         if (row.input)
-          return `<div class="tsk-q-line is-chosen"><span>answer  </span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="Answer" /></div>`;
+          return `<div class="tsk-q-line is-chosen"><span>${state.q.answer.comment ? "comment " : "answer  "}</span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="${state.q.answer.comment ? "Comment" : "Answer"}" /></div>`;
         // A field paints its label dim and only its value in the row's style.
         if (row.label)
           return `<div class="tsk-q-line" ${row.attrs}><span class="dim">${esc(row.text.slice(0, row.label))}</span><span class="${row.cls}">${esc(row.text.slice(row.label))}</span></div>`;
@@ -2464,6 +2526,9 @@ import { parseCapture } from "./capture.js";
         break;
       case "n":
         questionApprove(false);
+        break;
+      case "m":
+        questionComment();
         break;
       case "c":
         questionCorrect();

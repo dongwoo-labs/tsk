@@ -61,7 +61,8 @@ pub struct ApprovalCheck {
     pub terms: ApprovalTerms,
 }
 
-/// A free-text answer being typed for a question without options, or a secret's value.
+/// A free-text answer being typed for a question without options, a secret's value, or an
+/// approval's comment.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AnswerInput {
     pub id: Uuid,
@@ -70,6 +71,9 @@ pub struct AnswerInput {
     pub text: String,
     /// A secret question's value: painted as `•`, handed only to fnox, wiped on drop.
     pub secret: bool,
+    /// Free text beside an approval's y/n decision: `Enter` stages it for `y`/`n`, it is
+    /// never itself an answer and never saved on its own.
+    pub comment: bool,
 }
 
 impl AnswerInput {
@@ -82,6 +86,20 @@ impl AnswerInput {
             // Room up front, so typing rarely reallocates and leaves copies behind.
             text: String::with_capacity(256),
             secret: true,
+            comment: false,
+        }
+    }
+
+    /// A comment input for an open approval at `revision`, pre-filled with any text
+    /// already staged for it.
+    pub fn comment(id: Uuid, revision: Uuid, text: String) -> Self {
+        Self {
+            id,
+            revision,
+            corrects: None,
+            text,
+            secret: false,
+            comment: true,
         }
     }
 }
@@ -95,6 +113,7 @@ impl std::fmt::Debug for AnswerInput {
             .field("corrects", &self.corrects)
             .field("text", text)
             .field("secret", &self.secret)
+            .field("comment", &self.comment)
             .finish()
     }
 }
@@ -147,6 +166,8 @@ pub struct AnswerAttempt {
     pub corrects: Option<Uuid>,
     pub action: Option<FindingAction>,
     pub approve: bool,
+    /// Hash of the comment staged with this attempt, if any; `None` when none was staged.
+    pub comment_hash: Option<u64>,
 }
 
 impl PendingCommit {
@@ -191,6 +212,9 @@ pub struct QuestionsState {
     pub closed_open: bool,
     /// The pending save's list slot from before it, so its confirmation keeps that place.
     pub pending_slot: Option<usize>,
+    /// Comment text staged for an open approval, by question id: typed with `m`, kept
+    /// until `y`/`n` saves it beside the decision or the record moves past this revision.
+    pub comments: BTreeMap<Uuid, String>,
 }
 
 /// One questions-tab action. Pure moves apply on [`QuestionsState`]; the rest go through
@@ -217,6 +241,8 @@ pub enum QuestionIntent {
     Reject,
     /// `c`: correct the current answer as a new revision.
     Correct,
+    /// `m`: write or edit a comment staged beside an open approval's y/n decision.
+    Comment,
     /// `t`: open the question's task.
     OpenTask,
     /// `r`: resend the run request of a finding decided as create-and-run.
@@ -250,6 +276,8 @@ pub enum PageClick {
     OpenTask,
     /// The `c corrects` line.
     Correct,
+    /// The comment line, as `m` does.
+    Comment,
     /// The `r resends` line.
     Resend,
 }
@@ -582,15 +610,20 @@ impl QuestionsState {
         if !keep_correction {
             self.correcting = None;
         }
+        // A staged comment outlives a reload only while its approval is still open: once
+        // decided or moved on, it is either saved already or no longer this record's wait.
+        self.comments
+            .retain(|id, _| self.feed.get(*id).is_some_and(QuestionRecord::is_open));
     }
 
-    /// Whether quitting would lose a typed answer or an unresolved save.
+    /// Whether quitting would lose a typed answer, a staged comment, or an unresolved save.
     pub fn has_unsaved_work(&self) -> bool {
         self.pending.is_some()
             || self
                 .answer
                 .as_ref()
                 .is_some_and(|input| !input.text.is_empty())
+            || !self.comments.is_empty()
     }
 
     /// The typed answer opening `id` would discard: one in progress on another question.
@@ -990,6 +1023,24 @@ pub fn page_rows(
                 RowStyle::Dim,
                 false,
             );
+            if state.answer.as_ref().is_none_or(|input| !input.comment) {
+                let at = page.rows.len();
+                match state.comments.get(&record.reference.id) {
+                    Some(text) => {
+                        page.indented("comment ", text, RowStyle::Plain, false);
+                        page.click_from(at, PageClick::Comment);
+                        page.push(
+                            "m edits the comment · it saves with y or n, either way",
+                            RowStyle::Dim,
+                            false,
+                        );
+                    }
+                    None => {
+                        page.push("m adds a comment beside the decision", RowStyle::Dim, false);
+                        page.click_from(at, PageClick::Comment);
+                    }
+                }
+            }
         }
     }
 
@@ -1086,6 +1137,18 @@ pub fn page_rows(
                 RowStyle::Dim,
                 false,
             );
+        } else if input.comment {
+            page.indented(
+                "comment ",
+                &format!("{}▏", input.text),
+                RowStyle::Selected,
+                true,
+            );
+            page.push(
+                "enter stages it for y/n · esc discards the edit",
+                RowStyle::Dim,
+                false,
+            );
         } else {
             page.indented(
                 "answer  ",
@@ -1100,6 +1163,9 @@ pub fn page_rows(
     if let Some(answer) = record.current_answer() {
         page.blank();
         page.field("answer  ", &answer.text, RowStyle::Plain);
+        if let Some(comment) = answer.comment.as_deref() {
+            page.field("comment ", comment, RowStyle::Plain);
+        }
         if let FindingLink::One(id) = record.finding_link() {
             page.field("task    ", &task_label(tasks, id), RowStyle::Plain);
         }
@@ -1169,8 +1235,13 @@ pub fn page_rows(
         } else {
             ""
         };
+        let comment = answer
+            .comment
+            .as_deref()
+            .map(|text| format!(" · {text}"))
+            .unwrap_or_default();
         page.push(
-            &format!("{}{correction} · {}", answer.actor, answer.text),
+            &format!("{}{correction} · {}{comment}", answer.actor, answer.text),
             RowStyle::Plain,
             false,
         );
@@ -1203,6 +1274,8 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
     if let Some(input) = state.answer.as_ref() {
         return if input.secret {
             "enter fnox set · esc cancel"
+        } else if input.comment {
+            "enter stage · esc cancel"
         } else {
             "enter save · esc cancel"
         };
@@ -1221,7 +1294,7 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> &'static str {
         return "J/K next · t task · esc back";
     }
     if record.reference.kind == QuestionKind::Approval && record.is_open() {
-        return "space check · y approve · n reject · J/K next · esc back";
+        return "space check · y approve · n reject · m comment · J/K next · esc back";
     }
     if state.choosing(record) {
         return "j/k choose · enter save · J/K next · t task · esc back";
@@ -1313,6 +1386,7 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
         KeyCode::Char('y') => q(QuestionIntent::Approve),
         KeyCode::Char('n') => q(QuestionIntent::Reject),
         KeyCode::Char('c') => q(QuestionIntent::Correct),
+        KeyCode::Char('m') => q(QuestionIntent::Comment),
         KeyCode::Char('t') => q(QuestionIntent::OpenTask),
         KeyCode::Char('r') => q(QuestionIntent::Resend),
         _ => None,
@@ -1899,6 +1973,7 @@ mod tests {
             user_chat: None,
             source: None,
             action: None,
+            comment: None,
         });
         record.reference.revision = Uuid::from_u128(9);
         let id = record.reference.id;
@@ -1915,5 +1990,133 @@ mod tests {
         assert!(page.contains("set in fnox"), "{page}");
         assert!(!page.contains("c corrects"), "{page}");
         assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
+    }
+
+    fn approval_record() -> QuestionRecord {
+        use crate::domain::{ApprovalTerms, QuestionDraft, QuestionRef};
+        let task = Uuid::from_u128(3);
+        QuestionRecord {
+            reference: QuestionRef {
+                id: Uuid::from_u128(2),
+                number: 6,
+                task_id: task,
+                kind: QuestionKind::Approval,
+                summary: "deploy prod".into(),
+                revision: Uuid::from_u128(1),
+            },
+            draft: QuestionDraft {
+                task_id: task,
+                kind: QuestionKind::Approval,
+                summary: "deploy prod".into(),
+                origin_thread: "thr-a".into(),
+                recipient: "user".into(),
+                text: "please approve the deploy".into(),
+                options: Vec::new(),
+                recommendation: None,
+                impact: None,
+                blocking_scope: None,
+                approval: Some(ApprovalTerms {
+                    target: "prod".into(),
+                    action: "deploy".into(),
+                    h: "0".repeat(40),
+                    scope: "web".into(),
+                    rollback: "redeploy previous".into(),
+                }),
+                finding: None,
+                source: None,
+                audience: Some(Audience::User),
+                lead_recipient: None,
+                secret: None,
+            },
+            created_at: std::time::SystemTime::now(),
+            answers: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn m_stages_a_comment_beside_an_open_approval_and_it_rides_either_decision() {
+        let record = approval_record();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        // `m` is a page-level key, mapped only once the terms are checked (mirroring the
+        // page's own gate); the key itself maps independent of that gate.
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('m'))),
+            Some(BoardIntent::Question(QuestionIntent::Comment))
+        );
+
+        // Before any comment is staged, the page offers to add one.
+        let before = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            before.contains("m adds a comment beside the decision"),
+            "{before}"
+        );
+
+        // Typing stages the draft text in the input, shown live on the page.
+        state.answer = Some(AnswerInput::comment(
+            id,
+            record.reference.revision,
+            "looks safe".into(),
+        ));
+        let typing = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(typing.contains("comment looks safe▏"), "{typing}");
+        assert_eq!(footer_hint(&state, false), "enter stage · esc cancel");
+
+        // Once staged (as `enter` on the input does in question_actions::handle), the page
+        // shows the pending comment and offers `m` to edit it, and the approval footer
+        // names the key.
+        state.answer = None;
+        state.comments.insert(id, "looks safe".into());
+        let staged = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(staged.contains("comment looks safe"), "{staged}");
+        assert!(
+            staged.contains("m edits the comment · it saves with y or n, either way"),
+            "{staged}"
+        );
+        assert_eq!(
+            footer_hint(&state, false),
+            "space check · y approve · n reject · m comment · J/K next · esc back"
+        );
+
+        // A closed record's stale staged comment is dropped on reload.
+        let mut closed = record.clone();
+        closed.answers.push(crate::domain::QuestionAnswer {
+            revision: Uuid::from_u128(9),
+            created_task_id: None,
+            corrects_revision: None,
+            text: "rejected".into(),
+            actor: "user".into(),
+            origin: crate::domain::AnswerOrigin::UserUi,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: None,
+            comment: Some("looks safe".into()),
+        });
+        closed.reference.revision = Uuid::from_u128(9);
+        state.set_feed(QuestionFeed::Loaded(vec![closed]));
+        assert!(
+            state.comments.is_empty(),
+            "a decided approval's stale staged comment is pruned, not resurfaced"
+        );
     }
 }

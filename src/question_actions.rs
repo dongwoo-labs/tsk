@@ -81,6 +81,7 @@ fn draft(revision: Uuid, text: String) -> AnswerDraft {
         user_chat: None,
         source: None,
         action: None,
+        comment: None,
     }
 }
 
@@ -154,6 +155,7 @@ pub fn handle(
                 PageClick::Check => QuestionIntent::ToggleCheck,
                 PageClick::OpenTask => QuestionIntent::OpenTask,
                 PageClick::Correct => QuestionIntent::Correct,
+                PageClick::Comment => QuestionIntent::Comment,
                 PageClick::Resend => QuestionIntent::Resend,
             };
             handle(store, domain, model, next);
@@ -171,6 +173,10 @@ pub fn handle(
         }
         QuestionIntent::Correct => {
             correct(model);
+            model.questions().follow.set(true);
+        }
+        QuestionIntent::Comment => {
+            comment(model);
             model.questions().follow.set(true);
         }
         QuestionIntent::OpenTask => {
@@ -201,16 +207,15 @@ pub fn handle(
             model.questions().follow.set(true);
         }
         QuestionIntent::AnswerCancel => {
-            // Dropping a secret input wipes its buffer.
-            let secret = model
-                .questions_mut()
-                .answer
-                .take()
-                .is_some_and(|input| input.secret);
-            model.set_message(if secret {
-                "secret discarded · nothing sent to fnox · nothing saved"
-            } else {
-                "answer discarded · nothing saved"
+            // Dropping a secret input wipes its buffer. A comment edit leaves whatever was
+            // staged before untouched: Esc discards the edit, not the earlier text.
+            let input = model.questions_mut().answer.take();
+            model.set_message(match input {
+                Some(input) if input.secret => {
+                    "secret discarded · nothing sent to fnox · nothing saved"
+                }
+                Some(input) if input.comment => "comment edit discarded · earlier text kept",
+                _ => "answer discarded · nothing saved",
             });
         }
         QuestionIntent::Enter => {
@@ -312,6 +317,7 @@ fn correct(model: &mut BoardModel) {
             corrects: Some(current.revision),
             text: String::new(),
             secret: false,
+            comment: false,
         });
     } else {
         questions.correcting = Some((id, revision));
@@ -320,6 +326,41 @@ fn correct(model: &mut BoardModel) {
         "correcting Q{} · the new answer is a new revision, the earlier one stays",
         record.reference.number
     ));
+}
+
+/// `m`: write or edit the comment staged beside an open approval's y/n decision. The text
+/// is kept in session state until `y`/`n` saves it, or the record moves past this revision.
+fn comment(model: &mut BoardModel) {
+    let Some(record) = page_record(model) else {
+        return;
+    };
+    if record.reference.kind != QuestionKind::Approval || !record.is_open() {
+        return;
+    }
+    if pending_elsewhere(model, record.reference.id) {
+        return;
+    }
+    if model
+        .questions()
+        .pending
+        .is_some_and(|pending| pending.id() == record.reference.id)
+    {
+        model.set_message("confirm the pending save first (enter)");
+        return;
+    }
+    if refuse_unrouted(model, &record) {
+        return;
+    }
+    let id = record.reference.id;
+    let revision = record.reference.revision;
+    let staged = model
+        .questions()
+        .comments
+        .get(&id)
+        .cloned()
+        .unwrap_or_default();
+    model.questions_mut().answer = Some(AnswerInput::comment(id, revision, staged));
+    model.set_message("type a comment for this decision · enter stages it · esc discards the edit");
 }
 
 fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -343,6 +384,21 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
         return;
     }
     if let Some(input) = model.questions().answer.clone() {
+        if input.comment {
+            // A comment never saves on its own: it stages beside the still-open decision
+            // until `y`/`n` writes it with the approve/reject answer.
+            let text = input.text.trim().to_string();
+            let questions = model.questions_mut();
+            questions.answer = None;
+            if text.is_empty() {
+                questions.comments.remove(&input.id);
+                model.set_message("comment cleared");
+            } else {
+                questions.comments.insert(input.id, text);
+                model.set_message("comment staged · y approves · n rejects, either carries it");
+            }
+            return;
+        }
         if input.text.trim().is_empty() {
             model.set_message("type an answer first · esc cancels");
             return;
@@ -363,7 +419,7 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
     let questions = model.questions();
     if record.reference.kind == QuestionKind::Approval {
         if record.is_open() {
-            model.set_message("space checks the terms · y approves · n rejects");
+            model.set_message("space checks the terms · y approves · n rejects · m comments");
         }
         return;
     }
@@ -414,6 +470,7 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
             corrects: None,
             text: String::new(),
             secret: false,
+            comment: false,
         });
         model.set_message("type the answer · enter saves · esc cancels");
     }
@@ -551,6 +608,8 @@ fn decide_approval(
         answer.confirmed = true;
         answer.approval = record.draft.approval.clone();
     }
+    // A staged comment rides the decision either way; it is never itself an approval.
+    answer.comment = model.questions_mut().comments.remove(&record.reference.id);
     save(
         store,
         domain,
@@ -578,6 +637,8 @@ fn save(
     let id = record.reference.id;
     let source_task = record.reference.task_id;
     let title = record.reference.summary.clone();
+    // Kept so a failed save can restore a decision's staged comment rather than lose it.
+    let comment = answer.comment.clone();
     let attempt = AnswerAttempt {
         answers_before: record.answers.len(),
         routes_before: record.routes.len(),
@@ -585,6 +646,7 @@ fn save(
         corrects: answer.corrects_revision,
         action: answer.action,
         approve: answer.approve,
+        comment_hash: comment.as_deref().map(text_hash),
     };
     let mut refusal = None;
     let result = match create {
@@ -652,6 +714,11 @@ fn save(
             let questions = model.questions_mut();
             questions.correcting = None;
             questions.check = None;
+            // The comment was pulled off the staged map to attempt this save; restore it
+            // since nothing was actually written.
+            if let Some(text) = comment.clone() {
+                questions.comments.insert(id, text);
+            }
             let kept = if questions.answer.is_some() {
                 " · your text stays · esc discards it"
             } else {
@@ -661,7 +728,12 @@ fn save(
                 "Q{number} changed since you read it · read it again · nothing saved{kept}"
             ));
         }
-        Err(error) => model.set_message(format!("Q{number}: {error}")),
+        Err(error) => {
+            if let Some(text) = comment.clone() {
+                model.questions_mut().comments.insert(id, text);
+            }
+            model.set_message(format!("Q{number}: {error}"));
+        }
     }
     reload(model);
     if landed {
@@ -802,6 +874,7 @@ fn readback_is_attempt(record: &QuestionRecord, attempt: &AnswerAttempt) -> bool
         && answer.corrects_revision == attempt.corrects
         && answer.action == attempt.action
         && answer.approval.is_some() == attempt.approve
+        && answer.comment.as_deref().map(text_hash) == attempt.comment_hash
 }
 
 /// Keep the last hint outcome on the question page, where it can wrap in full.
@@ -1048,6 +1121,7 @@ mod tests {
             user_chat: None,
             source: None,
             action: Some(action),
+            comment: None,
         }
     }
 
@@ -1061,6 +1135,7 @@ mod tests {
             corrects: None,
             action: Some(FindingAction::CreateAndRun),
             approve: false,
+            comment_hash: None,
         };
         let mine = finding(
             vec![answer(

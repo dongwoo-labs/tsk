@@ -118,6 +118,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Type a secret, then hand it to fnox | `Enter` |
 | Check an approval | `Space` |
 | Approve / reject | `y` / `n` |
+| Write or edit a comment beside an approval's decision | `m` |
 | Correct an answer | `c` |
 | Open the task | `t` |
 | Resend a lead request | `r` |
