@@ -204,6 +204,10 @@ pub struct AnswerDraft {
     /// Finding decision intent. Only findings accept it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<FindingAction>,
+    /// Free text beside an approval's y/n decision; never itself an approval and never
+    /// checked against the approval terms. Only an approval question accepts one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +228,10 @@ pub struct QuestionAnswer {
     pub source: Option<QuestionSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<FindingAction>,
+    /// Free text beside an approval's y/n decision. Carried as-is from the draft; it is
+    /// never part of what `approval_for` checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 /// One audience change: same Q-ID, new immutable revision, nothing else moves.

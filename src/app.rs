@@ -3495,6 +3495,7 @@ mod tests {
                 user_chat: None,
                 source: None,
                 action: None,
+                comment: None,
             });
         }
         record
@@ -3671,6 +3672,7 @@ mod tests {
             corrects: None,
             text: "half an answer".into(),
             secret: false,
+            comment: false,
         });
         // While the answer is typed, the text entry owns ctrl+q and ctrl+c.
         for key in ['q', 'c'] {

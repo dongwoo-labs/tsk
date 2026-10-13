@@ -438,6 +438,7 @@ impl QuestionStore {
             user_chat: draft.user_chat,
             source: draft.source,
             action: draft.action,
+            comment: draft.comment,
         });
         record.reference.revision = revision;
         state.questions[index] = record.reference.clone();
@@ -673,6 +674,13 @@ pub fn agent_name(name: &str) -> bool {
 }
 
 fn validate_answer(record: &QuestionRecord, draft: &AnswerDraft) -> Result<(), QuestionError> {
+    // A comment is text beside an approval's y/n decision, never an approval of its own:
+    // only an approval question accepts one, and it never changes what `approve` checks.
+    if let Some(comment) = draft.comment.as_deref() {
+        if record.draft.kind != QuestionKind::Approval || comment.trim().is_empty() {
+            return Err(QuestionError::InvalidInput);
+        }
+    }
     if !draft.approve {
         if draft.approval.is_some() {
             return Err(QuestionError::ApprovalRefused);

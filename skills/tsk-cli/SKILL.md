@@ -97,6 +97,9 @@ retrying. Visible readback alone does not confirm durability. Notification failu
 not prove the recipient read it. Ordinary Agent or imported answers do not authorize execution.
 Approval must preserve confirmed UI evidence or verified original user-chat evidence and match the
 exact target, action, Git SHA or plan digest, scope, and rollback terms. Never fabricate that evidence.
+An approval answer may carry an optional `comment`: free text beside the `approve`/`reject`
+decision, never itself an approval and never checked against the stored terms, refused on anything
+but an approval or when blank.
 Private originals stay in Git-excluded `questions-private/`; put only shareable summaries in references.
 Set `audience` (`user` or `lead`) on every new question: the user's questions tab and waiting line
 count only `user` questions, and a question without one shows as target unknown. Change it later

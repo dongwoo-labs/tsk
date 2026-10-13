@@ -278,6 +278,57 @@ fn approval_needs_the_exact_terms_and_a_plain_answer_never_becomes_one() {
 }
 
 #[test]
+fn a_comment_rides_the_approval_decision_but_is_never_itself_one() {
+    let dir = TempDir::new("comment");
+    let (id, revision) = ask(&dir, "approval", Some("user"));
+
+    // Comment is refused on anything but an approval question.
+    let (plain_id, plain_revision) = ask(&dir, "question", Some("user"));
+    let plain_with_comment = ui_answer(
+        &dir,
+        "Q2",
+        &json!({"expected_revision": plain_revision, "choice": 0, "comment": "note"}),
+    );
+    assert_eq!(plain_with_comment.code, 2, "{}", plain_with_comment.stderr);
+    assert!(
+        plain_with_comment.stderr.contains("invalid-input"),
+        "{}",
+        plain_with_comment.stderr
+    );
+    assert_eq!(record(&dir, &plain_id)["answers"], json!([]));
+
+    // A blank comment on an approval is refused the same way.
+    let blank = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "reject": true, "comment": "   "}),
+    );
+    assert_eq!(blank.code, 2, "{}", blank.stderr);
+    assert_eq!(record(&dir, &id)["answers"], json!([]));
+
+    // A comment never substitutes for approve/reject: it still needs one of them.
+    let comment_alone = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "comment": "looks fine"}),
+    );
+    assert_eq!(comment_alone.code, 2, "{}", comment_alone.stderr);
+
+    // Rejecting with a comment saves the comment beside the rejection, and the decision
+    // is still exactly `rejected` with no approval terms attached.
+    let rejected = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "reject": true, "comment": "not ready yet"}),
+    );
+    assert_eq!(rejected.code, 0, "{}", rejected.stderr);
+    let answer = record(&dir, &id)["answers"][0].clone();
+    assert_eq!(answer["text"], json!("rejected"));
+    assert_eq!(answer["comment"], json!("not ready yet"));
+    assert_eq!(answer["approval"], Value::Null);
+}
+
+#[test]
 fn a_plain_question_refuses_approve_and_approval_terms() {
     let dir = TempDir::new("plain");
     let (id, revision) = ask(&dir, "question", Some("user"));

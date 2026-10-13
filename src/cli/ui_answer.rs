@@ -38,6 +38,10 @@ struct UiAnswerInput {
     /// The current answer's revision when this answer corrects it.
     #[serde(default)]
     corrects_revision: Option<Uuid>,
+    /// Free text beside an approval's `approve`/`reject` decision. Never itself a pick,
+    /// and refused on anything but an approval.
+    #[serde(default)]
+    comment: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -199,6 +203,15 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
             "give exactly one of choice, text, approve, or reject",
         ));
     }
+    // A comment is text beside an approval's decision; refused up front on anything else
+    // or when blank, so the shape check fails before any store write is attempted.
+    if let Some(comment) = input.comment.as_deref() {
+        if record.reference.kind != QuestionKind::Approval || comment.trim().is_empty() {
+            return Err(invalid(
+                "comment is only for an approval, and must not be blank",
+            ));
+        }
+    }
     let mut answer = AnswerDraft {
         expected_revision: input.expected_revision,
         text: String::new(),
@@ -212,6 +225,7 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
         user_chat: None,
         source: None,
         action: None,
+        comment: input.comment,
     };
     match record.reference.kind {
         QuestionKind::Secret => Err(store_refusal(QuestionError::SecretNeedsBoard)),

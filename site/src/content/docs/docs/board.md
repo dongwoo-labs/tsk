@@ -91,6 +91,7 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | `Enter` | On a secret, type the value (shown as `•`); `Enter` hands it to fnox, `Esc` cancels and wipes it |
 | `Space` | Check the approval's exact target, scope, and revision |
 | `y` / `n` | Approve (only once checked) / reject an approval |
+| `m` | Write or edit a comment beside an open approval's decision |
 | `c` | Correct a saved answer; it becomes a new revision |
 | `t` | Open the record's task; `Esc` returns to the record |
 | `r` | Resend the lead request of a create-and-run finding |
@@ -98,7 +99,7 @@ Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page
 | `PgUp` / `PgDn` or the wheel | Scroll the page |
 | `Esc` | Back to the list; at the list, quit |
 
-The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, `r resends`) to act as that key does. Every footer action is a button too (the `j/k` pair only names the keys), so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
+The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, the comment line, `r resends`) to act as that key does. Every footer action is a button too (the `j/k` pair only names the keys), so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
 
 Once an answer, approval, rejection, or decision is saved, the page closes and the list comes back with the cursor in the same place, now on the next record still waiting; the status line names the save and its hint. A record opened from a task page returns to that task page instead. A save the store cannot prove durable stays on the page until `Enter` confirms it. Answered records fold into **CLOSED**, so `j`/`k` and `J`/`K` walk only what still waits; `z` shows or hides them for the session.
 
@@ -109,6 +110,8 @@ A secret request names where its value goes: the fnox `key`, `profile` (`default
 A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
 
 An approval saves only for the target, scope, and revision you checked; if the record changed, the check clears. A typed answer to a record that changed meanwhile is not saved and not moved onto the newer revision: the text stays on the page until `Esc` discards it. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
+
+On an open approval, `m` (or a click on the comment line) writes free text beside the decision: `Enter` stages it, `Esc` discards the edit and keeps whatever was staged before. The comment rides whichever of `y` or `n` you press next and is saved with it in one answer; it is never itself an approval, is never checked against the approval terms, and is dropped if you leave the record without deciding. A saved comment shows on the page and in history beside the `approved` or `rejected` text.
 
 ## Notices
 
