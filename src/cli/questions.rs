@@ -10,7 +10,9 @@ use crate::domain::{
     AnswerDraft, AnswerOrigin, FindingAction, QuestionDraft, QuestionKind, QuestionRecord,
     RouteDraft,
 };
-use crate::store::{notify_question, QuestionDurability, QuestionError, QuestionStore, TaskStore};
+use crate::store::{
+    notify_question, question_problems, QuestionDurability, QuestionError, QuestionStore, TaskStore,
+};
 
 pub fn help() -> CliOutput {
     super::presenter::questions_help()
@@ -150,9 +152,17 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
             if operand.is_some() {
                 return Err(("ask has no positional operand".into(), 2));
             }
+            // serde's text names the field or variant; it never echoes a field value.
             let draft: QuestionDraft = serde_json::from_slice(&read_input()?)
-                .map_err(|_| ("invalid question JSON".into(), 2))?;
-            let saved = store.ask(draft).map_err(|error| (error.to_string(), 1))?;
+                .map_err(|error| (format!("invalid question JSON: {error}"), 2))?;
+            let problems = question_problems(&draft);
+            let saved = store.ask(draft).map_err(|error| match error {
+                // Name every bad field at once so one retry fixes them all.
+                QuestionError::InvalidInput if !problems.is_empty() => {
+                    (format!("invalid question: {}", problems.join("; ")), 1)
+                }
+                _ => (error.to_string(), 1),
+            })?;
             let notification = notify_question(&saved, true);
             let code = if saved.durability == QuestionDurability::Uncertain {
                 1
