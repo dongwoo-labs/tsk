@@ -116,10 +116,11 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Move the highlighted choice | `↑` / `↓` or `k` / `j` on the record |
 | Pick the highlighted choice | `Enter` |
 | Pick a choice by number | `1`–`9` |
-| Open the `Type something…` field | type on that row, or `Enter` |
+| Open the `Type something…` field, or a secret's field | type on that row, or `Enter` |
 | Save a typed answer, or hand a secret to fnox | `Enter` in the field |
 | Leave a field (the draft stays; a secret is wiped) | `Esc` in the field |
 | Approve / reject an approval | `1` / `2` |
+| Close an open secret with no value | `2` |
 | Write or edit a comment beside an approval's decision | `3` or `m` |
 | Correct an answer | `c` |
 | Open the task | `t` |

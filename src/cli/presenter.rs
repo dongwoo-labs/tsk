@@ -121,7 +121,7 @@ pub fn questions_help() -> CliOutput {
             "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
             "tsk ui-answer <Q-number|UUID> --file <answer.json|-> --state-dir <Agent-dir>".into(),
         ],
-        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval. ui-answer records the user's pick from another interface with origin user_ui; agents never call it. A secret question (kind secret, audience user, secret {key, profile, config}) is answered only on the board, which hands the value to fnox set and records answer `set`.".into(),
+        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval. ui-answer records the user's pick from another interface with origin user_ui; agents never call it. A secret question (kind secret, audience user, secret {key, profile, config}) has its value set only on the board, which hands it to fnox set and records answer `set`; the board or ui-answer can instead reject it with no value, recording answer `rejected`.".into(),
         groups: vec![group("Options", &[
             ("--file <path>", "Full JSON question, answer, or route input; no text truncation; - reads stdin"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
@@ -132,7 +132,7 @@ pub fn questions_help() -> CliOutput {
         refusals: vec![
             "Personal or implicit board, missing/corrupt private record, stale expected revision, invalid correction".into(),
             "CLI UserUi origin; Agent/imported approval; unverified user evidence or mismatched target/action/H/scope".into(),
-            "secret-needs-board: answer or ui-answer on a secret question; invalid secret target or shape".into(),
+            "secret-needs-board: answer on a secret question, or ui-answer with anything but reject; invalid secret target or shape".into(),
         ],
         exit: "0 saved/read; notification failure remains separate from save success. 1 refused/not saved/commit unknown/durability uncertain: read back before retrying. 2 usage or invalid JSON. A notified hint proves submission only, not receiver application.".into(),
     })

@@ -117,10 +117,14 @@ question. File a secret question; the user types the value on the board, which h
 
 `key` matches `[A-Za-z_][A-Za-z0-9_]*`; `profile` is a fnox profile or `null` (default);
 `config` is the absolute path of an existing `fnox.toml` or `null` (global, `fnox set -g`).
-`audience` must be `user`. Wait until `tsk questions Q<n>` shows the answer `set`; it is the
-only thing tsk records, and no tsk command can show the value. Then read it only inside your
-own process with `fnox exec -- <command>` or `fnox get <KEY>` piped straight into its use,
-never echoed to output. `tsk answer` refuses it with `secret-needs-board`.
+`audience` must be `user`. Wait until `tsk questions Q<n>` shows the answer `set` or
+`rejected`; these are the only things tsk records, and no tsk command can show the value.
+`rejected` means the user closed the request with no value: ask again only if the key is
+still needed. On `set`, read the value only inside your own process with
+`fnox exec -- <command>` or `fnox get <KEY>` piped straight into its use, never echoed to
+output. `tsk answer` always refuses a secret question with `secret-needs-board`; only the
+board can set the value, and only the board or `tsk ui-answer`'s `reject: true` can reject
+it with no value.
 
 **Plan as steps.** When the user wants order of work tracked on the task: `tsk steps T12 add
 "…"` per step, in order. Do not add steps for your own bookkeeping. To fit a step into an existing

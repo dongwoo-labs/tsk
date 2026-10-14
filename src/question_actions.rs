@@ -14,7 +14,8 @@ use crate::domain::{
 };
 use crate::store::{
     default_state_dir, notify_question, valid_secret_question, QuestionDurability, QuestionError,
-    QuestionNotification, QuestionSaveResult, QuestionStore, TaskStore, SECRET_SET,
+    QuestionNotification, QuestionSaveResult, QuestionStore, TaskStore, SECRET_REJECTED,
+    SECRET_SET,
 };
 use crate::threads::herdr;
 use crate::ui::board::BoardModel;
@@ -82,6 +83,7 @@ fn draft(revision: Uuid, text: String) -> AnswerDraft {
         source: None,
         action: None,
         comment: None,
+        reject: false,
     }
 }
 
@@ -765,17 +767,45 @@ fn approval_draft(
     Some(answer)
 }
 
+/// An approval's rejection, or a secret's close-with-no-value. Neither runs fnox nor stores
+/// anything beyond the record `rejected`; only the board's user origin can do either.
 fn reject(
     store: &TaskStore,
     domain: &mut DomainState,
     model: &mut BoardModel,
     record: &QuestionRecord,
 ) {
-    if record.reference.kind != QuestionKind::Approval || !record.is_open() {
-        return;
+    match record.reference.kind {
+        QuestionKind::Approval if record.is_open() => {
+            let mut answer = draft(record.reference.revision, "rejected".to_string());
+            answer.comment = model.questions_mut().comments.remove(&record.reference.id);
+            save(
+                store,
+                domain,
+                model,
+                record,
+                answer,
+                FollowUp::NotifyOrigin,
+                None,
+            );
+        }
+        QuestionKind::Secret if record.is_open() => reject_secret(store, domain, model, record),
+        _ => {}
     }
-    let mut answer = draft(record.reference.revision, "rejected".to_string());
-    answer.comment = model.questions_mut().comments.remove(&record.reference.id);
+}
+
+/// Close an open secret question with no value: no `fnox set` runs, nothing is sent or
+/// stored but the fixed `rejected` text, and a typed-but-uncommitted value is dropped.
+fn reject_secret(
+    store: &TaskStore,
+    domain: &mut DomainState,
+    model: &mut BoardModel,
+    record: &QuestionRecord,
+) {
+    // Dropping any typed value here, same as Esc would: nothing it held ever reaches fnox.
+    model.questions_mut().answer = None;
+    let mut answer = draft(record.reference.revision, SECRET_REJECTED.to_string());
+    answer.reject = true;
     save(
         store,
         domain,
@@ -1649,6 +1679,43 @@ mod secret_tests {
             Some(QuestionError::SecretNeedsBoard),
             "a UserUi answer other than `set` would store a value"
         );
+        assert!(files_containing(&temp.state(), VALUE.as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn only_a_user_ui_reject_closes_a_secret_without_a_value() {
+        let temp = Temp::new("reject");
+        let (questions, record) = ask_secret(
+            &temp,
+            SecretTarget {
+                key: "TOKEN".into(),
+                profile: None,
+                config: None,
+            },
+        );
+        // An agent cannot reject: the same guard that keeps `set` board-only.
+        let mut agent_reject = draft(record.reference.revision, SECRET_REJECTED.to_string());
+        agent_reject.reject = true;
+        agent_reject.origin = AnswerOrigin::Agent;
+        assert_eq!(
+            questions.answer(record.reference.id, agent_reject).err(),
+            Some(QuestionError::SecretNeedsBoard)
+        );
+        assert!(
+            questions
+                .read(record.reference.id)
+                .expect("read back")
+                .is_open(),
+            "the agent's attempt left the question open"
+        );
+        // The board's user origin can reject it: no fnox call, no value, answer `rejected`.
+        let mut user_reject = draft(record.reference.revision, SECRET_REJECTED.to_string());
+        user_reject.reject = true;
+        let saved = questions
+            .answer(record.reference.id, user_reject)
+            .expect("reject saves");
+        assert!(!saved.record.is_open());
+        assert_eq!(saved.record.answers[0].text, SECRET_REJECTED);
         assert!(files_containing(&temp.state(), VALUE.as_bytes()).is_empty());
     }
 }
