@@ -149,7 +149,12 @@ test("demo questions tab follows the app's groups, actions, and sample boundary"
   for (const label of ["create the task and run it", "create the task only (todo)", "close · no task"]) {
     assert.ok(demo.includes(label), label);
   }
-  assert.match(demo, /check the target, scope, and revision first · space/);
+  // One answer form for every record, like Claude Code's: numbered picks, no check keys.
+  for (const label of ["Approve these exact terms", "Add a comment…", "Type something…", "Create the task only"]) {
+    assert.ok(demo.includes(label), label);
+  }
+  assert.match(demo, /questionPick\(digit - 1\)/);
+  assert.doesNotMatch(demo, /case " ":|case "y":|space check/);
   assert.match(demo, /sample: approved in this demo only · it authorizes nothing/);
   assert.match(demo, /no run request is sent/);
   assert.match(demo, /sample text · this demo holds no private records/);

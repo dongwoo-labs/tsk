@@ -301,8 +301,7 @@ import { parseCapture } from "./capture.js";
     q: {
       cursor: null,
       page: null,
-      options: {},
-      check: null,
+      highlight: {},
       answer: null,
       correcting: null,
       report: {},
@@ -600,22 +599,45 @@ import { parseCapture } from "./capture.js";
     ["create_only", "create the task only (todo)"],
     ["close", "close · no task"],
   ];
-  const choices = (q) =>
-    q.kind === "finding" ? FINDING_ACTIONS.map(([, l]) => l) : q.options;
-  function choice(q) {
-    const list = choices(q);
-    const fallback =
-      q.kind === "finding"
-        ? 0
-        : Math.max(0, q.options.indexOf(q.recommendation));
-    return Math.min(state.q.options[q.id] ?? fallback, list.length - 1);
+  // The finding form's rows; the saved answer text stays FINDING_ACTIONS.
+  const FINDING_LABELS = [
+    "Create the task and run it",
+    "Create the task only",
+    "Close",
+  ];
+  // The record's answer form, like Claude Code's: every row a pick submits at once.
+  function formChoices(q) {
+    if (!q.audience) return [];
+    const open = isOpen(q);
+    const correcting = state.q.correcting === q.id;
+    if (q.kind === "approval")
+      return open
+        ? ["approve", "reject", "comment"].map((kind) => ({ kind }))
+        : [];
+    if (q.kind === "finding")
+      return open || correcting
+        ? FINDING_ACTIONS.map((_, index) => ({ kind: "finding", index }))
+        : [];
+    if (q.kind === "question" && (open || correcting))
+      return [
+        ...q.options.map((_, index) => ({ kind: "option", index })),
+        { kind: "text" },
+      ];
+    return [];
   }
-  const choosing = (q) =>
-    q.kind !== "approval" &&
-    choices(q).length > 0 &&
-    ((isOpen(q) && q.audience) || state.q.correcting === q.id);
-  const checked = (q) =>
-    state.q.check?.id === q.id && state.q.check.revision === q.answers.length;
+  const loneField = (rows) => rows.length === 1 && rows[0].kind === "text";
+  function highlight(q) {
+    const rows = formChoices(q);
+    const fallback =
+      q.kind === "question"
+        ? Math.max(0, q.options.indexOf(q.recommendation))
+        : 0;
+    return Math.min(
+      state.q.highlight[q.id] ?? fallback,
+      Math.max(0, rows.length - 1),
+    );
+  }
+  const draftOf = (q) => (state.q.answer?.id === q.id ? state.q.answer : null);
   const kindWord = (q) =>
     q.kind === "finding" ? `finding · ${q.finding?.kind || "issue"}` : q.kind;
   const audienceWord = (q) =>
@@ -664,81 +686,73 @@ import { parseCapture } from "./capture.js";
       field("scope     ", q.approval.scope);
       field("revision  ", q.approval.h, "is-bold");
       field("undo      ", q.approval.rollback);
-      if (isOpen(q) && q.audience) {
-        const on = checked(q);
-        blank();
-        push(
-          `${on ? "[x]" : "[ ]"} I checked the target, scope, and revision (space)`,
-          on ? "is-chosen" : "",
-          'data-q-check="1"',
-        );
-        push(
-          on
-            ? "y approves · n rejects · no answer keeps waiting"
-            : "y approves once checked · n rejects · no answer keeps waiting",
-          "dim",
-        );
-        if (!state.q.answer?.comment) {
-          const staged = state.q.comments[q.id];
-          if (staged) {
-            field("comment ", staged, "", 'data-q-key="m"');
-            push(
-              "m edits the comment · it saves with y or n, either way",
-              "dim",
-            );
-          } else {
-            push(
-              "m adds a comment beside the decision",
-              "dim",
-              'data-q-key="m"',
-            );
-          }
-        }
-      }
     }
-    if (choosing(q) && !state.q.answer) {
-      const list = choices(q);
-      const chosen = choice(q);
+    const form = formChoices(q);
+    const draft = draftOf(q);
+    if (loneField(form)) {
       blank();
-      push(q.kind === "finding" ? "decide" : "options", "dim");
-      list.forEach((label, i) => {
-        const text =
-          q.kind !== "finding" && label === q.recommendation
-            ? `${label} · recommended`
-            : label;
+      if (draft?.focused) rows.push({ input: true, lead: "answer  " });
+      else
+        push(
+          `answer  ${draft?.text || "Type something…"}`,
+          draft?.text ? "is-bold" : "dim",
+          'data-q-option="0"',
+        );
+      push(
+        draft?.focused
+          ? "enter saves · esc leaves the field, the draft stays"
+          : "enter opens the field",
+        "dim",
+      );
+    } else if (form.length) {
+      const on = highlight(q);
+      blank();
+      push(q.kind === "question" ? "options" : "decide", "dim");
+      form.forEach((row, i) => {
+        const lead = `${i === on ? "▸ " : "  "}${i + 1}. `;
+        if (
+          (row.kind === "text" && draft?.focused && !draft.comment) ||
+          (row.kind === "comment" && draft?.comment)
+        ) {
+          rows.push({ input: true, lead });
+          return;
+        }
+        let text;
+        if (row.kind === "option") {
+          const label = q.options[row.index];
+          text = label === q.recommendation ? `${label} · recommended` : label;
+        } else if (row.kind === "text")
+          text = (!draft?.comment && draft?.text) || "Type something…";
+        else if (row.kind === "approve") text = "Approve these exact terms";
+        else if (row.kind === "reject") text = "Reject";
+        else if (row.kind === "comment")
+          text = state.q.comments[q.id]
+            ? `Comment · ${state.q.comments[q.id]}`
+            : "Add a comment…";
+        else text = FINDING_LABELS[row.index];
         indented(
-          i === chosen ? "(•) " : "( ) ",
+          lead,
           text,
-          i === chosen ? "is-chosen" : "",
+          i === on ? "is-chosen" : "",
           `data-q-option="${i}"`,
         );
       });
       push(
-        q.kind === "finding"
-          ? "enter decides"
-          : state.q.correcting === q.id
-            ? "enter saves the correction · the earlier answer stays in history"
-            : "enter saves the answer",
+        draft?.focused && draft.comment
+          ? "enter or esc keeps the comment · it saves with approve or reject, either way"
+          : draft?.focused
+            ? "enter saves · esc leaves the field, the draft stays"
+            : state.q.correcting === q.id
+              ? `enter or 1-${form.length} saves the correction · the earlier answer stays in history`
+              : q.kind === "approval"
+                ? "1 approves exactly these terms · a comment rides approve or reject · no answer keeps waiting"
+                : `enter or 1-${form.length} picks at once`,
         "dim",
-        'data-q-key="Enter"',
       );
     } else if (isOpen(q) && !q.audience) {
       blank();
       push(
         "target unknown · route it with tsk route before anyone answers here",
-        "dim",
-      );
-    } else if (isOpen(q) && q.kind === "question" && !state.q.answer) {
-      blank();
-      push("enter writes an answer", "dim", 'data-q-key="Enter"');
-    }
-    if (state.q.answer?.id === q.id) {
-      blank();
-      rows.push({ input: true });
-      push(
-        state.q.answer.comment
-          ? "enter stages it for y/n · esc discards the edit"
-          : "enter saves · esc cancels",
         "dim",
       );
     }
@@ -779,20 +793,21 @@ import { parseCapture } from "./capture.js";
 
   function questionFooterHint(wide) {
     const q = questionById(state.q.page);
-    if (state.q.answer)
+    if (state.q.answer?.focused)
       return state.q.answer.comment
-        ? "enter stage · esc cancel"
-        : "enter save · esc cancel";
+        ? "enter keep · esc keep"
+        : "enter save · esc leave";
     if (!q)
       return wide
         ? "enter/→ open · j/k move · z closed · 1 board · ? keys"
         : "enter open · j/k move · z closed · 1 board · ? keys";
     if (isOpen(q) && !q.audience) return "J/K next · t task · esc back";
-    if (q.kind === "approval" && isOpen(q))
-      return "space check · y approve · n reject · m comment · J/K next · esc back";
-    if (choosing(q))
-      return "j/k choose · enter save · J/K next · t task · esc back";
-    if (isOpen(q)) return "enter answer · J/K next · t task · esc back";
+    const form = formChoices(q);
+    if (loneField(form)) return "enter type · J/K next · t task · esc back";
+    if (form.length)
+      return form[highlight(q)]?.kind === "text"
+        ? `↑↓ move · enter type · 1-${form.length} pick · J/K next · esc back`
+        : `↑↓ move · enter pick · 1-${form.length} pick · J/K next · t task · esc back`;
     if (q.kind === "approval") return "t task · J/K next · esc back";
     return "c correct · t task · J/K next · esc back";
   }
@@ -807,13 +822,12 @@ import { parseCapture } from "./capture.js";
     q.answers.push({ actor: "user", text, ...extra });
     state.q.correcting = null;
     state.q.answer = null;
-    state.q.check = null;
     state.message = `Q${q.number} saved · sample`;
     backToList(q, slot);
     return correction;
   }
-  function decideFinding(q) {
-    const [action, label] = FINDING_ACTIONS[choice(q)];
+  function decideFinding(q, index) {
+    const [action, label] = FINDING_ACTIONS[index];
     const correcting = state.q.correcting === q.id;
     saveAnswer(q, label, { action });
     if (action === "close") {
@@ -853,25 +867,15 @@ import { parseCapture } from "./capture.js";
   function questionEnter() {
     const q = questionById(state.q.page);
     if (!q) return;
-    if (state.q.answer) {
-      if (state.q.answer.comment) {
-        // A comment never saves on its own: it stages beside the still-open decision.
-        const text = state.q.answer.text.trim();
-        const id = state.q.answer.id;
-        state.q.answer = null;
-        if (text) {
-          state.q.comments[id] = text;
-          state.message =
-            "comment staged · y approves · n rejects, either carries it";
-        } else {
-          delete state.q.comments[id];
-          state.message = "comment cleared";
-        }
+    const draft = draftOf(q);
+    if (draft?.focused) {
+      if (draft.comment) {
+        stageComment();
         return;
       }
-      const text = state.q.answer.text.trim();
+      const text = draft.text.trim();
       if (!text) {
-        state.message = "an answer needs text";
+        state.message = "type an answer first · esc leaves the field";
         return;
       }
       const correction = saveAnswer(q, text);
@@ -885,28 +889,53 @@ import { parseCapture } from "./capture.js";
       state.message = "target unknown · route it with tsk route first";
       return;
     }
-    if (choosing(q)) {
-      if (q.kind === "finding") decideFinding(q);
-      else {
-        const correction = saveAnswer(q, choices(q)[choice(q)]);
-        report(
-          q,
-          `sample: ${correction ? "correction" : "answer"} kept in this page only · nothing is sent (the app hints ${q.origin})`,
-        );
-      }
-      return;
+    if (formChoices(q).length) questionPick(highlight(q));
+  }
+  // A comment never saves on its own: it stages beside the still-open decision.
+  function stageComment() {
+    const draft = state.q.answer;
+    if (!draft?.comment) return;
+    const text = draft.text.trim();
+    state.q.answer = null;
+    if (text) {
+      state.q.comments[draft.id] = text;
+      state.message =
+        "comment kept · 1 approves · 2 rejects, either carries it";
+    } else {
+      delete state.q.comments[draft.id];
+      state.message = "comment cleared";
     }
-    if (q.kind === "question" && (isOpen(q) || state.q.correcting === q.id)) {
-      state.q.answer = { id: q.id, text: "" };
-    }
+  }
+  // Pick one row of the form at once: a digit, Enter on the highlight, or a click.
+  function questionPick(i) {
+    const q = questionById(state.q.page);
+    const row = q && formChoices(q)[i];
+    if (!row) return;
+    state.q.highlight[q.id] = i;
+    if (state.q.answer?.comment && row.kind !== "comment") stageComment();
+    if (row.kind === "option") {
+      const correction = saveAnswer(q, q.options[row.index]);
+      report(
+        q,
+        `sample: ${correction ? "correction" : "answer"} kept in this page only · nothing is sent (the app hints ${q.origin})`,
+      );
+    } else if (row.kind === "text") openField(q);
+    else if (row.kind === "approve") questionApprove(true);
+    else if (row.kind === "reject") questionApprove(false);
+    else if (row.kind === "comment") questionComment();
+    else decideFinding(q, row.index);
+  }
+  // Focus the text field: the draft kept on the row, or a new one.
+  function openField(q, typed = "") {
+    const draft = draftOf(q);
+    if (draft && !draft.comment) {
+      draft.focused = true;
+      draft.text += typed;
+    } else state.q.answer = { id: q.id, text: typed, focused: true };
   }
   function questionApprove(approved) {
     const q = questionById(state.q.page);
     if (!q || q.kind !== "approval" || !isOpen(q) || !q.audience) return;
-    if (approved && !checked(q)) {
-      state.message = "check the target, scope, and revision first · space";
-      return;
-    }
     const slot = Math.max(0, questionOrder().indexOf(q.id));
     const comment = state.q.comments[q.id];
     delete state.q.comments[q.id];
@@ -916,7 +945,6 @@ import { parseCapture } from "./capture.js";
       approved,
       ...(comment ? { comment } : {}),
     });
-    state.q.check = null;
     state.message = `Q${q.number} ${approved ? "approved" : "rejected"} · sample`;
     report(
       q,
@@ -929,20 +957,22 @@ import { parseCapture } from "./capture.js";
   function questionComment() {
     const q = questionById(state.q.page);
     if (!q || q.kind !== "approval" || !isOpen(q) || !q.audience) return;
+    state.q.highlight[q.id] = 2;
     state.q.answer = {
       id: q.id,
       text: state.q.comments[q.id] || "",
       comment: true,
+      focused: true,
     };
-    state.message =
-      "type a comment for this decision · enter stages it · esc discards the edit";
+    state.message = "type a comment for this decision · enter or esc keeps it";
   }
   function questionCorrect() {
     const q = questionById(state.q.page);
     if (!q || isOpen(q) || q.kind === "approval") return;
     state.q.correcting = q.id;
+    delete state.q.highlight[q.id];
     if (q.kind === "question" && !q.options.length)
-      state.q.answer = { id: q.id, text: "" };
+      state.q.answer = { id: q.id, text: "", focused: true };
   }
   function questionResend() {
     const q = questionById(state.q.page);
@@ -954,9 +984,12 @@ import { parseCapture } from "./capture.js";
   }
   function openQuestion(id, fromTask = null) {
     if (state.q.page !== id) {
-      state.q.check = null;
       state.q.correcting = null;
       state.q.answer = null;
+      // A question without options opens on its focused field.
+      const q = questionById(id);
+      if (q && isOpen(q) && q.audience && loneField(formChoices(q)))
+        state.q.answer = { id, text: "", focused: true };
     }
     state.tab = "questions";
     state.q.cursor = id;
@@ -1595,8 +1628,7 @@ import { parseCapture } from "./capture.js";
     state.q = {
       cursor: null,
       page: null,
-      options: {},
-      check: null,
+      highlight: {},
       answer: null,
       correcting: null,
       report: {},
@@ -1636,16 +1668,10 @@ import { parseCapture } from "./capture.js";
     ["views & find", "g", "fold / unfold archived", "drawer"],
     ["views & find", "/", "search board", "find filter"],
     ["views & find", ":", "command palette", "find actions"],
-    ["questions", "enter", "open · save the chosen answer", "answer"],
-    ["questions", "j / k", "choose an option", "answer"],
-    ["questions", "space", "check an approval's terms", "approve"],
-    ["questions", "y / n", "approve once checked / reject", "approve"],
-    [
-      "questions",
-      "m",
-      "write or edit a comment beside the decision",
-      "approve",
-    ],
+    ["questions", "enter", "open · pick the highlighted choice", "answer"],
+    ["questions", "↑↓ / jk", "move the highlight", "answer"],
+    ["questions", "1-9", "pick that choice at once", "answer approve"],
+    ["questions", "m", "comment on an approval", "approve"],
     ["questions", "c", "correct an answer", "answer"],
     ["questions", "t", "open the question's task", "task"],
     ["questions", "r", "resend a lead request", "finding"],
@@ -1986,7 +2012,7 @@ import { parseCapture } from "./capture.js";
     )
       .map((row) => {
         if (row.input)
-          return `<div class="tsk-q-line is-chosen"><span>${state.q.answer.comment ? "comment " : "answer  "}</span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="${state.q.answer.comment ? "Comment" : "Answer"}" /></div>`;
+          return `<div class="tsk-q-line is-chosen"><span>${esc(row.lead)}</span><input class="tsk-field" id="tsk-answer" value="${esc(state.q.answer.text)}" autocomplete="off" aria-label="${state.q.answer.comment ? "Comment" : "Answer"}" /></div>`;
         // A field paints its label dim and only its value in the row's style.
         if (row.label)
           return `<div class="tsk-q-line" ${row.attrs}><span class="dim">${esc(row.text.slice(0, row.label))}</span><span class="${row.cls}">${esc(row.text.slice(row.label))}</span></div>`;
@@ -2037,7 +2063,6 @@ import { parseCapture } from "./capture.js";
   function questionFooterKey(token) {
     if (token === "enter" || token === "enter/→") return "Enter";
     if (token === "esc") return "Escape";
-    if (token === "space") return " ";
     if (token === "J/K") return "J";
     return [...token].length === 1 ? token : null;
   }
@@ -2252,7 +2277,7 @@ import { parseCapture } from "./capture.js";
       if (keepKeys)
         root
           .querySelector(
-            '[data-ring][aria-selected="true"], [data-q-check], .tsk-q-line.is-chosen',
+            '[data-ring][aria-selected="true"], .tsk-q-line.is-chosen',
           )
           ?.scrollIntoView({ block: "nearest" });
       frame.classList.toggle(
@@ -2289,15 +2314,18 @@ import { parseCapture } from "./capture.js";
     }
     if (el.id === "tsk-answer") {
       if (e.key === "Escape") {
+        // Esc leaves the field: a typed draft stays on its row, a comment stays staged.
         e.preventDefault();
-        state.q.answer = null;
-        if (state.q.correcting) state.q.correcting = null;
+        state.q.answer.text = el.value;
+        if (state.q.answer.comment) stageComment();
+        else state.q.answer.focused = false;
       } else if (e.key === "Enter" && plain(e)) {
         e.preventDefault();
         state.q.answer.text = el.value;
         questionEnter();
       } else return true;
       render();
+      if (!state.q.answer?.focused) frame.focus({ preventScroll: true });
       return true;
     }
     if (el.id === "tsk-add") {
@@ -2440,6 +2468,28 @@ import { parseCapture } from "./capture.js";
     const wide = isWide();
     const page = questionById(state.q.page);
     if (!plain(e)) return false;
+    // The open page's form: a digit picks its row at once; on the highlighted
+    // `Type something…` row a typed character opens the field with it.
+    if (page && e.key.length === 1) {
+      const form = formChoices(page);
+      const lone = loneField(form);
+      const digit = Number(e.key);
+      if (!lone && digit >= 1 && digit <= form.length) {
+        e.preventDefault();
+        state.message = "";
+        questionPick(digit - 1);
+        return true;
+      }
+      if (
+        !lone &&
+        form[highlight(page)]?.kind === "text" &&
+        !/[0-9jkJK]/.test(e.key)
+      ) {
+        e.preventDefault();
+        openField(page, e.key);
+        return true;
+      }
+    }
     if (e.key === "z") {
       e.preventDefault();
       toggleClosed();
@@ -2482,18 +2532,27 @@ import { parseCapture } from "./capture.js";
       case "ArrowLeft":
       case "h":
         if (e.key !== "Escape" && !wide) return false;
-        leaveQuestionPage();
+        if (state.q.answer?.text) {
+          state.q.answer = null;
+          state.message = "answer discarded · nothing saved";
+        } else if (state.q.correcting) {
+          state.q.correcting = null;
+          state.q.answer = null;
+        } else {
+          state.q.answer = null;
+          leaveQuestionPage();
+        }
         break;
       case "ArrowDown":
       case "j":
       case "ArrowUp":
       case "k": {
         const forward = e.key === "ArrowDown" || e.key === "j";
-        if (choosing(page) && !state.q.answer) {
-          const n = choices(page).length;
-          state.q.options[page.id] = Math.min(
-            n - 1,
-            Math.max(0, choice(page) + (forward ? 1 : -1)),
+        const form = formChoices(page);
+        if (form.length && !loneField(form)) {
+          state.q.highlight[page.id] = Math.min(
+            form.length - 1,
+            Math.max(0, highlight(page) + (forward ? 1 : -1)),
           );
         } else
           frame
@@ -2510,23 +2569,8 @@ import { parseCapture } from "./capture.js";
       case "Enter":
         questionEnter();
         break;
-      case " ":
-        if (page.kind === "approval" && isOpen(page) && page.audience) {
-          if (checked(page)) {
-            state.q.check = null;
-            state.message = "check cleared";
-          } else {
-            state.q.check = { id: page.id, revision: page.answers.length };
-            state.message = "checked · y approves this exact revision";
-          }
-        }
-        break;
-      case "y":
-        questionApprove(true);
-        break;
-      case "n":
-        questionApprove(false);
-        break;
+      case "m":
+        questionComment();
       case "m":
         questionComment();
         break;
@@ -2865,22 +2909,24 @@ import { parseCapture } from "./capture.js";
       state.sort = state.sort === "number" ? "project" : "number";
     } else if (hit("[data-waiting]")) {
       selectTab("questions");
-    } else if ((node = hit("[data-q-option], [data-q-check], [data-q-key]"))) {
+    } else if ((node = hit("[data-q-option], [data-q-key]"))) {
       // A click on the wide preview opens that record before it acts.
       const shown = node.closest("[data-q-page]")?.dataset.qPage;
       if (shown && state.q.page !== shown) openQuestion(shown);
-      const key = node.dataset.qCheck ? " " : node.dataset.qKey;
-      const q = questionById(state.q.page);
+      const key = node.dataset.qKey;
+      const typing = state.q.answer?.focused;
+      if (typing)
+        state.q.answer.text =
+          root.querySelector("#tsk-answer")?.value ?? state.q.answer.text;
       if (node.dataset.qOption !== undefined) {
-        if (q && choosing(q) && !state.q.answer)
-          state.q.options[q.id] = Number(node.dataset.qOption);
-      } else if (state.q.answer && key === "Enter") {
-        state.q.answer.text = root.querySelector("#tsk-answer")?.value ?? "";
+        // A click on a choice picks it at once, as its digit does.
+        questionPick(Number(node.dataset.qOption));
+      } else if (typing && key === "Enter") {
         questionEnter();
-      } else if (state.q.answer && key === "Escape") {
-        state.q.answer = null;
-        if (state.q.correcting) state.q.correcting = null;
-      } else if (!state.q.answer) {
+      } else if (typing && key === "Escape") {
+        if (state.q.answer.comment) stageComment();
+        else state.q.answer.focused = false;
+      } else if (!typing) {
         handleQuestionsKey({
           key,
           ctrlKey: false,

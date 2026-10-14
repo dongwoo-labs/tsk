@@ -82,36 +82,48 @@ The **2 questions** tab lists the questions, approvals, and findings agents file
 
 A record from an older agent that names no audience shows apart as *target unknown · route with tsk route*. tsk never guesses its target, offers no answer or correction on it (answered or not), and leaves it out of the tab number and row marks; an agent sets the audience with [`tsk route`](/docs/cli/#route).
 
-Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page below 110 columns, the list and the record side by side at 110 and up (`→`/`l` opens, `←`/`h` goes back). On the page:
+Move with `↑`/`↓` or `j`/`k` and press `Enter` to open a record: a full page below 110 columns, the list and the record side by side at 110 and up (`→`/`l` opens, `←`/`h` goes back).
+
+A record waiting on you is answered with one form, the way Claude Code asks: the question text, then a numbered choice list. The highlight starts on the first choice, or on the recommendation when there is one.
+
+| Record | Choices |
+| --- | --- |
+| Question with options | its options, then `n. Type something…` |
+| Question without options | one answer field, already focused |
+| Approval | `1. Approve these exact terms` · `2. Reject` · `3. Add a comment…`, below the exact terms |
+| Finding | `1. Create the task and run it` · `2. Create the task only` · `3. Close` |
+| Secret | one masked field, already focused |
+
+Answered, closed, lead-addressed, and target-unknown records show no choices.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, then `Enter` | Choose an option and save it as the answer |
-| `Enter` | On a question without options, type an answer; `Enter` saves, `Esc` cancels |
-| `Enter` | On a secret, type the value (shown as `•`); `Enter` hands it to fnox, `Esc` cancels and wipes it |
-| `Space` | Check the approval's exact target, scope, and revision |
-| `y` / `n` | Approve (only once checked) / reject an approval |
-| `m` | Write or edit a comment beside an open approval's decision |
+| `↑` / `↓` or `j` / `k` | Move the highlight |
+| `Enter` | Pick the highlighted choice at once; in a field, save |
+| `1`–`9` | Pick that choice at once |
+| `Esc` | In a field, leave it (the draft stays); otherwise back to the list; at the list, quit |
+| `m` | The approval's comment row, as picking it does |
 | `c` | Correct a saved answer; it becomes a new revision |
 | `t` | Open the record's task; `Esc` returns to the record |
 | `r` | Resend the lead request of a create-and-run finding |
 | `J` / `K` | Next or previous record in list order |
 | `PgUp` / `PgDn` or the wheel | Scroll the page |
-| `Esc` | Back to the list; at the list, quit |
 
-The mouse does the same. Click an option to choose it; choosing never saves. Click the approval's check line to check it, and click a line that names a key (`enter saves the answer`, `enter writes an answer`, the task line, `c corrects`, the comment line, `r resends`) to act as that key does. Every footer action is a button too (the `j/k` pair only names the keys), so a click on `enter save` saves the chosen option or the typed answer, and `y approve` still needs the check first. At 110 columns and up, a click on the previewed record opens it before it acts.
+Picking saves: there is no separate choose-then-save step. On the `Type something…` row, typing a character (or `Enter`) opens an inline text field; `Enter` saves the text as the answer and `Esc` leaves the field with the draft kept on the row, where `Enter` reopens it. A second `Esc` discards a kept draft, and the next leaves the page. While a field is open every key is text, and `ctrl+q` and `ctrl+c` do not quit. On a question without options the field opens focused; after `Esc` its page keys work again and `Enter` reopens it. On a page with choices the digits pick, so `1` and `2` switch tabs only from the list or a page without choices.
+
+The mouse does the same. A click on a choice picks it at once, as its digit does (a click on the text row opens the field). A click on a line that names a key (the task line, `c corrects`, `r resends`, a pending save) acts as that key, and every footer action is a button too (`↑↓ move` and `1-n pick` only name the keys). At 110 columns and up, a click on the previewed record opens it before it acts.
 
 Once an answer, approval, rejection, or decision is saved, the page closes and the list comes back with the cursor in the same place, now on the next record still waiting; the status line names the save and its hint. A record opened from a task page returns to that task page instead. A save the store cannot prove durable stays on the page until `Enter` confirms it. Answered records fold into **CLOSED**, so `j`/`k` and `J`/`K` walk only what still waits; `z` shows or hides them for the session.
 
-A page opens at its top. Scrolling never moves the chosen option or the check; choosing an option, checking, or typing brings that line back into view above the `↓ n more rows` line.
+A page opens at its top. Scrolling never moves the highlight; moving the highlight or typing brings that line back into view above the `↓ n more rows` line.
 
-A secret request names where its value goes: the fnox `key`, `profile` (`default` when none), and `config` (`global` when none). `Enter` (or a click on `enter types the secret`) opens a masked line: each character shows as `•`, a paste drops its line breaks, and `Esc` discards it. `Enter` re-reads the request, checks that it is unchanged and its config is still a regular file, then runs `fnox set` with the value on standard input and fnox's output discarded. On success the answer is recorded as `set`, nothing else; the value is never saved, shown, or sent to the agent. When fnox fails, the status row says `fnox set failed` (with its exit code), nothing is saved, and the request stays open. A secret is never corrected; the agent asks again to replace it. Set `TSK_FNOX_BIN` to run a different fnox binary.
+An approval shows its exact terms (action, target, scope, revision, undo) above its choices. Picking **Approve these exact terms** approves the terms the page showed when it opened: tsk compares them with the record on screen and with a fresh read of the store, and saves only when the revision and every term still match. If anything changed, nothing is saved, the status row says so, and the page now binds to the terms it shows, so you read them before picking `1` again. **Add a comment…** (or `m`) opens an inline field for free text beside the decision: `Enter` or `Esc` keeps it on the row, and it rides whichever of approve or reject you pick next, saved with it in one answer. It is never itself an approval, is never checked against the approval terms, and is dropped if you leave the record without deciding. A saved comment shows on the page and in history beside the `approved` or `rejected` text.
 
-A finding offers **create the task and run it**, **create the task only**, or **close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
+A secret request names where its value goes: the fnox `key`, `profile` (`default` when none), and `config` (`global` when none). The page opens on a masked field: each character shows as `•`, a paste drops its line breaks, and `Esc` discards and wipes it (`Enter` opens a new one). `Enter` re-reads the request, checks that it is unchanged and its config is still a regular file, then runs `fnox set` with the value on standard input and fnox's output discarded. On success the answer is recorded as `set`, nothing else; the value is never saved, shown, or sent to the agent. When fnox fails, the status row says `fnox set failed` (with its exit code), nothing is saved, and the request stays open. A secret is never corrected; the agent asks again to replace it. Set `TSK_FNOX_BIN` to run a different fnox binary.
 
-An approval saves only for the target, scope, and revision you checked; if the record changed, the check clears. A typed answer to a record that changed meanwhile is not saved and not moved onto the newer revision: the text stays on the page until `Esc` discards it. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
+A finding offers **Create the task and run it**, **Create the task only** (Todo), or **Close**. Creating makes one new task in the finding's task scope (refused, with nothing saved, when that project is archived), titled with the finding's shareable summary (Doing to run it, Todo otherwise); the private detail is never copied. A correction or close never creates a second task. Create-and-run then sends an identifier-only request to the finding's `lead_recipient`, only when exactly one live Herdr agent has that name. The page reports whether the request and the origin-thread hint were sent, and why not: no recipient set, no live agent, several agents with that name, outside Herdr, or a failed send. `r` reads the record back before resending.
 
-On an open approval, `m` (or a click on the comment line) writes free text beside the decision: `Enter` stages it, `Esc` discards the edit and keeps whatever was staged before. The comment rides whichever of `y` or `n` you press next and is saved with it in one answer; it is never itself an approval, is never checked against the approval terms, and is dropped if you leave the record without deciding. A saved comment shows on the page and in history beside the `approved` or `rejected` text.
+`c` on an answered question or finding shows its form again; the next pick or typed answer saves as a correction, and the earlier answer stays in history. A typed answer to a record that changed meanwhile is not saved and not moved onto the newer revision: the text stays on the page until `Esc` discards it. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
 
 ## Notices
 
