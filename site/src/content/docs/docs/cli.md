@@ -27,6 +27,8 @@ Use `--json` on `add`, `list`, or `import` for machine-readable output. Read the
 
 Question commands run only with an explicit non-personal Agent state directory. `TSK_STATE_DIR` also supplies that selection. They do not open or write the personal default board.
 
+`tsk ask` checks the question before it saves anything. A kind `approval` needs `approval` with non-blank `target`, `action`, `scope`, and `rollback` and an `h` of 40 or 64 hex digits; every other kind takes no `approval`. A wrong shape exits 1 with every bad field in one line (`invalid question: approval.h: ...; approval.target: ...`) and creates no Q number, record, or notification. A JSON error (unknown `kind`, an unknown or missing field) exits 2 and names it. Whether the target, repo, or H make sense for your work is the caller's check; `tsk ask` checks only the shape.
+
 ```sh
 tsk ask --file question.json --state-dir /local/agent-board
 tsk questions --task T12 --state-dir /local/agent-board --json

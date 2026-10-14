@@ -589,80 +589,135 @@ fn now() -> std::time::SystemTime {
     std::time::SystemTime::now()
 }
 
-fn validate_terms(terms: &ApprovalTerms) -> bool {
-    [
-        terms.target.as_str(),
-        terms.action.as_str(),
-        terms.scope.as_str(),
-        terms.rollback.as_str(),
-    ]
-    .iter()
-    .all(|value| !value.trim().is_empty())
-        && matches!(terms.h.len(), 40 | 64)
-        && terms.h.bytes().all(|byte| byte.is_ascii_hexdigit())
+/// Every field-level problem with approval terms, named by field.
+fn terms_problems(terms: &ApprovalTerms) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (name, value) in [
+        ("target", &terms.target),
+        ("action", &terms.action),
+        ("scope", &terms.scope),
+        ("rollback", &terms.rollback),
+    ] {
+        if value.trim().is_empty() {
+            problems.push(format!("approval.{name}: must not be blank"));
+        }
+    }
+    if !matches!(terms.h.len(), 40 | 64) || !terms.h.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        problems.push(
+            "approval.h: must be a hex Git SHA (40 digits) or plan digest (64 digits)".into(),
+        );
+    }
+    problems
 }
 
-fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
-    if [
-        draft.summary.as_str(),
-        draft.origin_thread.as_str(),
-        draft.recipient.as_str(),
-        draft.text.as_str(),
-    ]
-    .iter()
-    .any(|value| value.trim().is_empty())
-        || draft.options.iter().any(|option| option.trim().is_empty())
-    {
-        return Err(QuestionError::InvalidInput);
+/// Every problem with a draft, named by field, in check order. The flag marks a secret
+/// problem; the first one decides which error `ask` refuses with.
+fn draft_problems(draft: &QuestionDraft) -> Vec<(bool, String)> {
+    let mut problems: Vec<(bool, String)> = Vec::new();
+    let mut note = |secret: bool, message: String| problems.push((secret, message));
+    for (name, value) in [
+        ("summary", &draft.summary),
+        ("origin_thread", &draft.origin_thread),
+        ("recipient", &draft.recipient),
+        ("text", &draft.text),
+    ] {
+        if value.trim().is_empty() {
+            note(false, format!("{name}: must not be blank"));
+        }
+    }
+    if draft.options.iter().any(|option| option.trim().is_empty()) {
+        note(false, "options: no option may be blank".into());
     }
     if draft.secret.is_some() && draft.kind != QuestionKind::Secret {
-        return Err(QuestionError::InvalidSecret);
+        note(true, "secret: only kind secret carries it".into());
     }
-    if !agent_name(&draft.origin_thread)
-        || !agent_name(&draft.recipient)
-        || draft
-            .lead_recipient
-            .as_deref()
-            .is_some_and(|name| !agent_name(name))
-    {
-        return Err(QuestionError::InvalidInput);
+    for (name, value) in [
+        ("origin_thread", Some(draft.origin_thread.as_str())),
+        ("recipient", Some(draft.recipient.as_str())),
+        ("lead_recipient", draft.lead_recipient.as_deref()),
+    ] {
+        if value.is_some_and(|value| !agent_name(value)) {
+            note(
+                false,
+                format!("{name}: must be a Herdr agent name ([a-z][a-z0-9_-]{{0,31}})"),
+            );
+        }
     }
     match draft.kind {
-        QuestionKind::Approval
-            if draft
-                .approval
-                .as_ref()
-                .is_none_or(|terms| !validate_terms(terms))
-                || draft.finding.is_some() =>
-        {
-            Err(QuestionError::InvalidInput)
+        QuestionKind::Approval => {
+            match draft.approval.as_ref() {
+                None => note(
+                    false,
+                    "approval: required for kind approval (target, action, h, scope, rollback)"
+                        .into(),
+                ),
+                Some(terms) => {
+                    for message in terms_problems(terms) {
+                        note(false, message);
+                    }
+                }
+            }
+            if draft.finding.is_some() {
+                note(false, "finding: not allowed for kind approval".into());
+            }
         }
-        QuestionKind::Finding
+        QuestionKind::Finding => {
             if draft
                 .finding
                 .as_ref()
                 .is_none_or(|finding| finding.detail.trim().is_empty())
-                || draft.approval.is_some() =>
-        {
-            Err(QuestionError::InvalidInput)
+            {
+                note(false, "finding.detail: required for kind finding".into());
+            }
+            if draft.approval.is_some() {
+                note(false, "approval: only kind approval carries it".into());
+            }
         }
-        QuestionKind::Question if draft.approval.is_some() || draft.finding.is_some() => {
-            Err(QuestionError::InvalidInput)
+        QuestionKind::Question => {
+            if draft.approval.is_some() {
+                note(false, "approval: only kind approval carries it".into());
+            }
+            if draft.finding.is_some() {
+                note(false, "finding: only kind finding carries it".into());
+            }
         }
         // A secret goes to the user's board only, as one fnox target and nothing to pick.
-        QuestionKind::Secret
-            if draft.audience != Some(Audience::User)
-                || !draft.options.is_empty()
-                || draft.approval.is_some()
-                || draft.finding.is_some()
-                || draft
-                    .secret
-                    .as_ref()
-                    .is_none_or(|target| !target.is_well_formed()) =>
-        {
-            Err(QuestionError::InvalidSecret)
+        QuestionKind::Secret => {
+            if draft.audience != Some(Audience::User) {
+                note(true, "audience: kind secret needs \"user\"".into());
+            }
+            if !draft.options.is_empty() {
+                note(true, "options: kind secret takes none".into());
+            }
+            if draft.approval.is_some() || draft.finding.is_some() {
+                note(true, "approval, finding: kind secret takes neither".into());
+            }
+            if draft
+                .secret
+                .as_ref()
+                .is_none_or(|target| !target.is_well_formed())
+            {
+                note(true, "secret: missing or malformed fnox target".into());
+            }
         }
-        _ => Ok(()),
+    }
+    problems
+}
+
+/// Field-level problems with a draft, all at once, for the refusal text. Empty means the
+/// shape is valid; whether the task exists is checked under the store lock.
+pub fn question_problems(draft: &QuestionDraft) -> Vec<String> {
+    draft_problems(draft)
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect()
+}
+
+fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
+    match draft_problems(draft).first() {
+        None => Ok(()),
+        Some((true, _)) => Err(QuestionError::InvalidSecret),
+        Some((false, _)) => Err(QuestionError::InvalidInput),
     }
 }
 
