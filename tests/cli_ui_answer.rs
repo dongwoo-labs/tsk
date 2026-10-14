@@ -420,3 +420,94 @@ fn ordinary_answer_still_refuses_user_ui_origin() {
     assert!(out.stderr.contains("UserUi"), "{}", out.stderr);
     assert_eq!(record(&dir, &id)["answers"], json!([]));
 }
+
+/// Ask one secret question (global fnox target, audience user) and return (Q id, revision).
+fn ask_secret(dir: &TempDir) -> (String, String) {
+    let task = task_id(dir);
+    let question = json!({
+        "task_id": task,
+        "kind": "secret",
+        "summary": "staging key",
+        "origin_thread": "thr-a",
+        "recipient": "lead-a",
+        "text": "Paste the staging key",
+        "options": [],
+        "recommendation": null,
+        "impact": null,
+        "blocking_scope": null,
+        "approval": null,
+        "finding": null,
+        "source": null,
+        "audience": "user",
+        "secret": {"key": "STAGING_KEY", "profile": null, "config": null}
+    });
+    let file = dir.write("secret-question.json", &question);
+    let asked = cli(&["ask", "--file", &file, "--state-dir", &dir.state()]);
+    assert_eq!(asked.code, 0, "ask: {}", asked.stderr);
+    let saved = stdout_json(&asked);
+    let reference = &saved["saved"]["record"]["reference"];
+    (
+        reference["id"].as_str().expect("Q id").to_string(),
+        reference["revision"]
+            .as_str()
+            .expect("revision")
+            .to_string(),
+    )
+}
+
+#[test]
+fn ui_answer_rejects_a_secret_without_a_value_but_still_refuses_a_set_attempt() {
+    let dir = TempDir::new("secret-reject");
+    let (id, revision) = ask_secret(&dir);
+
+    // Anything but `reject` still refuses with secret-needs-board: no text, no choice, no
+    // approve, and a plain reject-shaped pick combined with another field is still one pick.
+    let attempt = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "text": "hunter2"}),
+    );
+    assert_eq!(attempt.code, 1, "{}", attempt.stderr);
+    assert!(
+        attempt
+            .stderr
+            .starts_with("tsk ui-answer: secret-needs-board: "),
+        "{}",
+        attempt.stderr
+    );
+    assert_eq!(record(&dir, &id)["answers"], json!([]));
+
+    // A correction attempt on a secret reject is refused before any write.
+    let corrected = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "reject": true, "corrects_revision": revision}),
+    );
+    assert_eq!(corrected.code, 1, "{}", corrected.stderr);
+    assert!(
+        corrected.stderr.contains("invalid-correction"),
+        "{}",
+        corrected.stderr
+    );
+    assert_eq!(record(&dir, &id)["answers"], json!([]));
+
+    // `reject: true` closes it with no value and no fnox call.
+    let rejected = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "reject": true}),
+    );
+    assert_eq!(rejected.code, 0, "{}", rejected.stderr);
+    let answer = record(&dir, &id)["answers"][0].clone();
+    assert_eq!(answer["text"], json!("rejected"));
+    assert_eq!(answer["origin"], json!("user_ui"));
+
+    // Once rejected, the question stays closed; nothing else can answer it again.
+    let again = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "reject": true}),
+    );
+    assert_eq!(again.code, 1, "{}", again.stderr);
+    assert!(again.stderr.contains("stale-revision"), "{}", again.stderr);
+}

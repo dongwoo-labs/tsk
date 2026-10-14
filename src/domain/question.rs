@@ -208,6 +208,10 @@ pub struct AnswerDraft {
     /// checked against the approval terms. Only an approval question accepts one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Close a secret question without a value: no `fnox set` runs and none is stored.
+    /// Only a secret question accepts it, and only from `UserUi` origin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reject: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

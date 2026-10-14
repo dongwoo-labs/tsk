@@ -508,6 +508,9 @@ pub fn state_label(record: &QuestionRecord, tasks: &[Task]) -> String {
             (FindingLink::None, _) => "answered".to_string(),
         },
         QuestionKind::Question => "answered".to_string(),
+        QuestionKind::Secret if answer.text == crate::store::SECRET_REJECTED => {
+            "rejected".to_string()
+        }
         QuestionKind::Secret => "set in fnox".to_string(),
     }
 }
@@ -527,7 +530,8 @@ const FINDING_LABELS: [&str; 3] = [
 
 /// The record's answer form: every row a pick can submit, in paint order. Empty when the
 /// record is read-only (answered and not under correction, lead-addressed, or with no
-/// target). A question without options and a secret have one row, their lone text field.
+/// target). A question without options has one row, its lone text field; a secret has its
+/// masked field plus a reject row that closes it with no value.
 pub fn form(state: &QuestionsState, record: &QuestionRecord) -> Vec<Choice> {
     if record.draft.audience.is_none() {
         return Vec::new();
@@ -538,7 +542,7 @@ pub fn form(state: &QuestionsState, record: &QuestionRecord) -> Vec<Choice> {
     let open = record.is_open();
     match record.reference.kind {
         QuestionKind::Approval if open => vec![Choice::Approve, Choice::Reject, Choice::Comment],
-        QuestionKind::Secret if open => vec![Choice::Text],
+        QuestionKind::Secret if open => vec![Choice::Text, Choice::Reject],
         QuestionKind::Finding if open || correcting => {
             (0..FINDING_ACTIONS.len()).map(Choice::Finding).collect()
         }
@@ -1273,6 +1277,16 @@ fn form_choices(
                     format!("{label} · recommended")
                 } else {
                     label
+                }
+            }
+            Choice::Text if record.reference.kind == QuestionKind::Secret => {
+                match input.filter(|input| input.secret) {
+                    Some(input) => {
+                        style = RowStyle::Selected;
+                        // One `•` per character typed: the length shows, the value never does.
+                        format!("{}▏", "•".repeat(input.text.chars().count()))
+                    }
+                    None => "Type the value…".to_string(),
                 }
             }
             Choice::Text => match input.filter(|input| !input.comment && !input.secret) {
@@ -2037,10 +2051,9 @@ mod tests {
         assert!(before.contains("key     STAGING_KEY"), "{before}");
         assert!(before.contains("profile default"), "{before}");
         assert!(before.contains("config  global"), "{before}");
-        // The page opens on one masked field, already focused: no numbered choices.
-        assert!(before.contains("secret  ▏"), "{before}");
-        assert!(before.contains("enter hands it to fnox set"), "{before}");
-        assert!(!before.contains("1. "), "{before}");
+        // The page opens on its masked field, already focused, plus a reject row.
+        assert!(before.contains("1. ▏"), "{before}");
+        assert!(before.contains("2. Reject"), "{before}");
         assert!(state.typing().is_some_and(|input| input.secret));
         assert_eq!(group_of(&record), QuestionGroup::ForYou);
 
@@ -2052,7 +2065,7 @@ mod tests {
             .push_str("hunter2");
         let typed = texts(&state).join("\n");
         assert!(!typed.contains("hunter2"), "{typed}");
-        assert!(typed.contains("secret  •••••••▏"), "{typed}");
+        assert!(typed.contains("•••••••▏"), "{typed}");
         assert_eq!(footer_hint(&state, false), "enter fnox set · esc cancel");
         let debug = format!("{state:?}");
         assert!(!debug.contains("hunter2"), "Debug never prints the value");
@@ -2096,6 +2109,76 @@ mod tests {
             .join("\n");
         assert!(page.contains("set in fnox"), "{page}");
         assert!(!page.contains("c corrects"), "{page}");
+        assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
+    }
+
+    #[test]
+    fn picking_reject_on_an_open_secret_closes_it_with_no_fnox_call() {
+        let record = secret_record();
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        assert_eq!(form(&state, &record), vec![Choice::Text, Choice::Reject]);
+        // While the masked field is focused, text entry owns every key, digits included.
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('2'))),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "2".into()
+            ))),
+            "a focused field takes every key as text, including digits"
+        );
+        // Leaving the field (Esc) wipes the secret and the page falls back to its form,
+        // where `2` now picks the reject row.
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Esc)),
+            Some(BoardIntent::Question(QuestionIntent::AnswerCancel))
+        );
+        state.answer = None;
+        assert_eq!(
+            map_key(&state, false, KeyEvent::from(KeyCode::Char('2'))),
+            Some(BoardIntent::Question(QuestionIntent::Pick(1)))
+        );
+    }
+
+    #[test]
+    fn a_rejected_secret_shows_rejected_not_set_in_fnox() {
+        let mut record = secret_record();
+        record.answers.push(crate::domain::QuestionAnswer {
+            revision: Uuid::from_u128(9),
+            created_task_id: None,
+            corrects_revision: None,
+            text: crate::store::SECRET_REJECTED.into(),
+            actor: "user".into(),
+            origin: crate::domain::AnswerOrigin::UserUi,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: None,
+            comment: None,
+        });
+        record.reference.revision = Uuid::from_u128(9);
+        assert_eq!(state_label(&record, &[]), "rejected");
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let page = page_rows(&state, &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!page.contains("set in fnox"), "{page}");
+        assert!(
+            !page.contains("c corrects"),
+            "a secret is never corrected: {page}"
+        );
         assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
     }
 

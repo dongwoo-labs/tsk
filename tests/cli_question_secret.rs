@@ -286,3 +286,48 @@ fn no_cli_answer_or_route_takes_a_secret_question() {
     assert_eq!(record["answers"], json!([]), "the question stays open");
     assert_eq!(record["reference"]["revision"], revision);
 }
+
+#[test]
+fn tsk_answer_cannot_reject_a_secret_even_with_user_ui_shaped_reject_text() {
+    let dir = TempDir::new("reject-agent");
+    let task = task_id(&dir);
+    let asked = ask(&dir, &secret_draft(&task, global()));
+    assert_eq!(asked.code, 0, "{}", asked.stderr);
+    let revision = stdout_json(&asked)["saved"]["record"]["reference"]["revision"].clone();
+
+    // `tsk answer` refuses every secret question outright, before the draft is even
+    // parsed: an agent has no way to close a secret, reject or otherwise.
+    let agent_reject = dir.write(
+        "agent-reject.json",
+        &json!({
+            "expected_revision": revision,
+            "text": "rejected",
+            "actor": "thr-a",
+            "origin": "agent",
+            "corrects_revision": null,
+            "approve": false,
+            "confirmed": false,
+            "approval": null,
+            "user_chat": null,
+            "source": null,
+            "reject": true
+        }),
+    );
+    let out = cli(&[
+        "answer",
+        "Q1",
+        "--file",
+        &agent_reject,
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr
+            .starts_with("tsk questions: secret-needs-board: "),
+        "{}",
+        out.stderr
+    );
+    let record = stdout_json(&cli(&["questions", "Q1", "--state-dir", &dir.state()]));
+    assert_eq!(record["answers"], json!([]), "the question stays open");
+}

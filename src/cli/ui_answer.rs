@@ -16,9 +16,11 @@ use crate::domain::{AnswerDraft, AnswerOrigin, ApprovalTerms, QuestionKind, Ques
 use crate::question_actions::USER;
 use crate::store::{
     notify_question, QuestionDurability, QuestionError, QuestionNotification, QuestionStore,
+    SECRET_REJECTED,
 };
 
 /// What the user picked or typed. Exactly one of `choice`, `text`, `approve`, `reject`.
+/// `reject` rejects an open approval, or closes an open secret with no value.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UiAnswerInput {
@@ -171,10 +173,6 @@ fn execute(args: &[String], stdin: &mut dyn Read) -> Result<CliOutput, Refusal> 
 /// The board's answer for the same pick: a plain answer stays plain, an approval carries
 /// the exact terms the user saw, and the store re-checks both under its lock.
 fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, Refusal> {
-    // A secret never travels through this entrypoint: only the board hands it to fnox.
-    if record.reference.kind == QuestionKind::Secret {
-        return Err(store_refusal(QuestionError::SecretNeedsBoard));
-    }
     // A stale read refuses before any shape check, so the caller always learns to reread.
     if input.expected_revision != record.reference.revision {
         return Err(store_refusal(QuestionError::StaleRevision));
@@ -226,9 +224,25 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
         source: None,
         action: None,
         comment: input.comment,
+        reject: false,
     };
     match record.reference.kind {
-        QuestionKind::Secret => Err(store_refusal(QuestionError::SecretNeedsBoard)),
+        QuestionKind::Secret => {
+            if !input.reject {
+                return Err(store_refusal(QuestionError::SecretNeedsBoard));
+            }
+            if input.corrects_revision.is_some() {
+                return Err(Refusal {
+                    code: "invalid-correction",
+                    message: "a secret is not corrected; ask a new secret question to set it again"
+                        .into(),
+                    exit: 1,
+                });
+            }
+            answer.text = SECRET_REJECTED.into();
+            answer.reject = true;
+            Ok(answer)
+        }
         QuestionKind::Finding => Err(Refusal {
             code: "finding-board-action",
             message: "a finding is decided on the board".into(),
@@ -260,7 +274,7 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
                 return Err(store_refusal(QuestionError::ApprovalRefused));
             }
             if input.reject {
-                return Err(invalid("reject answers an approval only"));
+                return Err(invalid("reject answers an approval or a secret only"));
             }
             answer.text = match (input.choice, input.text) {
                 (Some(choice), _) => record

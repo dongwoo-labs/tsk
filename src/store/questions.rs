@@ -14,6 +14,9 @@ const PRIVATE_DIR: &str = "questions-private";
 /// The only answer text a secret question records: fnox took the value.
 pub const SECRET_SET: &str = "set";
 
+/// The only other answer text a secret question records: closed without a value.
+pub const SECRET_REJECTED: &str = "rejected";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuestionDurability {
@@ -390,14 +393,23 @@ impl QuestionStore {
             _ => {}
         }
         validate_answer(&record, &draft)?;
-        // The board records `set` only after fnox took the value; nothing else answers it.
-        if record.draft.kind == QuestionKind::Secret
-            && (draft.origin != AnswerOrigin::UserUi
-                || draft.text != SECRET_SET
+        // The board records `set` after fnox took the value, or `rejected` closing it with
+        // no value and no fnox call; nothing else answers it.
+        if record.draft.kind == QuestionKind::Secret {
+            let text_ok = if draft.reject {
+                draft.text == SECRET_REJECTED
+            } else {
+                draft.text == SECRET_SET
+            };
+            if draft.origin != AnswerOrigin::UserUi
+                || !text_ok
                 || draft.corrects_revision.is_some()
-                || draft.approve)
-        {
-            return Err(QuestionError::SecretNeedsBoard);
+                || draft.approve
+            {
+                return Err(QuestionError::SecretNeedsBoard);
+            }
+        } else if draft.reject {
+            return Err(QuestionError::InvalidInput);
         }
         if draft.action.is_some() && record.draft.kind != QuestionKind::Finding {
             return Err(QuestionError::InvalidInput);
