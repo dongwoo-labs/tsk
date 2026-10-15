@@ -111,7 +111,7 @@ A record waiting on you is answered with one form, the way Claude Code asks: the
 
 Answered, closed, lead-addressed, and target-unknown records show no choices.
 
-An option written as two lines (`label` then a newline and what picking it leads to) shows the label as the choice and the second line dim beneath it; picking saves the label line as the answer, and a recommendation may name either the label or the whole option. **Explain it first** saves nothing: inside Herdr it sends the one live `lead-` agent a prompt to explain the question with the wait-what skill and sum it up with a recommendation, and the record stays open for you to answer afterwards. Outside Herdr, or with no single live lead, the status row says why nothing was sent.
+An option written as two lines (`label` then a newline and what picking it leads to) shows the label as the choice and the second line dim beneath it; picking saves the label line as the answer, and a recommendation may name either the label or the whole option. **Explain it first** saves nothing: inside Herdr it sends the one live `lead-` agent the single line `/wait-what Q<n>`, so its wait-what skill explains the question, and the record stays open for you to answer afterwards. Outside Herdr, or with no single live lead, the status row says why nothing was sent.
 
 | Key | Action |
 | --- | --- |

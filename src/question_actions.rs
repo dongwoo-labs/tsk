@@ -1172,18 +1172,10 @@ fn request_lead(record: &QuestionRecord) -> String {
     }
 }
 
-/// The prompt "Explain it first" hands the lead: explain the question with the wait-what
-/// skill and sum it up, without answering it. The same words as `/tsk`'s menu item.
+/// The prompt "Explain it first" hands the lead: the wait-what skill on this question,
+/// nothing else. The same line as `/tsk`'s menu item.
 fn explain_prompt(record: &QuestionRecord) -> String {
-    let number = record.reference.number;
-    let dir = default_state_dir();
-    [
-        format!("Use the /wait-what skill to explain tsk Q{number} to me before I answer it."),
-        format!("Read it with `tsk questions Q{number} --json --state-dir {}`, and the task and thread it came from if that helps.", dir.display()),
-        "Explain what it asks, why the thread needs it, and what each option (or approve/reject) would lead to, then sum it up in a few lines with your recommendation.".to_string(),
-        format!("Do not answer it yourself: I answer it in the tsk board or with /tsk Q{number}."),
-    ]
-    .join("\n")
+    format!("/wait-what Q{}", record.reference.number)
 }
 
 /// "Explain it first": hand the one live lead (`lead-` prefix) the explain prompt. Writes
@@ -1380,6 +1372,14 @@ mod tests {
         let mut answer = answer("rejected", FindingAction::Close, AnswerOrigin::UserUi);
         answer.action = None;
         answer
+    }
+
+    #[test]
+    fn explain_hands_the_lead_only_the_wait_what_line() {
+        assert_eq!(
+            explain_prompt(&finding(Vec::new(), Vec::new())),
+            "/wait-what Q4"
+        );
     }
 
     fn finding(answers: Vec<QuestionAnswer>, routes: Vec<QuestionRoute>) -> QuestionRecord {
