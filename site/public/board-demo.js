@@ -985,7 +985,8 @@ import { parseCapture } from "./capture.js";
       comment: true,
       focused: true,
     };
-    state.message = "type a comment for this decision · enter or esc keeps it";
+    state.message =
+      "type a comment · enter answers with it alone · esc keeps it for approve or reject";
   }
   function questionCorrect() {
     const q = questionById(state.q.page);
