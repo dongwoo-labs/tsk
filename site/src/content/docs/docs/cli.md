@@ -207,6 +207,7 @@ tsk list T12
 tsk list --all --json
 tsk list -p atlas
 tsk list --done --all
+tsk list --done --history --all
 tsk list --todo --all
 tsk list --doing --all
 tsk list --archived --all
@@ -214,7 +215,7 @@ tsk list --deleted --all
 ```
 
 ```text
-tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done | --deleted | --archived] [--json] [--state-dir <dir>]
+tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done [--history] | --deleted | --archived] [--json] [--state-dir <dir>]
 ```
 
 | Filter | Result |
@@ -222,13 +223,14 @@ tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done | -
 | Default | Todo and Doing tasks; excludes archived, deleted, and notice (`N`) tasks |
 | `--todo` | Tasks with status `todo` |
 | `--doing` | Tasks with status `doing` |
-| `--done` | Completed tasks |
+| `--done` | Completed tasks still in `tsk.json` (done within the last day by default) |
+| `--history` | With `--done`: also the done tasks moved to the dated files under `done/`, in the same order; `-p` also matches projects known only from those files. See [storage](/docs/storage/#older-done-tasks). |
 | `--archived` | Individually archived tasks and tasks in archived projects, across statuses |
 | `--deleted` | Live soft-deleted tasks and `trash.jsonl` entries, deduped by task with the live copy winning, newest deletion first. Trash is retained for 30 days, see [storage](/docs/storage/#deleted-tasks). |
 
 Scope flags are mutually exclusive. So are `--todo`, `--doing`, `--done`, `--deleted`, and `--archived`.
 
-A direct task address searches the main store, including done, archived, and recently deleted tasks. It cannot be combined with scope or status filters. A missing task exits 2. A task already moved to `trash.jsonl` is not addressable; find it with `tsk list --deleted` (optionally `-p`), or restore it with `tsk trash restore`.
+A direct task address searches the main store, including done, archived, and recently deleted tasks, then the dated done files. It cannot be combined with scope or status filters. A missing task exits 2. A task already moved to `trash.jsonl` is not addressable; find it with `tsk list --deleted` (optionally `-p`), or restore it with `tsk trash restore`.
 
 Human output groups by status in `DOING`, `TODO` order. Todo rows use oldest capture first; Doing and Done use most recent status change first. This order is separate from the board, which groups rows by project, in task-number order inside each group. JSON is that flat order. With `--all`, human output groups each status by scope: the groups are ordered by their first row, and the rows inside each group keep the board order, so interleaved scopes print in a different order from JSON; filtered rows include the task number, and `--all` adds scope labels using a unique concise trailing path or desk. List output and errors wrap to the attached terminal width with hanging indentation. Task rows, scope labels, notes, steps, and archived marks use the same wrapping behavior, supported from 50 columns. Redirected output keeps stored logical lines. Command help is reference text and instead always wraps at 80 columns.
 

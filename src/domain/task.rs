@@ -147,6 +147,22 @@ fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
     task.history.push(TaskEvent { kind, at });
 }
 
+/// When a task was finished: its last `completed` event, else `updated_at`.
+pub(crate) fn done_at(task: &Task) -> SystemTime {
+    task.last_event_at(TaskEventKind::Completed)
+        .unwrap_or(task.updated_at)
+}
+
+/// A numbered done task missing from a disk document that has already numbered past it
+/// was moved to a dated done file. A replaced or emptied document restarts its counter,
+/// so its missing tasks are kept rather than dropped.
+fn moved_to_done_file(task: &Task, disk: &DomainState) -> bool {
+    task.status == HumanStatus::Done
+        && task
+            .number
+            .is_some_and(|number| number < disk.next_task_number)
+}
+
 /// Document version written by this binary.
 pub const STORE_FORMAT_VERSION: u32 = 9;
 
@@ -1094,13 +1110,16 @@ impl DomainState {
 
     /// A local task absent from disk that is soft-deleted with no merge base was trashed
     /// by another process (or by this one on an earlier save): drop it instead of
-    /// resurrecting it on the next write. A local task that is not soft-deleted, or that
-    /// carries a `merge_base_revision`, is a local creation or mutation and stays.
+    /// resurrecting it on the next write. A numbered done task the disk has already
+    /// counted past moved to a dated done file the same way. Any other local task, or one
+    /// that carries a `merge_base_revision`, is a local creation or mutation and stays.
     fn drop_tasks_trashed_elsewhere(&mut self, disk: &DomainState) {
         let disk_ids: BTreeSet<Uuid> = disk.tasks.iter().map(|task| task.id).collect();
         let before = self.tasks.len();
         self.tasks.retain(|task| {
-            disk_ids.contains(&task.id) || !task.soft_deleted || task.merge_base_revision.is_some()
+            disk_ids.contains(&task.id)
+                || task.merge_base_revision.is_some()
+                || !(task.soft_deleted || moved_to_done_file(task, disk))
         });
         if self.tasks.len() != before {
             self.undo_stack.retain(|entry| {
@@ -1260,6 +1279,72 @@ impl DomainState {
                     .then(|| (deleted_at, task.clone()))
             })
             .collect()
+    }
+
+    /// Done tasks eligible to move to the dated done files, with each task's `done_at`
+    /// (its last `completed` event, else `updated_at`). A task moves when it is done,
+    /// not deleted, not a notice, already numbered, done for longer than `keep`, no undo
+    /// entry targets it, no question reference names it, and no task that stays live
+    /// names it as parent.
+    pub(crate) fn done_archive_eligible(
+        &self,
+        now: SystemTime,
+        keep: Duration,
+    ) -> Vec<(SystemTime, Task)> {
+        let targeted: BTreeSet<Uuid> = self
+            .undo_stack
+            .iter()
+            .flat_map(UndoEntry::targets)
+            .map(|(id, _)| id)
+            .collect();
+        let asked: BTreeSet<Uuid> = self.questions.iter().map(|q| q.task_id).collect();
+        let mut eligible: BTreeSet<Uuid> = self
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.status == HumanStatus::Done
+                    && !task.soft_deleted
+                    && !task.is_notice()
+                    && task.number.is_some()
+                    && !targeted.contains(&task.id)
+                    && !asked.contains(&task.id)
+                    && now
+                        .duration_since(done_at(task))
+                        .is_ok_and(|age| age > keep)
+            })
+            .map(|task| task.id)
+            .collect();
+        // A parent leaves only after every child that names it has left.
+        loop {
+            let pinned: BTreeSet<Uuid> = self
+                .tasks
+                .iter()
+                .filter(|task| !eligible.contains(&task.id))
+                .filter_map(|task| task.parent_task_id)
+                .filter(|parent| eligible.contains(parent))
+                .collect();
+            if pinned.is_empty() {
+                break;
+            }
+            eligible.retain(|id| !pinned.contains(id));
+        }
+        self.tasks
+            .iter()
+            .filter(|task| eligible.contains(&task.id))
+            .map(|task| (done_at(task), task.clone()))
+            .collect()
+    }
+
+    /// A read-only view that also holds tasks moved to the dated done files, so
+    /// relationships, counts, and project names cover them. A live copy wins.
+    pub(crate) fn with_moved_tasks(&self, moved: impl IntoIterator<Item = Task>) -> DomainState {
+        let mut view = self.clone();
+        for task in moved {
+            if view.get(task.id).is_none() {
+                view.tasks.push(task);
+            }
+        }
+        view
     }
 
     /// Remove the given tasks and every undo entry targeting one of them.

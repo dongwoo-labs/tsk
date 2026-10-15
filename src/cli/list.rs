@@ -23,6 +23,8 @@ pub struct ListInput {
     pub archived: bool,
     pub todo: bool,
     pub doing: bool,
+    /// With `--done`: also list done tasks moved to the dated done files.
+    pub history: bool,
     /// One task addressed by UUID or human number: single-task listing with full detail.
     pub task: Option<TaskAddress>,
     pub state_dir: Option<PathBuf>,
@@ -105,6 +107,7 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         archived: false,
         todo: false,
         doing: false,
+        history: false,
         task: None,
         state_dir: None,
         help: false,
@@ -156,6 +159,10 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
                 input.doing = true;
                 index += 1;
             }
+            "--history" => {
+                input.history = true;
+                index += 1;
+            }
             "--help" => {
                 input.help = true;
                 index += 1;
@@ -203,6 +210,9 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
     if input.archived && (input.done || input.deleted) {
         return Err("--archived cannot be used with --done or --deleted".into());
     }
+    if input.history && !input.done {
+        return Err("--history needs --done".into());
+    }
     if input.todo && input.doing {
         return Err("--todo cannot be used with --doing".into());
     }
@@ -217,9 +227,19 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
 /// Load tasks in the requested scope and view, ordered by their displayed status groups.
 pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     let store = TaskStore::new(input.state_dir.unwrap_or_else(default_state_dir));
-    let domain = store
+    let live = store
         .load()
         .map_err(|error| ListError::Store(error.to_string()))?;
+    // A direct lookup and `--history` also read the dated done files, so moved tasks,
+    // their relationships, and their project names resolve like live ones.
+    let domain = if input.task.is_some() || input.history {
+        let moved = store
+            .load_done_history()
+            .map_err(|error| ListError::Store(error.to_string()))?;
+        live.with_moved_tasks(moved.into_iter().map(|line| line.task))
+    } else {
+        live
+    };
     if let Some(task_address) = input.task {
         // Single-task listing ignores cwd and filters, and includes complete readable detail.
         let task = domain

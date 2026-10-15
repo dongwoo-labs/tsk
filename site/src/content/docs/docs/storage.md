@@ -9,6 +9,7 @@ The board, CLI, and Herdr plugin share one store. The current store format is v9
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
+| `TSK_DONE_KEEP_DAYS` | `1` | Days a done task stays in `tsk.json` before it moves to its dated file under `done/`, see [older done tasks](#older-done-tasks) |
 | `TSK_STATE_DIR` | Platform default | Task data, backups, trash, and release-check cache. The default is `~/.tsk` on macOS/Linux, `%LOCALAPPDATA%\tsk` on Windows, or `%USERPROFILE%\.tsk` when `LOCALAPPDATA` is unavailable. Without a usable platform home, tsk refuses to run rather than pick a directory |
 | `--state-dir <dir>` | State directory | Override storage for a data command |
 
@@ -50,6 +51,17 @@ A secret question's snapshot holds only its fnox target (key, profile, config pa
 The four starter tasks (`N1`… on your desk) are seeded once per state directory on the first board open. Mark one done, archive it, or delete it and it never returns. Deleting `delivery.json` seeds any starter catalog id the task document no longer holds.
 
 After an upgrade, the first board open adds one `What's new in tsk` task to your desk (in `doing`, under DOING) when the new version bundles release notes you have not seen. That includes upgrading from a build that only had starter tasks. Every missed release lands in that one task, newest first, with its changelog link in the notes. The notes ship inside the binary; a blank first install records them as seen and shows none. Clear it like any starter task.
+
+## Older done tasks
+
+A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while an undo entry or a question still names it, or while a task that stays live names it as parent. Its number is never reused.
+
+```sh
+tsk list --done --history --all
+tsk list T12
+```
+
+The board's done drawer shows only the tasks still in `tsk.json`. `tsk list --done --history` adds the moved tasks in the usual done order, and `tsk list T<n>` finds a moved task by number with its parent and children. Project names and child counts include moved tasks. Moved tasks are read-only: reopening one is not supported yet. Each file is plain JSON lines (`done_at` and the task), written atomically before the live file loses the tasks.
 
 ## Deleted tasks
 
