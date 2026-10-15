@@ -1197,18 +1197,12 @@ fn explain(record: &QuestionRecord) -> String {
         Ok(rows) => rows,
         Err(_) => return format!("Q{number} explain not sent: cannot list live agents"),
     };
-    let leads: Vec<&str> = rows
-        .iter()
-        .map(|row| row.name.as_str())
-        .filter(|name| name.starts_with("lead-"))
-        .collect();
-    match leads.as_slice() {
-        [] => format!("Q{number} explain not sent: no live lead"),
-        [lead] => match herdr::prompt(lead, &explain_prompt(record)) {
+    match crate::stall::single_lead(&rows) {
+        Ok(lead) => match herdr::prompt(lead, &explain_prompt(record)) {
             Ok(()) => format!("asked {lead} to explain Q{number} · answer it here afterwards"),
             Err(_) => format!("Q{number} explain to {lead} failed to send"),
         },
-        many => format!("Q{number} explain not sent: {} live leads", many.len()),
+        Err(why) => format!("Q{number} explain not sent: {why}"),
     }
 }
 

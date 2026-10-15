@@ -223,6 +223,31 @@ pub fn lead_hint(stale: &[String], todo: &[String]) -> String {
 }
 
 /// The single live lead (`lead-` prefix) in `agents`, or why there is none.
+/// "no live lead" with what Herdr did list, so a misnamed lead shows on the status row.
+fn no_lead_detail(agents: &[ThreadRow]) -> String {
+    let named: Vec<&str> = agents
+        .iter()
+        .map(|row| row.name.as_str())
+        .filter(|name| !name.is_empty())
+        .collect();
+    let unnamed = agents.len() - named.len();
+    let mut seen: Vec<String> = named.iter().take(6).map(|name| name.to_string()).collect();
+    if named.len() > 6 {
+        seen.push(format!("+{} more", named.len() - 6));
+    }
+    if unnamed > 0 {
+        seen.push(format!("{unnamed} unnamed"));
+    }
+    if seen.is_empty() {
+        "no live lead: herdr agent list is empty".to_string()
+    } else {
+        format!(
+            "no live lead (no name starts with lead-; agents: {})",
+            seen.join(", ")
+        )
+    }
+}
+
 pub fn single_lead(agents: &[ThreadRow]) -> Result<&str, String> {
     let leads: Vec<&str> = agents
         .iter()
@@ -231,7 +256,7 @@ pub fn single_lead(agents: &[ThreadRow]) -> Result<&str, String> {
         .collect();
     match leads.as_slice() {
         [lead] => Ok(lead),
-        [] => Err("no live lead".to_string()),
+        [] => Err(no_lead_detail(agents)),
         many => Err(format!("{} live leads", many.len())),
     }
 }
@@ -423,5 +448,20 @@ mod tests {
         let agents = vec![agent("thr-a", AgentStatus::Idle), other];
         assert!(!unique_name("thr-a", &agents));
         assert!(unique_name("thr-a", &agents[..1]));
+    }
+
+    #[test]
+    fn no_lead_names_what_herdr_listed() {
+        let mut unnamed = agent("", AgentStatus::Working);
+        unnamed.pane_id = "w1:p8".into();
+        let why = single_lead(&[agent("thr-a", AgentStatus::Idle), unnamed]).unwrap_err();
+        assert_eq!(
+            why,
+            "no live lead (no name starts with lead-; agents: thr-a, 1 unnamed)"
+        );
+        assert_eq!(
+            single_lead(&[]).unwrap_err(),
+            "no live lead: herdr agent list is empty"
+        );
     }
 }
