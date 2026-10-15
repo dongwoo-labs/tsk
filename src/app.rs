@@ -1621,12 +1621,15 @@ fn refresh_all(model: &mut BoardModel) -> String {
     if stale_labels.is_empty() && todo_labels.is_empty() {
         return "nothing to check: no stale doing or todo tasks".to_string();
     }
-    let lead = match crate::stall::single_lead(&agents) {
-        Ok(lead) => lead.to_string(),
+    let (target, lead) = match crate::stall::single_lead(&agents) {
+        Ok(row) => (
+            row.focus_target().to_string(),
+            row.session_name().to_string(),
+        ),
         Err(why) => return format!("stall check not sent: {why}"),
     };
     let hint = crate::stall::lead_hint(&stale_labels, &todo_labels);
-    match crate::threads::herdr::prompt(&lead, &hint) {
+    match crate::threads::herdr::prompt(&target, &hint) {
         Ok(()) => {
             let now = SystemTime::now();
             for id in stale_ids {

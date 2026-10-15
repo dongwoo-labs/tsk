@@ -55,6 +55,7 @@ the GitHub release notes verbatim.
 
 ### Fixed
 
+- **↻ check**, `ctrl+l`, and **Explain it first** no longer say `no live lead` when the lead was started by hand: Herdr lists such a lead without a name, so the board now also recognises the one agent whose terminal title starts with `lead-` and sends to its pane. When no lead is found, the status row names the agents Herdr listed.
 - Copying a drag selection on the board no longer puts a space after every Hangul, CJK, or other double-width character (`테 스 트`): the copy reads each wide glyph once instead of also reading the blank cell it covers.
 - At 110 columns or wider, a long task title wraps onto more rows in the detail's header, while viewing and while editing it, instead of being cut off with `…`. The status and project stay on the first row.
 - At 110 columns or wider, the Task view's narrow board rail keeps an open done drawer and the archived group's fold state, like Split does, so a done task opened from the drawer stays selected beside its page instead of vanishing from the rail. Thanks @LukasGold (#174).
