@@ -1268,6 +1268,7 @@ fn task_page_header_shows_identifier_not_footer() {
         title_cursor: None,
         status_word: "todo",
         notes_rows: Vec::new(),
+        notes_lines: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
         relation_rows: Vec::new(),
@@ -1376,6 +1377,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
             "first draft note".to_string(),
             "second draft note".to_string(),
         ],
+        notes_lines: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
         relation_rows: Vec::new(),
@@ -1722,6 +1724,70 @@ fn notes_edit_shows_raw_markdown_markers_that_view_mode_strips() {
         edit.contains("**strong**"),
         "notes edit must show raw **strong** markers:\n{edit}"
     );
+}
+
+#[test]
+fn task_page_view_renders_agent_markdown_and_edit_keeps_the_source() {
+    let notes = "## Plan\n\
+                 1. read [the spec](https://x.dev/spec)\n\
+                 - [ ] write tests\n\
+                 - [x] ship\n\
+                 > keep it **simple**\n\
+                 ---\n\
+                 | key | value |\n\
+                 |-----|-------|\n\
+                 | a | b |";
+    let mut domain = DomainState::new();
+    domain
+        .create(
+            "Agent notes",
+            Some(notes.into()),
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create task");
+    let mut model = BoardModel::from_domain(&domain, None);
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    for width in [80u16, 140] {
+        let rows = board_rows(&model, width, 30);
+        let view = rows.join("\n");
+        for shown in [
+            "Plan",
+            "1. read the spec (https://x.dev/spec)",
+            "☐ write tests",
+            "☑ ship",
+            "│ keep it simple",
+            "key │ value",
+            "a │ b",
+            "─────",
+        ] {
+            assert!(
+                view.contains(shown),
+                "{width}: view must show {shown:?}:\n{view}"
+            );
+        }
+        for hidden in ["## Plan", "[the spec]", "- [ ]", "|-----|", "**simple**"] {
+            assert!(
+                !view.contains(hidden),
+                "{width}: view must hide {hidden:?}:\n{view}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .all(|row| row_display_width(row) == width as usize),
+            "{width}: a rendered notes row overflowed the frame"
+        );
+    }
+    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditNotes, None).expect("edit");
+    let edit = board_rows(&model, 80, 30).join("\n");
+    for raw in [
+        "## Plan",
+        "[the spec](https://x.dev/spec)",
+        "- [ ] write tests",
+        "|-----|",
+    ] {
+        assert!(edit.contains(raw), "notes edit must show {raw:?}:\n{edit}");
+    }
 }
 
 #[test]

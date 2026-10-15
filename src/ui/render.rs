@@ -641,6 +641,10 @@ pub enum QueueOverlay<'a> {
         /// View mode: the wrapped notes windowed by the page scroll. Edit mode: the
         /// cursor-windowed draft rows.
         notes_rows: Vec<String>,
+        /// View mode outside an edit session: `notes_rows` rendered as markdown, one
+        /// styled line per row (`notes_rows` holds their painted text). Empty while any
+        /// field is edited, when the raw wrap rows paint instead.
+        notes_lines: Vec<Line<'static>>,
         /// Notes cursor (row, col) while the notes are being edited.
         notes_cursor: Option<(u16, u16)>,
         /// Wrapped note rows hidden below the window, named by the divider's tail.
@@ -1207,6 +1211,7 @@ pub fn draw_task_column(
         ref title_cursor,
         status_word,
         ref notes_rows,
+        ref notes_lines,
         notes_cursor,
         more_lines,
         ref relation_rows,
@@ -1235,6 +1240,7 @@ pub fn draw_task_column(
             *title_cursor,
             status_word,
             notes_rows,
+            notes_lines,
             notes_cursor,
             more_lines,
             relation_rows,
@@ -1785,6 +1791,7 @@ fn paint_overlay(
             ref title_cursor,
             status_word,
             ref notes_rows,
+            ref notes_lines,
             notes_cursor,
             more_lines,
             ref relation_rows,
@@ -1812,6 +1819,7 @@ fn paint_overlay(
                 *title_cursor,
                 status_word,
                 notes_rows,
+                notes_lines,
                 *notes_cursor,
                 *more_lines,
                 relation_rows,
@@ -2846,6 +2854,7 @@ fn paint_task_page(
     title_cursor: Option<(u16, u16)>,
     status_word: &str,
     notes_rows: &[String],
+    notes_lines: &[Line<'static>],
     notes_cursor: Option<(u16, u16)>,
     more_lines: usize,
     relation_rows: &[RelationRow],
@@ -3077,7 +3086,15 @@ fn paint_task_page(
             } else {
                 notes_style
             };
-            let painted = if notes_rows.is_empty() || focus == Some(CaptureField::Notes) {
+            let rendered = (focus != Some(CaptureField::Notes))
+                .then(|| notes_lines.get(absolute))
+                .flatten();
+            let painted = if let Some(line) = rendered {
+                // Rendered markdown, already wrapped to the notes width: only the gutter.
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(line.spans.iter().cloned());
+                bound_line(Line::from(spans), content_width as usize)
+            } else if notes_rows.is_empty() || focus == Some(CaptureField::Notes) {
                 paint_bounded_line(&format!("  {text} "), content_width, style)
             } else {
                 let mut in_fence = notes_rows

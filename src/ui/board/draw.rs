@@ -532,6 +532,11 @@ fn build_task_page_overlay<'a>(
     let notes_width = width.saturating_sub(6);
     let want = lay.notes_rows as usize;
     let editing_notes = model.input_mode() == BoardInputMode::EditNotes;
+    // An edit session paints the raw wrap rows, which a click maps straight into the
+    // draft; reading outside one paints the notes as rendered markdown, wrapped on the
+    // rendered text (see `crate::ui::markdown::render`).
+    let editing_session = !form.is_task() || form.editing || model.open_field_edit().is_some();
+    let mut notes_lines = Vec::new();
     let (notes_rows, notes_cursor, more_lines, notes_scroll) = if editing_notes {
         let (all_rows, cursor_row, cursor_column) = wrapped_edit_rows(&form.notes, notes_width);
         // Explicit pointer scrolling may leave the caret offscreen to reach steps.
@@ -555,9 +560,21 @@ fn build_task_page_overlay<'a>(
         )
     } else if form.notes.value().trim().is_empty() {
         (Vec::new(), None, 0, form.notes_scroll)
-    } else {
+    } else if editing_session {
         (
             wrapped_draft_rows(&form.notes, notes_width),
+            None,
+            0,
+            form.notes_scroll,
+        )
+    } else {
+        notes_lines =
+            crate::ui::markdown::render(form.notes.value(), notes_width, render::style_plain());
+        (
+            notes_lines
+                .iter()
+                .map(crate::ui::markdown::line_text)
+                .collect(),
             None,
             0,
             form.notes_scroll,
@@ -628,7 +645,6 @@ fn build_task_page_overlay<'a>(
     // present). The identifier belongs in the header, so it never competes with footer hits.
     // A wide column moves the project up into its header slot: the scope footer paints only
     // while the edit session can change it, so its control stays reachable by mouse.
-    let editing_session = !form.is_task() || form.editing || model.open_field_edit().is_some();
     let show_scope = !column || editing_session;
     let meta_scope = if show_scope {
         match &form.scope {
@@ -675,6 +691,7 @@ fn build_task_page_overlay<'a>(
         title_cursor,
         status_word,
         notes_rows,
+        notes_lines,
         notes_cursor,
         more_lines,
         relation_rows,

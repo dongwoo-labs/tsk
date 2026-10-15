@@ -935,6 +935,9 @@ pub struct PageRow {
     pub click: Option<QueueHitTarget>,
     /// Bytes of `text` that are a field label, painted dim before the value.
     pub label: usize,
+    /// A markdown body row: `text` rendered with its styles (label and lead included),
+    /// painted in place of `text` and `style`. `text` stays its painted text.
+    pub rich: Option<Line<'static>>,
 }
 
 struct PageBuilder {
@@ -965,6 +968,7 @@ impl PageBuilder {
                     focus: focus && first,
                     click: None,
                     label: 0,
+                    rich: None,
                 });
                 first = false;
             }
@@ -976,6 +980,7 @@ impl PageBuilder {
                 focus,
                 click: None,
                 label: 0,
+                rich: None,
             });
         }
     }
@@ -987,6 +992,37 @@ impl PageBuilder {
         if let Some(row) = self.rows.get_mut(at) {
             row.label = label.len();
         }
+    }
+
+    /// Render `text` as markdown under a fixed lead (painted `lead_style`); continuation
+    /// rows indent under the text. Wraps on the rendered text, never the raw markers.
+    fn markdown(&mut self, lead: &str, lead_style: RowStyle, text: &str, style: RowStyle) {
+        let lead_w = render::display_width(lead);
+        let room = self.width.saturating_sub(lead_w).max(1);
+        let lines = crate::ui::markdown::render(text, room, self::style(style));
+        for (index, line) in lines.into_iter().enumerate() {
+            let prefix = if index == 0 {
+                lead.to_string()
+            } else {
+                " ".repeat(lead_w)
+            };
+            let text = format!("{prefix}{}", crate::ui::markdown::line_text(&line));
+            let mut spans = vec![Span::styled(prefix, self::style(lead_style))];
+            spans.extend(line.spans);
+            self.rows.push(PageRow {
+                text,
+                style,
+                focus: false,
+                click: None,
+                label: 0,
+                rich: Some(Line::from(spans)),
+            });
+        }
+    }
+
+    /// A `label  value` field whose value is markdown: the label paints dim.
+    fn markdown_field(&mut self, label: &str, text: &str, style: RowStyle) {
+        self.markdown(label, RowStyle::Dim, text, style);
     }
 
     /// Make every row pushed since `from` a click target.
@@ -1003,6 +1039,7 @@ impl PageBuilder {
             focus: false,
             click: None,
             label: 0,
+            rich: None,
         });
     }
 }
@@ -1079,13 +1116,19 @@ pub fn page_rows(
     page.push(&record.reference.summary, RowStyle::Bold, false);
     page.push("local original · never shared", RowStyle::Dim, false);
     // The original sits indented under its heading so it reads as one quoted block.
-    page.indented(BODY_INDENT, &draft.text, RowStyle::Plain, false);
+    // Bodies agents write in markdown render as markdown; ids, paths, and hashes stay raw.
+    page.markdown(BODY_INDENT, RowStyle::Plain, &draft.text, RowStyle::Plain);
     if let Some(finding) = draft.finding.as_ref() {
-        page.indented(BODY_INDENT, &finding.detail, RowStyle::Plain, false);
+        page.markdown(
+            BODY_INDENT,
+            RowStyle::Plain,
+            &finding.detail,
+            RowStyle::Plain,
+        );
     }
     if let Some(impact) = draft.impact.as_deref() {
         page.blank();
-        page.field("impact  ", impact, RowStyle::Plain);
+        page.markdown_field("impact  ", impact, RowStyle::Plain);
     }
 
     if let Some(terms) = draft.approval.as_ref() {
@@ -1096,11 +1139,11 @@ pub fn page_rows(
             false,
         );
         // What is being approved reads bold; how far it reaches and how to undo it, plain.
-        page.field("action    ", &terms.action, RowStyle::Bold);
-        page.field("target    ", &terms.target, RowStyle::Bold);
-        page.field("scope     ", &terms.scope, RowStyle::Plain);
+        page.markdown_field("action    ", &terms.action, RowStyle::Bold);
+        page.markdown_field("target    ", &terms.target, RowStyle::Bold);
+        page.markdown_field("scope     ", &terms.scope, RowStyle::Plain);
         page.field("revision  ", &terms.h, RowStyle::Bold);
-        page.field("undo      ", &terms.rollback, RowStyle::Plain);
+        page.markdown_field("undo      ", &terms.rollback, RowStyle::Plain);
     }
 
     let rows = form(state, record);
@@ -1127,9 +1170,9 @@ pub fn page_rows(
 
     if let Some(answer) = record.current_answer() {
         page.blank();
-        page.field("answer  ", &answer.text, RowStyle::Plain);
+        page.markdown_field("answer  ", &answer.text, RowStyle::Plain);
         if let Some(comment) = answer.comment.as_deref() {
-            page.field("comment ", comment, RowStyle::Plain);
+            page.markdown_field("comment ", comment, RowStyle::Plain);
         }
         if let FindingLink::One(id) = record.finding_link() {
             page.field("task    ", &task_label(tasks, id), RowStyle::Plain);
@@ -1205,10 +1248,11 @@ pub fn page_rows(
             .as_deref()
             .map(|text| format!(" · {text}"))
             .unwrap_or_default();
-        page.push(
+        page.markdown(
+            "",
+            RowStyle::Plain,
             &format!("{}{correction} · {}{comment}", answer.actor, answer.text),
             RowStyle::Plain,
-            false,
         );
         events += 1;
     }
@@ -1600,6 +1644,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 focus: false,
                 click: None,
                 label: 0,
+                rich: None,
             },
         )
     };
@@ -1637,6 +1682,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 focus: false,
                 click: None,
                 label: 0,
+                rich: None,
             },
         ));
         let folded = group == QuestionGroup::Closed && !state.closed_open;
@@ -1662,6 +1708,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 click: (group == QuestionGroup::Closed)
                     .then_some(QueueHitTarget::QuestionKey(KeyCode::Char('z'))),
                 label: 0,
+                rich: None,
             },
         ));
         if folded {
@@ -1699,6 +1746,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                         focus: selected && index == 0,
                         click: None,
                         label: 0,
+                        rich: None,
                     },
                 ));
             }
@@ -1767,7 +1815,17 @@ fn paint_rows(
             );
             break;
         }
-        if row.label > 0 && row.label <= row.text.len() {
+        if let Some(line) = row.rich.as_ref() {
+            let shown = if line.width() <= rect.width as usize {
+                line.clone()
+            } else {
+                Line::from(Span::styled(
+                    crate::ui::present_line(&row.text, rect.width as usize),
+                    style(row.style),
+                ))
+            };
+            out.render_widget(Paragraph::new(shown), Rect::new(rect.x, y, rect.width, 1));
+        } else if row.label > 0 && row.label <= row.text.len() {
             let (label, value) = row.text.split_at(row.label);
             let label_w = (render::display_width(label) as u16).min(rect.width);
             put(out, rect.x, y, label_w, label, RowStyle::Dim);
@@ -2013,6 +2071,7 @@ mod tests {
                         focus: index == focus,
                         click: None,
                         label: 0,
+                        rich: None,
                     },
                 )
             })
@@ -2267,6 +2326,86 @@ mod tests {
             created_at: std::time::SystemTime::now(),
             answers: Vec::new(),
             routes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_record_page_renders_markdown_bodies_and_keeps_raw_ids() {
+        use ratatui::style::Modifier;
+        let mut record = approval_record();
+        record.draft.text =
+            "## Why\n- [ ] check [the run](https://ci.dev/1)\n> **blocks** release\n\
+                             | env | state |\n|---|---|\n| prod | `red` |"
+                .into();
+        record.draft.impact = Some("users see ~~old~~ **new** pages".into());
+        if let Some(terms) = record.draft.approval.as_mut() {
+            terms.rollback = "run `deploy --previous`".into();
+            terms.h = "a_b_c".into();
+        }
+        record.answers.push(crate::domain::QuestionAnswer {
+            revision: Uuid::from_u128(9),
+            created_task_id: None,
+            corrects_revision: None,
+            text: "approved *after* review".into(),
+            actor: "user".into(),
+            origin: crate::domain::AnswerOrigin::UserUi,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: None,
+            comment: Some("see [log](https://ci.dev/2)".into()),
+        });
+        let state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            ..QuestionsState::default()
+        };
+        let rows = page_rows(&state, &record, &[], 80);
+        let page = rows
+            .iter()
+            .map(|row| row.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for shown in [
+            "  Why",
+            "  ☐ check the run (https://ci.dev/1)",
+            "  │ blocks release",
+            "  env │ state",
+            "  prod │ `red`",
+            "impact  users see old new pages",
+            "undo      run `deploy --previous`",
+            "revision  a_b_c",
+            "answer  approved after review",
+            "comment see log (https://ci.dev/2)",
+            "user · approved after review · see log (https://ci.dev/2)",
+        ] {
+            assert!(page.contains(shown), "page must show {shown:?}:\n{page}");
+        }
+        for hidden in ["## Why", "- [ ]", "](", "|---|", "~~", "**", "*after*"] {
+            assert!(!page.contains(hidden), "page must hide {hidden:?}:\n{page}");
+        }
+        // A rendered row paints styled spans whose text is the row's text, label dim.
+        let heading = rows
+            .iter()
+            .find(|row| row.text == "  Why")
+            .expect("heading");
+        let line = heading.rich.as_ref().expect("a markdown row is rich");
+        assert_eq!(crate::ui::markdown::line_text(line), heading.text);
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content == "Why" && span.style.add_modifier.contains(Modifier::BOLD)));
+        let impact = rows
+            .iter()
+            .find(|row| row.text.starts_with("impact"))
+            .and_then(|row| row.rich.as_ref())
+            .expect("impact row");
+        assert_eq!(impact.spans[0].content, "impact  ");
+        assert!(impact.spans[0].style.add_modifier.contains(Modifier::DIM));
+        // A long body wraps on its rendered width under the body indent.
+        let narrow = page_rows(&state, &record, &[], 24);
+        for row in &narrow {
+            assert!(render::display_width(&row.text) <= 24, "{:?}", row.text);
         }
     }
 
