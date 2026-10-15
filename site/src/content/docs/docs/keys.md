@@ -25,6 +25,7 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Delete, with a second press to confirm | `ctrl+x` or `ctrl+Delete` |
 | Undo completion/deletion; restore an archived selection | `ctrl+u` |
 | Archive / restore selected task (archived tasks live in the done drawer's archived group) | `ctrl+f` |
+| Check stalled tasks: ask the Herdr lead about stalled and Todo tasks (inside Herdr) | `ctrl+l` |
 | Open / close done drawer | `d` |
 | Fold or unfold archived in the done drawer | `g` |
 | Board tab, list focus | `1` |

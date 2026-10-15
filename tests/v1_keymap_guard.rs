@@ -46,6 +46,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('+'), BoardIntent::OpenCapture, false),
         (KeyCode::Char('d'), BoardIntent::ToggleDoneDrawer, false),
         (KeyCode::Char('g'), BoardIntent::ToggleAllGroups, false),
+        (KeyCode::Char('l'), BoardIntent::RefreshAll, true),
         (KeyCode::Char('/'), BoardIntent::FocusSearch, false),
         (KeyCode::Char(':'), BoardIntent::OpenCommandPalette, false),
         (KeyCode::Char('?'), BoardIntent::OpenHelp, false),

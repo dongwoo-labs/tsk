@@ -1015,7 +1015,21 @@ fn nav_paint(model: &BoardModel) -> NavPaint {
     NavPaint {
         active: model.nav_tab(),
         questions_tab: crate::ui::questions::tab_texts(&model.questions.feed).1,
+        check: model.stall.enabled,
     }
+}
+
+/// Row marks: a stale task's `↻` first, then its question marks (`!`, `?n`).
+fn row_marks(model: &BoardModel) -> std::collections::BTreeMap<uuid::Uuid, String> {
+    let mut marks = crate::ui::questions::task_marks(&model.questions.feed);
+    for id in model.stale_ids() {
+        let mark = match marks.remove(&id) {
+            Some(question) => format!("{} {question}", crate::stall::REFRESH_MARK),
+            None => crate::stall::REFRESH_MARK.to_string(),
+        };
+        marks.insert(id, mark);
+    }
+    marks
 }
 
 /// Which surface the list paints, from the scope.
@@ -1457,7 +1471,7 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         inbox_header_selected: model.inbox_header_selected(),
         rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
-        task_marks: crate::ui::questions::task_marks(&model.questions.feed),
+        task_marks: row_marks(model),
     };
     let (hits, painted_list_scroll) = render::draw_queue_frame(frame, &frame_model, &geo, area);
     if let Some((scroll, max_scroll)) = painted_list_scroll {
@@ -1615,7 +1629,7 @@ fn draw_wide_board(
         inbox_header_selected: model.inbox_header_selected(),
         rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
-        task_marks: crate::ui::questions::task_marks(&model.questions.feed),
+        task_marks: row_marks(model),
     };
     let task_frame = QueueFrameModel {
         overlay: task_overlay.clone(),

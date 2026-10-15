@@ -129,6 +129,23 @@ fn board_md_palette_table_matches_the_palette_catalog() {
 
     let with_step = labels(&step_selected_model());
 
+    // Stall checks exist only inside Herdr; the thread check needs a Thread line too.
+    let mut herdr = BoardModel::from_tasks(Vec::new(), None);
+    herdr.stall_mut().enabled = true;
+    let in_herdr = labels(&herdr);
+    let mut domain = DomainState::new();
+    domain
+        .create(
+            "thread witness",
+            Some("Thread: thr-a-1 w1 w1:t2 w1:p3".into()),
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("seed task");
+    let mut threaded = BoardModel::from_tasks(domain.tasks().to_vec(), None);
+    threaded.stall_mut().enabled = true;
+    let with_thread = labels(&threaded);
+
     let mut documented: Vec<(String, &str)> = Vec::new();
     for row in &rows {
         let (actions, when) = (&row[0], &row[1]);
@@ -137,6 +154,8 @@ fn board_md_palette_table_matches_the_palette_catalog() {
             "A task is selected" => &with_selection,
             "A save has failed" => &recovery,
             "A task-page step is selected" => &with_step,
+            "Inside Herdr" => &in_herdr,
+            "Inside Herdr, the task has a Thread line" => &with_thread,
             other => panic!("unknown palette condition {other:?} in board.md"),
         };
         for label in promised_labels(actions) {
@@ -163,6 +182,14 @@ fn board_md_palette_table_matches_the_palette_catalog() {
             "A task-page step is selected" => assert!(
                 !with_selection.contains(label),
                 "{label:?} is documented as step-only but the board selection offers it"
+            ),
+            "Inside Herdr" => assert!(
+                !always.contains(label) && !with_selection.contains(label),
+                "{label:?} is documented as Herdr-only but the board offers it outside Herdr"
+            ),
+            "Inside Herdr, the task has a Thread line" => assert!(
+                !in_herdr.contains(label) && !with_selection.contains(label),
+                "{label:?} is documented as needing a Thread line but shows without one"
             ),
             _ => {}
         }
@@ -200,6 +227,20 @@ fn board_md_palette_table_matches_the_palette_catalog() {
             "a selected task-page step offers {label:?} but board.md's table does not list it"
         );
     }
+    for label in in_herdr.iter().chain(&with_thread) {
+        assert!(
+            covers(
+                label,
+                &[
+                    "Always",
+                    "A task is selected",
+                    "Inside Herdr",
+                    "Inside Herdr, the task has a Thread line"
+                ]
+            ),
+            "a board inside Herdr offers {label:?} but board.md's table does not list it"
+        );
+    }
     for label in &recovery {
         assert!(
             covers(label, &["A save has failed"]),
@@ -226,6 +267,8 @@ fn expected_intent(action: &str) -> Option<BoardIntent> {
         BoardIntent::Undo
     } else if action.starts_with("archive") {
         BoardIntent::File
+    } else if action.starts_with("check stalled") {
+        BoardIntent::RefreshAll
     } else if action.starts_with("quit") {
         BoardIntent::Quit
     } else {

@@ -476,6 +476,8 @@ fn apply_board_intent(
         BoardIntent::CloseCommandSurface => return Ok(IntentOutcome::None),
         // The app loop performs the OSC 52 write so pure reducer tests stay terminal-free.
         BoardIntent::CopyTaskNumber(_) => return Ok(IntentOutcome::None),
+        // Stall checks prompt Herdr agents at the app boundary; nothing to reduce.
+        BoardIntent::RefreshTask(_) | BoardIntent::RefreshAll => return Ok(IntentOutcome::None),
         BoardIntent::ConfirmCommand | BoardIntent::SelectCommand(_) => {
             // Resolve to the existing intent, then run that exact route. `SelectCommand`
             // reaches here only defensively: every real caller -- the key, paste and
