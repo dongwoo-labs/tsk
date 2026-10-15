@@ -227,8 +227,8 @@ pub fn lead_hint(stale: &[String], todo: &[String]) -> String {
 fn no_lead_detail(agents: &[ThreadRow]) -> String {
     let named: Vec<&str> = agents
         .iter()
-        .map(|row| row.name.as_str())
-        .filter(|name| !name.is_empty())
+        .filter(|row| !row.name.is_empty() || row.title.is_some())
+        .map(ThreadRow::session_name)
         .collect();
     let unnamed = agents.len() - named.len();
     let mut seen: Vec<String> = named.iter().take(6).map(|name| name.to_string()).collect();
@@ -242,17 +242,20 @@ fn no_lead_detail(agents: &[ThreadRow]) -> String {
         "no live lead: herdr agent list is empty".to_string()
     } else {
         format!(
-            "no live lead (no name starts with lead-; agents: {})",
+            "no live lead (no name or terminal title starts with lead-; agents: {})",
             seen.join(", ")
         )
     }
 }
 
-pub fn single_lead(agents: &[ThreadRow]) -> Result<&str, String> {
-    let leads: Vec<&str> = agents
+/// The one live lead: the agent whose Herdr name starts with `lead-`, or, for an agent
+/// Herdr lists without a name (a lead started by hand in its own pane), whose terminal
+/// title does. Prompt it through `focus_target` (the name, else the pane id) and call it
+/// by `session_name`.
+pub fn single_lead(agents: &[ThreadRow]) -> Result<&ThreadRow, String> {
+    let leads: Vec<&ThreadRow> = agents
         .iter()
-        .map(|row| row.name.as_str())
-        .filter(|name| name.starts_with("lead-"))
+        .filter(|row| row.session_name().starts_with("lead-"))
         .collect();
     match leads.as_slice() {
         [lead] => Ok(lead),
@@ -280,6 +283,7 @@ mod tests {
             focused: false,
             state_change_seq: 0,
             cwd: None,
+            title: None,
         }
     }
 
@@ -430,7 +434,8 @@ mod tests {
             single_lead(&[
                 agent("lead-a", AgentStatus::Idle),
                 agent("thr-x-1", AgentStatus::Idle)
-            ]),
+            ])
+            .map(ThreadRow::session_name),
             Ok("lead-a")
         );
         assert!(single_lead(&[]).is_err());
@@ -457,11 +462,30 @@ mod tests {
         let why = single_lead(&[agent("thr-a", AgentStatus::Idle), unnamed]).unwrap_err();
         assert_eq!(
             why,
-            "no live lead (no name starts with lead-; agents: thr-a, 1 unnamed)"
+            "no live lead (no name or terminal title starts with lead-; agents: thr-a, 1 unnamed)"
         );
         assert_eq!(
             single_lead(&[]).unwrap_err(),
             "no live lead: herdr agent list is empty"
         );
+    }
+
+    #[test]
+    fn a_lead_herdr_lists_without_a_name_is_found_by_its_terminal_title() {
+        // `herdr agent list` row for a lead started by hand: no `name`, only the title.
+        let json = r#"{"result":{"agents":[
+            {"agent":"claude","agent_status":"working","pane_id":"wT0:p2X",
+             "tab_id":"wT0:t21","workspace_id":"wT0","cwd":"/Users/dongwoo/src/agent-home",
+             "terminal_title":"\u25d1 lead-dongwoo","terminal_title_stripped":"lead-dongwoo"},
+            {"name":"thr-dongwoo-2521","agent":"claude","agent_status":"idle",
+             "pane_id":"wT0:p3A","terminal_title_stripped":"thr-dongwoo-2521"}]}}"#;
+        let agents = crate::threads::parse_agent_list(json).unwrap();
+        let lead = single_lead(&agents).unwrap();
+        assert_eq!(lead.session_name(), "lead-dongwoo");
+        assert_eq!(lead.focus_target(), "wT0:p2X");
+        // A named agent whose title happens to read lead- is still known by its name.
+        let mut thread = agent("thr-a", AgentStatus::Idle);
+        thread.title = Some("lead-x".into());
+        assert!(single_lead(&[thread]).is_err());
     }
 }

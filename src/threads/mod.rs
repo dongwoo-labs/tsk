@@ -88,6 +88,9 @@ pub struct ThreadRow {
     /// Herdr's per-agent state change counter; lets the view time how long a status held.
     pub state_change_seq: u64,
     pub cwd: Option<String>,
+    /// Herdr's `terminal_title_stripped`: the session name a hand-started agent (one with
+    /// no Herdr name, such as a lead launched in its own pane) still shows.
+    pub title: Option<String>,
 }
 
 impl ThreadRow {
@@ -131,6 +134,14 @@ impl ThreadRow {
     /// Target for `herdr agent focus`: the unique live name, else the hosting pane id.
     pub fn focus_target(&self) -> &str {
         self.display_name()
+    }
+
+    /// The session's own name: the Herdr name, else the terminal title, else the pane id.
+    pub fn session_name(&self) -> &str {
+        match self.title.as_deref() {
+            Some(title) if self.name.is_empty() && !title.is_empty() => title,
+            _ => self.display_name(),
+        }
     }
 }
 
@@ -178,6 +189,9 @@ fn parse_agent(agent: &Value) -> Option<ThreadRow> {
             .and_then(Value::as_u64)
             .unwrap_or(0),
         cwd: text("foreground_cwd").or_else(|| text("cwd")),
+        title: text("terminal_title_stripped")
+            .map(|title| title.trim().to_owned())
+            .filter(|title| !title.is_empty()),
     })
 }
 

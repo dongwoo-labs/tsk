@@ -1198,9 +1198,12 @@ fn explain(record: &QuestionRecord) -> String {
         Err(_) => return format!("Q{number} explain not sent: cannot list live agents"),
     };
     match crate::stall::single_lead(&rows) {
-        Ok(lead) => match herdr::prompt(lead, &explain_prompt(record)) {
-            Ok(()) => format!("asked {lead} to explain Q{number} · answer it here afterwards"),
-            Err(_) => format!("Q{number} explain to {lead} failed to send"),
+        Ok(row) => match herdr::prompt(row.focus_target(), &explain_prompt(record)) {
+            Ok(()) => format!(
+                "asked {} to explain Q{number} · answer it here afterwards",
+                row.session_name()
+            ),
+            Err(_) => format!("Q{number} explain to {} failed to send", row.session_name()),
         },
         Err(why) => format!("Q{number} explain not sent: {why}"),
     }
