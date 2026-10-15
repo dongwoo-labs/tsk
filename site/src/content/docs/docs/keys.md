@@ -121,7 +121,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Leave a field (the draft stays; a secret is wiped) | `Esc` in the field |
 | Approve / reject an approval | `1` / `2` |
 | Close an open secret with no value | `2` |
-| Write or edit a comment beside an approval's decision | `3` or `m` |
+| Write a comment on an approval (`Enter` answers with it alone, `Esc` keeps it for approve or reject) | `3` or `m` |
 | Correct an answer | `c` |
 | Open the task | `t` |
 | Resend a lead request | `r` |

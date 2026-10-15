@@ -16,10 +16,11 @@ use crate::domain::{AnswerDraft, AnswerOrigin, ApprovalTerms, QuestionKind, Ques
 use crate::question_actions::USER;
 use crate::store::{
     notify_question, QuestionDurability, QuestionError, QuestionNotification, QuestionStore,
-    SECRET_REJECTED,
+    COMMENTED, SECRET_REJECTED,
 };
 
-/// What the user picked or typed. Exactly one of `choice`, `text`, `approve`, `reject`.
+/// What the user picked or typed. Exactly one of `choice`, `text`, `approve`, `reject`,
+/// or, on an approval only, a `comment` alone (saved as `commented`, nothing approved).
 /// `reject` rejects an open approval, or closes an open secret with no value.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,8 +41,8 @@ struct UiAnswerInput {
     /// The current answer's revision when this answer corrects it.
     #[serde(default)]
     corrects_revision: Option<Uuid>,
-    /// Free text beside an approval's `approve`/`reject` decision. Never itself a pick,
-    /// and refused on anything but an approval.
+    /// Free text beside an approval's `approve`/`reject` decision, or an approval's whole
+    /// answer when it comes alone. Never an approval, and refused on anything but one.
     #[serde(default)]
     comment: Option<String>,
 }
@@ -196,9 +197,13 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
     .iter()
     .filter(|pick| **pick)
     .count();
-    if picks != 1 {
+    // An approval also takes a comment alone: the person answers with words instead of
+    // a decision, which leaves the terms unapproved.
+    let comment_alone =
+        picks == 0 && input.comment.is_some() && record.reference.kind == QuestionKind::Approval;
+    if picks != 1 && !comment_alone {
         return Err(invalid(
-            "give exactly one of choice, text, approve, or reject",
+            "give exactly one of choice, text, approve, or reject (an approval also takes a comment alone)",
         ));
     }
     // A comment is text beside an approval's decision; refused up front on anything else
@@ -264,8 +269,10 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
                 answer.text = "approved".into();
                 answer.approve = true;
                 answer.confirmed = true;
-            } else {
+            } else if input.reject {
                 answer.text = "rejected".into();
+            } else {
+                answer.text = COMMENTED.into();
             }
             Ok(answer)
         }

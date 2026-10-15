@@ -587,7 +587,12 @@ import { parseCapture } from "./capture.js";
         : q.audience === "lead"
           ? "open · with lead"
           : "open · for you";
-    if (q.kind === "approval") return answer.approved ? "approved" : "rejected";
+    if (q.kind === "approval")
+      return answer.approved
+        ? "approved"
+        : answer.text === "commented"
+          ? "commented"
+          : "rejected";
     if (q.kind === "finding") {
       if (q.createdTask) return `→ ${taskLabel(q.createdTask)}`;
       return answer.action === "close" ? "closed" : "answered";
@@ -739,13 +744,13 @@ import { parseCapture } from "./capture.js";
       });
       push(
         draft?.focused && draft.comment
-          ? "enter or esc keeps the comment · it saves with approve or reject, either way"
+          ? "enter answers with the comment alone · esc keeps it for approve or reject"
           : draft?.focused
             ? "enter saves · esc leaves the field, the draft stays"
             : state.q.correcting === q.id
               ? `enter or 1-${form.length} saves the correction · the earlier answer stays in history`
               : q.kind === "approval"
-                ? "1 approves exactly these terms · a comment rides approve or reject · no answer keeps waiting"
+                ? "1 approves exactly these terms · a comment answers alone or rides approve or reject · no answer keeps waiting"
                 : `enter or 1-${form.length} picks at once`,
         "dim",
       );
@@ -795,7 +800,7 @@ import { parseCapture } from "./capture.js";
     const q = questionById(state.q.page);
     if (state.q.answer?.focused)
       return state.q.answer.comment
-        ? "enter keep · esc keep"
+        ? "enter send · esc keep"
         : "enter save · esc leave";
     if (!q)
       return wide
@@ -870,7 +875,7 @@ import { parseCapture } from "./capture.js";
     const draft = draftOf(q);
     if (draft?.focused) {
       if (draft.comment) {
-        stageComment();
+        commentAlone(q, draft);
         return;
       }
       const text = draft.text.trim();
@@ -891,7 +896,23 @@ import { parseCapture } from "./capture.js";
     }
     if (formChoices(q).length) questionPick(highlight(q));
   }
-  // A comment never saves on its own: it stages beside the still-open decision.
+  // Enter on the comment field answers the approval with the comment alone: nothing
+  // is approved, the words go back to the asking Thread.
+  function commentAlone(q, draft) {
+    const text = draft.text.trim();
+    if (!text) {
+      state.message = "type a comment first · esc leaves the field";
+      return;
+    }
+    const slot = Math.max(0, questionOrder().indexOf(q.id));
+    delete state.q.comments[q.id];
+    state.q.answer = null;
+    q.answers.push({ actor: "user", text: "commented", comment: text });
+    state.message = `Q${q.number} commented · sample`;
+    report(q, "sample: commented in this demo only · nothing approved");
+    backToList(q, slot);
+  }
+  // Esc on the comment field stages it beside the still-open decision.
   function stageComment() {
     const draft = state.q.answer;
     if (!draft?.comment) return;
@@ -964,7 +985,8 @@ import { parseCapture } from "./capture.js";
       comment: true,
       focused: true,
     };
-    state.message = "type a comment for this decision · enter or esc keeps it";
+    state.message =
+      "type a comment · enter answers with it alone · esc keeps it for approve or reject";
   }
   function questionCorrect() {
     const q = questionById(state.q.page);

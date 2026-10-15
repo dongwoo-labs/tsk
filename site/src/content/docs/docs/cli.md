@@ -68,9 +68,10 @@ Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncer
 | `text` | a question | the trimmed text |
 | `approve: true` with `approval` | an approval | `approved`, with the terms, only when `approval` equals the stored target, action, `h`, scope, and rollback exactly |
 | `reject: true` | an approval | `rejected` |
+| `comment` alone | an approval | `commented`, with the comment; nothing approved |
 | `reject: true` | an open secret | `rejected`, with no value and no `fnox set` call |
 
-An optional `comment` rides either `approve` or `reject` as free text beside an approval's decision; it is refused (exit 2) on anything but an approval, or blank, and never substitutes for `approve`/`reject` itself. It is refused the same way on a secret's `reject`.
+An optional `comment` rides either `approve` or `reject` as free text beside an approval's decision, or answers an approval alone as `commented` (the person replied in words; the terms stay unapproved). It is refused (exit 2) on anything but an approval, or blank, and never approves anything. It is refused the same way on a secret's `reject`.
 
 `corrects_revision` names the current answer's revision to correct a question's answer; an approval is never corrected (ask a new question for new terms), and neither is a secret, set or rejected (ask a new secret question to set it again). Approval terms on anything but an approve are refused: a plain answer never becomes an approval. A finding is decided on the board and is refused here, as is a question without an `audience`. A secret question refuses everything but `reject: true` with `secret-needs-board`: only the board's masked `Enter` can hand a value to fnox. Unknown fields are refused.
 
