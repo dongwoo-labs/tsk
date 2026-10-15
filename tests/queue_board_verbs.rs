@@ -6,12 +6,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
-use tsk_tui::context::InvocationSnapshot;
 use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskEventKind, TaskScope};
 use tsk_tui::ui::board::{
     apply_intent, board_hit_map, board_intent_may_persist, board_verb_items, draw_board,
     resolve_board_command, BoardInputMode, BoardModel, CommandSurface, IntentOutcome,
-    ProjectScopeOption,
 };
 use tsk_tui::ui::capture::CaptureField;
 use tsk_tui::ui::input::{
@@ -550,19 +548,11 @@ fn cursor_only_open_and_edit_ignore_marks_and_lens_boundaries_clear_marks() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::OpenProjectSelector,
+        BoardIntent::SelectNavTab(tsk_tui::ui::queue::NavTab::Questions),
         None,
     )
-    .expect("open scope picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectProjectOption(1),
-        None,
-    )
-    .expect("switch scope to the desk");
-    assert!(model.at_home());
-    assert_eq!(model.marked_count(), 0, "scope changes clear marks");
+    .expect("switch to the questions tab");
+    assert_eq!(model.marked_count(), 0, "tab changes clear marks");
 }
 
 #[test]
@@ -1021,7 +1011,6 @@ fn t64_ctrl_q_quits_every_non_editor_mode_and_stays_inert_in_editors_and_recover
         BoardInputMode::EditScope,
         BoardInputMode::FormScopeDropdown,
         BoardInputMode::LaunchCard,
-        BoardInputMode::ProjectPicker,
         BoardInputMode::ParentPicker,
         BoardInputMode::Help,
     ] {
@@ -1055,26 +1044,12 @@ fn t64_ctrl_q_quits_every_non_editor_mode_and_stays_inert_in_editors_and_recover
 }
 
 #[test]
-fn t64_ctrl_q_quits_instead_of_dismissing_help_or_pickers() {
+fn t64_ctrl_q_quits_instead_of_dismissing_help() {
     let (mut domain, mut model, _) = board_with_task("quit surfaces", HumanStatus::Todo);
 
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     assert_eq!(
         apply_intent(&mut domain, &mut model, BoardIntent::Quit, None).expect("quit help"),
-        IntentOutcome::Quit
-    );
-
-    apply_intent(&mut domain, &mut model, BoardIntent::CloseHelp, None).expect("close help");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-    assert_eq!(
-        apply_intent(&mut domain, &mut model, BoardIntent::Quit, None).expect("quit picker"),
         IntentOutcome::Quit
     );
 }
@@ -1109,7 +1084,6 @@ fn t64_root_esc_quits_on_each_board_scope_without_resetting_it() {
         assert_eq!(model.search_query(), "", "{tab:?}");
         assert!(!model.inbox_header_selected(), "{tab:?}");
         assert!(!model.archived_header_selected(), "{tab:?}");
-        assert!(!model.focus_is_archived(), "{tab:?}");
         assert_eq!(
             apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("root Esc"),
             IntentOutcome::Quit,
@@ -1503,7 +1477,6 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
         ("ctrl+←", "word left (text input)"),
         ("home", "line start (text input)"),
         ("backspace", "delete backward (text input)"),
-        ("q", "close project picker"),
         ("y", "unarchive launch project"),
         ("r / enter", "retry failed save"),
         ("↑↓ / page keys", "scroll Help"),
@@ -1685,10 +1658,6 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
     assert_eq!(
-        map_key(BoardInputMode::ProjectPicker, press(KeyCode::Char('?'))),
-        Some(BoardIntent::OpenHelp)
-    );
-    assert_eq!(
         map_key(BoardInputMode::LaunchCard, press(KeyCode::Char('?'))),
         Some(BoardIntent::OpenHelp)
     );
@@ -1724,28 +1693,6 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
             "question mark remains text in {mode:?}"
         );
     }
-    apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None).expect("close task page");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("project picker");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("picker help");
-    assert_eq!(model.input_mode(), BoardInputMode::Help);
-    apply_intent(&mut domain, &mut model, BoardIntent::CloseLayer, None)
-        .expect("close picker help");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::CancelProjectPicker,
-        None,
-    )
-    .expect("close picker");
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("task page");
     apply_intent(&mut domain, &mut model, BoardIntent::BeginEditScope, None)
         .expect("scope control");
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
@@ -1754,9 +1701,9 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
 }
 
-/// project-scope chip/dropdown filters every visible section and count.
+/// A pinned project scope filters every visible section and count.
 #[test]
-fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
+fn project_scope_filters_all_visible_sections_matching_ac5() {
     let mut domain = DomainState::new();
     let motion_app = domain
         .create(
@@ -1865,63 +1812,8 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
     apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None)
         .expect("open done drawer");
 
-    // Chip path: open selector without needing the classic Projects lens.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open scope dropdown");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-    assert_eq!(model.popup(), BoardPopup::ProjectPicker);
-
-    let frame = rendered_board(&model, 80, 24);
-    // The dropdown marks its highlighted option (the current project at open) and
-    // paints the desk choice plus every project option around it.
-    let marked_row = frame
-        .lines()
-        .position(|line| line.contains('▸'))
-        .expect("scope dropdown must mark the highlighted option");
-    assert!(
-        frame.lines().any(|line| line.contains("desk")),
-        "scope dropdown must paint the home/desk option: {frame:?}"
-    );
-    assert!(
-        frame
-            .lines()
-            .skip(marked_row.saturating_sub(2))
-            .take(5)
-            .any(|line| line.contains("other") || line.contains("app") || line.contains("empty")),
-        "scope dropdown must paint the project options: {frame:?}"
-    );
-
-    // Move to /repos/other and confirm (session-only deck scope).
-    let options = model.project_options();
-    let other_idx = options
-        .iter()
-        .position(|opt| opt == &ProjectScopeOption::Project(PathBuf::from("/repos/other")))
-        .expect("/repos/other in options");
-    for _ in 0..options.len() {
-        if model.project_picker_index() == Some(other_idx) {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next");
-    }
-    assert_eq!(model.project_picker_index(), Some(other_idx));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("confirm scope");
+    // Pin /repos/other (session-only deck scope).
+    model.set_selected_project(Some(PathBuf::from("/repos/other")));
 
     assert_eq!(model.selected_project(), Some(Path::new("/repos/other")));
     let other_view = model.queue_view();
@@ -1945,38 +1837,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
     assert!(!model.visible_ids().contains(&deck_app));
 
     // Home returns to the desk tab with global IN MOTION and desk-scoped ON DECK.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("reopen for home");
-    let home_idx = model
-        .project_options()
-        .iter()
-        .position(|option| option == &ProjectScopeOption::Home)
-        .expect("home option");
-    for _ in 0..model.project_options().len() {
-        if model.project_picker_index() == Some(home_idx) {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next home");
-    }
-    assert_eq!(model.project_picker_index(), Some(home_idx));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("scope home");
+    model.set_selected_project(None);
     assert!(model.at_home());
     assert_eq!(model.active_project(), None);
     let home_view = model.queue_view();
@@ -1994,40 +1855,7 @@ fn project_scope_chip_and_dropdown_filter_all_visible_sections_matching_ac5() {
     );
 
     // Scoped project with zero open deck tasks → header + empty hint, no invented row.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("reopen");
-    let empty_idx = model
-        .project_options()
-        .iter()
-        .position(|opt| opt == &ProjectScopeOption::Project(PathBuf::from("/repos/empty")))
-        .expect("empty project option (from selected history or tasks)");
-    // Ensure empty is reachable: if not in options because only done tasks, select via path.
-    // project_options includes paths from non-soft-deleted tasks, including done.
-    for _ in 0..model.project_options().len() {
-        if model.project_picker_index() == Some(empty_idx) {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next empty");
-    }
-    assert_eq!(model.project_picker_index(), Some(empty_idx));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("scope empty");
+    model.set_selected_project(Some(PathBuf::from("/repos/empty")));
 
     let empty_sections: Vec<_> = model
         .queue_view()
@@ -4546,766 +4374,6 @@ fn help_card_lists_ctrl_f_and_the_verb_bar_keeps_archive_out_of_its_seats() {
         frame.contains("ctrl+u undo") || !frame.contains("u Undo"),
         "no legacy undo label survives"
     );
-}
-
-#[test]
-fn ctrl_f_in_the_picker_archives_the_selected_project_and_keeps_the_picker_open() {
-    let mut domain = DomainState::new();
-    domain
-        .create("in app", None, project(THIS_REPO), ProvenanceOrigin::Manual)
-        .expect("create");
-    let other = "/repos/other";
-    domain
-        .create("in other", None, project(other), ProvenanceOrigin::Manual)
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-
-    // Walk the main list onto the other project's option.
-    let target = tsk_tui::ui::board::ProjectScopeOption::Project(PathBuf::from(other));
-    for _ in 0..model.project_options().len() {
-        let index = model.project_picker_index().expect("picker index");
-        if model.project_options()[index] == target {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next");
-    }
-    let index = model.project_picker_index().expect("picker index");
-    assert_eq!(
-        model.project_options()[index],
-        target,
-        "walked onto the project"
-    );
-
-    apply_intent(&mut domain, &mut model, BoardIntent::File, None).expect("ctrl+f files");
-
-    assert!(
-        domain.is_project_archived(other),
-        "ctrl+f archives the selected project"
-    );
-    assert_eq!(
-        model.input_mode(),
-        BoardInputMode::ProjectPicker,
-        "the picker stays open"
-    );
-    assert!(
-        !model.project_options().contains(&target),
-        "the project leaves the main list"
-    );
-    assert!(
-        model
-            .archived_project_options()
-            .contains(&PathBuf::from(other)),
-        "the project is listed on the archived tab"
-    );
-}
-
-#[test]
-fn ctrl_f_and_ctrl_u_on_the_archived_tab_unarchive_and_every_task_keeps_its_status() {
-    let mut domain = DomainState::new();
-    let a = domain
-        .create(
-            "a ready",
-            None,
-            project("/repos/a"),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create a");
-    let b = domain
-        .create(
-            "b started",
-            None,
-            project("/repos/b"),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create b");
-    domain.set_status(b, HumanStatus::Doing).expect("doing");
-    let statuses_before: Vec<(uuid::Uuid, HumanStatus)> = domain
-        .tasks()
-        .iter()
-        .map(|task| (task.id, task.status))
-        .collect();
-    domain.archive_project("/repos/a").expect("archive a");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/a")));
-
-    // Switch to the archived tab and ctrl+f the entry: the project unarchives.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("switch tab");
-    apply_intent(&mut domain, &mut model, BoardIntent::File, None).expect("ctrl+f unarchives");
-    assert!(
-        !domain.is_project_archived("/repos/a"),
-        "ctrl+f on the archived tab unarchives"
-    );
-    assert_eq!(
-        model.archived_project_options(),
-        Vec::<PathBuf>::new(),
-        "no archived projects remain"
-    );
-    assert!(
-        model
-            .project_options()
-            .contains(&tsk_tui::ui::board::ProjectScopeOption::Project(
-                PathBuf::from("/repos/a")
-            )),
-        "the project returns to the main list (and the projects tab)"
-    );
-
-    // Re-archive, switch, and ctrl+u: same unarchive route, statuses untouched.
-    domain.archive_project("/repos/a").expect("archive again");
-    model.sync_from_domain(&domain);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("switch tab");
-    apply_intent(&mut domain, &mut model, BoardIntent::Undo, None).expect("ctrl+u unarchives");
-    assert!(
-        !domain.is_project_archived("/repos/a"),
-        "ctrl+u on the archived tab unarchives"
-    );
-
-    let statuses_after: Vec<(uuid::Uuid, HumanStatus)> = domain
-        .tasks()
-        .iter()
-        .map(|task| (task.id, task.status))
-        .collect();
-    assert_eq!(
-        statuses_before, statuses_after,
-        "project archive round-trips leave every task's status alone"
-    );
-    let _ = a;
-}
-
-#[test]
-fn file_on_a_taskless_invocation_repo_refuses_on_the_status_line() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "desk only",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create desk task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-
-    // Select the invocation repo option: it has no tasks, so there is nothing to archive.
-    let target = tsk_tui::ui::board::ProjectScopeOption::Project(PathBuf::from(THIS_REPO));
-    for _ in 0..model.project_options().len() {
-        let index = model.project_picker_index().expect("picker index");
-        if model.project_options()[index] == target {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next");
-    }
-    apply_intent(&mut domain, &mut model, BoardIntent::File, None).expect("file applies");
-
-    assert_eq!(
-        model.input_mode(),
-        BoardInputMode::ProjectPicker,
-        "the picker stays open"
-    );
-    let message = model
-        .message()
-        .expect("a refusal paints on the status slot");
-    assert!(
-        message.contains("nothing to archive") && message.contains("app"),
-        "the refusal names the empty project: {message:?}"
-    );
-    assert!(
-        !domain.is_project_archived(THIS_REPO),
-        "no record was written"
-    );
-}
-
-#[test]
-fn picker_archive_of_the_focused_project_sends_quick_add_to_the_desk() {
-    // Focus /repos/other, archive it from the picker. The board goes home, but the
-    // invocation default (THIS_REPO, unarchived) must still drive quick-add: archiving one
-    // project is not a session-wide "everything goes to the desk".
-    let mut domain = DomainState::new();
-    domain
-        .create("in app", None, project(THIS_REPO), ProvenanceOrigin::Manual)
-        .expect("create");
-    let other = "/repos/other";
-    domain
-        .create("in other", None, project(other), ProvenanceOrigin::Manual)
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    let target = tsk_tui::ui::board::ProjectScopeOption::Project(PathBuf::from(other));
-    let walk_to_other = |domain: &mut DomainState, model: &mut BoardModel| {
-        apply_intent(domain, model, BoardIntent::OpenProjectSelector, None).expect("open picker");
-        for _ in 0..model.project_options().len() {
-            let index = model.project_picker_index().expect("picker index");
-            if model.project_options()[index] == target {
-                break;
-            }
-            apply_intent(domain, model, BoardIntent::ProjectPickerNext, None).expect("next");
-        }
-    };
-    walk_to_other(&mut domain, &mut model);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("focus other");
-    assert_eq!(model.selected_project(), Some(Path::new(other)));
-
-    walk_to_other(&mut domain, &mut model);
-    apply_intent(&mut domain, &mut model, BoardIntent::File, None).expect("ctrl+f files");
-    assert!(domain.is_project_archived(other));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::CancelProjectPicker,
-        None,
-    )
-    .expect("close picker");
-    assert_eq!(
-        model.selected_project(),
-        None,
-        "focus on the archived project resets to home"
-    );
-
-    let snapshot = InvocationSnapshot {
-        default_scope: project(THIS_REPO),
-        this_repo: Some(PathBuf::from(THIS_REPO)),
-        title_prefill: None,
-        provenance: ProvenanceOrigin::Capture,
-    };
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenCapture,
-        Some(&snapshot),
-    )
-    .expect("open capture");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::QuickAddInsertText("probe".into()),
-        None,
-    )
-    .expect("type");
-    apply_intent(&mut domain, &mut model, BoardIntent::QuickAddSave, None).expect("save");
-    let probe = domain
-        .tasks()
-        .iter()
-        .find(|task| task.title == "probe")
-        .expect("probe saved");
-    assert_eq!(
-        probe.scope,
-        TaskScope::Global,
-        "quick-add from the reset scope goes to the desk, never the archived project"
-    );
-}
-
-/// A board focused (read-only) on an archived project holding one Ready task.
-fn read_only_focus() -> (DomainState, BoardModel, uuid::Uuid) {
-    let mut domain = DomainState::new();
-    let inside = domain
-        .create(
-            "filed away task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create inside");
-    domain
-        .create(
-            "desk task",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create desk");
-    domain.archive_project(THIS_REPO).expect("archive project");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("enter opens read-only focus");
-    (domain, model, inside)
-}
-
-#[test]
-fn enter_on_the_archived_tab_opens_a_read_only_focus_that_persists_nothing() {
-    let mut domain = DomainState::new();
-    let inside = domain
-        .create(
-            "filed away task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create inside");
-    domain
-        .create(
-            "second filed task",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create second");
-    domain.archive_project(THIS_REPO).expect("archive project");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    assert!(
-        !model.visible_ids().contains(&inside),
-        "no working lens paints an archived project's tasks"
-    );
-
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-    let outcome = apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("enter opens the focus");
-    assert_eq!(
-        outcome,
-        IntentOutcome::None,
-        "entering a read-only focus persists nothing"
-    );
-    assert!(
-        domain.is_project_archived(THIS_REPO),
-        "the project is still archived"
-    );
-    assert_eq!(model.input_mode(), BoardInputMode::Normal, "picker closed");
-    assert!(model.focus_is_archived(), "the focus is the read-only one");
-    assert!(
-        model.visible_ids().contains(&inside),
-        "the archived project's tasks paint in this focus"
-    );
-
-    // The idle status row names the read-only lens, and the chip says the same.
-    let status = board_chrome_row(&model, (80, 24));
-    assert_eq!(status.trim(), "app · archived");
-    let frame = rendered_board(&model, 80, 24);
-    assert!(
-        frame.contains("app \u{b7} archived"),
-        "the chip reads `<name> · archived`:\n{frame}"
-    );
-    assert!(
-        frame.contains("ctrl+u unarchive \u{b7} enter open \u{b7} esc close \u{b7} ? help"),
-        "the focus verb bar offers only what works here:\n{frame}"
-    );
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw");
-    let buffer = terminal.backend().buffer().clone();
-    let selected = model.selected_id();
-    let unselected_title = if selected == Some(inside) {
-        "second filed task"
-    } else {
-        "filed away task"
-    };
-    let row_y = (0..24u16)
-        .find(|y| {
-            (0..80u16)
-                .map(|x| buffer[(x, *y)].symbol())
-                .collect::<String>()
-                .contains(unselected_title)
-        })
-        .expect("the task row paints");
-    let row: String = (0..80u16).map(|x| buffer[(x, row_y)].symbol()).collect();
-    let title_x = row.find(unselected_title).expect("title on the row") as u16;
-    for x in title_x..title_x + 5 {
-        assert!(
-            buffer[(x, row_y)]
-                .style()
-                .add_modifier
-                .contains(ratatui::style::Modifier::DIM),
-            "the archived project's task titles paint dim (cell {x}): {row:?}"
-        );
-    }
-}
-
-#[test]
-fn every_mutating_verb_in_read_only_focus_refuses_with_the_archived_message() {
-    let refusal = "project app is archived \u{b7} ctrl+u unarchive";
-    let chords = [
-        BoardIntent::PrimaryVerb,
-        BoardIntent::Complete,
-        BoardIntent::Reopen,
-        BoardIntent::SetStatus(HumanStatus::Doing),
-        BoardIntent::SetStatus(HumanStatus::Doing),
-        BoardIntent::ToggleStep,
-        BoardIntent::BeginEditTitle,
-        BoardIntent::BeginEditNotes,
-        BoardIntent::SoftDelete,
-        BoardIntent::File,
-        BoardIntent::OpenCapture,
-    ];
-    for intent in chords {
-        let (mut domain, mut model, inside) = read_only_focus();
-        let before = domain
-            .tasks()
-            .iter()
-            .find(|task| task.id == inside)
-            .cloned()
-            .expect("task before");
-        let outcome = apply_intent(&mut domain, &mut model, intent.clone(), None)
-            .unwrap_or_else(|error| panic!("{intent:?} applies: {error}"));
-        assert_eq!(
-            outcome,
-            IntentOutcome::None,
-            "{intent:?} changes nothing durable"
-        );
-        assert_eq!(
-            model.message(),
-            Some(refusal),
-            "{intent:?} refuses with the archived message"
-        );
-        assert_eq!(
-            model.input_mode(),
-            BoardInputMode::Normal,
-            "{intent:?} opens no surface"
-        );
-        let after = domain
-            .tasks()
-            .iter()
-            .find(|task| task.id == inside)
-            .cloned()
-            .expect("task after");
-        assert_eq!(after.status, before.status, "{intent:?} changed the status");
-        assert_eq!(
-            after.soft_deleted, before.soft_deleted,
-            "{intent:?} deleted the task"
-        );
-        assert_eq!(after.archived, before.archived, "{intent:?} archived it");
-        assert!(
-            model.focus_is_archived(),
-            "{intent:?} left the read-only focus"
-        );
-    }
-}
-
-#[test]
-fn ctrl_u_in_read_only_focus_unarchives_in_place() {
-    let (mut domain, mut model, inside) = read_only_focus();
-    assert!(domain.is_project_archived(THIS_REPO));
-
-    let outcome = apply_intent(&mut domain, &mut model, BoardIntent::Undo, None)
-        .expect("ctrl+u unarchives in place");
-    assert_eq!(outcome, IntentOutcome::Persist, "the unarchive is durable");
-    assert!(
-        !domain.is_project_archived(THIS_REPO),
-        "the project is live again"
-    );
-    assert!(
-        !model.focus_is_archived(),
-        "the focus became a normal project focus"
-    );
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new(THIS_REPO)),
-        "on the same project"
-    );
-    assert!(
-        model.visible_ids().contains(&inside),
-        "its tasks stay on the board"
-    );
-
-    let frame = rendered_board(&model, 80, 24);
-    assert!(
-        !frame.contains("app \u{b7} archived"),
-        "the chip drops the archived suffix:\n{frame}"
-    );
-
-    // Verbs work again.
-    let index = model
-        .visible_ids()
-        .iter()
-        .position(|&id| id == inside)
-        .expect("row");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::SelectIndex(index),
-        None,
-    )
-    .expect("select");
-    let outcome = apply_intent(&mut domain, &mut model, BoardIntent::Complete, None)
-        .expect("ctrl+d works again");
-    assert_eq!(outcome, IntentOutcome::Persist);
-}
-
-#[test]
-fn leaving_read_only_focus_hides_the_archived_projects_tasks_again() {
-    for leave in [
-        BoardIntent::CancelEdit,
-        BoardIntent::CloseLayer,
-        BoardIntent::OpenProjectSelector,
-    ] {
-        let (mut domain, mut model, inside) = read_only_focus();
-        assert!(model.visible_ids().contains(&inside));
-        apply_intent(&mut domain, &mut model, leave.clone(), None)
-            .unwrap_or_else(|error| panic!("{leave:?} applies: {error}"));
-        assert!(
-            !model.focus_is_archived(),
-            "{leave:?} leaves the read-only focus"
-        );
-        assert!(
-            !model.visible_ids().contains(&inside),
-            "{leave:?} hides the archived project's tasks again"
-        );
-    }
-}
-
-#[test]
-fn esc_leaves_read_only_focus_and_never_quits() {
-    let (mut domain, mut model, inside) = read_only_focus();
-    assert!(model.focus_is_archived());
-    let esc = map_key(BoardInputMode::Normal, press(KeyCode::Esc)).expect("Esc maps");
-    let outcome = apply_intent(&mut domain, &mut model, esc, None).expect("esc applies");
-    assert_eq!(
-        outcome,
-        IntentOutcome::None,
-        "Esc in read-only focus never quits the board"
-    );
-    assert!(
-        !model.focus_is_archived(),
-        "Esc leaves the read-only focus (AC-45)"
-    );
-    assert!(model.at_home(), "and lands on the desk");
-    assert!(
-        !model.visible_ids().contains(&inside),
-        "the archived project's tasks are hidden again"
-    );
-}
-
-#[test]
-fn opening_the_picker_from_read_only_focus_lands_home_on_cancel() {
-    let (mut domain, mut model, inside) = read_only_focus();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker opens");
-    assert_eq!(model.input_mode(), BoardInputMode::ProjectPicker);
-    assert!(
-        !model.focus_is_archived(),
-        "P leaves the read-only lens before the picker paints (AC-45)"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::CancelProjectPicker,
-        None,
-    )
-    .expect("cancel");
-    assert!(model.at_home(), "cancelling the picker lands on the desk");
-    assert!(
-        !model.visible_ids().contains(&inside),
-        "the archived project's tasks are hidden again"
-    );
-}
-
-#[test]
-fn unarchiving_from_the_picker_converts_a_read_only_focus_in_place() {
-    let (mut domain, mut model, inside) = read_only_focus();
-    // The picker leaves the lens (D3), but the focus is restored to prove the conversion
-    // path rather than the exit path: unarchive through the picker's archived tab.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("back into the read-only focus");
-    assert!(model.focus_is_archived());
-
-    // Unarchive it by any other route: the stale read-only lens must convert.
-    domain.unarchive_project(THIS_REPO).expect("unarchive");
-    model.sync_from_domain(&domain);
-
-    assert!(
-        !model.focus_is_archived(),
-        "the read-only lens converts once its project is live again"
-    );
-    assert_eq!(
-        model.selected_project(),
-        Some(Path::new(THIS_REPO)),
-        "on the same project"
-    );
-    assert!(
-        model.visible_ids().contains(&inside),
-        "its tasks stay on the board"
-    );
-    let frame = rendered_board(&model, 80, 24);
-    assert!(
-        !frame.contains("app \u{b7} archived"),
-        "the chip drops the archived suffix:\n{frame}"
-    );
-}
-
-#[test]
-fn ctrl_f_on_the_archived_tab_still_unarchives_from_read_only_focus() {
-    let (mut domain, mut model, inside) = read_only_focus();
-    // `P` leaves the lens (D3); step back into it so the picker is reached from the
-    // read-only focus exactly as a user would.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("read-only focus");
-    assert!(model.focus_is_archived());
-
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker again");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-    let outcome = apply_intent(&mut domain, &mut model, BoardIntent::File, None)
-        .expect("ctrl+f on the archived entry");
-    assert_eq!(
-        outcome,
-        IntentOutcome::Persist,
-        "the picker owns ctrl+f while it is open"
-    );
-    assert!(
-        !domain.is_project_archived(THIS_REPO),
-        "the entry was unarchived"
-    );
-    assert_ne!(
-        model.message(),
-        Some("project app is archived \u{b7} ctrl+u unarchive"),
-        "the read-only refusal must not fire for a picker verb"
-    );
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::CancelProjectPicker,
-        None,
-    )
-    .expect("close");
-    assert!(!model.focus_is_archived());
-    let _ = inside;
 }
 
 #[test]

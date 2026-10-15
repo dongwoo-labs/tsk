@@ -1,6 +1,6 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ 1 board  ·  2 questions  ·  all ▾  ·  sort number ▾                            │
+│ 1 board  ·  2 questions                                                        │
 │                                                                                │
 │    no tasks match "nothing-here"                                               │
 │                                                                                │

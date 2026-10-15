@@ -88,7 +88,7 @@ When the task has children, `children 1/3 done` comes after **+ step**, then one
 
 `P` and `U` work in view mode on the open task, including the detail beside the list at 110+ columns. In a text field they type capital letters, and a draft with unsaved changes refuses both until you save or cancel it. The picker lists every other task by number; **current** marks the present parent and **archived** an archived task. A long title wraps onto more rows; `↑` / `↓` show the rest of a tall option before moving to the next one, and the wheel scrolls its rows. A task under this one is marked **under this task** and refused, because choosing it would form a cycle. Each change saves at once; a failed save offers [retry or cancel](/docs/board/#save-failures).
 
-Opening a related task keeps the list as it is: its project, search, sort, and cursor. The cursor follows only when the list shows that task. Status and other verbs act on the task the page shows. `Esc` returns to the task you came from, skipping any that was deleted meanwhile, and closes the page when none is left. `J` / `K` to a list neighbour, a new list selection, a project change, or closing the page ends that trail. A draft with unsaved changes refuses to open another task. A missing parent refuses with `<UUID> not found · link kept` and keeps the link. A task in an archived project opens read-only: you can move through it and open its relations, and every change, `ctrl+u` included, refuses with `project <name> is archived · read only`. On an archived task, `ctrl+u` unarchives the task the page shows.
+Opening a related task keeps the list as it is: its search and cursor. The cursor follows only when the list shows that task. Status and other verbs act on the task the page shows. `Esc` returns to the task you came from, skipping any that was deleted meanwhile, and closes the page when none is left. `J` / `K` to a list neighbour, a new list selection, a tab change, or closing the page ends that trail. A draft with unsaved changes refuses to open another task. A missing parent refuses with `<UUID> not found · link kept` and keeps the link. A task in an archived project opens read-only: you can move through it and open its relations, and every change, `ctrl+u` included, refuses with `project <name> is archived · read only`. On an archived task, `ctrl+u` unarchives the task the page shows.
 
 Changing or clearing a parent never changes the status, scope, or children of either task. Archive and Done do not break a relationship. Deleting a parent never deletes, detaches, or completes its children; they keep its id and show it as not found. Saving other fields of a task keeps its parent as it is, found or not.
 
@@ -108,6 +108,27 @@ After the children, the page lists the task's agent records on an explicit Agent
 | `Thread: <agent-name> <workspace-id> <tab-id> <pane-id>` | The Thread working on the task |
 
 `Enter` on an issue, PR, or CI line shows its URL on the status row; tsk calls no forge. `Enter` on a Thread line focuses that Herdr pane only when it is the task's only Thread line, carries all four tokens, and exactly one live agent matches all four. A name-only, partial, or duplicated Thread line shows `cannot verify` and focuses nothing. With no live match, several matches, or outside Herdr, the status row says so and nothing is focused. tsk never falls back to a question's origin Thread.
+
+## Status card
+
+Keep the first lines of the notes as a short status card, each one replaced in place rather than appended:
+
+```text
+Now: running the full test suite on the branch
+Next: open the PR
+Blocked: API key, waiting on the infra team
+Done when: the PR is merged and the release notes mention it
+PR: https://github.com/acme/atlas/pull/12
+```
+
+| Line | Use |
+| --- | --- |
+| `Now:` | The current state |
+| `Next:` | The next action (optional) |
+| `Blocked:` | What blocks the task and who it waits on; only while blocked |
+| `Done when:` | The completion condition |
+
+Reference lines (`PR:`, `Linear:`, `Issue:`, `CI:`, `Thread:`) follow the card. Only `Now:` and `Blocked:` show on the [board rows](/docs/board/#rows): a `Blocked:` line on any task that is not done paints bold as `blocked: …`; otherwise a `Now:` line on a Doing task paints dim under its title. Keys are case-insensitive, a leading `- ` is allowed, and only the first matching line counts. The card is a convention: tsk never sets a status from it.
 
 ## Notes markdown
 

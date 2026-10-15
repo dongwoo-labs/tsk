@@ -12,7 +12,7 @@ use tsk_tui::domain::{
     DomainState, HumanStatus, ProvenanceOrigin, Task, TaskEvent, TaskEventKind, TaskScope,
 };
 use tsk_tui::store::TaskStore;
-use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel, ProjectScopeOption};
+use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel};
 use tsk_tui::ui::input::BoardIntent;
 use tsk_tui::ui::queue::{
     query_board, query_lens, BoardLens, BoardSort, QueueView, SectionKind, INBOX_HEADER_ROW_ID,
@@ -175,7 +175,7 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
         "from_domain seeds an IN MOTION task when any exist"
     );
 
-    // Case B: a ready-only project opens its own board and seeds the first ON DECK row.
+    // Case B: a ready-only project seeds its first ON DECK row.
     let deck_a = task(10, "a", HumanStatus::Todo, project("/repos/a"), 30);
     let deck_b = task(11, "b", HumanStatus::Todo, project(THIS_REPO), 40);
     let deck_tasks = vec![deck_a.clone(), deck_b.clone()];
@@ -193,11 +193,15 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
         .create("b", None, project(THIS_REPO), ProvenanceOrigin::Manual)
         .unwrap();
     let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    assert_eq!(model.active_project(), Some(Path::new(THIS_REPO)));
+    assert_eq!(
+        model.active_project(),
+        None,
+        "startup stays on every project"
+    );
     assert_eq!(
         model.selected_id(),
         Some(deck_id),
-        "startup opens the invocation project's board and seeds its first row"
+        "startup seeds the invocation project's first row"
     );
 
     // Case C: empty → no selection.
@@ -205,10 +209,11 @@ fn from_domain_seeds_selection_on_first_needs_you_else_motion_else_deck_row() {
     assert_eq!(empty.selected_id(), None);
 }
 
-/// Directory-aware startup: a live project opens its board, an archived project
-/// stays on the desk behind the launch card, absent project context means desk.
+/// Directory-aware startup: the board always opens on every project; a live project seeds
+/// the cursor on its group, an archived project stays hidden behind the launch card,
+/// absent project context means desk.
 #[test]
-fn from_domain_opens_the_invocation_project_unless_archived() {
+fn from_domain_seeds_on_the_invocation_project_unless_archived() {
     let mut domain = DomainState::new();
     let live_id = domain
         .create("live", None, project(THIS_REPO), ProvenanceOrigin::Manual)
@@ -226,12 +231,21 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
     assert_eq!(
         model.selected_project(),
         Some(Path::new(THIS_REPO)),
-        "launch inside a repo opens that project's board"
+        "launch inside a repo remembers that project"
     );
-    assert_eq!(model.visible_ids(), vec![live_id]);
-    assert_eq!(model.active_project(), Some(Path::new(THIS_REPO)));
+    assert_eq!(
+        model.active_project(),
+        None,
+        "the board stays on every project"
+    );
+    assert_eq!(model.visible_ids().len(), 2, "every live project is listed");
+    assert_eq!(
+        model.selected_id(),
+        Some(live_id),
+        "the cursor starts on the invocation project's row"
+    );
 
-    // Empty project: same destination, useful empty state (no fallback lens).
+    // Empty project: same destination, useful empty state.
     let empty_repo = format!("{THIS_REPO}-empty");
     let model = BoardModel::from_domain(&DomainState::new(), Some(PathBuf::from(&empty_repo)));
     assert_eq!(
@@ -281,9 +295,10 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
     assert_eq!(model.selected_id(), Some(desk_id));
 }
 
-/// Confirming a project selector choice narrows ON DECK to that project.
+/// Startup in a repo keeps every project on the board with the cursor on that project's
+/// row; pinning another project's scope narrows the queue to it.
 #[test]
-fn confirming_project_choice_changes_visible_queue_sections() {
+fn pinning_a_project_scope_changes_visible_queue_sections() {
     let mut domain = DomainState::new();
     let app_id = domain
         .create(
@@ -302,45 +317,18 @@ fn confirming_project_choice_changes_visible_queue_sections() {
         )
         .unwrap();
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
+    let visible = model.visible_ids();
+    assert!(
+        visible.contains(&app_id) && visible.contains(&other_id),
+        "startup keeps every project on the board: {visible:?}"
+    );
     assert_eq!(
-        model.visible_ids(),
-        vec![app_id],
-        "startup sits on the invocation project's board"
+        model.selected_id(),
+        Some(app_id),
+        "startup seeds the cursor on the invocation project's row"
     );
 
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .unwrap();
-    // Picker highlights the current deck scope (All at open); step to /repos/other.
-    let other_idx = model
-        .project_options()
-        .iter()
-        .position(|opt| opt == &ProjectScopeOption::Project(PathBuf::from("/repos/other")))
-        .expect("/repos/other option");
-    for _ in 0..model.project_options().len() {
-        if model.project_picker_index() == Some(other_idx) {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .unwrap();
-    }
-    assert_eq!(model.project_picker_index(), Some(other_idx));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .unwrap();
+    model.set_selected_project(Some(PathBuf::from("/repos/other")));
 
     assert_eq!(model.selected_project(), Some(Path::new("/repos/other")));
     assert_eq!(model.visible_ids(), vec![other_id]);

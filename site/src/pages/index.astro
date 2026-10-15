@@ -21,28 +21,28 @@ const PAGE_JUMPS = [
 const BOARD_PINS = [
   {
     n: 1,
-    title: 'One board, scope and sort.',
-    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you. <kbd>p</kbd> picks the scope: <b>all</b>, <b>desk</b>, or one project. <kbd>S</kbd> flips the sort between task number and project groups. The line below the tabs says what waits on you.',
+    title: 'One board, every project.',
+    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you. The board always shows your desk and every live project; opened inside a repo, the cursor starts on that project. The line below the tabs says what waits on you.',
   },
   {
     n: 2,
     title: 'DOING.',
-    body: 'Work in progress across all projects on Desk, or within the selected project on its board. Questions and agent execution status stay separate.',
+    body: 'Work in progress across every project. Questions and agent execution status stay separate.',
   },
   {
     n: 3,
     title: 'A task.',
-    body: 'A selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the wrapped title. A bold <code>!</code> or <code>?n</code> says an agent waits on you; the project lives in the task detail.',
+    body: 'A selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the wrapped title. A bold <code>!</code> or <code>?n</code> says an agent waits on you; dim <code>✓2/5</code> counts checked steps and <code>⊂1/3</code> done children. Under the title, the notes\' <code>Now:</code> line says where a Doing task stands, and a <code>Blocked:</code> line shows in bold.',
   },
   {
     n: 4,
-    title: 'Number order.',
-    body: 'Rows follow task numbers, so a task keeps its place while you work on it. At 110 columns or wider the selected task always shows beside the list; <kbd>→</kbd> or <kbd>l</kbd> moves into it and <kbd>J</kbd> / <kbd>K</kbd> walk the list from there.',
+    title: 'Grouped by project.',
+    body: 'A dim project name heads each group, desk first; inside a group rows follow task numbers, so a task keeps its place while you work on it. At 110 columns or wider the selected task always shows beside the list; <kbd>→</kbd> or <kbd>l</kbd> moves into it and <kbd>J</kbd> / <kbd>K</kbd> walk the list from there.',
   },
   {
     n: 5,
     title: 'Your loose backlog.',
-    body: "Desk's TODO contains only tasks without a project, oldest capture first. Project backlogs live on their own boards.",
+    body: "TODO starts with your desk: tasks without a project, in number order. Each project's backlog follows under its own heading.",
   },
 ];
 const pinLabel = (n) => {
@@ -224,7 +224,7 @@ const softwareApplication = {
           <div class="hero-side" data-board-pins>
             <div class="screen" role="group" aria-label="A tsk board at 78 columns. Hover or click a number for its callout.">
               <div class="s-row s-tabs is-on">
-                <span class="l"><span class="on">1 board</span><span class="dim">  ·  </span>2 questions ·3<span class="dim">  ·  </span>desk ▾<span class="dim">  ·  </span>sort number ▾</span>
+                <span class="l"><span class="on">1 board</span><span class="dim">  ·  </span>2 questions ·3</span>
                 <button type="button" class="pin is-on" data-pin="1" aria-label={pinLabel(1)} aria-controls="pin-card" aria-expanded="true">1</button>
               </div>
               <div class="s-row s-task">
@@ -237,26 +237,42 @@ const softwareApplication = {
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-task">
-                <span class="l">   <span class="tid">T27</span> Proof the landing copy once more</span>
+                <span class="l meta">   site</span>
                 <button type="button" class="pin" data-pin="4" aria-label={pinLabel(4)} aria-controls="pin-card" aria-expanded="false">4</button>
+              </div>
+              <div class="s-row s-task">
+                <span class="l">   <span class="tid">T27</span> Proof the landing copy once more</span>
               </div>
               <div class="s-row s-task">
                 <span class="l">   <span class="tid">T29</span> Waiting on the pane label</span><span class="r"><b>?2</b></span>
               </div>
+              <div class="s-row s-task">
+                <span class="l">       <b>blocked: pane label API, waiting on herdr</b></span>
+              </div>
               <div class="s-row s-task is-sel">
-                <span class="l">▸  <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span><span class="r"><b>!</b> <span class="dim">⊂1/3</span></span>
+                <span class="l">▸  <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span><span class="r"><b>!</b> <span class="dim">✓2/5 ⊂1/3</span></span>
                 <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
+              </div>
+              <div class="s-row s-task">
+                <span class="l meta">       running the release smoke on macOS</span>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
-                <span class="sec">TODO · desk</span><span class="rule"></span><span class="count">4</span>
+                <span class="sec">TODO</span><span class="rule"></span><span class="count">4</span>
                 <button type="button" class="pin" data-pin="5" aria-label={pinLabel(5)} aria-controls="pin-card" aria-expanded="false">5</button>
+              </div>
+              <div class="s-gap"></div>
+              <div class="s-row s-task">
+                <span class="l meta">   desk</span>
               </div>
               <div class="s-row s-task">
                 <span class="l">   <span class="tid">T18</span> Global backlog note</span>
               </div>
               <div class="s-row s-task">
                 <span class="l">   <span class="tid">T24</span> Capture the loose idea</span>
+              </div>
+              <div class="s-row s-task">
+                <span class="l meta">   site</span>
               </div>
               <div class="s-row s-task">
                 <span class="l">   <span class="tid">T25</span> Draft the announcement</span>
@@ -267,7 +283,7 @@ const softwareApplication = {
               <div class="s-fill"></div>
               <div class="s-row s-footrule"><span class="rule"></span></div>
               <div class="s-row s-foot">
-                <span class="l meta">desk</span>
+                <span class="l meta">all</span>
               </div>
               <div class="s-row s-foot">
                 <span class="l meta">enter open · ctrl+o todo · ctrl+d done · ? help</span>
@@ -407,12 +423,12 @@ const softwareApplication = {
         <div class="band-inner" data-reveal>
           <header class="band-head">
             <span class="index">02 <span class="index-label">board</span></span>
-            <h2 id="board-heading">One list, ordered by urgency.</h2>
+            <h2 id="board-heading">One list, every project.</h2>
             <p class="band-lede">
-              Inside Git, start on the repo’s project board. Outside Git, start on <b>all</b>. <kbd>p</kbd> picks the
-              scope: <b>all</b> tasks, your <b>desk</b> (what needs you across projects, active work,
-              and your loose backlog), or one project. Rows follow task numbers; <kbd>S</kbd> groups
-              them by project. Press <kbd>2</kbd> for the questions agents left for you.
+              The board shows every task: your <b>desk</b> first, then each project under its
+              own heading. Inside Git, the cursor starts on the repo’s project. Rows show
+              checked steps as <code>✓2/5</code> and the notes’ <code>Now:</code> or
+              <code>Blocked:</code> line under the title. Press <kbd>2</kbd> for the questions agents left for you.
               Give the board 110 columns and the selected task sits beside the list.
             </p>
           </header>

@@ -1113,7 +1113,6 @@ pub fn apply_board_intent_with_save_recovery(
             | BoardIntent::FocusList
             | BoardIntent::NextTask
             | BoardIntent::PrevTask
-            | BoardIntent::ToggleSort
             | BoardIntent::PageScrollUp
             | BoardIntent::PageScrollDown
             | BoardIntent::PageWheelScrollUp
@@ -2818,71 +2817,6 @@ mod tests {
         assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
     }
 
-    /// live dispatch reaches the project selector by mouse and keyboard in
-    /// every layout that offers it, including the legacy Resize band down to 40x10.
-    #[test]
-    fn project_selector_mouse_and_keyboard_dispatch_the_same_intent_at_every_size() {
-        use crate::ui::board::board_hit_map;
-        use crate::ui::mouse::left_click;
-        use crate::ui::render::QueueHitTarget;
-
-        let mut domain = DomainState::new();
-        domain
-            .create(
-                "Project scoped",
-                None,
-                TaskScope::Project {
-                    path: "/repos/app".into(),
-                },
-                ProvenanceOrigin::Manual,
-            )
-            .expect("create task");
-        let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/app")));
-        model.set_selected_project(Some(PathBuf::from("/repos/app")));
-
-        for area in [
-            Rect::new(0, 0, 120, 24),
-            Rect::new(0, 0, 50, 18),
-            Rect::new(0, 0, 49, 18),
-            Rect::new(0, 0, 40, 10),
-        ] {
-            // Clicking the scope control opens the picker.
-            let hits = board_hit_map(area, &model);
-            let scope = hits
-                .regions
-                .iter()
-                .find(|hit| matches!(hit.target, QueueHitTarget::ScopeChip))
-                .unwrap_or_else(|| panic!("no scope control hit region at {area:?}"));
-            let mouse_intent =
-                map_board_mouse(&model, &hits, left_click(scope.area.x + 1, scope.area.y))
-                    .expect("scope control hit");
-            assert_eq!(mouse_intent, BoardIntent::OpenProjectSelector);
-            // `p` gives the keyboard the same destination by direct intent.
-            let keyboard_intent = map_key(
-                board_input_mode_for_area(area, model.input_mode()),
-                KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
-            );
-            assert_eq!(
-                keyboard_intent,
-                Some(BoardIntent::OpenProjectSelector),
-                "`p` must open the project selector at {area:?}"
-            );
-            assert_eq!(
-                board_intent_for_area(area, mouse_intent.clone()),
-                Some(mouse_intent.clone()),
-                "{area:?} must route the project selector"
-            );
-        }
-
-        // the legacy Resize band paints a project chip too and no longer
-        // withholds the route to it.
-        assert_eq!(
-            board_intent_for_area(RESIZE_AREA, BoardIntent::OpenProjectSelector),
-            Some(BoardIntent::OpenProjectSelector),
-            "the project selector must remain reachable down to the legacy Resize band"
-        );
-    }
-
     #[test]
     fn every_board_mutation_uses_a_real_persisted_baseline() {
         for intent in [
@@ -4537,6 +4471,7 @@ mod tests {
         };
         let mut domain = DomainState::new();
         let mut model = BoardModel::from_domain(&domain, snapshot.this_repo.clone());
+        model.set_selected_project(snapshot.this_repo.clone());
         let mut recovery = SaveRecovery::new();
 
         apply_intent(
@@ -4567,14 +4502,14 @@ mod tests {
             Some(&snapshot),
         )
         .expect("focus scope");
-        // Startup inside a repo opens that project's board, so quick-add starts
-        // scoped to it; cycling moves to the next option (the desk).
+        // A board pinned to the project starts quick-add scoped to it; cycling moves
+        // to the next option (the desk).
         assert_eq!(
             model.form_scope(),
             Some(&TaskScope::Project {
                 path: "/repos/chosen".into()
             }),
-            "quick-add inherits the invocation project as its destination"
+            "quick-add inherits the pinned project as its destination"
         );
         apply_intent(
             &mut domain,
@@ -5275,11 +5210,6 @@ mod tests {
                 BoardInputMode::TaskPage,
                 KeyCode::Char('e'),
                 Some(BoardIntent::BeginEditTitle),
-            ),
-            (
-                BoardInputMode::ProjectPicker,
-                KeyCode::Char('q'),
-                Some(BoardIntent::CancelProjectPicker),
             ),
             (
                 BoardInputMode::SaveRecovery,

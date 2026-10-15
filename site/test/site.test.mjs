@@ -109,15 +109,20 @@ test("docs and demo share the 110-column list + detail layout with no slider", a
   }
 });
 
-test("demo keeps the one board tab with scope, sort, search, archive, and the done drawer", async () => {
+test("demo keeps the one board tab, project groups, search, archive, and the done drawer", async () => {
   const demo = await read("../public/board-demo.js");
   assert.match(demo, /data-tab="\$\{name\}"/);
   assert.match(demo, /tab\("board", "1 board"\)/);
   assert.match(demo, /tab\("questions", qLabel\)/);
-  assert.match(demo, /data-scope="1"/);
-  assert.match(demo, /data-sort="1"/);
-  assert.match(demo, /const scopeOptions = \(\) => \["all", "desk", \.\.\.projectNames\(\)\]/);
-  assert.match(demo, /state\.scope === "desk" \? "TODO · desk" : "TODO"/);
+  // The board always groups by project: no scope picker, no sort toggle.
+  for (const gone of [/data-scope=/, /data-sort=/, /scopeOptions/, /state\.scope\b/, /state\.sort\b/, /TODO · desk/, /rescope/]) {
+    assert.doesNotMatch(demo, gone);
+  }
+  assert.match(demo, /rows\.push\(\{ kind: "sub", label: key \}\)/);
+  // Progress at a glance: `✓done/total` steps before `⊂done/total` children, and the
+  // notes' Blocked/Now line under the title.
+  assert.match(demo, /`✓\$\{/);
+  assert.match(demo, /function rowStatusLine\(task\)/);
   assert.doesNotMatch(demo, /status === "(?:open|ready|started|blocked|review)"/);
   assert.match(demo, /id: "nav:archived"/);
   assert.match(demo, /selectedRow\(\)\?\.kind !== "task"/);
@@ -130,7 +135,7 @@ test("demo keeps the one board tab with scope, sort, search, archive, and the do
   assert.match(demo, /data-drawer="1"><span class="sec">/);
 });
 
-test("demo rows show number, title, question marks, and the child count only", async () => {
+test("demo rows show number, title, question marks, step and child counts, and the status line", async () => {
   const demo = await read("../public/board-demo.js");
   const styles = await read("../src/styles/landing.css");
   assert.match(demo, /const prefix = `\$\{selected \? "▸" : " "\}\$\{marked \? "▪" : " "\} `;/);
@@ -281,7 +286,7 @@ test("hero board pins reveal callout copy", async () => {
   assert.doesNotMatch(page, /data-pin="6"/);
   assert.equal((page.match(/data-pin="\d"/g) || []).length, 5);
   // One rule, then the scope line, then the verb bar: the footer the TUI paints.
-  assert.match(page, /s-footrule[\s\S]*<span class="l meta">desk<\/span>/);
+  assert.match(page, /s-footrule[\s\S]*<span class="l meta">all<\/span>/);
   assert.equal((page.match(/s-footrule/g) || []).length, 1);
   assert.doesNotMatch(page, /<span class="l meta">2 done<\/span>/);
   // The selected Doing task uses the same verbs as the generated TUI fixture.
@@ -292,8 +297,10 @@ test("hero board pins reveal callout copy", async () => {
   assert.match(css, /\.hero-side \.screen \{[^}]*white-space: pre-wrap/);
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);
   assert.doesNotMatch(css, /\.goto-label \{\s*display: none/);
-  assert.match(page, /One board, scope and sort/);
-  assert.match(page, /<span class="on">1 board<\/span>[\s\S]*?2 questions[\s\S]*?desk ▾[\s\S]*?sort number ▾/);
+  assert.match(page, /One board, every project/);
+  assert.match(page, /<span class="on">1 board<\/span><span class="dim">  ·  <\/span>2 questions ·3<\/span>/);
+  assert.doesNotMatch(page, /desk ▾|sort number ▾/);
+  assert.match(page, /✓2\/5 ⊂1\/3/);
   assert.match(page, /waiting on you  approval 1 · question 2  → 2/);
   assert.match(page, /title: 'A task\.'/);
   assert.doesNotMatch(page, /title: 'A row\.'/);

@@ -16,9 +16,8 @@ use crate::ui::tier::{FocusedSurface, WideStage};
 use super::commands::{resolve_board_command, CommandSurface};
 use super::model::{relation_scroll_to, steps_scroll_to_cursor, steps_scroll_to_row};
 use super::model::{
-    BoardForm, BoardInputMode, BoardLocation, BoardModel, IntentOutcome, ListPickerValue,
-    PickerTab, ProjectPickerState, ProjectScopeOption, StepEditor, StepEditorSave, TaskEditSave,
-    DIRTY_TASK_SWITCH_REFUSAL,
+    BoardForm, BoardInputMode, BoardModel, IntentOutcome, ListPickerValue, StepEditor,
+    StepEditorSave, TaskEditSave, DIRTY_TASK_SWITCH_REFUSAL,
 };
 
 /// What the row says when an action that aims at the selection is asked for on a board that
@@ -212,19 +211,16 @@ fn apply_chrome_row_lifetime(model: &mut BoardModel, intent: &BoardIntent) {
 ///
 /// Mutating intents call Task Domain only. Caller persists with Task Store when outcome is
 /// [`IntentOutcome::Persist`]. The capture snapshot is retained by the form.
-/// Intents the read-only archived focus refuses (AC-42): everything that would mutate a
-/// task or open a capture/edit surface. `Undo` is excluded: it is the unarchive route.
-/// The refusal a read-only task page paints: the archived focus's own, or, for a page a
-/// relation open reached inside an archived project, that project's read-only line.
+/// The refusal a read-only task page paints: a relation open reached a task inside an
+/// archived project.
 fn read_only_page_refusal(model: &BoardModel) -> Option<String> {
-    if let Some(refusal) = model.archived_focus_refusal() {
-        return Some(refusal);
-    }
     let path = model.page_archived_project()?;
     let name = crate::ui::render::short_project(&path).to_string();
     Some(format!("project {name} is archived \u{b7} read only"))
 }
 
+/// Intents a read-only page refuses: everything that would mutate a task or open a
+/// capture/edit surface. `Undo` is excluded here; the caller refuses it separately.
 fn read_only_focus_refuses(model: &BoardModel, intent: &BoardIntent) -> bool {
     if matches!(intent, BoardIntent::Undo) {
         return false;
@@ -327,29 +323,11 @@ pub fn apply_intent(
         // message down with it, before whatever the intent itself has to report.
         model.clear_message();
     }
-    // AC-42: the read-only archived focus refuses every mutating verb before the reducer
-    // sees it. `Undo` is the one way out (it unarchives, AC-43), and navigation, peek,
-    // the drawer, the palette, help and the picker all stay live.
-    // An open popup owns its own intents (the picker's ctrl+f/ctrl+u, the palette, the
-    // launch card, help), so the read-only gate stands down while one is up: otherwise it
-    // would refuse a picker verb in the name of the project behind the card.
-    if model.focus_is_archived()
-        && model.popup() == BoardPopup::None
-        && model.project_picker.is_none()
-        && model.surface == CommandSurface::None
-        && read_only_focus_refuses(model, &intent)
-    {
-        if let Some(refusal) = model.archived_focus_refusal() {
-            model.set_message(refusal);
-        }
-        return Ok(IntentOutcome::None);
-    }
     // A relation open can reach a task of an archived project from a working lens. Its page
-    // is read-only the same way, and `ctrl+u` refuses too: unarchiving a project is the
-    // project picker's route, not a task page's.
+    // is read-only, and `ctrl+u` refuses too: unarchiving a project is
+    // `tsk project unarchive`'s route, not a task page's.
     if model.page_archived_project().is_some()
         && model.popup() == BoardPopup::None
-        && model.project_picker.is_none()
         && model.surface == CommandSurface::None
         && (matches!(intent, BoardIntent::Undo) || read_only_focus_refuses(model, &intent))
     {
@@ -461,9 +439,6 @@ fn apply_board_intent(
         // reducer has nothing to apply for them.
         BoardIntent::Question(_) => return Ok(IntentOutcome::None),
         BoardIntent::OpenCommandPalette => {
-            if model.project_picker.is_some() {
-                return Ok(IntentOutcome::None);
-            }
             model.open_command_surface(CommandSurface::Palette);
             return Ok(IntentOutcome::None);
         }
@@ -855,11 +830,6 @@ fn apply_board_intent(
             model.select_prev();
             return Ok(IntentOutcome::None);
         }
-        BoardIntent::ToggleSort => {
-            model.toggle_sort();
-            model.clear_message();
-            return Ok(IntentOutcome::None);
-        }
         BoardIntent::NextTask | BoardIntent::PrevTask => {
             step_task_page(domain, model, intent == BoardIntent::NextTask);
             return Ok(IntentOutcome::None);
@@ -1149,12 +1119,6 @@ fn apply_board_intent(
             return Ok(IntentOutcome::None);
         }
         BoardIntent::CancelEdit => {
-            // AC-45: Esc leaves the read-only archived focus, which hides that project's
-            // tasks again. Nothing else on the board is open in that state.
-            if model.focus_is_archived() && model.input_mode == BoardInputMode::Normal {
-                model.leave_archived_focus();
-                return Ok(IntentOutcome::None);
-            }
             // The inline step editor cancels to page view: draft discarded, no mutation,
             // and the page's step cursor state stays intact.
             if model.input_mode == BoardInputMode::EditStep && model.form.is_some() {
@@ -1289,116 +1253,6 @@ fn apply_board_intent(
             return Ok(outcome);
         }
 
-        BoardIntent::OpenProjectSelector => {
-            // the project-scope chip opens this dropdown from any board surface.
-            // A save-failure modal owns its decision rather than being dismissed by the chip.
-            if matches!(model.popup, BoardPopup::SaveRecovery) {
-                return Ok(IntentOutcome::None);
-            }
-            // AC-45: `P` leaves the read-only archived lens before the picker paints, so
-            // its tasks are hidden again and Esc from the picker lands home, not back in
-            // a lens the user thought they had left.
-            if model.focus_is_archived() {
-                model.leave_archived_focus();
-            }
-            let options = model.project_options();
-            // Highlight the option that matches the current destination.
-            let selected = match &model.board_location {
-                BoardLocation::All => 0,
-                BoardLocation::Desk => 1,
-                BoardLocation::Project(path) | BoardLocation::ArchivedProject(path) => options
-                    .iter()
-                    .position(|option| option == &ProjectScopeOption::Project(path.clone()))
-                    .unwrap_or(0),
-            };
-            model.close_popup();
-            model.close_command_surface();
-            model.close_help();
-            model.project_picker = Some(ProjectPickerState {
-                options,
-                selected,
-                tab: PickerTab::Main,
-                archived: model.archived_project_options(),
-                archived_selected: 0,
-            });
-            model.popup = BoardPopup::ProjectPicker;
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::ProjectPickerNext => {
-            model.move_project_picker(true);
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::ProjectPickerPrev => {
-            model.move_project_picker(false);
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::ProjectPickerSwitchTab | BoardIntent::SelectPickerTab(_) => {
-            if let Some(picker) = model.project_picker.as_mut() {
-                picker.tab = match intent {
-                    BoardIntent::SelectPickerTab(tab) => tab,
-                    _ => match picker.tab {
-                        PickerTab::Main => PickerTab::Archived,
-                        PickerTab::Archived => PickerTab::Main,
-                    },
-                };
-            }
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::ConfirmProjectChoice => {
-            // Session-only navigation: nothing durable is touched, so no outcome persists.
-            // AC-41: on the archived tab, Enter opens that project in read-only focus.
-            if model.picker_tab() == Some(PickerTab::Archived) {
-                let chosen = model
-                    .project_picker
-                    .as_ref()
-                    .and_then(|picker| picker.archived.get(picker.archived_selected).cloned());
-                if let Some(path) = chosen {
-                    model.clear_marks();
-                    model.project_picker = None;
-                    model.open_archived_focus(path);
-                    model.clear_message();
-                }
-                return Ok(IntentOutcome::None);
-            }
-            let Some(picker) = model.project_picker.take() else {
-                return Ok(IntentOutcome::None);
-            };
-            let chosen = picker.options.get(picker.selected).cloned();
-            model.clear_marks();
-            model.set_board_scope(chosen.unwrap_or(ProjectScopeOption::All));
-            model.clear_message();
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::CancelProjectPicker => {
-            if model.project_picker.is_some() {
-                model.close_popup();
-                model.clear_message();
-            }
-            return Ok(IntentOutcome::None);
-        }
-        BoardIntent::SelectProjectOption(index) => {
-            // Mouse-only jump: a dropdown row click chooses its option directly, the way
-            // `SelectIndex` chooses a task row directly, instead of stepping
-            // `ProjectPickerNext`/`Prev` to it first. Session-only
-            // navigation: nothing durable is touched, so no outcome persists.
-            // The archived tab has no choose action: its rows are inert.
-            if model.picker_tab() == Some(PickerTab::Archived) {
-                return Ok(IntentOutcome::None);
-            }
-            let Some(picker) = model.project_picker.take() else {
-                return Ok(IntentOutcome::None);
-            };
-            let Some(chosen) = picker.options.get(index).cloned() else {
-                // Out of range against the picker this click actually opened: put it back
-                // rather than silently discard an open selection.
-                model.project_picker = Some(picker);
-                return Ok(IntentOutcome::None);
-            };
-            model.clear_marks();
-            model.set_board_scope(chosen);
-            model.clear_message();
-            return Ok(IntentOutcome::None);
-        }
         BoardIntent::SelectNavTab(tab) => {
             // The board-tab route ends the relation trail, like a scope change.
             model.page_back.clear();
@@ -1979,10 +1833,7 @@ fn apply_board_intent(
             let active_mode = model.input_mode();
             let return_mode = model.input_mode;
             model.close_command_surface();
-            if !matches!(
-                active_mode,
-                BoardInputMode::ProjectPicker | BoardInputMode::LaunchCard
-            ) {
+            if active_mode != BoardInputMode::LaunchCard {
                 model.close_popup();
             }
             model.help_return_mode = return_mode;
@@ -2148,12 +1999,6 @@ fn apply_board_intent(
             if model.popup != before {
                 return Ok(IntentOutcome::None);
             }
-            // AC-45: with no layer above it, Esc leaves the read-only archived focus for
-            // the desk, which hides that project's tasks again. It never quits from there.
-            if model.focus_is_archived() {
-                model.leave_archived_focus();
-                return Ok(IntentOutcome::None);
-            }
             return Ok(IntentOutcome::None);
         }
         // The five intents below aim at the selection, and an empty board has none. Each
@@ -2297,7 +2142,8 @@ fn apply_board_intent(
             // targets it.
             model.launch_card = None;
             model.popup = BoardPopup::None;
-            model.set_board_scope(super::model::ProjectScopeOption::Project(path));
+            model.sync_from_domain(domain);
+            model.focus_project_group(&path);
             model.clear_message();
         }
         BoardIntent::LaunchKeepArchived => {
@@ -2315,48 +2161,6 @@ fn apply_board_intent(
             return Ok(IntentOutcome::None);
         }
         BoardIntent::File => {
-            // Picker open: archive the selected main-tab project, or unarchive the
-            // selected archived-tab entry. The picker stays open either way.
-            if model.project_picker.is_some() {
-                model.clear_marks();
-            }
-            if let Some(picker) = model.project_picker.as_ref() {
-                let tab = picker.tab;
-                let chosen = match tab {
-                    PickerTab::Main => picker.options.get(picker.selected).cloned(),
-                    PickerTab::Archived => picker
-                        .archived
-                        .get(picker.archived_selected)
-                        .map(|path| ProjectScopeOption::Project(path.clone())),
-                };
-                let Some(ProjectScopeOption::Project(path)) = chosen else {
-                    // Main + Home (or an empty tab) is inert.
-                    return Ok(IntentOutcome::None);
-                };
-                let scope_path = path.to_string_lossy().into_owned();
-                let previous_visible = model.visible_ids();
-                let previous = model.selection_id;
-                let result = match tab {
-                    PickerTab::Main => domain.archive_project(&scope_path),
-                    PickerTab::Archived => domain.unarchive_project(&scope_path).map(|_| true),
-                };
-                if let Err(error) = result {
-                    // Unknown project and friends leave the picker untouched and paint
-                    // the refusal on the status slot, per the status-slot rule.
-                    if error == DomainError::UnknownProject(scope_path.clone()) {
-                        let short = crate::ui::render::short_project(&scope_path);
-                        model.set_message(format!("nothing to archive in {short}"));
-                    } else {
-                        model.set_message(error.to_string());
-                    }
-                    return Ok(IntentOutcome::None);
-                }
-                // `sync_from_domain` resets a focus that now points at an archived project.
-                model.sync_from_domain(domain);
-                model.refresh_project_picker();
-                model.reanchor_selection(previous, &previous_visible);
-                return Ok(IntentOutcome::Persist);
-            }
             model.close_popup();
             let (targets, _) = take_verb_targets(model);
             if targets.is_empty() {
@@ -2370,35 +2174,6 @@ fn apply_board_intent(
         }
         BoardIntent::Undo => {
             model.clear_marks();
-            // Picker open: the archived tab's ctrl+u is the unarchive route; the main
-            // tab stays inert (undo exactly as before the feature).
-            if let Some(picker) = model.project_picker.as_ref() {
-                if picker.tab == PickerTab::Main {
-                    return Ok(IntentOutcome::None);
-                }
-                let Some(path) = picker.archived.get(picker.archived_selected).cloned() else {
-                    return Ok(IntentOutcome::None);
-                };
-                let scope_path = path.to_string_lossy().into_owned();
-                if domain.unarchive_project(&scope_path).is_err() {
-                    return Ok(IntentOutcome::None);
-                }
-                model.sync_from_domain(domain);
-                model.refresh_project_picker();
-                return Ok(IntentOutcome::Persist);
-            }
-            // AC-43: in the read-only archived focus ctrl+u unarchives that project in
-            // place and the focus becomes a normal project focus.
-            if let Some(path) = model.archived_focus().map(std::path::Path::to_path_buf) {
-                let scope_path = path.to_string_lossy().into_owned();
-                if domain.unarchive_project(&scope_path).is_err() {
-                    return Ok(IntentOutcome::None);
-                }
-                model.sync_from_domain(domain);
-                model.enter_project_focus(path);
-                model.clear_message();
-                return Ok(IntentOutcome::Persist);
-            }
             model.close_popup();
             // ctrl+u on an archived selection is the unarchive route, never an undo:
             // the stack is not popped (AC-3). On a focused page that is the page's own task,

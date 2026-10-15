@@ -17,9 +17,7 @@ test("board illustration uses an arrow without a filled selection or a glyph", a
   );
 });
 
-test("the done drawer and its archived group follow the scope", async ({
-  page,
-}) => {
+test("the done drawer and its archived group", async ({ page }) => {
   await page.goto(LANDING);
   await page.locator("#board-demo").focus();
   // Closed, DONE shows its heading and count but no done rows.
@@ -39,8 +37,6 @@ test("the done drawer and its archived group follow the scope", async ({
       .locator("[data-task]")
       .filter({ hasText: "Prototype a GraphQL gateway" }),
   ).toHaveCount(1);
-  await page.locator("[data-scope]").click();
-  await page.locator('[data-pick="website"]').click();
   await page.keyboard.press("z");
   await expect(
     page
@@ -50,22 +46,9 @@ test("the done drawer and its archived group follow the scope", async ({
   await expect(page.locator("[data-archived-header]")).toHaveCount(0);
 });
 
-test("scope picker lists all, desk, and the projects and opens the choice", async ({
+test("the questions tab ignores p, S, and search, and has no scope control", async ({
   page,
 }) => {
-  await page.goto(LANDING);
-  await page.locator("[data-scope]").click();
-  expect(
-    await page
-      .locator("[data-pick]")
-      .evaluateAll((rows) => rows.map((row) => row.dataset.pick)),
-  ).toEqual(["all", "desk", "launchpad", "website"]);
-  await page.locator('[data-pick="website"]').click();
-  await expect(page.locator("[data-scope]")).toHaveText("website ▾");
-  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
-});
-
-test("the questions tab ignores p, S, and search", async ({ page }) => {
   await page.goto(LANDING);
   await page.locator("#board-demo").focus();
   await page.keyboard.press("2");

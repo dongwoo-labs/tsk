@@ -99,7 +99,7 @@ for width in (40, 78, 109, 110):
             while b'DOING' not in first and time.monotonic() < deadline:
                 first += drain()
             assert b'DOING' in first, repr(first)
-            # `1` is the board tab; startup in the Git project opens that project's board.
+            # `1` is the board tab; startup in the Git project seeds the cursor on its group.
             key(b'1', 'initial')
             assert 'TODO' in '\n'.join(screen.display)
             # Narrow frames show the list or a task, never a peek: `→` is inert below 110.
@@ -108,12 +108,18 @@ for width in (40, 78, 109, 110):
             detail_shown = 'Confirm the wording' in '\n'.join(screen.display)
             assert detail_shown == (width >= 110), (width, detail_shown)
             key(b'\x1b[D', 'list-focus')
-            # T13 is a desk task: `p` opens the scope picker on the project, `↑` selects desk.
-            key(b'p', 'scope-picker')
-            key(b'\x1b[A', 'scope-desk-selected')
-            key(b'\r', 'desk')
-            assert 'T13' in '\n'.join(screen.display)
-            key(b'\x1b[B', 'selected')
+            # The board shows every project grouped; T13 sits in the desk group, which
+            # leads. The cursor starts on the launch project's group: walk up to T13.
+
+            def cursor_on(label):
+                return any('\u25b8' in line and label in line for line in screen.display)
+
+            for step in range(30):
+                if cursor_on('T13 '):
+                    break
+                key(b'k' if step < 15 else b'j', f'walk-{step}')
+            assert cursor_on('T13 '), '\n'.join(screen.display)
+            key(b'', 'selected')
             key(b'\x13', 'started')
             assert saved_task(13, lambda t: t['status'] == 'doing')['status'] == 'doing'
             key(b'\r', 'page')
@@ -132,7 +138,7 @@ for width in (40, 78, 109, 110):
             key(b'\x11', 'quit')
             child.wait(timeout=5)
             assert child.returncode == 0
-            print(f'{width}x24: initial, list-or-detail focus, desk scope, select, persisted start, page, persisted step toggle/add, back, clean quit OK')
+            print(f'{width}x24: initial, list-or-detail focus, walk to T13, persisted start, page, persisted step toggle/add, back, clean quit OK')
         finally:
             if child.poll() is None:
                 child.kill()

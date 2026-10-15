@@ -61,6 +61,12 @@ alias are usage errors, not alternate spellings.
    `Thread: <agent-name> <workspace-id> <tab-id> <pane-id>` are the references the task page
    reads. Keep URLs and short results only; never copy PR or CI detail. A Thread line focuses
    only when it is the task's one Thread line and all four tokens match one live pane.
+9. **Keep a status card at the top of the notes.** First lines `Now: <current state>`,
+   `Next: <next action>` (optional), `Blocked: <what, waiting on whom>` (only while blocked), and
+   `Done when: <completion condition>`; reference lines follow. Replace a card line in place
+   (`tsk list T12 --json`, then `tsk edit T12 --notes "…"` with the whole body), never append a
+   second one, and drop `Blocked:` once unblocked. The board shows only the first `Blocked:` line
+   (bold, on any task not done) or else the `Now:` line of a Doing task, under the row's title.
 
 ## Task-command exit contract
 

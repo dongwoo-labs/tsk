@@ -19,9 +19,10 @@ pub const CATALOG: [Guide; 4] = [
         title: "Welcome to tsk, start here",
         notes: "Hi. This is your board. Every task you make lives here. Take a minute with this one.\n\
                 \n\
-                **One board, three scopes**\n\
-                - `p` picks the scope. `all` shows every task from every project and your desk. `desk` shows Doing tasks from every project, plus Todo tasks that belong to no project. A project name shows only that project.\n\
-                - Rows follow task numbers. `S` groups them by project instead, and `S` again goes back.\n\
+                **One board, every project**\n\
+                - The board shows every task: your desk first, then each project under its own dim heading. Inside a project folder the cursor starts on that project.\n\
+                - Rows follow task numbers inside each group. A dim `✓2/5` counts checked steps.\n\
+                - Start notes with `Now: …` and the board shows that line under a Doing task. A `Blocked: …` line shows in bold.\n\
                 \n\
                 **Three human statuses**\n\
                 - **DOING** holds `doing` tasks. This task is Doing. Questions and agent execution status are separate.\n\
@@ -37,7 +38,7 @@ pub const CATALOG: [Guide; 4] = [
         status: HumanStatus::Doing,
         steps: &[
             ("Open this task with Enter", true),
-            ("Press Esc, then p to try each scope", false),
+            ("Press Esc and find each project's heading", false),
             ("Press ctrl+o and watch this task move to TODO", false),
         ],
     },

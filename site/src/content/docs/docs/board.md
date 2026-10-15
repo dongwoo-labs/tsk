@@ -1,23 +1,15 @@
 ---
 title: Board
-description: Find tasks, switch projects, answer questions, and keep work moving.
+description: Find tasks across every project, answer questions, and keep work moving.
 ---
 
 Click to navigate, or use the keyboard. The footer shows actions for the cursor or your marked task set; those actions are clickable.
 
 ## Navigate
 
-The top row holds the **1 board** and **2 questions** tabs, a scope control, and a sort control. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions). Press `p` or click the scope to choose what the board shows:
+The top row holds the **1 board** and **2 questions** tabs. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions).
 
-| Scope | Contents |
-| --- | --- |
-| **all** | Every live task: your desk and every live project |
-| **desk** | Doing tasks across all live projects; Todo tasks from your desk |
-| *project name* | Tasks in that project |
-
-Launching inside a Git repository opens that project. Outside Git, tsk opens **all**.
-
-Rows show the `T`/`N` number and the title; the section already names the status. A bold `!` follows when an approval on the task waits on you, and `?n` counts its other questions and findings waiting on you. A task with direct children adds a dim `⊂done/total` count at the right edge, such as `⊂1/3`; it counts children in every scope and status, archived ones included ([related tasks](/docs/task-page/#related-tasks)). Rows follow task numbers by default. Press `S` or click the sort control to group rows by project instead (desk first, then project path); press `S` again to return to number order. In project order on **all** or **desk**, a dim project name heads each group. The sort is session-only and never changes a task. The [CLI](/docs/cli/#list) keeps its own order.
+The board always shows every live task: your desk and every live project. Launching inside a Git repository puts the cursor on that project's first row; it does not hide the rest. See [Projects](#projects) and [Rows](#rows).
 
 In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one is already open in another tab there, Herdr switches to that tab and focuses its pane, preserving its view and edits. Otherwise, it opens a board beside your work. Boards in other workspaces stay untouched; all boards share the same tasks.
 
@@ -25,14 +17,37 @@ In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one i
 
 Press `ctrl+q` to quit from the board or a task view, including Help and pickers. While a text editor, board search, quick-add line, or palette query owns input, `ctrl+q` keeps its editing behavior instead. Unsaved drafts must be saved or cancelled before quitting, including a draft parked in the detail column while the list has focus. Save recovery must be resolved first; quit attempts leave its failure message intact.
 
-`Esc` leaves multi-select and clears its marked tasks before it closes the current layer. At the board root, with multi-select inactive and no page, popup, search, or header selection left to dismiss, it quits without confirmation. This applies on every scope. In the wide layout, `Esc` from the detail column returns focus to the list once any editor or overlay is dismissed; a task draft stays parked beside it. Quick capture's popup-close behavior is unchanged.
+`Esc` leaves multi-select and clears its marked tasks before it closes the current layer. At the board root, with multi-select inactive and no page, popup, search, or header selection left to dismiss, it quits without confirmation. In the wide layout, `Esc` from the detail column returns focus to the list once any editor or overlay is dismissed; a task draft stays parked beside it. Quick capture's popup-close behavior is unchanged.
 
 ## Projects
 
-Press `p` to choose a scope: **all**, **desk**, or a project.
+**DOING** and **TODO** group their rows by project: the desk first, then each live project by path. A dim project name heads each group. Inside a group, rows keep [board order](#status). Grouping is permanent and never changes a task; the [CLI](/docs/cli/#list) keeps its own order.
 
-- Click a choice to switch to it; `Enter` switches to the highlighted one.
-- Check the footer for the selected project's full path.
+Quick-add (`+`) files a new task under the project you launched tsk in when that project is live, and on your desk otherwise. A `!p` token in the title still picks another destination ([capture](/docs/capture/)).
+
+Archived projects and their tasks stay off the board. Archive or restore a project from the CLI with [`tsk project archive` and `tsk project unarchive`](/docs/cli/#project-archive--unarchive).
+
+## Rows
+
+Rows show the `T`/`N` number and the title; the section already names the status. A bold `!` follows when an approval on the task waits on you, and `?n` counts its other questions and findings waiting on you.
+
+At the right edge, dim counts show progress at a glance:
+
+| Count | Meaning |
+| --- | --- |
+| `✓2/5` | Checked steps out of all [steps](/docs/steps/) |
+| `⊂1/3` | Done direct children out of all children, in every scope and status, archived ones included ([related tasks](/docs/task-page/#related-tasks)) |
+
+A task with both shows `✓2/5 ⊂1/3`.
+
+Under the title, a row can show one status line from the task's notes, wrapped under the title text:
+
+| Notes line | Shown on | Paint |
+| --- | --- | --- |
+| `Blocked: …` | Any task that is not done | Bold, as `blocked: …` |
+| `Now: …` | Doing tasks without a `Blocked:` line | Dim, the text only |
+
+Keys are case-insensitive, a leading `- ` is allowed, and only the first matching line counts. Todo tasks show no `Now:` line; done tasks show neither. The [status card](/docs/task-page/#status-card) convention keeps these lines first in the notes.
 
 ## Search
 
@@ -40,7 +55,7 @@ Press `/` to search the rows the board currently shows. It matches tasks by titl
 
 Typing or pasting filters immediately. Empty sections disappear and section counts show only matches, the closed **DONE** heading's count included. Done rows appear only while the drawer is open.
 
-Press `Enter` to pin the query and return to board keys. Navigation, task actions, the done drawer, and a second `Enter` then act on the filtered rows; the query remains in the footer. Press `Esc` while typing to clear and close search, or press it once on a pinned board to clear the query before normal `Esc` behavior resumes. Changing scope also clears it.
+Press `Enter` to pin the query and return to board keys. Navigation, task actions, the done drawer, and a second `Enter` then act on the filtered rows; the query remains in the footer. Press `Esc` while typing to clear and close search, or press it once on a pinned board to clear the query before normal `Esc` behavior resumes.
 
 ## Status
 
@@ -50,11 +65,11 @@ Press `Enter` to pin the query and return to board keys. Navigation, task action
 | **TODO** | `todo` |
 | Done drawer | `done` |
 
-Questions do not create a blocked Task status. Human progress is independent of Herdr execution status. On the desk, **DOING** includes live project tasks and **TODO** contains only desk tasks. A project board shows its own tasks. Notice tasks lead within each group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group.
+Questions do not create a blocked Task status, and a `Blocked:` notes line only paints the row. Human progress is independent of Herdr execution status. Notice tasks lead within the desk group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group.
 
-Every section lists its rows in board order: `N` tasks first, then ascending `T` number, with tasks not yet numbered last. Editing a task, ticking a step, or setting a status never reorders a section; a status change only moves the task to its new section.
+Inside each project group, a section lists its rows in board order: `N` tasks first, then ascending `T` number, with tasks not yet numbered last. Editing a task, ticking a step, or setting a status never reorders a section; a status change only moves the task to its new section.
 
-Move the cursor with `↑`/`↓` or `j`/`k`. Press `Shift+M` to enter multi-select. While it is active, press `Space` to toggle the cursored task, hold `Shift` with `↑`/`↓` to mark the current task before moving, or click a task to toggle it. Marked rows show `▪`; the cursor remains `▸`. Removing the last mark leaves the mode active. `Shift+M` again while the board owns input, a task action, `Esc`, or a view change such as folding a group or switching scope or the done drawer exits the mode and clears the session-only set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
+Move the cursor with `↑`/`↓` or `j`/`k`. Press `Shift+M` to enter multi-select. While it is active, press `Space` to toggle the cursored task, hold `Shift` with `↑`/`↓` to mark the current task before moving, or click a task to toggle it. Marked rows show `▪`; the cursor remains `▸`. Removing the last mark leaves the mode active. `Shift+M` again while the board owns input, a task action, `Esc`, or a view change such as folding a group or switching the tab or the done drawer exits the mode and clears the session-only set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
 On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act on the marked set when it is non-empty. With no marks they act on the cursor. `Enter`, `ctrl+e`, and task-page actions remain cursor-only.
 
@@ -70,7 +85,7 @@ Agents can set any status with [the CLI](/docs/cli/#status). Task status does no
 
 ## Questions
 
-The **2 questions** tab lists the questions, approvals, and findings agents filed on an explicit Agent board (`TSK_STATE_DIR` set). The personal board records none and says so. When something waits on you, the board shows `waiting on you  approval n · question n · finding n  → 2` above its sections, with a separate `target unknown n` when records name no target; click it or press `2`. The tab's number counts approvals, questions, and findings waiting on you, and scope, sort, `p`, `S`, and search do not apply on it.
+The **2 questions** tab lists the questions, approvals, and findings agents filed on an explicit Agent board (`TSK_STATE_DIR` set). The personal board records none and says so. When something waits on you, the board shows `waiting on you  approval n · question n · finding n  → 2` above its sections, with a separate `target unknown n` when records name no target; click it or press `2`. The tab's number counts approvals, questions, and findings waiting on you, and board search does not apply on it.
 
 | Group | Contents |
 | --- | --- |
@@ -133,7 +148,7 @@ Your first board open seeds four desk tasks with `N` ids (not `T`). They teach t
 
 | Action | Result |
 | --- | --- |
-| Click a tab or selector | Change view or open its choices |
+| Click a tab | Change view |
 | Click a task outside multi-select | Select it; in wide panes the detail beside the list follows it and the list keeps focus |
 | Click a task or its `T`/`N` number in multi-select | Move the cursor there and toggle its mark |
 | Double-click a task | Open it: full screen in narrow panes, focused in the detail column in wide panes |
@@ -154,7 +169,7 @@ At **110 usable columns** or wider, the board is always two columns: the list on
 | `J` / `K` | On the detail or task page, open the next or previous task in list order |
 | `P` / `U` | On the detail or task page, choose or clear the task's parent |
 
-`J` and `K` skip group headings and follow the current scope, sort, search, and drawer. At either end they stay put and say `last task in this list` or `first task in this list`; if the open task has left the list, or a parent or child line opened a task the list does not show, they say `this task is not in the list · esc back`. `Enter` on a parent or child line of the detail opens that task without changing the list; `Esc` returns to the task before it. A task draft with unsaved changes refuses to switch until you save or cancel it.
+`J` and `K` skip group headings and follow the current grouping, search, and drawer. At either end they stay put and say `last task in this list` or `first task in this list`; if the open task has left the list, or a parent or child line opened a task the list does not show, they say `this task is not in the list · esc back`. `Enter` on a parent or child line of the detail opens that task without changing the list; `Esc` returns to the task before it. A task draft with unsaved changes refuses to switch until you save or cancel it.
 
 The list keeps the done drawer and archived fold state, so a done task opened from the drawer stays selected beside its detail. While editing, arrows move the text cursor instead.
 
@@ -168,7 +183,7 @@ Narrowing the pane shows one surface, the one that had focus; widening it restor
 
 ## Completed tasks
 
-The **DONE** heading starts closed: it shows the count of done tasks in the current scope with `d to open`, and no done rows, so the cursor, marks, and `J` / `K` skip them. Press `d` or click the heading to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
+The **DONE** heading starts closed: it shows the count of done tasks with `d to open`, and no done rows, so the cursor, marks, and `J` / `K` skip them. Press `d` or click the heading to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
 
 The drawer's **archived** group starts closed. Click its heading or press `Enter` on it to expand. `g` folds or unfolds the group while the drawer is open.
 
@@ -179,19 +194,15 @@ Archiving hides work without changing its status.
 | Archive | Restore |
 | --- | --- |
 | Task: select it and press `ctrl+f` | Open the done drawer's archived group, select it, then press `ctrl+u` or `ctrl+f` |
-| Project: press `p`, select it, then `ctrl+f` | Switch to the picker's **archived** tab, select it, then `ctrl+u` or `ctrl+f` |
+| Project: `tsk project archive <name or path>` | `tsk project unarchive <name or path>` |
 
-Use `Tab`, `←`, or `→` to switch project-picker tabs. Archiving has no undo entry.
+The board does not archive or restore projects; use the [CLI](/docs/cli/#project-archive--unarchive). Archiving has no undo entry.
 
-### View an archived project
-
-Press `Enter` on a project in the picker's **archived** tab. Its tasks open read-only. Press `ctrl+u` to restore the project, or `Esc` or `p` to leave.
-
-Archived projects are excluded from task-destination pickers. Restoring a project leaves individually archived tasks archived.
+Archived projects are excluded from task-destination pickers. Restoring a project leaves individually archived tasks archived. A task inside an archived project, reached from a [related task](/docs/task-page/#related-tasks) line, opens read-only.
 
 ### Launch inside an archived project
 
-tsk asks whether to restore it. Choose `y` to restore and open that project's board, or `n`/`Esc` to keep it archived. Keeping it archived sends new captures to your desk for that session.
+tsk asks whether to restore it. Choose `y` to restore it and put the cursor on that project's first row, or `n`/`Esc` to keep it archived. Keeping it archived sends new captures to your desk for that session.
 
 ## Delete and undo
 

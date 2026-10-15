@@ -41,7 +41,7 @@ test.beforeAll(async ({ browser }) => {
     ),
   );
 });
-// The fixture page (port 4178) mirrors tests/demo_parity.rs: desk scope, no Agent questions.
+// The fixture page (port 4178) mirrors tests/demo_parity.rs: every project, no Agent questions.
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const row = (page, n) => page.locator(`[data-task="${id(n)}"]`);
 async function open(page, width) {
@@ -78,22 +78,23 @@ for (const width of [78, 110]) {
   });
 }
 
-test("the tab row names two tabs, the scope, and the sort", async ({
+test("the tab row names only the two tabs and rows group by project", async ({
   page,
 }) => {
   await open(page, 78);
   await expect(page.locator(".tsk-tabs")).toHaveText(
-    " 1 board  ·  2 questions  ·  desk ▾  ·  sort number ▾",
+    " 1 board  ·  2 questions",
   );
   await expect(page.locator(".tsk-tab")).toHaveCount(2);
-  await page.keyboard.press("S");
-  await expect(page.locator("[data-sort]")).toHaveText("sort project ▾");
+  await expect(page.locator("[data-scope], [data-sort]")).toHaveCount(0);
   await expect(
     page.locator(".tsk-sub-label").filter({ hasText: "desk" }),
   ).toHaveCount(1);
+  await expect(
+    page.locator(".tsk-sub-label").filter({ hasText: "tsk-parity" }),
+  ).toHaveCount(2);
   await page.keyboard.press("p");
-  await expect(page.getByRole("dialog", { name: "scope" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.keyboard.press("2");
   await expect(page.locator("#tsk-demo")).toContainText(
     "this sample board has no Agent questions",

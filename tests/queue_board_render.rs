@@ -374,8 +374,6 @@ fn fixture_model_on_scope<'a>(
         nav: NavPaint {
             questions_tab: " 2 questions ".to_string(),
             active: NavTab::Board,
-            scope_label: if project { "tsk" } else { "desk" }.to_string(),
-            sort_label: "number",
         },
         surface: if project {
             tsk_tui::ui::render::BoardSurface::Project
@@ -459,7 +457,7 @@ fn board_rows(model: &BoardModel, width: u16, height: u16) -> Vec<String> {
 }
 
 #[test]
-fn inactive_selector_controls_are_dimmed() {
+fn inactive_selector_tab_is_dimmed() {
     let model = base_board_model();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
     terminal
@@ -473,10 +471,10 @@ fn inactive_selector_controls_are_dimmed() {
             let row = (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
             (y, row)
         })
-        .find(|(_, row)| row.contains("1 board") && row.contains("sort"))
+        .find(|(_, row)| row.contains("1 board") && row.contains("questions"))
         .expect("selector row with its tab digits");
-    let label = "sort";
-    let x = row[..row.find(label).expect("sort control")]
+    let label = "questions";
+    let x = row[..row.find(label).expect("questions tab")]
         .chars()
         .count() as u16;
     assert!(
@@ -484,7 +482,7 @@ fn inactive_selector_controls_are_dimmed() {
             .style()
             .add_modifier
             .contains(Modifier::DIM),
-        "inactive {label} control must be dimmed"
+        "inactive {label} tab must be dimmed"
     );
 }
 
@@ -575,11 +573,12 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         "selector must not paint a view switcher: {selector:?}"
     );
     assert!(
-        selector.contains("1 board")
-            && selector.contains("2 questions")
-            && selector.contains("desk ▾")
-            && selector.contains("sort number ▾"),
-        "selector must show both numbered tabs, scope, and sort: {selector:?}"
+        selector.contains("1 board") && selector.contains("2 questions"),
+        "selector must show both numbered tabs: {selector:?}"
+    );
+    assert!(
+        !selector.contains('▾') && !selector.contains("sort"),
+        "selector paints no scope or sort control: {selector:?}"
     );
 
     let list: String = rows
@@ -757,27 +756,7 @@ fn desk_and_project_focus_paint_needs_you_above_in_motion() {
         .set_status(blocked, HumanStatus::Doing)
         .expect("block");
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/tsk")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerNext,
-        None,
-    )
-    .expect("next");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .expect("focus project");
+    model.set_selected_project(Some(PathBuf::from("/repos/tsk")));
     let project_rows = board_rows(&model, 78, 24).join("\n");
     assert!(
         project_rows.contains("DOING"),
@@ -1030,7 +1009,6 @@ fn overlay_rows_are_padded_exact_no_base_bleed() {
         model.overlay = QueueOverlay::ScopeDropdown {
             options: &scope_opts,
             selected: 0,
-            tabs: None,
             title: None,
             query: None,
             wrap: None,
@@ -2506,14 +2484,8 @@ fn golden_scenes() -> Vec<GoldenScene> {
     )
     .expect("focus the wide detail for golden");
     let board_wide_detail_rows = board_rows(&wide_model, 110, 30);
-    let mut sorted_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
-    apply_intent(
-        &mut wide_domain,
-        &mut sorted_model,
-        BoardIntent::ToggleSort,
-        None,
-    )
-    .expect("project order for golden");
+    // The board always groups by project: desk first, then each project under its heading.
+    let sorted_model = BoardModel::from_tasks(tasks.clone(), Some(PathBuf::from("/repos/tsk")));
     let board_project_order_rows = board_rows(&sorted_model, 80, 30);
 
     let mut search_domain = DomainState::new();
@@ -3384,47 +3356,13 @@ fn archived_task_paints_in_no_working_lens_in_any_status_at_any_tier() {
         domain.archive_task(archived_id).expect("archive it");
         let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/lens")));
 
-        // Scope setups: every scope, the desk, project order, and the project board.
-        let lens_names = ["all", "desk", "project order", "project board"];
+        // Scope setups: every scope (grouped by project), the desk, and the project board.
+        let lens_names = ["all", "desk", "project board"];
         for (lens_index, lens) in lens_names.iter().enumerate() {
             match lens_index {
-                0 => model.set_selected_project(None),
-                1 => {
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::OpenProjectSelector,
-                        None,
-                    )
-                    .expect("open picker");
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::SelectProjectOption(0),
-                        None,
-                    )
-                    .expect("every scope");
-                }
-                2 => {
-                    apply_intent(&mut domain, &mut model, BoardIntent::ToggleSort, None)
-                        .expect("project order");
-                }
-                _ => {
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::OpenProjectSelector,
-                        None,
-                    )
-                    .expect("open picker");
-                    apply_intent(
-                        &mut domain,
-                        &mut model,
-                        BoardIntent::SelectProjectOption(2),
-                        None,
-                    )
-                    .expect("focus the project");
-                }
+                0 => {}
+                1 => model.set_selected_project(None),
+                _ => model.set_selected_project(Some(PathBuf::from("/repos/lens"))),
             }
 
             for (width, height) in [(80u16, 24u16), (40u16, 10u16)] {
@@ -3709,82 +3647,7 @@ fn task_page_header_slot_reads_archived_for_an_archived_task() {
 }
 
 #[test]
-fn archived_tab_lists_exactly_the_archived_projects_and_paints_an_empty_state_line() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "app task",
-            None,
-            TaskScope::Project {
-                path: "/repos/zebra".into(),
-            },
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/zebra")));
-
-    // Empty archived tab: the tabs row paints and an empty-state line names the gap.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("switch to the archived tab");
-    let rows = board_rows(&model, 80, 24);
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("projects") && row.contains("archived")),
-        "the tabs row paints:\n{}",
-        rows.join("\n")
-    );
-    assert!(
-        rows.iter().any(|row| row.contains("no archived projects")),
-        "an empty archived tab paints an empty-state line:\n{}",
-        rows.join("\n")
-    );
-
-    // Archive the project elsewhere, reopen, switch: the tab lists exactly it.
-    domain
-        .archive_project("/repos/zebra")
-        .expect("archive zebra");
-    model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/zebra")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("switch to the archived tab");
-    let rows = board_rows(&model, 80, 24);
-    assert!(
-        rows.iter().any(|row| row.contains("zebra")),
-        "the archived tab lists the archived project:\n{}",
-        rows.join("\n")
-    );
-    assert!(
-        !rows.iter().any(|row| row.contains("no archived projects")),
-        "the empty-state line yields to the entry:\n{}",
-        rows.join("\n")
-    );
-}
-
-#[test]
-fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
+fn archived_project_paints_nowhere_on_every_scope() {
     let mut domain = DomainState::new();
     domain
         .create(
@@ -3813,23 +3676,9 @@ fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/here")));
 
     for desk in [false, true] {
+        // The board starts on every live project, grouped; `desk` pins the desk scope.
         if desk {
             model.set_selected_project(None);
-        } else {
-            apply_intent(
-                &mut domain,
-                &mut model,
-                BoardIntent::OpenProjectSelector,
-                None,
-            )
-            .expect("open picker");
-            apply_intent(
-                &mut domain,
-                &mut model,
-                BoardIntent::SelectProjectOption(0),
-                None,
-            )
-            .expect("every scope");
         }
         let rows = board_rows(&model, 80, 24);
         assert!(
@@ -3837,27 +3686,18 @@ fn archived_project_paints_nowhere_on_every_scope_or_the_picker_main_list() {
             "desk={desk}: the archived project's task paints:\n{}",
             rows.join("\n")
         );
+        // Not even as a project group heading.
+        assert!(
+            !rows.iter().any(|row| row.contains("gone")),
+            "desk={desk}: the archived project paints:\n{}",
+            rows.join("\n")
+        );
     }
-
-    // The picker's main list skips it too.
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
+    model.set_selected_project(Some(PathBuf::from("/repos/here")));
     let rows = board_rows(&model, 80, 24);
-    // The picker paints basenames: the archived project's basename must be gone while
-    // the live project's stays.
     assert!(
-        !rows.iter().any(|row| row.contains("gone")),
-        "picker main list paints the archived project:\n{}",
-        rows.join("\n")
-    );
-    assert!(
-        rows.iter().any(|row| row.contains("here")),
-        "picker main list keeps the live project:\n{}",
+        rows.iter().any(|row| row.contains("here task")),
+        "the live project keeps its task:\n{}",
         rows.join("\n")
     );
 }
@@ -4048,218 +3888,6 @@ fn archived_header_reads_chevron_word_dot_count_and_selection_is_bold_not_revers
 }
 
 #[test]
-fn picker_paints_a_dim_rule_under_its_tabs() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "picker task",
-            None,
-            TaskScope::Global,
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("switch to the archived tab");
-
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw board");
-    let buffer = terminal.backend().buffer();
-    assert_buffer_mono(buffer);
-    let tabs_y = (0..24)
-        .map(|y| {
-            let row: String = (0..80).map(|x| buffer[(x, y)].symbol()).collect();
-            (y, row)
-        })
-        .find(|(_, row)| row.contains("projects") && row.contains("archived"))
-        .expect("tabs row paints")
-        .0;
-    let rule_row: String = (0..80).map(|x| buffer[(x, tabs_y + 1)].symbol()).collect();
-    let rule_cells = rule_row.matches('─').count();
-    assert!(
-        rule_cells >= 4,
-        "a dim rule row paints directly under the tabs: {rule_row:?}"
-    );
-    assert!(
-        buffer[(20, tabs_y + 1)]
-            .style()
-            .add_modifier
-            .contains(ratatui::style::Modifier::DIM),
-        "the rule is dim: {rule_row:?}"
-    );
-}
-
-#[test]
-fn archived_tab_verb_bar_advertises_ctrl_u_enter_esc() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "filed task",
-            None,
-            TaskScope::Project {
-                path: "/repos/filed".into(),
-            },
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create");
-    domain.archive_project("/repos/filed").expect("archive");
-    let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker");
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ProjectPickerSwitchTab,
-        None,
-    )
-    .expect("archived tab");
-
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw");
-    let buffer = terminal.backend().buffer();
-    assert_buffer_mono(buffer);
-    let frame: String = (0..24)
-        .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        frame.contains("ctrl+u unarchive \u{b7} enter open \u{b7} esc close"),
-        "the archived tab's footer reads its own verbs:\n{frame}"
-    );
-}
-
-#[test]
-fn project_picker_main_tab_advertises_archive() {
-    let mut domain = DomainState::new();
-    domain
-        .create(
-            "picker task",
-            None,
-            project("/repos/picker"),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/picker")));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("project picker");
-    let main = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        main.contains("↑↓ move \u{b7} enter choose \u{b7} ctrl+f archive \u{b7} esc close"),
-        "main project picker must advertise archive:\n{main}"
-    );
-
-    // The compact card caps near 34 content columns: the legend keeps only the seat that
-    // is not guessable, rather than clipping the archive seat mid-word.
-    let compact = board_rows(&model, 40, 10).join("\n");
-    let legend_row = compact
-        .lines()
-        .find(|line| line.contains("ctrl+f"))
-        .expect("compact legend painted");
-    assert!(
-        legend_row.contains("ctrl+f archive \u{b7} esc close"),
-        "compact picker keeps the archive seat readable:\n{compact}"
-    );
-    assert!(
-        !legend_row.contains("…"),
-        "no mid-word clipping in the compact legend: {legend_row}"
-    );
-}
-
-#[test]
-fn picker_list_capacity_counts_the_rule_row_on_a_short_frame() {
-    let mut domain = DomainState::new();
-    for index in 0..10 {
-        domain
-            .create(
-                format!("task {index}"),
-                None,
-                TaskScope::Project {
-                    path: format!("/repos/p{index}"),
-                },
-                ProvenanceOrigin::Manual,
-            )
-            .expect("create");
-    }
-    let mut model = BoardModel::from_domain(&domain, None);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("picker");
-    // Walk the selection onto the last option: it must stay painted, not clipped by the
-    // rule row the card also spends a content row on.
-    let last = model.project_options().len() - 1;
-    let label = match &model.project_options()[last] {
-        tsk_tui::ui::board::ProjectScopeOption::All => "all".to_string(),
-        tsk_tui::ui::board::ProjectScopeOption::Home => "desk".to_string(),
-        tsk_tui::ui::board::ProjectScopeOption::Project(path) => {
-            tsk_tui::ui::board::project_option_label(path.as_path())
-        }
-    };
-    while model.project_picker_index() != Some(last) {
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .expect("next");
-    }
-
-    let backend = TestBackend::new(78, 12);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| {
-            let _ = draw_board(frame, &model);
-        })
-        .expect("draw");
-    let buffer = terminal.backend().buffer();
-    assert_buffer_mono(buffer);
-    let frame: String = (0..12)
-        .map(|y| (0..78).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        frame.contains(&format!("\u{25b8} {label}")),
-        "the selected last option paints on a short frame:\n{frame}"
-    );
-}
-
-#[test]
 fn real_quick_add_paints_its_destination() {
     let mut domain = DomainState::new();
     domain
@@ -4272,8 +3900,23 @@ fn real_quick_add_paints_its_destination() {
             ProvenanceOrigin::Manual,
         )
         .expect("task");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/beta")));
-    apply_intent(&mut domain, &mut model, BoardIntent::OpenCapture, None).expect("quick add");
+    // Launched inside the project: the every-project board's quick-add goes there.
+    let snapshot = tsk_tui::context::InvocationSnapshot {
+        default_scope: TaskScope::Project {
+            path: "/repos/beta".into(),
+        },
+        this_repo: Some(PathBuf::from("/repos/beta")),
+        title_prefill: None,
+        provenance: ProvenanceOrigin::Capture,
+    };
+    let mut model = BoardModel::from_domain_for_snapshot(&domain, &snapshot);
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::OpenCapture,
+        Some(&snapshot),
+    )
+    .expect("quick add");
     let text = board_rows(&model, 162, 43).join("\n");
     assert!(
         text.contains("add to beta"),
@@ -4281,20 +3924,25 @@ fn real_quick_add_paints_its_destination() {
     );
 }
 
+/// Two projects that share a basename keep separate group headings: the run boundary is
+/// the stored path, only the label is short.
 #[test]
-fn scope_control_names_the_active_scope() {
-    let domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/alpha")));
-    let text = board_rows(&model, 80, 24).join("\n");
-    assert!(
-        text.contains("alpha ▾"),
-        "project scope label missing:\n{text}"
-    );
-    model.set_selected_project(None);
-    let text = board_rows(&model, 80, 24).join("\n");
-    assert!(text.contains("desk ▾"), "desk scope label missing:\n{text}");
-    assert!(
-        text.contains("sort number ▾"),
-        "sort control missing:\n{text}"
-    );
+fn projects_sharing_a_basename_each_get_a_heading() {
+    let mut domain = DomainState::new();
+    for path in ["/work/a/app", "/work/b/app"] {
+        domain
+            .create(
+                format!("task in {path}"),
+                None,
+                TaskScope::Project {
+                    path: path.to_string(),
+                },
+                ProvenanceOrigin::Manual,
+            )
+            .expect("create task");
+    }
+    let model = BoardModel::from_domain(&domain, None);
+    let rows = board_rows(&model, 80, 24);
+    let headings = rows.iter().filter(|row| row.trim() == "app").count();
+    assert_eq!(headings, 2, "{}", rows.join("\n"));
 }

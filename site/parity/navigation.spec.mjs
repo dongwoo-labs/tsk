@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-// The built landing page (port 4180) runs the demo on its sample data: launchpad scope and
+// The built landing page (port 4180) runs the demo on its sample data: launched in launchpad, with
 // sample Agent questions. Nothing in it is stored, sent, or approved.
 const LANDING = "http://127.0.0.1:4180/";
 const row = (page, n) => page.locator(`[data-task="t${n}"]`);
@@ -40,38 +40,49 @@ test("full terminal opens with the list and the selected task side by side", asy
   await expect(page.locator(".tsk-task-header")).toBeVisible();
 });
 
-test("the sample board opens on launchpad and p reaches desk and all", async ({
+test("the sample board shows every project grouped, cursor on launchpad", async ({
   page,
 }) => {
   await page.goto(LANDING);
-  await expect(page.locator("[data-scope]")).toHaveText("launchpad ▾");
+  await expect(page.locator("[data-scope], [data-sort]")).toHaveCount(0);
+  await expect(page.locator(".tsk-sec").nth(1)).toHaveText(/^TODO/);
+  for (const label of ["desk", "launchpad", "website"])
+    await expect(
+      page.locator(".tsk-sub-label").filter({ hasText: label }).first(),
+    ).toBeVisible();
   for (const title of [
     "Make webhook delivery idempotent",
     "Trace worker queue saturation",
+    "Plan the support handoff",
+    "Record the retry runbook",
+    "Review error states",
   ])
     await expect(
       page.locator("[data-task]").filter({ hasText: title }),
     ).toHaveCount(1);
-  await page.locator("[data-scope]").click();
-  await page.locator('[data-pick="desk"]').click();
-  await expect(page.locator(".tsk-sec").nth(1)).toContainText("TODO · desk");
-  for (const title of ["Plan the support handoff", "Record the retry runbook"])
-    await expect(
-      page.locator("[data-task]").filter({ hasText: title }),
-    ).toHaveCount(1);
-  await page.locator("[data-scope]").click();
-  await page.locator('[data-pick="all"]').click();
-  await expect(
-    page.locator("[data-task]").filter({ hasText: "Review error states" }),
-  ).toHaveCount(1);
+  await expect(row(page, 12)).toContainText("▸  T12");
 });
 
 test("rows carry question marks and the child count; the waiting line opens tab 2", async ({
   page,
 }) => {
   await page.goto(LANDING);
-  await expect(row(page, 12).locator(".tsk-row-tail")).toHaveText("! ?1 ⊂1/2");
-  await expect(row(page, 13).locator(".tsk-row-tail")).toHaveText("?2");
+  await expect(row(page, 12).locator(".tsk-row-tail")).toHaveText(
+    "! ?1 ✓1/3 ⊂1/2",
+  );
+  await expect(row(page, 13).locator(".tsk-row-tail")).toHaveText("?2 ✓0/3");
+  // The notes' status card: a Doing task's Now line dim, a Blocked line bold.
+  // A long line wraps under the title onto more than one row.
+  expect(
+    (await row(page, 12).locator(".tsk-row-status").allTextContents())
+      .map((line) => line.trim())
+      .join(" "),
+  ).toBe("rotating tokens in the refresh endpoint");
+  expect(
+    (await row(page, 15).locator(".tsk-row-status").allTextContents())
+      .map((line) => line.trim())
+      .join(" "),
+  ).toMatch(/^blocked: staging client registration/);
   await expect(page.locator("[data-waiting]")).toContainText(
     "waiting on you  approval 1 · question 2 · finding 1 · target unknown 1  → 2",
   );

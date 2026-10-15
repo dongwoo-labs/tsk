@@ -1,7 +1,7 @@
 # Demo parity harness
 
 The harness compares the browser demo with Rust-rendered reference frames.
-It also exercises the built homepage: scope and sort, the questions tab on the
+It also exercises the built homepage: project groups and row progress, the questions tab on the
 sample questions, related tasks and links, task steps, selection styling, and
 the sample CLI output using a disposable store.
 

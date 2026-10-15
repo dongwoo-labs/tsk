@@ -19,7 +19,10 @@ import { parseCapture } from "./capture.js";
     document.getElementById("tsk-demo-fixture")?.textContent || "null",
   );
   const clock = () => fixture?.now ?? Date.now();
-  const launchProject = () => fixture?.selectedProject || "launchpad";
+  // The project the board was "launched" in: quick-add files there and the cursor starts
+  // on its first row. The parity fixture launches outside any project, like its reference.
+  const launchProject = () =>
+    fixture ? (fixture.launchProject ?? null) : "launchpad";
   const NOW = clock();
   const MIN = 60 * 1000;
 
@@ -67,7 +70,7 @@ import { parseCapture } from "./capture.js";
         status: "doing",
         project: "launchpad",
         notes:
-          "Store a hash of each refresh token and revoke its token family if an old token is reused.\nLinear: LAUNCH-12 https://linear.app/example/issue/LAUNCH-12\nThread: thr-launch-12 w1 t2 p3",
+          "Now: rotating tokens in the refresh endpoint\nDone when: a reused token revokes its whole family\nStore a hash of each refresh token and revoke its token family if an old token is reused.\nLinear: LAUNCH-12 https://linear.app/example/issue/LAUNCH-12\nThread: thr-launch-12 w1 t2 p3",
         steps: steps("s12", [
           ["Add token-family storage", true],
           ["Rotate tokens in the refresh endpoint", false],
@@ -102,7 +105,7 @@ import { parseCapture } from "./capture.js";
         project: "launchpad",
         parent: "t12",
         notes:
-          "Waiting for the identity provider's staging client registration. The callback handler is ready.",
+          "Blocked: staging client registration, waiting on the identity provider\nThe callback handler is ready.",
         steps: steps("s15", [
           ["Verify the redirect URI", true],
           ["Register the staging client", false],
@@ -266,8 +269,6 @@ import { parseCapture } from "./capture.js";
     // null: no Agent questions on this board (the parity fixture), as on a personal board.
     questions: fixture ? (fixture.questions ?? null) : seedQuestions(),
     tab: "board",
-    scope: fixture?.scope ?? launchProject(),
-    sort: "number",
     searchQuery: "",
     searchPinned: false,
     selectedId: null,
@@ -285,7 +286,6 @@ import { parseCapture } from "./capture.js";
     paletteQ: "",
     paletteI: 0,
     helpQ: "",
-    pickerI: 0,
     parentQ: "",
     parentI: 0,
     // Narrow: the task page owns the screen. Wide: the detail beside the list has focus.
@@ -345,12 +345,25 @@ import { parseCapture } from "./capture.js";
     for (const t of state.tasks) if (t.project) names.add(t.project);
     return [...names].sort();
   }
-  const scopeOptions = () => ["all", "desk", ...projectNames()];
 
-  function inScope(task) {
-    if (state.scope === "all") return true;
-    if (state.scope === "desk") return !task.project || task.status === "doing";
-    return task.project === state.scope;
+  // The status-card line under a row's title, as the app paints it: a `Blocked:` notes line
+  // on any open task (bold), else a `Now:` line on a Doing task (dim). First match only.
+  function rowStatusLine(task) {
+    if (task.status === "done") return null;
+    const value = (key) => {
+      for (const raw of String(task.notes || "").split("\n")) {
+        const line = raw.trim().replace(/^- /, "").trimStart();
+        const at = line.indexOf(":");
+        if (at < 0) continue;
+        const rest = line.slice(at + 1).trim();
+        if (line.slice(0, at).trim().toLowerCase() === key && rest) return rest;
+      }
+      return null;
+    };
+    const blocked = value("blocked");
+    if (blocked) return { text: `blocked: ${blocked}`, bold: true };
+    const now = task.status === "doing" ? value("now") : null;
+    return now ? { text: now, bold: false } : null;
   }
 
   function taskMatchesSearch(task, query) {
@@ -370,31 +383,37 @@ import { parseCapture } from "./capture.js";
 
   function buildRows() {
     const rows = [];
-    const live = state.tasks.filter((t) => !t.archived && inScope(t));
+    const live = state.tasks.filter((t) => !t.archived);
     const match = (t) => taskMatchesSearch(t, state.searchQuery);
+    // Always grouped by project: desk first, then each project, number order inside.
+    // Every section uses it, the done drawer and its archived group included.
+    const pushGrouped = (tasks, dim) => {
+      const groups = new Map();
+      for (const t of tasks) {
+        const key = projectName(t);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(t);
+      }
+      const keys = [...groups.keys()].sort((a, b) =>
+        a === "desk" ? -1 : b === "desk" ? 1 : a.localeCompare(b),
+      );
+      for (const key of keys) {
+        rows.push({ kind: "sub", label: key });
+        for (const t of groups.get(key).sort(byNumber))
+          rows.push({
+            kind: "task",
+            task: t,
+            id: t.id,
+            selectable: true,
+            ...(dim ? { dim: true } : {}),
+          });
+      }
+    };
     const section = (label, tasks, kind) => {
       if (!tasks.length && state.searchQuery.trim()) return;
       if (!tasks.length && kind !== "todo") return;
       rows.push({ kind: "section", label, count: tasks.length });
-      if (state.sort === "project") {
-        const groups = new Map();
-        for (const t of tasks) {
-          const key = projectName(t);
-          if (!groups.has(key)) groups.set(key, []);
-          groups.get(key).push(t);
-        }
-        const keys = [...groups.keys()].sort((a, b) =>
-          a === "desk" ? -1 : b === "desk" ? 1 : a.localeCompare(b),
-        );
-        for (const key of keys) {
-          rows.push({ kind: "sub", label: key });
-          for (const t of groups.get(key).sort(byNumber))
-            rows.push({ kind: "task", task: t, id: t.id, selectable: true });
-        }
-      } else {
-        for (const t of tasks.sort(byNumber))
-          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
-      }
+      pushGrouped(tasks, false);
     };
     section(
       "DOING",
@@ -402,7 +421,7 @@ import { parseCapture } from "./capture.js";
       "doing",
     );
     section(
-      state.scope === "desk" ? "TODO · desk" : "TODO",
+      "TODO",
       live.filter((t) => t.status === "todo" && match(t)),
       "todo",
     );
@@ -420,12 +439,9 @@ import { parseCapture } from "./capture.js";
     if (state.drawer) {
       if (done.length) {
         rows.push({ kind: "section", label: "DONE", count: done.length });
-        for (const t of done)
-          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
+        pushGrouped(done, false);
       }
-      const archived = state.tasks.filter(
-        (t) => t.archived && inScope(t) && match(t),
-      );
+      const archived = state.tasks.filter((t) => t.archived && match(t));
       if (archived.length) {
         rows.push({
           kind: "archived",
@@ -433,15 +449,7 @@ import { parseCapture } from "./capture.js";
           id: "nav:archived",
           selectable: true,
         });
-        if (state.archivedOpen)
-          for (const t of archived)
-            rows.push({
-              kind: "task",
-              task: t,
-              id: t.id,
-              selectable: true,
-              dim: true,
-            });
+        if (state.archivedOpen) pushGrouped(archived, true);
       }
     }
     return rows;
@@ -1154,17 +1162,6 @@ import { parseCapture } from "./capture.js";
     state.undo = null;
     state.message = "";
   }
-  function setScope(scope) {
-    if (hasUnsavedWork()) return;
-    clearMarks();
-    state.scope = scope;
-    state.searchQuery = "";
-    state.searchPinned = false;
-    state.trail = [];
-    state.page = false;
-    state.message = "";
-    ensureSelection();
-  }
   function selectTab(tab) {
     if (tab === state.tab) {
       if (tab === "board") {
@@ -1482,8 +1479,8 @@ import { parseCapture } from "./capture.js";
   }
 
   // ── quick-add ─────────────────────────────────────────────────────────────
-  const fallbackProject = () =>
-    state.scope === "all" || state.scope === "desk" ? null : state.scope;
+  // Quick-add files under the launch project (always live in the demo), else the desk.
+  const fallbackProject = () => launchProject();
   function openQuickAdd() {
     if (hasUnsavedWork()) return;
     state.overlay = "quick";
@@ -1510,7 +1507,7 @@ import { parseCapture } from "./capture.js";
       updatedAt: clock(),
     };
     state.tasks.push(task);
-    if (inScope(task)) state.selectedId = task.id;
+    state.selectedId = task.id;
     flash([task]);
     state.draft = "";
     state.refuse = "";
@@ -1578,7 +1575,7 @@ import { parseCapture } from "./capture.js";
     state.edit = null;
     state.overlay = null;
     steps.reset();
-    if (inScope(task)) state.selectedId = task.id;
+    state.selectedId = task.id;
     flash([task]);
   }
 
@@ -1633,8 +1630,6 @@ import { parseCapture } from "./capture.js";
     state.questions = fixture ? (fixture.questions ?? null) : seedQuestions();
     Object.assign(state, {
       tab: "board",
-      scope: fixture?.scope ?? launchProject(),
-      sort: "number",
       searchQuery: "",
       searchPinned: false,
       selectedId: null,
@@ -1661,6 +1656,17 @@ import { parseCapture } from "./capture.js";
       comments: {},
     };
     steps.reset();
+    focusLaunchProject();
+  }
+
+  // Launching inside a project starts the cursor on that project's first row; the board
+  // still shows every project.
+  function focusLaunchProject() {
+    const launch = launchProject();
+    const first = buildRows().find(
+      (row) => row.kind === "task" && row.task.project === launch,
+    );
+    if (launch && first) state.selectedId = first.id;
   }
 
   const HELP = [
@@ -1684,8 +1690,6 @@ import { parseCapture } from "./capture.js";
     ["create & edit", "P / U", "choose / clear the parent", "relation"],
     ["views & find", "1", "board tab", "switch"],
     ["views & find", "2", "questions tab", "agent answer approve"],
-    ["views & find", "p", "scope: all, desk, or a project", "project"],
-    ["views & find", "S", "sort by number / by project", "order"],
     ["views & find", "z / D", "done drawer", "completed"],
     ["views & find", "g", "fold / unfold archived", "drawer"],
     ["views & find", "/", "search board", "find filter"],
@@ -1704,33 +1708,15 @@ import { parseCapture } from "./capture.js";
   // ── rendering ─────────────────────────────────────────────────────────────
   function renderTabs(width) {
     const count = questionsLoaded() && forYou() ? ` ·${forYou()}` : "";
-    const scope = `${state.scope} ▾`;
-    const sort = `sort ${state.sort} ▾`;
-    const variants = [
-      ["questions", sort],
-      ["questions", sort.replace("sort ", "")],
-      ["", sort.replace("sort ", "")],
-    ];
     const sep = "  ·  ";
-    const onBoard = state.tab === "board";
-    let chosen = variants[variants.length - 1];
-    for (const v of variants) {
-      const label = `2${v[0] ? ` ${v[0]}` : ""}${count}`;
-      const parts = onBoard
-        ? ["1 board", label, scope, v[1]]
-        : ["1 board", label];
-      if ((" " + parts.join(sep)).length <= width) {
-        chosen = v;
-        break;
-      }
-    }
-    const qLabel = `2${chosen[0] ? ` ${chosen[0]}` : ""}${count}`;
+    // The top row holds only the two tabs; a narrow pane drops the word `questions`.
+    const full = `2 questions${count}`;
+    const qLabel =
+      (" " + ["1 board", full].join(sep)).length <= width ? full : `2${count}`;
     const tab = (name, text) =>
       `<span class="tsk-tab-group ${state.tab === name ? "is-on" : ""}"><button type="button" class="tsk-tab ${state.tab === name ? "is-on" : ""}" data-tab="${name}">${esc(text)}</button></span>`;
     const dot = `<span class="dim">${sep}</span>`;
-    let html = ` ${tab("board", "1 board")}${dot}${tab("questions", qLabel)}`;
-    if (onBoard)
-      html += `${dot}<button type="button" class="tsk-selector dim" data-scope="1">${esc(scope)}</button>${dot}<button type="button" class="tsk-selector dim" data-sort="1">${esc(chosen[1])}</button>`;
+    const html = ` ${tab("board", "1 board")}${dot}${tab("questions", qLabel)}`;
     return `<div class="tsk-tabs">${html}</div>`;
   }
 
@@ -1748,9 +1734,18 @@ import { parseCapture } from "./capture.js";
     const prefix = `${selected ? "▸" : " "}${marked ? "▪" : " "} `;
     const id = `T${task.number}`;
     const kids = children(task);
-    const badge = kids.length
-      ? `⊂${kids.filter((c) => c.status === "done").length}/${kids.length}`
-      : "";
+    const rowSteps = task.steps || [];
+    // `✓done/total` steps, then `⊂done/total` children: progress at a glance.
+    const badge = [
+      rowSteps.length
+        ? `✓${rowSteps.filter((step) => step.done).length}/${rowSteps.length}`
+        : "",
+      kids.length
+        ? `⊂${kids.filter((c) => c.status === "done").length}/${kids.length}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     const alert = taskMarks(task);
     const tailWidth = alert.length + badge.length + (alert && badge ? 1 : 0);
     const room = Math.max(
@@ -1762,9 +1757,20 @@ import { parseCapture } from "./capture.js";
         1 -
         (tailWidth ? tailWidth + 1 : 0),
     );
-    const title = wrapText(task.title, room)
-      .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
-      .join("");
+    const status = rowStatusLine(task);
+    const statusLines = status
+      ? wrapText(status.text, room)
+          .map((line) =>
+            status.bold && !row.dim
+              ? `<b class="tsk-title-line tsk-row-status">${esc(line)}</b>`
+              : `<span class="tsk-title-line tsk-row-status dim">${esc(line)}</span>`,
+          )
+          .join("")
+      : "";
+    const title =
+      wrapText(task.title, room)
+        .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
+        .join("") + statusLines;
     const tail = tailWidth
       ? `<span class="tsk-row-tail">${alert ? `<b class="tsk-alert">${esc(alert)}</b>` : ""}${alert && badge ? " " : ""}${badge ? `<span class="dim">${esc(badge)}</span>` : ""}</span>`
       : "";
@@ -1800,7 +1806,7 @@ import { parseCapture } from "./capture.js";
       : "";
     const empty = state.searchQuery.trim()
       ? `no tasks match &quot;${esc(state.searchQuery.trim())}&quot;`
-      : "no open tasks here — p rescope or + add";
+      : "no open tasks here — + add";
     return `${renderTabs(width)}${waitingRow}<div class="tsk-list">${body || `<div class="dim">    ${empty}</div>`}</div>`;
   }
 
@@ -2064,8 +2070,8 @@ import { parseCapture } from "./capture.js";
     }
     const base =
       state.searchPinned && state.searchQuery.trim()
-        ? `${state.scope} · /${state.searchQuery.trim()}`
-        : state.scope;
+        ? `all · /${state.searchQuery.trim()}`
+        : "all";
     if (state.markMode)
       return state.markedIds.size
         ? `multi-select · ${state.markedIds.size} selected · esc clears`
@@ -2210,16 +2216,6 @@ import { parseCapture } from "./capture.js";
       .join("");
     return `<div class="tsk-box tsk-palette" role="dialog" aria-label="command"><div class="tsk-box-top"><span class="tsk-box-title">command</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-box-body">${list || `<div class="dim">  no matches</div>`}</div><div class="tsk-box-foot">↑/↓ move · enter run · esc close · type to filter</div></div><div class="tsk-input-row"><span class="tsk-prompt">:</span><span class="tsk-draft">${esc(state.paletteQ)}</span><span class="cursor">█</span></div>`;
   }
-  function renderScopePicker() {
-    const opts = scopeOptions();
-    const list = opts
-      .map(
-        (name, i) =>
-          `<div class="tsk-pal-row" data-pick="${esc(name)}"><span class="${i === state.pickerI ? "sel-text" : ""}">${i === state.pickerI ? "▸" : " "} ${esc(name)}${name === state.scope ? " · current" : ""}</span></div>`,
-      )
-      .join("");
-    return `<div class="tsk-box tsk-palette" role="dialog" aria-label="scope"><div class="tsk-box-top"><span class="tsk-box-title">scope</span><button type="button" class="tsk-box-close" data-close="1" aria-label="close">[x]</button></div><div class="tsk-box-body">${list}</div><div class="tsk-box-foot">↑/↓ move · enter open · esc close</div></div>`;
-  }
   function renderParentPicker() {
     const opts = parentOptions();
     if (state.parentI >= opts.length)
@@ -2252,7 +2248,6 @@ import { parseCapture } from "./capture.js";
       }
       if (state.overlay === "help") html += renderHelp();
       if (state.overlay === "palette") html += renderPalette();
-      if (state.overlay === "picker") html += renderScopePicker();
       if (state.overlay === "parent") html += renderParentPicker();
       const oldScroll = root.querySelector(".tsk-task-surface")?.scrollTop ?? 0;
       const keepKeys =
@@ -2447,20 +2442,6 @@ import { parseCapture } from "./capture.js";
         state.paletteQ += e.key;
         state.paletteI = 0;
       }
-      render();
-      return true;
-    }
-    if (o === "picker") {
-      e.preventDefault();
-      const opts = scopeOptions();
-      if (e.key === "Escape" || e.key === "q") state.overlay = null;
-      else if (e.key === "Enter") {
-        state.overlay = null;
-        setScope(opts[state.pickerI]);
-      } else if (e.key === "ArrowDown" || e.key === "j")
-        state.pickerI = Math.min(opts.length - 1, state.pickerI + 1);
-      else if (e.key === "ArrowUp" || e.key === "k")
-        state.pickerI = Math.max(0, state.pickerI - 1);
       render();
       return true;
     }
@@ -2759,13 +2740,7 @@ import { parseCapture } from "./capture.js";
     } else if (bare && e.key === "+") openQuickAdd();
     else if (bare && (e.key === "1" || e.key === "2"))
       selectTab(e.key === "1" ? "board" : "questions");
-    else if (bare && e.key === "p") {
-      state.overlay = "picker";
-      state.pickerI = Math.max(0, scopeOptions().indexOf(state.scope));
-    } else if (bare && e.key === "S") {
-      clearMarks();
-      state.sort = state.sort === "number" ? "project" : "number";
-    } else if (bare && (e.key === "z" || e.key === "D")) {
+    else if (bare && (e.key === "z" || e.key === "D")) {
       clearMarks();
       state.drawer = !state.drawer;
     } else if (bare && e.key === "g" && state.drawer) {
@@ -2917,18 +2892,10 @@ import { parseCapture } from "./capture.js";
       const cmd = paletteCommands().find((c) => c.id === node.dataset.cmd);
       state.overlay = null;
       cmd?.run();
-    } else if ((node = hit("[data-pick]"))) {
-      state.overlay = null;
-      setScope(node.dataset.pick);
     } else if ((node = hit("[data-parent-option]"))) {
       chooseParent(Number(node.dataset.parentOption));
     } else if ((node = hit("[data-tab]"))) {
       selectTab(node.dataset.tab);
-    } else if (hit("[data-scope]")) {
-      state.overlay = "picker";
-      state.pickerI = Math.max(0, scopeOptions().indexOf(state.scope));
-    } else if (hit("[data-sort]")) {
-      state.sort = state.sort === "number" ? "project" : "number";
     } else if (hit("[data-waiting]")) {
       selectTab("questions");
     } else if ((node = hit("[data-q-option], [data-q-key]"))) {
@@ -3041,6 +3008,7 @@ import { parseCapture } from "./capture.js";
     if (!frame.contains(e.relatedTarget)) frame.classList.remove("is-focused");
   });
 
+  focusLaunchProject();
   render();
   frame.dispatchEvent(new CustomEvent("tsk:ready"));
 })();
