@@ -3028,7 +3028,7 @@ impl BoardModel {
         let first = self.visible_ids().into_iter().find(|id| {
             self.tasks.iter().any(|task| {
                 task.id == *id
-                    && matches!(&task.scope, TaskScope::Project { path } if *path == wanted)
+                    && matches!(&task.scope, TaskScope::Project { path } if paths_equivalent(path, &wanted))
             })
         });
         if let Some(id) = first {
@@ -3171,6 +3171,19 @@ mod tests {
         let model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
         assert_eq!(model.board_location, BoardLocation::All);
         assert_eq!(model.sort(), BoardSort::Project);
+    }
+
+    #[test]
+    fn startup_seeds_on_the_launch_project_under_an_equivalent_spelling() {
+        let mut domain = DomainState::new();
+        let desk = create(&mut domain, "desk", TaskScope::Global);
+        let a1 = create(&mut domain, "task-a", project(REPO_A));
+        for id in [desk, a1] {
+            domain.set_status(id, HumanStatus::Doing).expect("start");
+        }
+        let launch = PathBuf::from(format!("{REPO_A}/"));
+        let model = BoardModel::from_domain(&domain, Some(launch));
+        assert_eq!(model.selected_id(), Some(a1));
     }
 
     #[test]

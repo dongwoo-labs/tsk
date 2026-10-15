@@ -3918,17 +3918,22 @@ fn build_list_rows(
         let Some(task) = model.tasks.iter().find(|task| task.id == id) else {
             return;
         };
-        let label = match board_group_key(task) {
-            (0, _) => "desk".to_string(),
-            (_, path) => short_project(path).to_string(),
-        };
-        if last.as_deref() != Some(label.as_str()) {
+        // The run boundary follows the full stored path, so two projects that share a
+        // basename still get a heading each; only the painted label is short.
+        let (rank, path) = board_group_key(task);
+        let key = format!("{rank}:{path}");
+        if last.as_deref() != Some(key.as_str()) {
+            let label = if rank == 0 {
+                "desk"
+            } else {
+                short_project(path)
+            };
             out.push(ListRow::Hint(paint_bounded_line(
                 &format!("   {label}"),
                 geo.row_width,
                 style_dim(),
             )));
-            *last = Some(label);
+            *last = Some(key);
         }
     };
 

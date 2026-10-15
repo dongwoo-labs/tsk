@@ -385,11 +385,9 @@ import { parseCapture } from "./capture.js";
     const rows = [];
     const live = state.tasks.filter((t) => !t.archived);
     const match = (t) => taskMatchesSearch(t, state.searchQuery);
-    const section = (label, tasks, kind) => {
-      if (!tasks.length && state.searchQuery.trim()) return;
-      if (!tasks.length && kind !== "todo") return;
-      rows.push({ kind: "section", label, count: tasks.length });
-      // Always grouped by project: desk first, then each project, number order inside.
+    // Always grouped by project: desk first, then each project, number order inside.
+    // Every section uses it, the done drawer and its archived group included.
+    const pushGrouped = (tasks, dim) => {
       const groups = new Map();
       for (const t of tasks) {
         const key = projectName(t);
@@ -402,8 +400,20 @@ import { parseCapture } from "./capture.js";
       for (const key of keys) {
         rows.push({ kind: "sub", label: key });
         for (const t of groups.get(key).sort(byNumber))
-          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
+          rows.push({
+            kind: "task",
+            task: t,
+            id: t.id,
+            selectable: true,
+            ...(dim ? { dim: true } : {}),
+          });
       }
+    };
+    const section = (label, tasks, kind) => {
+      if (!tasks.length && state.searchQuery.trim()) return;
+      if (!tasks.length && kind !== "todo") return;
+      rows.push({ kind: "section", label, count: tasks.length });
+      pushGrouped(tasks, false);
     };
     section(
       "DOING",
@@ -429,8 +439,7 @@ import { parseCapture } from "./capture.js";
     if (state.drawer) {
       if (done.length) {
         rows.push({ kind: "section", label: "DONE", count: done.length });
-        for (const t of done)
-          rows.push({ kind: "task", task: t, id: t.id, selectable: true });
+        pushGrouped(done, false);
       }
       const archived = state.tasks.filter((t) => t.archived && match(t));
       if (archived.length) {
@@ -440,15 +449,7 @@ import { parseCapture } from "./capture.js";
           id: "nav:archived",
           selectable: true,
         });
-        if (state.archivedOpen)
-          for (const t of archived)
-            rows.push({
-              kind: "task",
-              task: t,
-              id: t.id,
-              selectable: true,
-              dim: true,
-            });
+        if (state.archivedOpen) pushGrouped(archived, true);
       }
     }
     return rows;

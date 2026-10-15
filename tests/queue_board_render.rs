@@ -3923,3 +3923,26 @@ fn real_quick_add_paints_its_destination() {
         "quick-add destination missing:\n{text}"
     );
 }
+
+/// Two projects that share a basename keep separate group headings: the run boundary is
+/// the stored path, only the label is short.
+#[test]
+fn projects_sharing_a_basename_each_get_a_heading() {
+    let mut domain = DomainState::new();
+    for path in ["/work/a/app", "/work/b/app"] {
+        domain
+            .create(
+                format!("task in {path}"),
+                None,
+                TaskScope::Project {
+                    path: path.to_string(),
+                },
+                ProvenanceOrigin::Manual,
+            )
+            .expect("create task");
+    }
+    let model = BoardModel::from_domain(&domain, None);
+    let rows = board_rows(&model, 80, 24);
+    let headings = rows.iter().filter(|row| row.trim() == "app").count();
+    assert_eq!(headings, 2, "{}", rows.join("\n"));
+}
