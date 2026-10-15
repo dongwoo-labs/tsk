@@ -543,10 +543,20 @@ fn pick(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel, ind
             focus_text(model);
         }
         Choice::Comment => comment(model),
+        Choice::Explain => {
+            let message = explain(&record);
+            model.set_message(message);
+        }
         Choice::Approve => approve(store, domain, model, &record),
         Choice::Reject => reject(store, domain, model, &record),
         Choice::Option(at) => {
-            let Some(text) = record.draft.options.get(at).cloned() else {
+            // The label line answers; the description only helped the pick.
+            let Some(text) = record
+                .draft
+                .options
+                .get(at)
+                .map(|option| crate::ui::questions::option_parts(option).0.to_string())
+            else {
                 return;
             };
             let mut answer = draft(record.reference.revision, text);
@@ -1159,6 +1169,46 @@ fn request_lead(record: &QuestionRecord) -> String {
             }
         }
         n => format!("run request to {name} not sent: {n} live agents share that name"),
+    }
+}
+
+/// The prompt "Explain it first" hands the lead: explain the question with the wait-what
+/// skill and sum it up, without answering it. The same words as `/tsk`'s menu item.
+fn explain_prompt(record: &QuestionRecord) -> String {
+    let number = record.reference.number;
+    let dir = default_state_dir();
+    [
+        format!("Use the /mattpocock-skills:wait-what skill to explain tsk Q{number} to me before I answer it."),
+        format!("Read it with `tsk questions Q{number} --json --state-dir {}`, and the task and thread it came from if that helps.", dir.display()),
+        "Explain what it asks, why the thread needs it, and what each option (or approve/reject) would lead to, then sum it up in a few lines with your recommendation.".to_string(),
+        format!("Do not answer it yourself: I answer it in the tsk board or with /tsk Q{number}."),
+    ]
+    .join("\n")
+}
+
+/// "Explain it first": hand the one live lead (`lead-` prefix) the explain prompt. Writes
+/// nothing to the question; the person answers it afterwards.
+fn explain(record: &QuestionRecord) -> String {
+    let number = record.reference.number;
+    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+        return format!("Q{number} explain not sent: outside Herdr");
+    }
+    let rows = match herdr::list_agents() {
+        Ok(rows) => rows,
+        Err(_) => return format!("Q{number} explain not sent: cannot list live agents"),
+    };
+    let leads: Vec<&str> = rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .filter(|name| name.starts_with("lead-"))
+        .collect();
+    match leads.as_slice() {
+        [] => format!("Q{number} explain not sent: no live lead"),
+        [lead] => match herdr::prompt(lead, &explain_prompt(record)) {
+            Ok(()) => format!("asked {lead} to explain Q{number} · answer it here afterwards"),
+            Err(_) => format!("Q{number} explain to {lead} failed to send"),
+        },
+        many => format!("Q{number} explain not sent: {} live leads", many.len()),
     }
 }
 

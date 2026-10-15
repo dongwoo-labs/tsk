@@ -1268,6 +1268,7 @@ fn task_page_header_shows_identifier_not_footer() {
         title_cursor: None,
         status_word: "todo",
         notes_rows: Vec::new(),
+        notes_lines: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
         relation_rows: Vec::new(),
@@ -1376,6 +1377,7 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
             "first draft note".to_string(),
             "second draft note".to_string(),
         ],
+        notes_lines: Vec::new(),
         notes_cursor: None,
         more_lines: 0,
         relation_rows: Vec::new(),
@@ -1722,6 +1724,70 @@ fn notes_edit_shows_raw_markdown_markers_that_view_mode_strips() {
         edit.contains("**strong**"),
         "notes edit must show raw **strong** markers:\n{edit}"
     );
+}
+
+#[test]
+fn task_page_view_renders_agent_markdown_and_edit_keeps_the_source() {
+    let notes = "## Plan\n\
+                 1. read [the spec](https://x.dev/spec)\n\
+                 - [ ] write tests\n\
+                 - [x] ship\n\
+                 > keep it **simple**\n\
+                 ---\n\
+                 | key | value |\n\
+                 |-----|-------|\n\
+                 | a | b |";
+    let mut domain = DomainState::new();
+    domain
+        .create(
+            "Agent notes",
+            Some(notes.into()),
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create task");
+    let mut model = BoardModel::from_domain(&domain, None);
+    apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open");
+    for width in [80u16, 140] {
+        let rows = board_rows(&model, width, 30);
+        let view = rows.join("\n");
+        for shown in [
+            "Plan",
+            "1. read the spec (https://x.dev/spec)",
+            "☐ write tests",
+            "☑ ship",
+            "│ keep it simple",
+            "key │ value",
+            "a │ b",
+            "─────",
+        ] {
+            assert!(
+                view.contains(shown),
+                "{width}: view must show {shown:?}:\n{view}"
+            );
+        }
+        for hidden in ["## Plan", "[the spec]", "- [ ]", "|-----|", "**simple**"] {
+            assert!(
+                !view.contains(hidden),
+                "{width}: view must hide {hidden:?}:\n{view}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .all(|row| row_display_width(row) == width as usize),
+            "{width}: a rendered notes row overflowed the frame"
+        );
+    }
+    apply_intent(&mut domain, &mut model, BoardIntent::BeginEditNotes, None).expect("edit");
+    let edit = board_rows(&model, 80, 30).join("\n");
+    for raw in [
+        "## Plan",
+        "[the spec](https://x.dev/spec)",
+        "- [ ] write tests",
+        "|-----|",
+    ] {
+        assert!(edit.contains(raw), "notes edit must show {raw:?}:\n{edit}");
+    }
 }
 
 #[test]
@@ -3945,4 +4011,56 @@ fn projects_sharing_a_basename_each_get_a_heading() {
     let rows = board_rows(&model, 80, 24);
     let headings = rows.iter().filter(|row| row.trim() == "app").count();
     assert_eq!(headings, 2, "{}", rows.join("\n"));
+}
+
+/// A project heading paints in its palette colour on the real board frame; the desk stays
+/// plain. (Bounded-line sanitising once stripped the colour before it reached the buffer.)
+#[test]
+fn a_project_heading_paints_its_palette_colour_on_the_board() {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return;
+    }
+    let mut domain = DomainState::new();
+    for scope in [
+        TaskScope::Global,
+        TaskScope::Project {
+            path: "/work/app".to_string(),
+        },
+    ] {
+        domain
+            .create("task", None, scope, ProvenanceOrigin::Manual)
+            .expect("create task");
+    }
+    let model = BoardModel::from_domain(&domain, None);
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let _ = draw_board(frame, &model);
+        })
+        .expect("draw board");
+    let buffer = terminal.backend().buffer();
+    assert_buffer_mono(buffer);
+    let row_of = |label: &str| {
+        (0..24u16)
+            .find(|&y| {
+                (0..80u16)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .trim()
+                    == label
+            })
+            .unwrap_or_else(|| panic!("{label} heading"))
+    };
+    let app = row_of("app");
+    let x = (0..80u16)
+        .find(|&x| buffer[(x, app)].symbol() == "a")
+        .expect("label cell");
+    assert!(
+        tsk_tui::ui::render::GROUP_PALETTE.contains(&buffer[(x, app)].fg),
+        "project heading colour: {:?}",
+        buffer[(x, app)].fg
+    );
+    let desk = row_of("desk");
+    assert!((0..80u16).all(|x| buffer[(x, desk)].fg == ratatui::style::Color::Reset));
 }

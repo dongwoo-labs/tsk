@@ -315,6 +315,28 @@ pub enum Choice {
     Comment,
     /// The finding action at this index into [`FINDING_ACTIONS`].
     Finding(usize),
+    /// Ask the live lead to explain the question first (wait-what); answers nothing.
+    Explain,
+}
+
+/// An option's label (its first line) and its description (the lines after it). A thread
+/// writes `label\nwhat picking it leads to`; a one-line option has no description.
+pub fn option_parts(option: &str) -> (&str, &str) {
+    match option.split_once('\n') {
+        // A blank first line leaves no label to answer with: the whole option is the label.
+        Some((label, description)) if !label.trim().is_empty() => {
+            (label.trim_end(), description.trim())
+        }
+        _ => (option, ""),
+    }
+}
+
+/// Whether the recommendation names this option, by its whole text or its label line.
+pub fn recommends(recommendation: Option<&str>, option: &str) -> bool {
+    recommendation.is_some_and(|rec| {
+        let rec = rec.trim();
+        !rec.is_empty() && (rec == option.trim() || rec == option_parts(option).0.trim())
+    })
 }
 
 /// The groups of the list, in paint order. `Unrouted` is the compatibility block for open
@@ -541,18 +563,30 @@ pub fn form(state: &QuestionsState, record: &QuestionRecord) -> Vec<Choice> {
         .correcting
         .is_some_and(|(id, _)| id == record.reference.id);
     let open = record.is_open();
-    match record.reference.kind {
+    // A still-open question with numbered choices also offers to have the lead explain it
+    // first; a correction or a lone text field does not.
+    let explain = open && !correcting;
+    let mut rows = match record.reference.kind {
         QuestionKind::Approval if open => vec![Choice::Approve, Choice::Reject, Choice::Comment],
-        QuestionKind::Secret if open => vec![Choice::Text, Choice::Reject],
+        QuestionKind::Secret if open => return vec![Choice::Text, Choice::Reject],
         QuestionKind::Finding if open || correcting => {
             (0..FINDING_ACTIONS.len()).map(Choice::Finding).collect()
         }
-        QuestionKind::Question if open || correcting => (0..record.draft.options.len())
-            .map(Choice::Option)
-            .chain(std::iter::once(Choice::Text))
-            .collect(),
-        _ => Vec::new(),
+        QuestionKind::Question if open || correcting => {
+            if record.draft.options.is_empty() {
+                return vec![Choice::Text];
+            }
+            (0..record.draft.options.len())
+                .map(Choice::Option)
+                .chain(std::iter::once(Choice::Text))
+                .collect()
+        }
+        _ => return Vec::new(),
+    };
+    if explain {
+        rows.push(Choice::Explain);
     }
+    rows
 }
 
 /// Whether the form is one text field and nothing else (no numbered choices).
@@ -574,7 +608,7 @@ fn default_highlight(record: &QuestionRecord) -> usize {
                 .draft
                 .options
                 .iter()
-                .position(|option| option.trim() == rec.trim())
+                .position(|option| recommends(Some(rec), option))
         })
         .unwrap_or(0)
 }
@@ -904,6 +938,9 @@ pub struct PageRow {
     pub click: Option<QueueHitTarget>,
     /// Bytes of `text` that are a field label, painted dim before the value.
     pub label: usize,
+    /// A markdown body row: `text` rendered with its styles (label and lead included),
+    /// painted in place of `text` and `style`. `text` stays its painted text.
+    pub rich: Option<Line<'static>>,
 }
 
 struct PageBuilder {
@@ -934,6 +971,7 @@ impl PageBuilder {
                     focus: focus && first,
                     click: None,
                     label: 0,
+                    rich: None,
                 });
                 first = false;
             }
@@ -945,6 +983,7 @@ impl PageBuilder {
                 focus,
                 click: None,
                 label: 0,
+                rich: None,
             });
         }
     }
@@ -956,6 +995,37 @@ impl PageBuilder {
         if let Some(row) = self.rows.get_mut(at) {
             row.label = label.len();
         }
+    }
+
+    /// Render `text` as markdown under a fixed lead (painted `lead_style`); continuation
+    /// rows indent under the text. Wraps on the rendered text, never the raw markers.
+    fn markdown(&mut self, lead: &str, lead_style: RowStyle, text: &str, style: RowStyle) {
+        let lead_w = render::display_width(lead);
+        let room = self.width.saturating_sub(lead_w).max(1);
+        let lines = crate::ui::markdown::render(text, room, self::style(style));
+        for (index, line) in lines.into_iter().enumerate() {
+            let prefix = if index == 0 {
+                lead.to_string()
+            } else {
+                " ".repeat(lead_w)
+            };
+            let text = format!("{prefix}{}", crate::ui::markdown::line_text(&line));
+            let mut spans = vec![Span::styled(prefix, self::style(lead_style))];
+            spans.extend(line.spans);
+            self.rows.push(PageRow {
+                text,
+                style,
+                focus: false,
+                click: None,
+                label: 0,
+                rich: Some(Line::from(spans)),
+            });
+        }
+    }
+
+    /// A `label  value` field whose value is markdown: the label paints dim.
+    fn markdown_field(&mut self, label: &str, text: &str, style: RowStyle) {
+        self.markdown(label, RowStyle::Dim, text, style);
     }
 
     /// Make every row pushed since `from` a click target.
@@ -972,6 +1042,7 @@ impl PageBuilder {
             focus: false,
             click: None,
             label: 0,
+            rich: None,
         });
     }
 }
@@ -1048,13 +1119,19 @@ pub fn page_rows(
     page.push(&record.reference.summary, RowStyle::Bold, false);
     page.push("local original · never shared", RowStyle::Dim, false);
     // The original sits indented under its heading so it reads as one quoted block.
-    page.indented(BODY_INDENT, &draft.text, RowStyle::Plain, false);
+    // Bodies agents write in markdown render as markdown; ids, paths, and hashes stay raw.
+    page.markdown(BODY_INDENT, RowStyle::Plain, &draft.text, RowStyle::Plain);
     if let Some(finding) = draft.finding.as_ref() {
-        page.indented(BODY_INDENT, &finding.detail, RowStyle::Plain, false);
+        page.markdown(
+            BODY_INDENT,
+            RowStyle::Plain,
+            &finding.detail,
+            RowStyle::Plain,
+        );
     }
     if let Some(impact) = draft.impact.as_deref() {
         page.blank();
-        page.field("impact  ", impact, RowStyle::Plain);
+        page.markdown_field("impact  ", impact, RowStyle::Plain);
     }
 
     if let Some(terms) = draft.approval.as_ref() {
@@ -1065,11 +1142,11 @@ pub fn page_rows(
             false,
         );
         // What is being approved reads bold; how far it reaches and how to undo it, plain.
-        page.field("action    ", &terms.action, RowStyle::Bold);
-        page.field("target    ", &terms.target, RowStyle::Bold);
-        page.field("scope     ", &terms.scope, RowStyle::Plain);
+        page.markdown_field("action    ", &terms.action, RowStyle::Bold);
+        page.markdown_field("target    ", &terms.target, RowStyle::Bold);
+        page.markdown_field("scope     ", &terms.scope, RowStyle::Plain);
         page.field("revision  ", &terms.h, RowStyle::Bold);
-        page.field("undo      ", &terms.rollback, RowStyle::Plain);
+        page.markdown_field("undo      ", &terms.rollback, RowStyle::Plain);
     }
 
     let rows = form(state, record);
@@ -1096,9 +1173,9 @@ pub fn page_rows(
 
     if let Some(answer) = record.current_answer() {
         page.blank();
-        page.field("answer  ", &answer.text, RowStyle::Plain);
+        page.markdown_field("answer  ", &answer.text, RowStyle::Plain);
         if let Some(comment) = answer.comment.as_deref() {
-            page.field("comment ", comment, RowStyle::Plain);
+            page.markdown_field("comment ", comment, RowStyle::Plain);
         }
         if let FindingLink::One(id) = record.finding_link() {
             page.field("task    ", &task_label(tasks, id), RowStyle::Plain);
@@ -1174,10 +1251,11 @@ pub fn page_rows(
             .as_deref()
             .map(|text| format!(" · {text}"))
             .unwrap_or_default();
-        page.push(
+        page.markdown(
+            "",
+            RowStyle::Plain,
             &format!("{}{correction} · {}{comment}", answer.actor, answer.text),
             RowStyle::Plain,
-            false,
         );
         events += 1;
     }
@@ -1269,12 +1347,13 @@ fn form_choices(
         };
         let text = match *choice {
             Choice::Option(at) => {
-                let label = draft.options.get(at).cloned().unwrap_or_default();
-                let recommended = draft
-                    .recommendation
-                    .as_deref()
-                    .is_some_and(|rec| rec.trim() == label.trim());
-                if recommended {
+                let option = draft
+                    .options
+                    .get(at)
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                let label = option_parts(option).0.to_string();
+                if recommends(draft.recommendation.as_deref(), option) {
                     format!("{label} · recommended")
                 } else {
                     label
@@ -1311,10 +1390,23 @@ fn form_choices(
                 },
             },
             Choice::Finding(at) => FINDING_LABELS[at].to_string(),
+            Choice::Explain => "Explain it first · the lead walks you through it".to_string(),
         };
         let marker = if on { "▸ " } else { "  " };
         let at = page.rows.len();
-        page.indented(&format!("{marker}{}. ", index + 1), &text, style, on);
+        let lead = format!("{marker}{}. ", index + 1);
+        page.indented(&lead, &text, style, on);
+        if let Choice::Option(option) = *choice {
+            let description = draft
+                .options
+                .get(option)
+                .map(|option| option_parts(option).1)
+                .unwrap_or_default();
+            if !description.is_empty() {
+                let pad = " ".repeat(render::display_width(&lead));
+                page.indented(&pad, description, RowStyle::Dim, false);
+            }
+        }
         page.click_from(at, PageClick::Choice(index));
     }
     let n = rows.len();
@@ -1555,6 +1647,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 focus: false,
                 click: None,
                 label: 0,
+                rich: None,
             },
         )
     };
@@ -1592,6 +1685,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 focus: false,
                 click: None,
                 label: 0,
+                rich: None,
             },
         ));
         let folded = group == QuestionGroup::Closed && !state.closed_open;
@@ -1617,6 +1711,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                 click: (group == QuestionGroup::Closed)
                     .then_some(QueueHitTarget::QuestionKey(KeyCode::Char('z'))),
                 label: 0,
+                rich: None,
             },
         ));
         if folded {
@@ -1654,6 +1749,7 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
                         focus: selected && index == 0,
                         click: None,
                         label: 0,
+                        rich: None,
                     },
                 ));
             }
@@ -1722,7 +1818,17 @@ fn paint_rows(
             );
             break;
         }
-        if row.label > 0 && row.label <= row.text.len() {
+        if let Some(line) = row.rich.as_ref() {
+            let shown = if line.width() <= rect.width as usize {
+                line.clone()
+            } else {
+                Line::from(Span::styled(
+                    crate::ui::present_line(&row.text, rect.width as usize),
+                    style(row.style),
+                ))
+            };
+            out.render_widget(Paragraph::new(shown), Rect::new(rect.x, y, rect.width, 1));
+        } else if row.label > 0 && row.label <= row.text.len() {
             let (label, value) = row.text.split_at(row.label);
             let label_w = (render::display_width(label) as u16).min(rect.width);
             put(out, rect.x, y, label_w, label, RowStyle::Dim);
@@ -1968,6 +2074,7 @@ mod tests {
                         focus: index == focus,
                         click: None,
                         label: 0,
+                        rich: None,
                     },
                 )
             })
@@ -2226,6 +2333,86 @@ mod tests {
     }
 
     #[test]
+    fn a_record_page_renders_markdown_bodies_and_keeps_raw_ids() {
+        use ratatui::style::Modifier;
+        let mut record = approval_record();
+        record.draft.text =
+            "## Why\n- [ ] check [the run](https://ci.dev/1)\n> **blocks** release\n\
+                             | env | state |\n|---|---|\n| prod | `red` |"
+                .into();
+        record.draft.impact = Some("users see ~~old~~ **new** pages".into());
+        if let Some(terms) = record.draft.approval.as_mut() {
+            terms.rollback = "run `deploy --previous`".into();
+            terms.h = "a_b_c".into();
+        }
+        record.answers.push(crate::domain::QuestionAnswer {
+            revision: Uuid::from_u128(9),
+            created_task_id: None,
+            corrects_revision: None,
+            text: "approved *after* review".into(),
+            actor: "user".into(),
+            origin: crate::domain::AnswerOrigin::UserUi,
+            at: std::time::SystemTime::now(),
+            approval: None,
+            user_chat: None,
+            source: None,
+            action: None,
+            comment: Some("see [log](https://ci.dev/2)".into()),
+        });
+        let state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            ..QuestionsState::default()
+        };
+        let rows = page_rows(&state, &record, &[], 80);
+        let page = rows
+            .iter()
+            .map(|row| row.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for shown in [
+            "  Why",
+            "  ☐ check the run (https://ci.dev/1)",
+            "  │ blocks release",
+            "  env │ state",
+            "  prod │ `red`",
+            "impact  users see old new pages",
+            "undo      run `deploy --previous`",
+            "revision  a_b_c",
+            "answer  approved after review",
+            "comment see log (https://ci.dev/2)",
+            "user · approved after review · see log (https://ci.dev/2)",
+        ] {
+            assert!(page.contains(shown), "page must show {shown:?}:\n{page}");
+        }
+        for hidden in ["## Why", "- [ ]", "](", "|---|", "~~", "**", "*after*"] {
+            assert!(!page.contains(hidden), "page must hide {hidden:?}:\n{page}");
+        }
+        // A rendered row paints styled spans whose text is the row's text, label dim.
+        let heading = rows
+            .iter()
+            .find(|row| row.text == "  Why")
+            .expect("heading");
+        let line = heading.rich.as_ref().expect("a markdown row is rich");
+        assert_eq!(crate::ui::markdown::line_text(line), heading.text);
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content == "Why" && span.style.add_modifier.contains(Modifier::BOLD)));
+        let impact = rows
+            .iter()
+            .find(|row| row.text.starts_with("impact"))
+            .and_then(|row| row.rich.as_ref())
+            .expect("impact row");
+        assert_eq!(impact.spans[0].content, "impact  ");
+        assert!(impact.spans[0].style.add_modifier.contains(Modifier::DIM));
+        // A long body wraps on its rendered width under the body indent.
+        let narrow = page_rows(&state, &record, &[], 24);
+        for row in &narrow {
+            assert!(render::display_width(&row.text) <= 24, "{:?}", row.text);
+        }
+    }
+
+    #[test]
     fn an_approval_form_offers_approve_reject_and_comment_and_no_check_keys() {
         let record = approval_record();
         let id = record.reference.id;
@@ -2251,10 +2438,16 @@ mod tests {
         assert!(terms < first, "{page}");
         assert!(page.contains("  2. Reject"), "{page}");
         assert!(page.contains("  3. Add a comment…"), "{page}");
+        assert!(page.contains("  4. Explain it first"), "{page}");
         assert!(!page.contains("[ ]"), "no check line: {page}");
         assert_eq!(
             form(&state, &record),
-            vec![Choice::Approve, Choice::Reject, Choice::Comment]
+            vec![
+                Choice::Approve,
+                Choice::Reject,
+                Choice::Comment,
+                Choice::Explain
+            ]
         );
         let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
         // Digits pick at once; the old check and decide keys are gone.
@@ -2266,7 +2459,7 @@ mod tests {
             key(&state, KeyCode::Char('3')),
             Some(BoardIntent::Question(QuestionIntent::Pick(2)))
         );
-        assert_eq!(key(&state, KeyCode::Char('4')), None);
+        assert_eq!(key(&state, KeyCode::Char('5')), None);
         for gone in [' ', 'y', 'n'] {
             assert_eq!(key(&state, KeyCode::Char(gone)), None, "{gone:?}");
         }
@@ -2276,7 +2469,7 @@ mod tests {
         );
         assert_eq!(
             footer_hint(&state, false),
-            "↑↓ move · enter pick · 1-3 pick · J/K next · t task · esc back"
+            "↑↓ move · enter pick · 1-4 pick · J/K next · t task · esc back"
         );
 
         // The comment row is an inline field; once kept, the row shows it.
@@ -2364,6 +2557,42 @@ mod tests {
     }
 
     #[test]
+    fn an_option_shows_its_label_line_and_its_description_dim_below() {
+        let mut record = options_record();
+        record.draft.options = vec![
+            "A) Ship now\nThe fix reaches users today; no data repair.".into(),
+            "B) Wait".into(),
+        ];
+        record.draft.recommendation = Some("A) Ship now".into());
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let rows = page_rows(&state, &record, &[], 80);
+        let label = rows
+            .iter()
+            .position(|row| row.text == "▸ 1. A) Ship now · recommended")
+            .expect("label row, recommended by its label line");
+        let description = &rows[label + 1];
+        assert_eq!(
+            description.text,
+            "     The fix reaches users today; no data repair."
+        );
+        assert_eq!(description.style, RowStyle::Dim);
+        assert_eq!(
+            description.click, rows[label].click,
+            "the description picks too"
+        );
+        assert!(rows.iter().any(|row| row.text == "  2. B) Wait"));
+        assert_eq!(option_parts("B) Wait"), ("B) Wait", ""));
+        let blank_label = "\nThis deploys now";
+        assert_eq!(option_parts(blank_label), (blank_label, ""));
+    }
+
+    #[test]
     fn a_question_form_numbers_its_options_then_a_text_row_and_starts_on_the_recommendation() {
         let record = options_record();
         let id = record.reference.id;
@@ -2381,6 +2610,7 @@ mod tests {
         assert!(page.contains("  1. alpha"), "{page}");
         assert!(page.contains("▸ 2. beta · recommended"), "{page}");
         assert!(page.contains("  3. Type something…"), "{page}");
+        assert!(page.contains("  4. Explain it first"), "{page}");
         assert!(state.typing().is_none(), "no field is focused yet");
         let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
         assert_eq!(
@@ -2395,11 +2625,10 @@ mod tests {
         assert_eq!(key(&state, KeyCode::Char('x')), None);
         state.move_on_page(true);
         assert_eq!(state.highlighted_choice(), Some(Choice::Text));
-        state.move_on_page(true);
         assert_eq!(state.highlighted(&record), 2);
         assert_eq!(
             footer_hint(&state, false),
-            "↑↓ move · enter type · 1-3 pick · J/K next · esc back"
+            "↑↓ move · enter type · 1-4 pick · J/K next · esc back"
         );
         assert_eq!(
             key(&state, KeyCode::Char('x')),

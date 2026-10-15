@@ -58,6 +58,37 @@ pub const MONO_MODIFIERS: Modifier = Modifier::BOLD
     .union(Modifier::UNDERLINED)
     .union(Modifier::REVERSED);
 
+/// The one place the board uses colour: project group headings, so groups read apart at
+/// a glance (user-confirmed 2026-10-15). Standard 16-colour foregrounds only, never a
+/// background; the desk heading stays uncoloured. `NO_COLOR` turns it off.
+pub const GROUP_PALETTE: [Color; 5] = [
+    Color::Cyan,
+    Color::Magenta,
+    Color::Yellow,
+    Color::Green,
+    Color::Blue,
+];
+
+/// SGR foreground codes of [`GROUP_PALETTE`], allowed by the colour scanners.
+const GROUP_PALETTE_SGR: [u32; 5] = [36, 35, 33, 32, 34];
+
+/// A project heading's style: bold, in a colour picked stably from the stored path, so a
+/// project keeps its colour across sessions and boards. The desk (`None`) stays bold only.
+pub fn style_group_heading(project: Option<&str>) -> Style {
+    let style = style_bold();
+    let Some(path) = project else {
+        return style;
+    };
+    if std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return style;
+    }
+    // FNV-1a: stable across runs and platforms, unlike the std hasher.
+    let hash = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    style.fg(GROUP_PALETTE[(hash % GROUP_PALETTE.len() as u64) as usize])
+}
+
 /// Style with only the allowed mono modifiers; never sets fg/bg.
 pub fn mono_style(modifier: Modifier) -> Style {
     Style::default().add_modifier(modifier.intersection(MONO_MODIFIERS))
@@ -386,8 +417,10 @@ pub fn assert_buffer_mono(buffer: &Buffer) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &buffer[(x, y)];
+            // The one colour exception is a bold project-group heading.
             assert!(
-                cell.fg == Color::Reset,
+                cell.fg == Color::Reset
+                    || (GROUP_PALETTE.contains(&cell.fg) && cell.modifier.contains(Modifier::BOLD)),
                 "AC-13: cell ({x},{y}) has fg color {:?}",
                 cell.fg
             );
@@ -610,6 +643,10 @@ pub enum QueueOverlay<'a> {
         /// View mode: the wrapped notes windowed by the page scroll. Edit mode: the
         /// cursor-windowed draft rows.
         notes_rows: Vec<String>,
+        /// View mode outside an edit session: `notes_rows` rendered as markdown, one
+        /// styled line per row (`notes_rows` holds their painted text). Empty while any
+        /// field is edited, when the raw wrap rows paint instead.
+        notes_lines: Vec<Line<'static>>,
         /// Notes cursor (row, col) while the notes are being edited.
         notes_cursor: Option<(u16, u16)>,
         /// Wrapped note rows hidden below the window, named by the divider's tail.
@@ -1176,6 +1213,7 @@ pub fn draw_task_column(
         ref title_cursor,
         status_word,
         ref notes_rows,
+        ref notes_lines,
         notes_cursor,
         more_lines,
         ref relation_rows,
@@ -1204,6 +1242,7 @@ pub fn draw_task_column(
             *title_cursor,
             status_word,
             notes_rows,
+            notes_lines,
             notes_cursor,
             more_lines,
             relation_rows,
@@ -1754,6 +1793,7 @@ fn paint_overlay(
             ref title_cursor,
             status_word,
             ref notes_rows,
+            ref notes_lines,
             notes_cursor,
             more_lines,
             ref relation_rows,
@@ -1781,6 +1821,7 @@ fn paint_overlay(
                 *title_cursor,
                 status_word,
                 notes_rows,
+                notes_lines,
                 *notes_cursor,
                 *more_lines,
                 relation_rows,
@@ -2815,6 +2856,7 @@ fn paint_task_page(
     title_cursor: Option<(u16, u16)>,
     status_word: &str,
     notes_rows: &[String],
+    notes_lines: &[Line<'static>],
     notes_cursor: Option<(u16, u16)>,
     more_lines: usize,
     relation_rows: &[RelationRow],
@@ -3046,7 +3088,15 @@ fn paint_task_page(
             } else {
                 notes_style
             };
-            let painted = if notes_rows.is_empty() || focus == Some(CaptureField::Notes) {
+            let rendered = (focus != Some(CaptureField::Notes))
+                .then(|| notes_lines.get(absolute))
+                .flatten();
+            let painted = if let Some(line) = rendered {
+                // Rendered markdown, already wrapped to the notes width: only the gutter.
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(line.spans.iter().cloned());
+                bound_line(Line::from(spans), content_width as usize)
+            } else if notes_rows.is_empty() || focus == Some(CaptureField::Notes) {
                 paint_bounded_line(&format!("  {text} "), content_width, style)
             } else {
                 let mut in_fence = notes_rows
@@ -3928,11 +3978,15 @@ fn build_list_rows(
             } else {
                 short_project(path)
             };
-            out.push(ListRow::Hint(paint_bounded_line(
-                &format!("   {label}"),
-                geo.row_width,
-                style_dim(),
-            )));
+            let style = style_group_heading((rank != 0).then_some(path));
+            let mut line = paint_bounded_line(&format!("   {label}"), geo.row_width, style);
+            // `paint_bounded_line` strips colour; put back the heading's palette colour.
+            if let Some(fg) = style.fg.filter(|fg| GROUP_PALETTE.contains(fg)) {
+                for span in &mut line.spans {
+                    span.style = span.style.fg(fg);
+                }
+            }
+            out.push(ListRow::Hint(line));
             *last = Some(key);
         }
     };
@@ -4551,6 +4605,8 @@ fn sgr_params_contain_color(params: &str) -> bool {
             // reset / mono intensity / underline / reverse and their offs,
             // including resets to default fg/bg/underline color.
             0 | 1 | 2 | 4 | 7 | 22 | 24 | 27 | 39 | 49 | 59 => {}
+            // the project group headings' palette (foreground only)
+            code if GROUP_PALETTE_SGR.contains(&code) => {}
             // classic/bright fg/bg and extended color selectors
             30..=38 | 40..=48 | 58 | 90..=107 => return true,
             // italic / blink / hidden / strike etc. are outside the mono set
@@ -5003,5 +5059,23 @@ mod tests {
         assert!(cleaned.fg.is_none());
         assert!(cleaned.bg.is_none());
         assert_eq!(cleaned.add_modifier, Modifier::BOLD);
+    }
+
+    #[test]
+    fn a_project_group_heading_takes_a_stable_palette_colour_and_the_desk_none() {
+        if std::env::var_os("NO_COLOR").is_some() {
+            return;
+        }
+        let first = super::style_group_heading(Some("/repos/alpha"));
+        let again = super::style_group_heading(Some("/repos/alpha"));
+        assert!(first
+            .fg
+            .is_some_and(|fg| super::GROUP_PALETTE.contains(&fg)));
+        assert_eq!(first, again, "the same path keeps its colour");
+        assert_eq!(
+            super::style_group_heading(None).fg,
+            None,
+            "the desk stays plain"
+        );
     }
 }

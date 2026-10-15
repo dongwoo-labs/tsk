@@ -288,7 +288,8 @@ fn draft(record: &QuestionRecord, input: UiAnswerInput) -> Result<AnswerDraft, R
                     .draft
                     .options
                     .get(choice)
-                    .cloned()
+                    // The label line answers, as a board pick does.
+                    .map(|option| crate::ui::questions::option_parts(option).0.to_string())
                     .ok_or_else(|| invalid("choice is not one of the question's options"))?,
                 (None, Some(text)) => {
                     let text = text.trim();
