@@ -12,7 +12,7 @@ use tsk_tui::domain::{
     DomainState, HumanStatus, ProvenanceOrigin, Task, TaskEvent, TaskEventKind, TaskScope,
 };
 use tsk_tui::store::TaskStore;
-use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel, ProjectScopeOption};
+use tsk_tui::ui::board::{apply_intent, draw_board, BoardModel};
 use tsk_tui::ui::input::BoardIntent;
 use tsk_tui::ui::queue::{
     query_board, query_lens, BoardLens, BoardSort, QueueView, SectionKind, INBOX_HEADER_ROW_ID,
@@ -281,9 +281,10 @@ fn from_domain_opens_the_invocation_project_unless_archived() {
     assert_eq!(model.selected_id(), Some(desk_id));
 }
 
-/// Confirming a project selector choice narrows ON DECK to that project.
+/// Startup in a repo keeps every project on the board with the cursor on that project's
+/// row; pinning another project's scope narrows the queue to it.
 #[test]
-fn confirming_project_choice_changes_visible_queue_sections() {
+fn pinning_a_project_scope_changes_visible_queue_sections() {
     let mut domain = DomainState::new();
     let app_id = domain
         .create(
@@ -302,45 +303,18 @@ fn confirming_project_choice_changes_visible_queue_sections() {
         )
         .unwrap();
     let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
+    let visible = model.visible_ids();
+    assert!(
+        visible.contains(&app_id) && visible.contains(&other_id),
+        "startup keeps every project on the board: {visible:?}"
+    );
     assert_eq!(
-        model.visible_ids(),
-        vec![app_id],
-        "startup sits on the invocation project's board"
+        model.selected_id(),
+        Some(app_id),
+        "startup seeds the cursor on the invocation project's row"
     );
 
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .unwrap();
-    // Picker highlights the current deck scope (All at open); step to /repos/other.
-    let other_idx = model
-        .project_options()
-        .iter()
-        .position(|opt| opt == &ProjectScopeOption::Project(PathBuf::from("/repos/other")))
-        .expect("/repos/other option");
-    for _ in 0..model.project_options().len() {
-        if model.project_picker_index() == Some(other_idx) {
-            break;
-        }
-        apply_intent(
-            &mut domain,
-            &mut model,
-            BoardIntent::ProjectPickerNext,
-            None,
-        )
-        .unwrap();
-    }
-    assert_eq!(model.project_picker_index(), Some(other_idx));
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::ConfirmProjectChoice,
-        None,
-    )
-    .unwrap();
+    model.set_selected_project(Some(PathBuf::from("/repos/other")));
 
     assert_eq!(model.selected_project(), Some(Path::new("/repos/other")));
     assert_eq!(model.visible_ids(), vec![other_id]);

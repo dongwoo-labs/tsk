@@ -963,7 +963,6 @@ fn focus_changes_never_mutate_the_domain() {
         BoardIntent::CloseLayer,
         BoardIntent::OpenTaskPage,
         BoardIntent::FocusList,
-        BoardIntent::ToggleSort,
     ] {
         let outcome = apply_intent(&mut domain, &mut model, intent, None).expect("focus intent");
         assert_eq!(outcome, IntentOutcome::None);
@@ -1061,7 +1060,6 @@ fn j_and_k_follow_the_project_sort_order() {
         },
     );
     let mut model = BoardModel::from_domain(&domain, None);
-    go(&mut domain, &mut model, BoardIntent::ToggleSort);
     assert_eq!(model.visible_ids(), vec![desk, alpha, beta]);
     model.set_message("");
     let index = model
