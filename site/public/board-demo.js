@@ -633,7 +633,10 @@ import { parseCapture } from "./capture.js";
     const explain = open && !correcting ? [{ kind: "explain" }] : [];
     if (q.kind === "approval")
       return open
-        ? [...["approve", "reject", "comment"].map((kind) => ({ kind })), ...explain]
+        ? [
+            ...["approve", "reject", "comment"].map((kind) => ({ kind })),
+            ...explain,
+          ]
         : [];
     if (q.kind === "finding")
       return open || correcting
@@ -795,7 +798,12 @@ import { parseCapture } from "./capture.js";
           `data-q-option="${i}"`,
         );
         if (description)
-          indented(" ".repeat(lead.length), description, "dim", `data-q-option="${i}"`);
+          indented(
+            " ".repeat(lead.length),
+            description,
+            "dim",
+            `data-q-option="${i}"`,
+          );
       });
       push(
         draft?.focused && draft.comment
