@@ -4012,3 +4012,55 @@ fn projects_sharing_a_basename_each_get_a_heading() {
     let headings = rows.iter().filter(|row| row.trim() == "app").count();
     assert_eq!(headings, 2, "{}", rows.join("\n"));
 }
+
+/// A project heading paints in its palette colour on the real board frame; the desk stays
+/// plain. (Bounded-line sanitising once stripped the colour before it reached the buffer.)
+#[test]
+fn a_project_heading_paints_its_palette_colour_on_the_board() {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return;
+    }
+    let mut domain = DomainState::new();
+    for scope in [
+        TaskScope::Global,
+        TaskScope::Project {
+            path: "/work/app".to_string(),
+        },
+    ] {
+        domain
+            .create("task", None, scope, ProvenanceOrigin::Manual)
+            .expect("create task");
+    }
+    let model = BoardModel::from_domain(&domain, None);
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let _ = draw_board(frame, &model);
+        })
+        .expect("draw board");
+    let buffer = terminal.backend().buffer();
+    assert_buffer_mono(buffer);
+    let row_of = |label: &str| {
+        (0..24u16)
+            .find(|&y| {
+                (0..80u16)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .trim()
+                    == label
+            })
+            .unwrap_or_else(|| panic!("{label} heading"))
+    };
+    let app = row_of("app");
+    let x = (0..80u16)
+        .find(|&x| buffer[(x, app)].symbol() == "a")
+        .expect("label cell");
+    assert!(
+        tsk_tui::ui::render::GROUP_PALETTE.contains(&buffer[(x, app)].fg),
+        "project heading colour: {:?}",
+        buffer[(x, app)].fg
+    );
+    let desk = row_of("desk");
+    assert!((0..80u16).all(|x| buffer[(x, desk)].fg == ratatui::style::Color::Reset));
+}

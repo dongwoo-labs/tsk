@@ -323,8 +323,11 @@ pub enum Choice {
 /// writes `label\nwhat picking it leads to`; a one-line option has no description.
 pub fn option_parts(option: &str) -> (&str, &str) {
     match option.split_once('\n') {
-        Some((label, description)) => (label.trim_end(), description.trim()),
-        None => (option, ""),
+        // A blank first line leaves no label to answer with: the whole option is the label.
+        Some((label, description)) if !label.trim().is_empty() => {
+            (label.trim_end(), description.trim())
+        }
+        _ => (option, ""),
     }
 }
 
@@ -2585,6 +2588,8 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.text == "  2. B) Wait"));
         assert_eq!(option_parts("B) Wait"), ("B) Wait", ""));
+        let blank_label = "\nThis deploys now";
+        assert_eq!(option_parts(blank_label), (blank_label, ""));
     }
 
     #[test]

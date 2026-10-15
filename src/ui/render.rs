@@ -417,8 +417,10 @@ pub fn assert_buffer_mono(buffer: &Buffer) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &buffer[(x, y)];
+            // The one colour exception is a bold project-group heading.
             assert!(
-                cell.fg == Color::Reset || GROUP_PALETTE.contains(&cell.fg),
+                cell.fg == Color::Reset
+                    || (GROUP_PALETTE.contains(&cell.fg) && cell.modifier.contains(Modifier::BOLD)),
                 "AC-13: cell ({x},{y}) has fg color {:?}",
                 cell.fg
             );
@@ -3976,11 +3978,15 @@ fn build_list_rows(
             } else {
                 short_project(path)
             };
-            out.push(ListRow::Hint(paint_bounded_line(
-                &format!("   {label}"),
-                geo.row_width,
-                style_group_heading((rank != 0).then_some(path)),
-            )));
+            let style = style_group_heading((rank != 0).then_some(path));
+            let mut line = paint_bounded_line(&format!("   {label}"), geo.row_width, style);
+            // `paint_bounded_line` strips colour; put back the heading's palette colour.
+            if let Some(fg) = style.fg.filter(|fg| GROUP_PALETTE.contains(fg)) {
+                for span in &mut line.spans {
+                    span.style = span.style.fg(fg);
+                }
+            }
+            out.push(ListRow::Hint(line));
             *last = Some(key);
         }
     };
