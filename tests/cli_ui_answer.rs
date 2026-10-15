@@ -101,7 +101,7 @@ fn ask(dir: &TempDir, kind: &str, audience: Option<&str>) -> (String, String) {
         "origin_thread": "thr-a",
         "recipient": "lead-a",
         "text": "Which one?",
-        "options": ["red", "blue"],
+        "options": ["red", "blue\nIt matches the logo."],
         "recommendation": null,
         "impact": null,
         "blocking_scope": null,
@@ -149,7 +149,7 @@ fn record(dir: &TempDir, id: &str) -> Value {
 }
 
 #[test]
-fn a_choice_is_saved_as_the_option_text_with_user_ui_origin() {
+fn a_choice_is_saved_as_the_option_label_line_with_user_ui_origin() {
     let dir = TempDir::new("choice");
     let (id, revision) = ask(&dir, "question", Some("user"));
     let out = ui_answer(
