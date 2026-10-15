@@ -2387,3 +2387,96 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn list_reads_done_tasks_moved_to_the_dated_done_files() {
+    let dir = temp_state_dir("done-history");
+    let mut state = DomainState::new();
+    let moved = state
+        .create(
+            "moved done",
+            Some("moved notes".into()),
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create moved task");
+    state.set_status(moved, HumanStatus::Done).expect("finish");
+    let live = state
+        .create(
+            "live done",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create live task");
+    state.set_status(live, HumanStatus::Done).expect("finish");
+    TaskStore::new(&dir).save(&state).expect("seed store");
+
+    // Move one task into its dated file the way a save does.
+    let path = dir.join("tsk.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+    let tasks = document["tasks"].as_array_mut().expect("tasks");
+    let at = tasks
+        .iter()
+        .position(|task| task["id"] == moved.to_string())
+        .expect("moved task");
+    let task = tasks.remove(at);
+    let number = task["number"].as_u64().expect("number");
+    document["undo_stack"] = serde_json::json!([]);
+    std::fs::write(&path, serde_json::to_vec(&document).expect("json")).expect("write");
+    std::fs::create_dir(dir.join("done")).expect("done dir");
+    let line = serde_json::json!({ "done_at": task["updated_at"], "task": task });
+    std::fs::write(dir.join("done/2026-10-01.jsonl"), format!("{line}\n")).expect("line");
+
+    let detail = list(&[
+        "tsk".into(),
+        "list".into(),
+        number.to_string(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(detail.code, 0, "{}", detail.stderr);
+    assert!(detail.stdout.contains("moved done"), "{}", detail.stdout);
+    assert!(detail.stdout.contains("moved notes"), "{}", detail.stdout);
+
+    let recent = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--done".into(),
+        "--all".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(recent.code, 0, "{}", recent.stderr);
+    assert!(recent.stdout.contains("live done"), "{}", recent.stdout);
+    assert!(!recent.stdout.contains("moved done"), "{}", recent.stdout);
+
+    let history = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--done".into(),
+        "--history".into(),
+        "--all".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(history.code, 0, "{}", history.stderr);
+    let live_at = history.stdout.find("live done").expect("live row");
+    let moved_at = history.stdout.find("moved done").expect("moved row");
+    assert!(live_at < moved_at, "{}", history.stdout);
+
+    let refused = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--history".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_ne!(refused.code, 0);
+    assert!(
+        refused.stderr.contains("--history needs --done"),
+        "{}",
+        refused.stderr
+    );
+}

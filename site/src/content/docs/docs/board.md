@@ -204,7 +204,7 @@ Narrowing the pane shows one surface, the one that had focus; widening it restor
 
 ## Completed tasks
 
-The **DONE** heading starts closed: it shows the count of done tasks with `d to open`, and no done rows, so the cursor, marks, and `J` / `K` skip them. Press `d` or click the heading to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo.
+The **DONE** heading starts closed: it shows the count of done tasks with `d to open`, and no done rows, so the cursor, marks, and `J` / `K` skip them. Press `d` or click the heading to open or close the done drawer. Select a done task and press `ctrl+o` to return it to Todo. The drawer holds tasks finished within the last day; older ones move to dated files, see [older done tasks](/docs/storage/#older-done-tasks).
 
 The drawer's **archived** group starts closed. Click its heading or press `Enter` on it to expand. `g` folds or unfolds the group while the drawer is open.
 

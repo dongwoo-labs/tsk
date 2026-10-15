@@ -23,6 +23,8 @@ pub struct ListInput {
     pub archived: bool,
     pub todo: bool,
     pub doing: bool,
+    /// With `--done`: also list done tasks moved to the dated done files.
+    pub history: bool,
     /// One task addressed by UUID or human number: single-task listing with full detail.
     pub task: Option<TaskAddress>,
     pub state_dir: Option<PathBuf>,
@@ -105,6 +107,7 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         archived: false,
         todo: false,
         doing: false,
+        history: false,
         task: None,
         state_dir: None,
         help: false,
@@ -156,6 +159,10 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
                 input.doing = true;
                 index += 1;
             }
+            "--history" => {
+                input.history = true;
+                index += 1;
+            }
             "--help" => {
                 input.help = true;
                 index += 1;
@@ -203,6 +210,9 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
     if input.archived && (input.done || input.deleted) {
         return Err("--archived cannot be used with --done or --deleted".into());
     }
+    if input.history && !input.done {
+        return Err("--history needs --done".into());
+    }
     if input.todo && input.doing {
         return Err("--todo cannot be used with --doing".into());
     }
@@ -222,11 +232,24 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
         .map_err(|error| ListError::Store(error.to_string()))?;
     if let Some(task_address) = input.task {
         // Single-task listing ignores cwd and filters, and includes complete readable detail.
-        let task = domain
+        let moved;
+        let task = match domain
             .tasks()
             .iter()
             .find(|task| task_address.matches(task))
-            .ok_or(ListError::UnknownTask)?;
+        {
+            Some(task) => task,
+            None => {
+                // A done task that left the live document reads from its dated file.
+                moved = store
+                    .load_done_history()
+                    .map_err(|error| ListError::Store(error.to_string()))?
+                    .into_iter()
+                    .find(|line| task_address.matches(&line.task))
+                    .ok_or(ListError::UnknownTask)?;
+                &moved.task
+            }
+        };
         let view = if task.soft_deleted {
             ListView::Deleted
         } else if task.status == HumanStatus::Done {
@@ -319,7 +342,7 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             .cmp(&status_group_rank(b.status))
             .then_with(|| crate::ui::queue::cmp_within_status(a, b))
     });
-    let rows = tasks
+    let mut rows = tasks
         .into_iter()
         .map(|task| {
             let mut row = row_for(task, &domain);
@@ -334,6 +357,25 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             row
         })
         .collect::<Vec<_>>();
+    if input.history {
+        // Moved done tasks follow the live ones, newest first; a task in both places
+        // is listed once, from the live copy.
+        let live_ids: std::collections::BTreeSet<Uuid> =
+            domain.tasks().iter().map(|task| task.id).collect();
+        let moved = store
+            .load_done_history()
+            .map_err(|error| ListError::Store(error.to_string()))?;
+        rows.extend(
+            moved
+                .iter()
+                .map(|line| &line.task)
+                .filter(|task| {
+                    !live_ids.contains(&task.id) && !task.is_notice() && !domain.is_hidden(task)
+                })
+                .filter(|task| scope.as_ref().is_none_or(|scope| task.scope == *scope))
+                .map(|task| row_for(task, &domain)),
+        );
+    }
     Ok(ListResult {
         rows,
         view,

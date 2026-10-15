@@ -32,6 +32,11 @@ const LOCK_FILE: &str = "tsk.json.lock";
 const TRASH_FILE: &str = "trash.jsonl";
 /// Trash lines older than this are dropped on the next trash rewrite.
 const TRASH_PURGE_AFTER: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// Directory of dated done files (`done/YYYY-MM-DD.jsonl`, UTC completion date).
+const DONE_DIR: &str = "done";
+/// Days a done task stays in the live document before it moves to its dated file.
+const DONE_KEEP_DAYS_ENV: &str = "TSK_DONE_KEEP_DAYS";
+const DONE_KEEP_DAYS_DEFAULT: u64 = 1;
 
 /// One document-format migration step.
 type MigrationStep = fn(serde_json::Value) -> Result<serde_json::Value, StoreError>;
@@ -232,6 +237,64 @@ pub struct TrashLine {
     #[serde(with = "crate::domain::time_serde")]
     pub deleted_at: SystemTime,
     pub task: Task,
+}
+
+/// One line of a dated done file: a done task moved out of the live store, with the
+/// `done_at` of its last `completed` event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoneLine {
+    #[serde(with = "crate::domain::time_serde")]
+    pub done_at: SystemTime,
+    pub task: Task,
+}
+
+/// Parse done lines tolerantly, like [`parse_trash_lines`]: skip torn or unreadable
+/// lines and dedupe by task id, last line winning.
+fn parse_done_lines(content: &[u8]) -> Vec<DoneLine> {
+    let mut lines: Vec<DoneLine> = Vec::new();
+    for entry in content
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| std::str::from_utf8(line).ok())
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<DoneLine>(line).ok())
+    {
+        match lines
+            .iter_mut()
+            .find(|existing| existing.task.id == entry.task.id)
+        {
+            Some(existing) => *existing = entry,
+            None => lines.push(entry),
+        }
+    }
+    lines
+}
+
+/// How long a done task stays live: `TSK_DONE_KEEP_DAYS` whole days, default one.
+/// An unreadable value falls back to the default.
+fn done_keep_window() -> Duration {
+    let days = env::var(DONE_KEEP_DAYS_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DONE_KEEP_DAYS_DEFAULT);
+    Duration::from_secs(days.saturating_mul(24 * 60 * 60))
+}
+
+/// `YYYY-MM-DD` of a time in UTC (civil-from-days, proleptic Gregorian).
+fn utc_date(time: SystemTime) -> String {
+    let days = time
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Address one trash line by its task's human number or id.
@@ -731,6 +794,7 @@ impl TaskStore {
         }
         // Preserve the original live document before any trash conversion.
         self.move_eligible_to_trash(state, filesystem)?;
+        self.move_done_to_dated_files(state, filesystem, done_keep_window())?;
         let tmp = self.unique_tmp_path();
         let data = serde_json::to_string_pretty(state)?;
         // A save is successful only after the replacement and containing directory are synced.
@@ -811,6 +875,108 @@ impl TaskStore {
             .collect::<std::collections::BTreeSet<_>>();
         state.remove_tasks(&ids);
         Ok(())
+    }
+
+    /// Move done tasks older than `keep` into `done/YYYY-MM-DD.jsonl` by UTC completion
+    /// date before the live document is replaced, so the live file holds recent work only.
+    ///
+    /// Same durability order as trash: each touched dated file is rewritten atomically
+    /// (its existing lines kept, the moved tasks added) before the live state loses the
+    /// tasks. A crash in between leaves a task in both places; readers prefer the live
+    /// copy. Task numbers never come back: the live counter stays above them.
+    fn move_done_to_dated_files<F: AtomicFilesystem>(
+        &self,
+        state: &mut DomainState,
+        filesystem: &F,
+        keep: Duration,
+    ) -> Result<(), StoreError> {
+        let eligible = state.done_archive_eligible(SystemTime::now(), keep);
+        if eligible.is_empty() {
+            return Ok(());
+        }
+        let dir = self.path.join(DONE_DIR);
+        fsperm::ensure_private_dir(&dir)?;
+        // Under the exclusive lock no rewrite is mid-flight: any temp here is an orphan.
+        for entry in fs::read_dir(&dir)?.flatten() {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        let mut by_date: std::collections::BTreeMap<String, Vec<DoneLine>> =
+            std::collections::BTreeMap::new();
+        for (done_at, task) in eligible.iter() {
+            by_date
+                .entry(utc_date(*done_at))
+                .or_default()
+                .push(DoneLine {
+                    done_at: *done_at,
+                    task: task.clone(),
+                });
+        }
+        for (date, added) in by_date {
+            let file = dir.join(format!("{date}.jsonl"));
+            let mut lines = match fs::read(&file) {
+                Ok(content) => parse_done_lines(&content),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                Err(error) => return Err(error.into()),
+            };
+            lines.retain(|line| !added.iter().any(|new| new.task.id == line.task.id));
+            lines.extend(added);
+            let mut content = String::new();
+            for line in &lines {
+                content.push_str(&serde_json::to_string(line)?);
+                content.push('\n');
+            }
+            let tmp = dir.join(format!(".{date}.jsonl.tmp.{}", std::process::id()));
+            let write_result = (|| -> Result<(), StoreError> {
+                let mut temp_file = filesystem.create_file(&tmp)?;
+                filesystem.write_all(&mut temp_file, content.as_bytes())?;
+                filesystem.sync_file(&temp_file)?;
+                drop(temp_file);
+                filesystem.rename(&tmp, &file)?;
+                filesystem.sync_directory(&dir)?;
+                Ok(())
+            })();
+            if write_result.is_err() {
+                let _ = filesystem.remove_file(&tmp);
+            }
+            write_result?;
+        }
+        let ids = eligible
+            .iter()
+            .map(|(_, task)| task.id)
+            .collect::<std::collections::BTreeSet<_>>();
+        state.remove_tasks(&ids);
+        Ok(())
+    }
+
+    /// Every task in the dated done files, newest `done_at` first, deduped by id.
+    /// Takes the exclusive lock so a read never races a rewrite.
+    pub fn load_done_history(&self) -> Result<Vec<DoneLine>, StoreError> {
+        let _guard = self.lock_exclusive()?;
+        let dir = self.path.join(DONE_DIR);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut lines: Vec<DoneLine> = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || !name.ends_with(".jsonl") {
+                continue;
+            }
+            for line in parse_done_lines(&fs::read(entry.path())?) {
+                match lines.iter_mut().find(|kept| kept.task.id == line.task.id) {
+                    Some(kept) if kept.done_at <= line.done_at => *kept = line,
+                    Some(_) => {}
+                    None => lines.push(line),
+                }
+            }
+        }
+        lines.sort_by_key(|line| std::cmp::Reverse(line.done_at));
+        Ok(lines)
     }
 
     /// Rewrite `trash.jsonl` keeping only the lines `keep` accepts; lines that fail to
@@ -1184,7 +1350,7 @@ impl From<serde_json::Error> for StoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ProvenanceOrigin, TaskScope};
+    use crate::domain::{HumanStatus, ProvenanceOrigin, TaskScope};
     use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
 
@@ -2364,6 +2530,91 @@ mod tests {
         assert!(reloaded.get(id).expect("task").soft_deleted);
         reloaded.undo().expect("undo restores");
         assert!(!reloaded.get(id).expect("task").soft_deleted);
+    }
+
+    /// Seed done tasks, then rewrite the document so each listed task finished
+    /// `days_ago` days back with no undo entry left on the stack.
+    fn backdate_done(dir: &Path, ids: &[Uuid], days_ago: u64) {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join(STATE_FILE)).expect("read")).expect("json");
+        value["undo_stack"] = serde_json::json!([]);
+        let shift = days_ago * 24 * 60 * 60;
+        for task in value["tasks"].as_array_mut().expect("tasks") {
+            let id: Uuid = serde_json::from_value(task["id"].clone()).expect("id");
+            if !ids.contains(&id) {
+                continue;
+            }
+            let back = |at: &mut serde_json::Value| {
+                let pair = at.as_array_mut().expect("time pair");
+                pair[0] = serde_json::json!(pair[0].as_u64().expect("secs") - shift);
+            };
+            back(&mut task["updated_at"]);
+            for event in task["history"].as_array_mut().expect("history") {
+                back(&mut event["at"]);
+            }
+        }
+        write_state_json(dir, value);
+    }
+
+    #[test]
+    fn utc_date_names_the_calendar_day() {
+        assert_eq!(utc_date(UNIX_EPOCH), "1970-01-01");
+        let day = UNIX_EPOCH + Duration::from_secs(1_760_486_400);
+        assert_eq!(utc_date(day), "2025-10-15");
+        assert_eq!(utc_date(day - Duration::from_secs(1)), "2025-10-14");
+        assert_eq!(
+            utc_date(UNIX_EPOCH + Duration::from_secs(951_782_400)),
+            "2000-02-29"
+        );
+    }
+
+    #[test]
+    fn old_done_tasks_move_to_their_dated_file_and_stay_gone() {
+        let dir = temp_dir("done-files");
+        let _guard = TempDirGuard(dir.clone());
+        let store = TaskStore::new(&dir);
+        let mut seed = DomainState::new();
+        let create = |state: &mut DomainState, title: &str| {
+            state
+                .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
+                .expect("create")
+        };
+        let old = create(&mut seed, "old done");
+        let parent = create(&mut seed, "done parent");
+        let child = create(&mut seed, "open child");
+        let fresh = create(&mut seed, "fresh done");
+        let open = create(&mut seed, "still open");
+        seed.set_parent(child, Some(parent)).expect("parent");
+        for id in [old, parent, fresh] {
+            seed.set_status(id, HumanStatus::Done).expect("done");
+        }
+        store.save(&seed).expect("seed");
+        // A board that loaded before the move still holds every task.
+        let mut board = store.load().expect("board load");
+        backdate_done(&dir, &[old, parent, child], 3);
+
+        let state = store.load().expect("load backdated");
+        store.save(&state).expect("save moves");
+
+        let live = store.load().expect("reload");
+        assert!(live.get(old).is_none(), "the old done task left tsk.json");
+        for id in [parent, child, fresh, open] {
+            assert!(live.get(id).is_some(), "{id} stays live");
+        }
+        let moved = store.load_done_history().expect("history");
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].task.id, old);
+        let file = dir
+            .join(DONE_DIR)
+            .join(format!("{}.jsonl", utc_date(moved[0].done_at)));
+        assert!(file.is_file(), "dated file {file:?}");
+
+        // The stale board's next save drops the moved task instead of resurrecting it.
+        board.set_status(open, HumanStatus::Doing).expect("touch");
+        store.reload_merge_save(&mut board).expect("board save");
+        assert!(board.get(old).is_none(), "the board forgets the moved task");
+        assert!(store.load().expect("reload").get(old).is_none());
+        assert_eq!(store.load_done_history().expect("history").len(), 1);
     }
 
     #[test]
