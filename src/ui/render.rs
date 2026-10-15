@@ -512,12 +512,10 @@ pub enum QueueOverlay<'a> {
     },
     /// Launch card: the two-choice archived-project modal.
     LaunchCard { name: &'a str },
-    /// Project-scope dropdown from the selector chip.
+    /// Searchable list card (the parent chooser).
     ScopeDropdown {
         options: &'a [String],
         selected: usize,
-        /// Picker tabs (main/archived). None for non-picker uses.
-        tabs: Option<PickerTabsPaint>,
         /// Card title override (the searchable list pickers name themselves).
         title: Option<&'a str>,
         /// Search query echoed in the card title (searchable list pickers).
@@ -620,7 +618,7 @@ pub struct QueueFrameModel<'a> {
     pub selection_id: Option<Uuid>,
     /// Session-only bulk selection, independent from the cursor.
     pub marked_ids: BTreeSet<Uuid>,
-    /// Persistent navigation paint: the tabs, then the scope and sort controls.
+    /// Persistent navigation paint: the board and questions tabs.
     pub nav: NavPaint,
     /// Which board surface the list paints (section titles).
     pub surface: BoardSurface,
@@ -674,18 +672,13 @@ pub struct QueueFrameModel<'a> {
     pub task_marks: BTreeMap<Uuid, String>,
 }
 
-/// Persistent navigation row paint: the tabs, then the scope and sort controls.
+/// Persistent navigation row paint: the board and questions tabs.
 #[derive(Debug, Clone)]
 pub struct NavPaint {
     /// Which tab is active (underlined).
     pub active: NavTab,
     /// The questions tab's text, with its waiting count when one is known.
     pub questions_tab: String,
-    /// The scope control's label: `all`, `desk`, a project name, or `name · archived` in
-    /// read-only focus.
-    pub scope_label: String,
-    /// The sort control's label: `number` or `project`.
-    pub sort_label: &'static str,
 }
 
 /// Which board surface owns the list (drives section titles).
@@ -694,14 +687,6 @@ pub enum BoardSurface {
     All,
     Desk,
     Project,
-}
-
-/// The project picker's tab row: which list is active and how many entries the
-/// archived one carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PickerTabsPaint {
-    pub archived_active: bool,
-    pub archived_count: usize,
 }
 
 /// Logical control under a painted rectangle (rebuilt every frame).
@@ -717,10 +702,6 @@ pub enum QueueHitTarget {
     QuestionKey(crossterm::event::KeyCode),
     /// The board's waiting-on-you line: opens the questions tab.
     Waiting,
-    /// The scope control (`p`).
-    ScopeChip,
-    /// The sort control (`S`).
-    SortChip,
     /// The visible board search field.
     Search,
     /// The quick-add input row. Clicking it keeps the already-focused line focused.
@@ -745,14 +726,9 @@ pub enum QueueHitTarget {
     /// command's own intent ( residual: mapped through the model's command list, never
     /// a fixed table, the same discipline `Verb` already follows).
     Command(usize),
-    /// One painted row of the open project-scope dropdown, indexed exactly as
-    /// `BoardModel::project_options()` orders them.
-    ProjectOption(usize),
     /// One painted row of an open searchable list picker (the parent chooser),
     /// indexed in the visible (filtered) order.
     ListPickerOption(usize),
-    /// One painted tab of the project picker's tab row.
-    PickerTab(crate::ui::board::PickerTab),
     /// One choice row of the launch card (0 = unarchive, 1 = keep archived).
     LaunchOption(usize),
     /// The open help card's full-frame dismiss hit. The card's own chrome and searchable
@@ -1694,7 +1670,6 @@ fn paint_overlay(
         QueueOverlay::ScopeDropdown {
             options,
             selected,
-            tabs,
             title,
             query,
             wrap,
@@ -1705,7 +1680,7 @@ fn paint_overlay(
                 );
             } else {
                 paint_scope_dropdown(
-                    frame, geo, surface, options, *selected, *tabs, *title, *query, hits,
+                    frame, geo, surface, options, *selected, *title, *query, hits,
                 );
             }
         }
@@ -2202,73 +2177,6 @@ const PALETTE_FOOTER: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "enter",
         label: "run",
-    },
-    VerbEntry {
-        key: "esc",
-        label: "close",
-    },
-];
-
-/// Legend footer for the project-scope card.
-/// AC-40: the picker's archived tab has its own verbs. `ctrl+f` still unarchives, it is
-/// simply not advertised beside the chord that reads as the undo of filing.
-const ARCHIVED_TAB_FOOTER: &[VerbEntry<'static>] = &[
-    VerbEntry {
-        key: "ctrl+u",
-        label: "unarchive",
-    },
-    VerbEntry {
-        key: "enter",
-        label: "open",
-    },
-    VerbEntry {
-        key: "esc",
-        label: "close",
-    },
-];
-
-/// Painted width of a card legend: the two-cell lead, `key label` seats, ` · ` between.
-fn legend_fits(geo: &TierGeometry, entries: &[VerbEntry<'_>]) -> bool {
-    let pad: usize = usize::from(geo.tier != Tier::Compact);
-    let content = (geo.row_width as usize)
-        .saturating_sub(4)
-        .min(62)
-        .saturating_sub(2)
-        .saturating_sub(2 * pad);
-    let width = 2
-        + entries
-            .iter()
-            .map(|entry| display_width(entry.key) + 1 + display_width(entry.label))
-            .sum::<usize>()
-        + 3 * entries.len().saturating_sub(1);
-    width <= content
-}
-
-/// Compact terminals cap the card near 34 content columns, so the legend keeps only the
-/// seat that is not guessable (`ctrl+f archive`) beside the way out.
-const PROJECT_PICKER_FOOTER_COMPACT: &[VerbEntry<'static>] = &[
-    VerbEntry {
-        key: "ctrl+f",
-        label: "archive",
-    },
-    VerbEntry {
-        key: "esc",
-        label: "close",
-    },
-];
-
-const PROJECT_PICKER_FOOTER: &[VerbEntry<'static>] = &[
-    VerbEntry {
-        key: "↑↓",
-        label: "move",
-    },
-    VerbEntry {
-        key: "enter",
-        label: "choose",
-    },
-    VerbEntry {
-        key: "ctrl+f",
-        label: "archive",
     },
     VerbEntry {
         key: "esc",
@@ -3494,17 +3402,15 @@ fn paint_scope_dropdown(
     surface: Rect,
     options: &[String],
     selected: usize,
-    tabs: Option<PickerTabsPaint>,
     title_override: Option<&str>,
     query: Option<&str>,
     hits: &mut QueueHitMap,
 ) {
-    if geo.row_width == 0 || (tabs.is_none() && title_override.is_none() && options.is_empty()) {
+    if geo.row_width == 0 || (title_override.is_none() && options.is_empty()) {
         return;
     }
-    let tabs_rows = usize::from(tabs.is_some());
     // Search owns a visible menu even when nothing matches, so its query can be
-    // corrected or dismissed. Archived lists also retain their empty-state row.
+    // corrected or dismissed.
     let empty_state = options.is_empty();
     // Help/project-scope have nothing worth preserving underneath (no query row like the
     // palette), so the full frame is the ceiling: a narrow compact terminal gets every row
@@ -3515,9 +3421,7 @@ fn paint_scope_dropdown(
     let capacity = bounds
         .height
         .saturating_sub(modal_chrome_rows(geo.tier, true));
-    // The tab row and the dim rule under it (AC-37) share the card's content area with
-    // the list, so both come off the capacity or the last row is clipped.
-    let list_capacity = (capacity.max(1) as usize).saturating_sub(tabs_rows * 2);
+    let list_capacity = capacity.max(1) as usize;
     let max_n = if geo.tier == Tier::Compact {
         list_capacity.max(1)
     } else {
@@ -3552,7 +3456,7 @@ fn paint_scope_dropdown(
         bounds,
         ModalCardSpec {
             title: &title,
-            content_rows: (rows + tabs_rows + usize::from(tabs.is_some())) as u16,
+            content_rows: rows as u16,
             min_content_width: if title_override.is_some() {
                 options
                     .iter()
@@ -3563,14 +3467,7 @@ fn paint_scope_dropdown(
             } else {
                 0
             },
-            legend: match tabs {
-                Some(tabs) if tabs.archived_active => ARCHIVED_TAB_FOOTER,
-                // Keyed on the painted width, not the tier: a tall-but-narrow frame and a
-                // wide-but-short one both get the largest legend their card can hold.
-                Some(_) if legend_fits(geo, PROJECT_PICKER_FOOTER) => PROJECT_PICKER_FOOTER,
-                Some(_) => PROJECT_PICKER_FOOTER_COMPACT,
-                None => SCOPE_FOOTER,
-            },
+            legend: SCOPE_FOOTER,
             dismiss: None,
             legend_hits: None,
         },
@@ -3579,74 +3476,19 @@ fn paint_scope_dropdown(
     if content.width == 0 || content.height == 0 {
         return;
     }
-    // The picker's tab row: `projects · archived (n)`, active bold, inactive dim.
-    if let Some(tabs) = tabs {
-        let y = content.y;
-        let main = " projects ";
-        let archived = format!(" archived ({}) ", tabs.archived_count);
-        let main_w = display_width(main) as u16;
-        let archived_w = display_width(&archived) as u16;
-        let (main_style, archived_style) = if tabs.archived_active {
-            (style_dim(), style_bold())
-        } else {
-            (style_bold(), style_dim())
-        };
-        put_line_at(
-            frame,
-            surface,
-            Rect::new(content.x, y, content.width, 1),
-            Line::from(vec![
-                Span::styled(main.to_string(), main_style),
-                Span::styled("·".to_string(), style_dim()),
-                Span::styled(archived, archived_style),
-            ]),
-        );
-        hits.push(
-            QueueHitTarget::PickerTab(crate::ui::board::PickerTab::Main),
-            Rect::new(content.x, y, main_w, 1),
-        );
-        hits.push(
-            QueueHitTarget::PickerTab(crate::ui::board::PickerTab::Archived),
-            Rect::new(content.x.saturating_add(main_w + 1), y, archived_w, 1),
-        );
-    }
-    // AC-37: a dim rule row sits directly under the picker's tabs row, like the
-    // board's rule under its tabs.
-    let rule_rows = usize::from(tabs.is_some());
-    if tabs.is_some() {
-        let y = content.y.saturating_add(1);
-        let rule = "\u{2500}".repeat(content.width as usize);
-        put_line_at(
-            frame,
-            surface,
-            Rect::new(content.x, y, content.width, 1),
-            Line::from(Span::styled(rule, style_dim())),
-        );
-    }
     if empty_state {
-        let y = content.y.saturating_add((tabs_rows + rule_rows) as u16);
+        let y = content.y;
         put_line_at(
             frame,
             surface,
             Rect::new(content.x, y, content.width, 1),
-            paint_bounded_line(
-                if tabs.is_some() {
-                    "  no archived projects"
-                } else {
-                    "  no matching options"
-                },
-                content.width,
-                style_dim(),
-            ),
+            paint_bounded_line("  no matching options", content.width, style_dim()),
         );
         return;
     }
-    let paintable = rows.min((content.height as usize).saturating_sub(tabs_rows + rule_rows));
+    let paintable = rows.min(content.height as usize);
     for (j, opt) in options.iter().enumerate().skip(scroll).take(paintable) {
-        let y = content
-            .y
-            .saturating_add((tabs_rows + rule_rows) as u16)
-            .saturating_add((j - scroll) as u16);
+        let y = content.y.saturating_add((j - scroll) as u16);
         let marker = if j == selected { "▸ " } else { "  " };
         let text = format!("{marker}{opt}");
         let style = if j == selected {
@@ -3663,11 +3505,7 @@ fn paint_scope_dropdown(
         );
         // `j` remains the source index after windowing, so a click selects the same option
         // Up/Down plus Enter would confirm rather than its position within this paint slice.
-        if tabs.is_none() && title_override.is_some() {
-            hits.push(QueueHitTarget::ListPickerOption(j), rect);
-        } else {
-            hits.push(QueueHitTarget::ProjectOption(j), rect);
-        }
+        hits.push(QueueHitTarget::ListPickerOption(j), rect);
         hits.push_copyable(rect);
     }
 }
@@ -4409,41 +4247,18 @@ fn paint_status_line(
     (bound_line(Line::from(spans), width as usize), undo_hit)
 }
 
-/// Measured selector controls: the board tab, the scope control, and the sort control. Only
-/// the scope label is shortened at narrow widths. The same result drives paint, wrapping,
-/// and hit regions.
-fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTarget, String); 4] {
+/// Measured selector tabs: the board tab and the questions tab. Only the questions tab drops
+/// its word at narrow widths. The same result drives paint, wrapping, and hit regions.
+fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTarget, String); 2] {
     let board = " 1 board ".to_string();
-    let budget = |questions: &str, sort: &str| {
-        width
-            .saturating_sub(display_width(&board))
-            .saturating_sub(display_width(questions))
-            .saturating_sub(display_width(sort))
-            // Three ` · ` separators, then the scope control's own ` ` + ` ▾ ` padding.
-            .saturating_sub(9)
-            .saturating_sub(4)
-    };
     let mut questions = model.nav.questions_tab.clone();
-    let mut sort = format!(" sort {} \u{25be} ", model.nav.sort_label);
-    // A narrow column keeps the scope readable: the sort control, then the questions tab,
-    // drop their words first.
-    let wanted = display_width(&model.nav.scope_label).min(12);
-    if budget(&questions, &sort) < wanted {
-        sort = format!(" {} \u{25be} ", model.nav.sort_label);
-    }
-    if budget(&questions, &sort) < wanted {
+    // One ` · ` separator between the two tabs.
+    if display_width(&board) + 3 + display_width(&questions) > width {
         questions = questions.replacen(" questions", "", 1);
     }
-    let scope_budget = budget(&questions, &sort);
-    let scope = format!(
-        " {} \u{25be} ",
-        present_line(&model.nav.scope_label, scope_budget)
-    );
     [
         (QueueHitTarget::NavTab(NavTab::Board), board),
         (QueueHitTarget::NavTab(NavTab::Questions), questions),
-        (QueueHitTarget::ScopeChip, scope),
-        (QueueHitTarget::SortChip, sort),
     ]
 }
 
@@ -4487,7 +4302,7 @@ fn push_selector_tab_spans(spans: &mut Vec<Span<'static>>, text: &str, active: b
     }
 }
 
-/// Paint the selector row: the board tab, then the scope and sort controls.
+/// Paint the selector row: the board and questions tabs.
 fn paint_selector_row(
     model: &QueueFrameModel<'_>,
     geo: &TierGeometry,
@@ -4707,7 +4522,7 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    fn selector_model(scope: &str) -> QueueFrameModel<'static> {
+    fn selector_model() -> QueueFrameModel<'static> {
         static VIEW: std::sync::OnceLock<QueueView> = std::sync::OnceLock::new();
         let view = VIEW.get_or_init(|| QueueView {
             sections: vec![],
@@ -4721,8 +4536,6 @@ mod tests {
             nav: NavPaint {
                 questions_tab: " 2 questions ".to_string(),
                 active: NavTab::Board,
-                scope_label: scope.to_string(),
-                sort_label: "number",
             },
             surface: BoardSurface::All,
             project_groups: false,
@@ -4750,38 +4563,41 @@ mod tests {
     }
 
     #[test]
-    fn narrow_selector_keeps_board_scope_and_sort_controls() {
-        let model = selector_model(&"x".repeat(32));
+    fn narrow_selector_keeps_both_tabs_and_drops_only_the_questions_word() {
+        let model = selector_model();
         let (line, hits) = paint_selector_row(&model, &tier::resolve(40, 24));
         let text = plain(&line);
         assert!(text.contains("1 board"), "{text}");
-        assert!(text.contains("number"), "{text}");
-        assert!(
-            text.matches('▾').count() == 2,
-            "both controls keep a chevron: {text}"
-        );
-        assert!(display_width(&text) <= 40);
-        let targets: Vec<QueueHitTarget> = hits.iter().map(|(target, _, _)| *target).collect();
-        assert_eq!(
-            targets,
-            vec![
-                QueueHitTarget::NavTab(NavTab::Board),
-                QueueHitTarget::NavTab(NavTab::Questions),
-                QueueHitTarget::ScopeChip,
-                QueueHitTarget::SortChip
-            ]
-        );
-        for (target, x, width) in hits {
-            assert!(
-                x.saturating_add(width) <= 40,
-                "{target:?} overflows selector"
+        assert!(text.contains("2 questions"), "{text}");
+        assert!(!text.contains('▾'), "no scope or sort control: {text}");
+
+        let (line, hits_narrow) = paint_selector_row(&model, &tier::resolve(20, 24));
+        let text = plain(&line);
+        assert!(text.contains("1 board"), "{text}");
+        assert!(!text.contains("questions"), "{text}");
+        assert!(display_width(&text) <= 20);
+        for (width, hits) in [(40u16, hits), (20, hits_narrow)] {
+            let targets: Vec<QueueHitTarget> =
+                hits.iter().map(|(target, _, _)| *target).collect();
+            assert_eq!(
+                targets,
+                vec![
+                    QueueHitTarget::NavTab(NavTab::Board),
+                    QueueHitTarget::NavTab(NavTab::Questions),
+                ]
             );
+            for (target, x, w) in hits {
+                assert!(
+                    x.saturating_add(w) <= width,
+                    "{target:?} overflows selector"
+                );
+            }
         }
     }
 
     #[test]
     fn active_tab_underlines_the_word_not_its_padding_or_the_controls() {
-        let (line, _) = paint_selector_row(&selector_model("tsk"), &tier::resolve(78, 24));
+        let (line, _) = paint_selector_row(&selector_model(), &tier::resolve(78, 24));
         let text = plain(&line);
         assert!(
             text.contains(" board "),
@@ -4794,16 +4610,6 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect();
         assert_eq!(underlined, "1 board");
-    }
-
-    #[test]
-    fn scope_label_is_escaped() {
-        let (line, _) = paint_selector_row(
-            &selector_model("/tmp/\u{1b}]52;clipboard\u{7}"),
-            &tier::resolve(120, 24),
-        );
-        let text = plain(&line);
-        assert!(!text.contains('\u{1b}'), "{text}");
     }
 
     #[test]

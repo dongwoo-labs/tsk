@@ -12,7 +12,6 @@ use crate::ui::edit::{
     escaped_line_window, wrap_text, wrapped_draft_rows, wrapped_edit_rows, EditBuffer,
 };
 use crate::ui::input::help_card_lines_for_query;
-use crate::ui::mouse::BoardPopup;
 use crate::ui::render::{
     self, BoardSurface, FormScopeDropdown, NavPaint, PaletteCommandRow, QueueFrameModel,
     QueueOverlay, RelationRow, VerbEntry,
@@ -22,10 +21,7 @@ use crate::ui::{present_line, terminal_text};
 
 use super::chrome::{notice_framed, row_width, BULK_DELETE_NOTICE_UNDO, DELETE_NOTICE_UNDO};
 use super::commands::CommandSurface;
-use super::model::{
-    project_option_label, project_scope_option_label, BoardForm, BoardInputMode, BoardLocation,
-    BoardModel, PickerTab, ProjectScopeOption,
-};
+use super::model::{project_option_label, BoardForm, BoardInputMode, BoardModel};
 
 /// Verb bar for the base board list.
 ///
@@ -76,22 +72,6 @@ pub fn board_verb_items(model: &BoardModel) -> Vec<VerbEntry<'static>> {
                 key: "esc",
                 label: "cancel",
             },
-        ];
-    }
-
-    // The read-only archived focus offers only what works there.
-    if model.focus_is_archived() {
-        return vec![
-            VerbEntry {
-                key: "u",
-                label: "unarchive",
-            },
-            OPEN,
-            VerbEntry {
-                key: "esc",
-                label: "close",
-            },
-            HELP,
         ];
     }
 
@@ -1004,36 +984,20 @@ fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
         BoardSurface::All => " all".to_string(),
         BoardSurface::Desk => " desk".to_string(),
         BoardSurface::Project => {
-            let path = model.archived_focus().or_else(|| model.active_project());
-            let name = path
+            let name = model
+                .active_project()
                 .map(|path| render::short_project(&path.to_string_lossy()).to_string())
                 .unwrap_or_else(|| "desk".to_string());
-            let mut context = format!(" {name}");
-            if model.focus_is_archived() {
-                context.push_str(" · archived");
-            }
-            context
+            format!(" {name}")
         }
     }
 }
 
-/// The persistent navigation row's paint for this model: the board tab, the scope and sort
-/// controls.
+/// The persistent navigation row's paint for this model: the board and questions tabs.
 fn nav_paint(model: &BoardModel) -> NavPaint {
-    let scope_label = match &model.board_location {
-        // AC-41: the read-only focus says so in its control.
-        BoardLocation::ArchivedProject(path) => {
-            format!("{} \u{b7} archived", project_option_label(path.as_path()))
-        }
-        BoardLocation::Project(path) => project_option_label(path.as_path()),
-        BoardLocation::All => "all".to_string(),
-        BoardLocation::Desk => "desk".to_string(),
-    };
     NavPaint {
         active: model.nav_tab(),
         questions_tab: crate::ui::questions::tab_texts(&model.questions.feed).1,
-        scope_label,
-        sort_label: model.sort().label(),
     }
 }
 
@@ -1096,7 +1060,6 @@ struct OverlayPayloads<'a> {
     list_picker_options: Vec<String>,
     list_picker_query: Option<String>,
     list_picker_selected: usize,
-    scope_tabs: Option<render::PickerTabsPaint>,
     launch_card_name: Option<String>,
     scope_selected: usize,
 }
@@ -1123,23 +1086,7 @@ impl<'a> OverlayPayloads<'a> {
             } else {
                 Vec::new()
             };
-        let scope_options: Vec<String> = if model.popup() == BoardPopup::ProjectPicker {
-            let labels = match model.picker_tab() {
-                Some(PickerTab::Archived) => model
-                    .archived_project_options()
-                    .iter()
-                    .map(|path| {
-                        project_scope_option_label(&ProjectScopeOption::Project(path.clone()))
-                    })
-                    .collect(),
-                _ => model
-                    .project_options()
-                    .iter()
-                    .map(project_scope_option_label)
-                    .collect(),
-            };
-            labels
-        } else if model.input_mode() == BoardInputMode::FormScopeDropdown {
+        let scope_options: Vec<String> = if model.input_mode() == BoardInputMode::FormScopeDropdown {
             // Short project names: the dropdown lists scopes, not filesystem paths.
             model
                 .form_scope_options()
@@ -1162,25 +1109,17 @@ impl<'a> OverlayPayloads<'a> {
             .collect();
         let list_picker_query = model.list_picker_query().map(str::to_string);
         let list_picker_selected = model.list_picker_selected();
-        let scope_selected = if model.popup() == BoardPopup::ProjectPicker {
-            model.project_picker_index().unwrap_or(0)
-        } else {
-            model
-                .form_scope_options()
-                .iter()
-                .position(|scope| Some(scope) == model.form_scope_dropdown_choice())
-                .unwrap_or(0)
-        };
+        let scope_selected = model
+            .form_scope_options()
+            .iter()
+            .position(|scope| Some(scope) == model.form_scope_dropdown_choice())
+            .unwrap_or(0);
         let launch_card_name = model.launch_card.as_deref().map(|path| {
             Path::new(path)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or(&path.to_string_lossy())
                 .to_string()
-        });
-        let scope_tabs = model.picker_tab().map(|tab| render::PickerTabsPaint {
-            archived_active: tab == PickerTab::Archived,
-            archived_count: model.archived_project_options().len(),
         });
         Self {
             help_lines,
@@ -1190,7 +1129,6 @@ impl<'a> OverlayPayloads<'a> {
             list_picker_query,
             list_picker_selected,
             scope_selected,
-            scope_tabs,
             launch_card_name,
         }
     }
@@ -1294,20 +1232,9 @@ impl<'a> OverlayPayloads<'a> {
                 selected: self
                     .list_picker_selected
                     .min(self.list_picker_options.len().saturating_sub(1)),
-                tabs: None,
                 title: Some(title),
                 query: self.list_picker_query.as_deref(),
                 wrap: model.list_picker_rows(),
-            });
-        }
-        if model.popup() == BoardPopup::ProjectPicker {
-            return Some(QueueOverlay::ScopeDropdown {
-                options: &self.scope_options,
-                selected: self.scope_selected,
-                tabs: self.scope_tabs,
-                title: None,
-                query: None,
-                wrap: None,
             });
         }
         None
@@ -1510,7 +1437,7 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         archived_header_selected: model.archived_header_selected(),
         inbox_collapsed: model.inbox_collapsed,
         inbox_header_selected: model.inbox_header_selected(),
-        rows_dim: model.focus_is_archived(),
+        rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: crate::ui::questions::task_marks(&model.questions.feed),
     };
@@ -1668,7 +1595,7 @@ fn draw_wide_board(
         archived_header_selected: model.archived_header_selected(),
         inbox_collapsed: model.inbox_collapsed,
         inbox_header_selected: model.inbox_header_selected(),
-        rows_dim: model.focus_is_archived(),
+        rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: crate::ui::questions::task_marks(&model.questions.feed),
     };

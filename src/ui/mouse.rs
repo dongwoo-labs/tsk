@@ -29,8 +29,6 @@ use super::tier::{FocusedSurface, ResponsivePresentation, WideStage};
 pub enum BoardPopup {
     #[default]
     None,
-    /// Session-only project scope selector.
-    ProjectPicker,
     /// Board persistence failed; Retry or Cancel must resolve it before another mutation.
     SaveRecovery,
     /// Two-choice card raised at launch when the cwd default is an archived project.
@@ -760,15 +758,6 @@ pub fn map_board_mouse(
             Some(QueueHitTarget::ModalClose) => Some(BoardIntent::CloseCommandSurface),
             _ => Some(BoardIntent::CloseCommandSurface),
         },
-        BoardInputMode::ProjectPicker => match hit_at(hits, pos) {
-            Some(QueueHitTarget::ProjectOption(index)) => {
-                Some(BoardIntent::SelectProjectOption(index))
-            }
-            Some(QueueHitTarget::PickerTab(tab)) => Some(BoardIntent::SelectPickerTab(tab)),
-            Some(QueueHitTarget::ModalChrome) => None,
-            Some(QueueHitTarget::ModalClose) => Some(BoardIntent::CancelProjectPicker),
-            _ => Some(BoardIntent::CancelProjectPicker),
-        },
         // The searchable card's own chrome and body are inert. Its `[x]` and the
         // full-frame fallback outside the card close it.
         BoardInputMode::Help => match hit_at(hits, pos) {
@@ -890,8 +879,6 @@ pub fn map_board_mouse(
         BoardInputMode::Normal => match hit_at(hits, pos) {
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
             Some(QueueHitTarget::Waiting) => Some(BoardIntent::SelectNavTab(NavTab::Questions)),
-            Some(QueueHitTarget::ScopeChip) => Some(BoardIntent::OpenProjectSelector),
-            Some(QueueHitTarget::SortChip) => Some(BoardIntent::ToggleSort),
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
             Some(QueueHitTarget::Drawer) => Some(BoardIntent::ToggleDoneDrawer),
             Some(QueueHitTarget::ArchivedHeader) => Some(BoardIntent::ToggleArchivedGroup),

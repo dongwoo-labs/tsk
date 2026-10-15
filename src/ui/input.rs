@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::domain::HumanStatus;
 
-use super::board::{BoardInputMode, PickerTab};
+use super::board::BoardInputMode;
 use super::capture::{CaptureField, CaptureScopeChoice};
 use super::tier::{ResponsivePresentation, WideStage};
 
@@ -224,26 +224,10 @@ pub enum BoardIntent {
     /// A list click while quick-add is open discards the draft, then selects its row.
     QuickAddSelectIndex(usize),
     OpenCapture,
-    /// Open the session project selector for the Projects lens (`P` or the chip).
-    OpenProjectSelector,
-    /// Move the project selector's option.
-    ProjectPickerNext,
-    ProjectPickerPrev,
-    /// Adopt the highlighted project for this board session only.
-    ConfirmProjectChoice,
-    /// Close the project selector without changing the selection.
-    CancelProjectPicker,
-    /// Select project selector option by index and adopt it in one step (mouse click on a
-    /// dropdown row;,,). The mouse-only counterpart of `SelectIndex` for
-    /// the task list: it runs the same effect `ConfirmProjectChoice` does after enough
-    /// `ProjectPickerNext`/`ProjectPickerPrev` presses reached this option.
-    SelectProjectOption(usize),
     /// Switch to a persistent navigation tab (`1` board).
     SelectNavTab(crate::ui::queue::NavTab),
     /// A questions-tab action, or a question/reference line opened from a task page.
     Question(crate::ui::questions::QuestionIntent),
-    /// `S` — flip every section between number order and project order.
-    ToggleSort,
     /// Focus the active board lens's search field (`/` or a click).
     FocusSearch,
     /// Pin the live query and return input to normal board keys.
@@ -280,7 +264,7 @@ pub enum BoardIntent {
     ConfirmCommand,
     /// Select command-surface row by index and confirm it in one step (mouse click on a
     /// palette/action-sheet row; G-7,,,). The mouse-only counterpart of
-    /// `SelectIndex` for the task list and `SelectProjectOption` for the project dropdown:
+    /// `SelectIndex` for the task list and `SelectFormScopeOption` for the scope dropdown:
     /// `map_board_mouse` takes `&BoardModel`, so a click cannot set `command_selected` itself,
     /// and a click names a row directly rather than stepping `CommandNext`/`CommandPrev` to it
     /// first. Resolved by `resolve_board_command` exactly the way `ConfirmCommand` is, so a
@@ -332,18 +316,12 @@ pub enum BoardIntent {
     PageWheelScrollDown,
     /// `z` — open/close the done drawer. Reducer lands in.
     ToggleDoneDrawer,
-    /// `ctrl+f` — the file verb: toggle the task's archived flag (picker: archive/
-    /// unarchive the selected project). No undo entry. Reducer lands in.
+    /// `ctrl+f` — the file verb: toggle the task's archived flag. No undo entry. Reducer lands in.
     File,
-    /// Picker `Tab` / `←` / `→`: flip the project selector between its main and
-    /// archived tabs. Reducer lands in.
-    ProjectPickerSwitchTab,
     /// Launch card: unarchive the archived project the default pointed at.
     LaunchUnarchive,
     /// Launch card: keep the project archived; quick-add goes to the desk this session.
     LaunchKeepArchived,
-    /// Mouse route onto the picker's painted tab row.
-    SelectPickerTab(PickerTab),
     /// Expand/collapse the done drawer's archived group (Enter or click on its header,
     /// which the intent also selects). Session-only. Reducer lands in.
     ToggleArchivedGroup,
@@ -555,22 +533,6 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "fold / unfold group",
         modifier: NormalModifier::Bare,
     },
-    // The scope chip is mouse-clickable; `p` gives the keyboard the same route.
-    NormalKeyEntry {
-        code: KeyCode::Char('p'),
-        intent: BoardIntent::OpenProjectSelector,
-        help_chord: "p",
-        help_label: "scope",
-        modifier: NormalModifier::Bare,
-    },
-    // `S` flips the row order. Navigation, not a verb: it changes no task.
-    NormalKeyEntry {
-        code: KeyCode::Char('S'),
-        intent: BoardIntent::ToggleSort,
-        help_chord: "S",
-        help_label: "sort: number / project",
-        modifier: NormalModifier::Bare,
-    },
     NormalKeyEntry {
         code: KeyCode::Char('/'),
         intent: BoardIntent::FocusSearch,
@@ -720,9 +682,7 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         BoardIntent::OpenCapture | BoardIntent::BeginEditTitle => HelpGroup::CreateEdit,
         BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleAllGroups
-        | BoardIntent::OpenProjectSelector
         | BoardIntent::FocusSearch
-        | BoardIntent::ToggleSort
         | BoardIntent::OpenCommandPalette => HelpGroup::ViewsFind,
         BoardIntent::CloseLayer | BoardIntent::OpenHelp | BoardIntent::Quit => {
             HelpGroup::AppControls
@@ -1263,7 +1223,6 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
                 | BoardInputMode::LaunchCard
-                | BoardInputMode::ProjectPicker
                 | BoardInputMode::ParentPicker
                 | BoardInputMode::Help
         )
@@ -1274,7 +1233,6 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
         BoardInputMode::Normal => map_normal(key),
         BoardInputMode::TaskPage => map_task_page(key),
         BoardInputMode::CapturePage => map_capture_page(key),
-        BoardInputMode::ProjectPicker => map_project_picker(key),
         BoardInputMode::ParentPicker => map_parent_picker(key),
         BoardInputMode::Search => map_search(key),
         BoardInputMode::SaveRecovery => map_save_recovery(key),
@@ -1640,9 +1598,7 @@ pub fn map_edit_paste(mode: BoardInputMode, text: &str) -> Option<BoardIntent> {
         BoardInputMode::Search => Some(BoardIntent::SearchQueryInsertText(text.to_string())),
         BoardInputMode::Palette => Some(BoardIntent::CommandQueryInsertText(text.to_string())),
         BoardInputMode::Help => Some(BoardIntent::HelpQueryInsertText(text.to_string())),
-        BoardInputMode::Normal | BoardInputMode::ProjectPicker | BoardInputMode::SaveRecovery => {
-            None
-        }
+        BoardInputMode::Normal | BoardInputMode::SaveRecovery => None,
     }
 }
 
@@ -1714,15 +1670,8 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::ConfirmFormScopeDropdown
         | BoardIntent::CancelFormScopeDropdown
         | BoardIntent::SelectFormScopeOption(_)
-        | BoardIntent::OpenProjectSelector
-        | BoardIntent::ProjectPickerNext
-        | BoardIntent::ProjectPickerPrev
-        | BoardIntent::ConfirmProjectChoice
-        | BoardIntent::CancelProjectPicker
-        | BoardIntent::SelectProjectOption(_)
         | BoardIntent::SelectNavTab(_)
         | BoardIntent::Question(_)
-        | BoardIntent::ToggleSort
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
         | BoardIntent::CancelListPicker
@@ -1770,8 +1719,6 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleArchivedGroup
         | BoardIntent::ToggleInboxGroup
-        | BoardIntent::ProjectPickerSwitchTab
-        | BoardIntent::SelectPickerTab(_)
         | BoardIntent::LaunchUnarchive
         | BoardIntent::LaunchKeepArchived
         | BoardIntent::File
@@ -1963,32 +1910,6 @@ fn map_help(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char(character) if !character.is_control() => {
             Some(BoardIntent::HelpQueryInsert(character))
         }
-        _ => None,
-    }
-}
-
-/// Project selector modal.
-fn map_project_picker(key: KeyEvent) -> Option<BoardIntent> {
-    let mods = key.modifiers;
-    if mods.contains(KeyModifiers::CONTROL)
-        && !mods.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-    {
-        return match key.code {
-            KeyCode::Char('f') => Some(BoardIntent::File),
-            KeyCode::Char('u') => Some(BoardIntent::Undo),
-            _ => None,
-        };
-    }
-    if mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
-        return None;
-    }
-    match key.code {
-        KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
-        KeyCode::Esc | KeyCode::Char('q') => Some(BoardIntent::CancelProjectPicker),
-        KeyCode::Enter => Some(BoardIntent::ConfirmProjectChoice),
-        KeyCode::Char('j') | KeyCode::Down => Some(BoardIntent::ProjectPickerNext),
-        KeyCode::Char('k') | KeyCode::Up => Some(BoardIntent::ProjectPickerPrev),
-        KeyCode::Tab | KeyCode::Left | KeyCode::Right => Some(BoardIntent::ProjectPickerSwitchTab),
         _ => None,
     }
 }

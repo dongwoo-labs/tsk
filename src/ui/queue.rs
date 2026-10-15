@@ -28,24 +28,6 @@ pub enum BoardSort {
     Project,
 }
 
-impl BoardSort {
-    /// The other order, for the `S` toggle.
-    pub fn toggled(self) -> Self {
-        match self {
-            Self::Number => Self::Project,
-            Self::Project => Self::Number,
-        }
-    }
-
-    /// The label the selector row paints for this order.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Number => "number",
-            Self::Project => "project",
-        }
-    }
-}
-
 /// Which list region a section belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
