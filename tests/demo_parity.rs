@@ -296,7 +296,7 @@ fn selection_uses_arrow_and_underlined_tab_without_reverse_fill() {
         })
         .unwrap();
     let text = tab_row.iter().map(|cell| cell.symbol()).collect::<String>();
-    for (label, active) in [("board", true), ("desk", false), ("sort number", false)] {
+    for (label, active) in [("board", true), ("questions", false)] {
         let start = text[..text.find(label).unwrap()].chars().count();
         for cell in &tab_row[start..start + label.len()] {
             assert_eq!(

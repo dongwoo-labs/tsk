@@ -243,15 +243,18 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
     let (rows, hits) = render(&model, 130, 24);
     let list = |y: u16| column_text(&rows, geometry.board, y);
     assert!(list(0).trim().is_empty(), "list row 0 blank: {:?}", list(0));
-    assert!(
-        list(1).contains("1 board  ·  2 questions  ·  all ▾  ·  number ▾"),
+    assert_eq!(
+        list(1).trim_end(),
+        " 1 board  ·  2 questions",
         "selector row: {}",
         list(1)
     );
     assert!(list(3).starts_with(" DOING ─"), "{}", list(3));
-    assert!(list(5).starts_with("▸  T12 Frame the wide task view"));
-    assert!(list(7).starts_with(" TODO ─"), "{}", list(7));
-    assert!(list(9).starts_with("   T15 Renew domain"));
+    assert_eq!(list(5).trim_end(), "   tsk", "project group heading");
+    assert!(list(6).starts_with("▸  T12 Frame the wide task view"));
+    assert!(list(8).starts_with(" TODO ─"), "{}", list(8));
+    assert_eq!(list(10).trim_end(), "   desk", "desk group heading");
+    assert!(list(11).starts_with("   T15 Renew domain"));
     assert_eq!(rows[5].chars().nth(geometry.rule.x as usize), Some('│'));
     // The detail shows the selected task beside the list.
     let detail = geometry.task_content();
@@ -268,11 +271,11 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
     focus(&mut domain, &mut model, WideStage::Task);
     let (rows, _) = render(&model, 130, 24);
     assert_eq!(
-        column_text(&rows, geometry.board, 5),
-        column_text(&rows, geometry.board, 5),
+        column_text(&rows, geometry.board, 6),
+        column_text(&rows, geometry.board, 6),
         "the list keeps painting while the detail owns focus"
     );
-    assert!(column_text(&rows, geometry.board, 5).starts_with("▸  T12 Frame"));
+    assert!(column_text(&rows, geometry.board, 6).starts_with("▸  T12 Frame"));
 }
 
 #[test]
@@ -280,7 +283,7 @@ fn rows_paint_the_title_only() {
     let (_, model) = fixture();
     let geometry = resolve_responsive(130, 24, WideStage::Board);
     let (rows, _) = render(&model, 130, 24);
-    let row = column_text(&rows, geometry.board, 5);
+    let row = column_text(&rows, geometry.board, 6);
     assert_eq!(row.trim_end(), "▸  T12 Frame the wide task view", "{row}");
     assert!(!rows.iter().any(|row| row.contains("└─ tsk")));
 }
@@ -498,12 +501,13 @@ fn list_focused_detail_paints_controls_for_the_focus_router_only() {
 fn narrow_board_paints_one_surface_and_no_crumb() {
     let (_, model) = fixture();
     let (rows, _) = render(&model, 109, 24);
-    assert!(
-        rows[1].contains("1 board  ·  2 questions  ·  all ▾  ·  sort number ▾"),
+    assert_eq!(
+        rows[1].trim_end(),
+        " 1 board  ·  2 questions",
         "{:?}",
         rows[1]
     );
-    assert!(rows[5].starts_with("▸  T12 Frame the wide task view"));
+    assert!(rows[6].starts_with("▸  T12 Frame the wide task view"));
     assert!(
         !rows[22].contains("→ detail"),
         "no crumb below the wide threshold"

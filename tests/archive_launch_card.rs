@@ -64,7 +64,8 @@ fn setup(archive: bool) -> (TaskStore, DomainState, BoardModel, PathBuf) {
     store.save(&state).expect("seed the store");
     let state = store.load().expect("reload");
     let snapshot = snapshot_for(PROJ);
-    let mut model = BoardModel::from_domain(&state, snapshot.this_repo.clone());
+    // The board opens the way the app does: from the invocation snapshot.
+    let mut model = BoardModel::from_domain_for_snapshot(&state, &snapshot);
     model.offer_launch_card(&state, &snapshot);
     (store, state, model, dir)
 }

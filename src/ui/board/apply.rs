@@ -16,9 +16,8 @@ use crate::ui::tier::{FocusedSurface, WideStage};
 use super::commands::{resolve_board_command, CommandSurface};
 use super::model::{relation_scroll_to, steps_scroll_to_cursor, steps_scroll_to_row};
 use super::model::{
-    BoardForm, BoardInputMode, BoardModel, IntentOutcome, ListPickerValue,
-    StepEditor, StepEditorSave, TaskEditSave,
-    DIRTY_TASK_SWITCH_REFUSAL,
+    BoardForm, BoardInputMode, BoardModel, IntentOutcome, ListPickerValue, StepEditor,
+    StepEditorSave, TaskEditSave, DIRTY_TASK_SWITCH_REFUSAL,
 };
 
 /// What the row says when an action that aims at the selection is asked for on a board that

@@ -1,15 +1,15 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                │
-│ 1 board  ·  2 questions  ·  all ▾  ·  sort project ▾                           │
+│ 1 board  ·  2 questions                                                        │
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
 │   herdr                                                                        │
-│   T2 Edit target binding pin                                                   │
+│▸  T2 Edit target binding pin                                                   │
 │   T5 Wire dispatch cleanup receipts                                            │
 │   T6 Docs refresh pass after F9 ships                                          │
 │   tsk                                                                          │
-│▸  T1 Smoke-test worktree dispatch                                              │
+│   T1 Smoke-test worktree dispatch                                              │
 │                                                                                │
 │ TODO ────────────────────────────────────────────────────────────────────────3 │
 │                                                                                │

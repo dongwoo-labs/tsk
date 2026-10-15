@@ -62,8 +62,8 @@ fn type_title(domain: &mut DomainState, model: &mut BoardModel, title: &str) {
 #[test]
 fn plus_opens_focused_bar_regardless_of_shift_and_legacy_chord_is_unbound() {
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/invocation")));
     let snap = snapshot();
+    let mut model = BoardModel::from_domain_for_snapshot(&domain, &snap);
 
     for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
         assert_eq!(
@@ -158,11 +158,12 @@ fn scoped_project_quick_add_defaults_to_the_selected_project() {
 fn all_projects_quick_add_keeps_the_invocation_default_scope() {
     let mut domain = DomainState::new();
     create_project_fixture(&mut domain, "/repos/project-x");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/project-y")));
     let mut snap = snapshot();
+    snap.this_repo = Some(PathBuf::from("/repos/project-y"));
     snap.default_scope = TaskScope::Project {
         path: "/repos/project-y".into(),
     };
+    let mut model = BoardModel::from_domain_for_snapshot(&domain, &snap);
 
     open(&mut domain, &mut model, &snap);
     type_title(&mut domain, &mut model, "all projects task");
@@ -183,11 +184,13 @@ fn all_projects_quick_add_keeps_the_invocation_default_scope() {
 #[test]
 fn home_board_quick_add_keeps_the_invocation_default_scope() {
     let mut domain = DomainState::new();
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/project-y")));
     let mut snap = snapshot();
+    snap.this_repo = Some(PathBuf::from("/repos/project-y"));
     snap.default_scope = TaskScope::Project {
         path: "/repos/project-y".into(),
     };
+    let mut model = BoardModel::from_domain_for_snapshot(&domain, &snap);
+    model.set_selected_project(None);
 
     open(&mut domain, &mut model, &snap);
     type_title(&mut domain, &mut model, "home board task");
@@ -357,10 +360,10 @@ fn quick_add_save_selects_the_new_task_and_navigation_stays_relative_to_it() {
     let expected_down = visible[(saved_index + 1) % visible.len()];
     apply(&mut domain, &mut model, BoardIntent::SelectNext, None);
     assert!(!model.inbox_header_selected());
-    assert_eq!(model.selected_id(), Some(prior_selection));
     assert_eq!(
-        expected_down, visible[0],
-        "the saved row wraps to the first Todo task"
+        model.selected_id(),
+        Some(expected_down),
+        "down moves to the row after the saved one"
     );
 
     apply(&mut domain, &mut model, BoardIntent::SelectPrev, None);

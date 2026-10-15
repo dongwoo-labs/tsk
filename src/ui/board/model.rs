@@ -1231,8 +1231,6 @@ impl BoardModel {
         self.sort
     }
 
-
-
     /// Record whether the app's current frame paints a wide split presentation.
     /// The stage and right-seat session remain parked when this is false.
     pub(crate) fn set_frame_wide(&self, wide: bool) {
@@ -1356,11 +1354,9 @@ impl BoardModel {
                 }
                 _ => Some(TaskScope::Global),
             },
-            BoardLocation::Project(path) => {
-                Some(TaskScope::Project {
-                    path: path.to_string_lossy().into_owned(),
-                })
-            }
+            BoardLocation::Project(path) => Some(TaskScope::Project {
+                path: path.to_string_lossy().into_owned(),
+            }),
         }
     }
 
@@ -2848,22 +2844,6 @@ impl BoardModel {
     ///
     /// Honors collapse state via [`Self::visible_ids`]: a seeded row must be one the
     /// renderer painted, or verbs would mutate a task the user cannot see.
-    /// Put the cursor on the first painted row of `project`'s group, or leave it where
-    /// `seed_selection` put it when that project has no painted row.
-    pub(super) fn focus_project_group(&mut self, project: &Path) {
-        let wanted = project.to_string_lossy();
-        let first = self.visible_ids().into_iter().find(|id| {
-            self.tasks.iter().any(|task| {
-                task.id == *id
-                    && matches!(&task.scope, TaskScope::Project { path } if *path == wanted)
-            })
-        });
-        if let Some(id) = first {
-            self.retarget_selection(Some(id), SelectionRetarget::Reanchor);
-            self.follow_list.set(true);
-        }
-    }
-
     pub(super) fn seed_selection(&mut self) {
         let visible: HashSet<Uuid> = self.visible_ids().into_iter().collect();
         let view = self.queue_view();
@@ -3041,9 +3021,26 @@ impl BoardModel {
         self.follow_list.set(false);
     }
 
+    /// Put the cursor on the first painted row of `project`'s group, or leave it where
+    /// `seed_selection` put it when that project has no painted row.
+    pub(super) fn focus_project_group(&mut self, project: &Path) {
+        let wanted = project.to_string_lossy();
+        let first = self.visible_ids().into_iter().find(|id| {
+            self.tasks.iter().any(|task| {
+                task.id == *id
+                    && matches!(&task.scope, TaskScope::Project { path } if *path == wanted)
+            })
+        });
+        if let Some(id) = first {
+            self.retarget_selection(Some(id), SelectionRetarget::Reanchor);
+            self.follow_list.set(true);
+        }
+    }
+
     /// Pin the board scope to one project, or to the desk for `None`. The board itself
     /// never offers this (it always shows every project grouped); embedders and tests do.
     pub fn set_selected_project(&mut self, project: Option<PathBuf>) {
+        self.clear_marks();
         self.close_popup();
         self.page_back.clear();
         self.search_query.clear();

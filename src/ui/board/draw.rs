@@ -1086,7 +1086,8 @@ impl<'a> OverlayPayloads<'a> {
             } else {
                 Vec::new()
             };
-        let scope_options: Vec<String> = if model.input_mode() == BoardInputMode::FormScopeDropdown {
+        let scope_options: Vec<String> = if model.input_mode() == BoardInputMode::FormScopeDropdown
+        {
             // Short project names: the dropdown lists scopes, not filesystem paths.
             model
                 .form_scope_options()

@@ -115,6 +115,9 @@ pub struct TaskRowPaint<'a> {
     pub badge: Option<&'a str>,
     /// Bold right-aligned marks before the badge: `!` and `?n` for questions waiting on you.
     pub alert: Option<&'a str>,
+    /// The task's status-card line under the title (its notes' `Now:` or `Blocked:` line),
+    /// wrapped and indented under the title text. `true` paints it bold (a blocker).
+    pub status: Option<(&'a str, bool)>,
 }
 
 impl TaskRowPaint<'_> {
@@ -213,7 +216,53 @@ pub fn paint_task_row_lines(
             identifier: None,
         });
     }
+    if let Some((status, bold)) = row.status {
+        let style = if row.dim {
+            style_dim()
+        } else if bold {
+            style_bold()
+        } else {
+            style_dim()
+        };
+        let status_room = row_w.saturating_sub(title_x).max(1);
+        for wrapped in crate::ui::edit::wrap_text(status, status_room) {
+            lines.push(TaskRowLine {
+                line: bound_line(
+                    Line::from(Span::styled(format!("{indent}{}", wrapped.text), style)),
+                    row_w,
+                ),
+                content_x: title_content_x,
+                content_width: u16::try_from(status_room).unwrap_or(u16::MAX).max(1),
+                identifier: None,
+            });
+        }
+    }
     lines
+}
+
+/// The status-card line a task row shows under its title: a `Blocked:` notes line on any
+/// open task (bold), else a `Now:` line on a Doing task (dim). Notes keep these first, one
+/// line each, replaced in place; the board shows only that line, never the whole notes.
+pub fn row_status_line(task: &crate::domain::Task) -> Option<(String, bool)> {
+    if task.status == crate::domain::HumanStatus::Done {
+        return None;
+    }
+    let notes = task.notes.as_deref()?;
+    let value = |key: &str| {
+        notes.lines().find_map(|line| {
+            let line = line.trim().trim_start_matches("- ").trim_start();
+            let (head, rest) = line.split_once(':')?;
+            (head.trim().eq_ignore_ascii_case(key) && !rest.trim().is_empty())
+                .then(|| rest.trim().to_string())
+        })
+    };
+    if let Some(blocked) = value("blocked") {
+        return Some((format!("blocked: {blocked}"), true));
+    }
+    if task.status == crate::domain::HumanStatus::Doing {
+        return value("now").map(|now| (now, false));
+    }
+    None
 }
 
 // Unit-test adapter: inspect the same first wrapped line the board paints.
@@ -3814,9 +3863,19 @@ fn build_list_rows(
             // A long title wraps onto continuation lines indented under its own first
             // row; every painted line carries the task's hit target and selection.
             let identifier = task.board_identifier();
-            let badge = child_counts
+            // `✓done/total` steps, then `⊂done/total` children: progress at a glance.
+            let steps = (!task.steps.is_empty()).then(|| {
+                let done = task.steps.iter().filter(|step| step.done).count();
+                format!("\u{2713}{done}/{}", task.steps.len())
+            });
+            let children = child_counts
                 .get(&task.id)
                 .map(|(done, total)| format!("\u{2282}{done}/{total}"));
+            let badge = match (steps, children) {
+                (Some(steps), Some(children)) => Some(format!("{steps} {children}")),
+                (steps, children) => steps.or(children),
+            };
+            let status = row_status_line(task);
             // The row is number, title, and marks only: the section already names the status.
             let lines = paint_task_row_lines(
                 &TaskRowPaint {
@@ -3830,6 +3889,7 @@ fn build_list_rows(
                     dim: dim || model.rows_dim,
                     badge: badge.as_deref(),
                     alert: model.task_marks.get(&task.id).map(String::as_str),
+                    status: status.as_ref().map(|(text, bold)| (text.as_str(), *bold)),
                 },
                 geo,
                 0,
@@ -4577,8 +4637,7 @@ mod tests {
         assert!(!text.contains("questions"), "{text}");
         assert!(display_width(&text) <= 20);
         for (width, hits) in [(40u16, hits), (20, hits_narrow)] {
-            let targets: Vec<QueueHitTarget> =
-                hits.iter().map(|(target, _, _)| *target).collect();
+            let targets: Vec<QueueHitTarget> = hits.iter().map(|(target, _, _)| *target).collect();
             assert_eq!(
                 targets,
                 vec![
@@ -4647,6 +4706,70 @@ mod tests {
     }
 
     #[test]
+    fn row_status_line_reads_blocked_first_and_now_only_while_doing() {
+        use crate::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
+        let mut state = DomainState::new();
+        let notes = "Goal: ship it\nNow: running CI on #12\nPR: https://x";
+        let id = state
+            .create(
+                "t",
+                Some(notes.to_string()),
+                TaskScope::Global,
+                ProvenanceOrigin::Capture,
+            )
+            .unwrap();
+        let task =
+            |state: &DomainState| state.tasks().iter().find(|t| t.id == id).cloned().unwrap();
+        // Todo shows no `Now:` line: only work in progress reports its current state.
+        assert_eq!(row_status_line(&task(&state)), None);
+        state.set_status(id, HumanStatus::Doing).unwrap();
+        assert_eq!(
+            row_status_line(&task(&state)),
+            Some(("running CI on #12".to_string(), false))
+        );
+        let mut blocked = task(&state);
+        blocked.notes = Some(format!("{notes}\n- blocked: waiting on review"));
+        blocked.status = HumanStatus::Todo;
+        assert_eq!(
+            row_status_line(&blocked),
+            Some(("blocked: waiting on review".to_string(), true))
+        );
+        blocked.status = HumanStatus::Done;
+        assert_eq!(row_status_line(&blocked), None);
+    }
+
+    #[test]
+    fn status_line_wraps_under_the_title_text() {
+        let geo = tier::resolve(40, 20);
+        let lines = paint_task_row_lines(
+            &TaskRowPaint {
+                glyph: "",
+                identifier: Some("T7"),
+                title: "short",
+                selected: false,
+                marked: false,
+                title_bold: false,
+                dim: false,
+                badge: Some("\u{2713}1/3"),
+                alert: None,
+                status: Some(("running the full test suite on the branch now", false)),
+            },
+            &geo,
+            0,
+        );
+        let text: Vec<String> = lines
+            .iter()
+            .map(|line| line.line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(text[0].contains("T7 short") && text[0].trim_end().ends_with("\u{2713}1/3"));
+        assert!(lines.len() >= 3, "{text:?}");
+        let title_col = text[0].find("short").unwrap();
+        for row in &text[1..] {
+            assert_eq!(row.len() - row.trim_start().len(), title_col, "{text:?}");
+        }
+    }
+
+    #[test]
     fn task_titles_use_full_width_with_two_cells_at_right_edge() {
         let geo = tier::resolve(80, 24);
         let room = geo.row_width as usize - 8 - 2;
@@ -4662,6 +4785,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             };
             let lines = paint_task_row_lines(&row, &geo, 0);
             assert_eq!(lines.len(), 2);
@@ -4696,6 +4820,7 @@ mod tests {
                         dim: false,
                         badge: None,
                         alert: None,
+                        status: None,
                     };
                     for line in paint_task_row_lines(&row, &geo, 0) {
                         assert!(
@@ -4726,6 +4851,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             },
             &geo,
         );
@@ -4748,6 +4874,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             },
             &geo,
         );
@@ -4799,6 +4926,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             },
             TaskRowPaint {
                 glyph: "▲",
@@ -4810,6 +4938,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             },
             TaskRowPaint {
                 glyph: "◓",
@@ -4821,6 +4950,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                status: None,
             },
         ];
 

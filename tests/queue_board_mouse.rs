@@ -110,28 +110,8 @@ fn board_with_task(title: &str, status: HumanStatus) -> (DomainState, BoardModel
     (domain, model, id)
 }
 
-/// Two Todo tasks in different projects, so the project selector offers more than one
-/// concrete project option (All, Global, this repo, the other repo).
-fn scoped_board() -> (DomainState, BoardModel, uuid::Uuid) {
-    let mut domain = DomainState::new();
-    let id = domain
-        .create("here", None, project(THIS_REPO), ProvenanceOrigin::Manual)
-        .expect("create here");
-    domain
-        .create(
-            "elsewhere",
-            None,
-            project(OTHER_REPO),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create elsewhere");
-    let model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    (domain, model, id)
-}
-
 /// `n` Todo tasks in the same project, enough to overflow the standard 80x24 viewport (20
-/// rows) and put the palette's command panel, and the scope dropdown's later options, over
-/// real task rows underneath -- the deck size C1 needs to exist at all.
+/// rows) and put the palette's command panel over real task rows underneath -- the deck size C1 needs to exist at all.
 fn deck_of(n: usize) -> (DomainState, BoardModel) {
     let mut domain = DomainState::new();
     for i in 0..n {
@@ -181,8 +161,8 @@ fn click(region: &QueueHit, model: &BoardModel, hits: &QueueHitMap) -> Option<Bo
 }
 
 #[test]
-fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_rows_help() {
-    // Base list: selection row, verbs, selector chip (project focus only).
+fn hit_map_covers_selection_rows_verbs_drawer_palette_rows_help() {
+    // Base list: selection row, verbs, navigation tabs.
     let (_domain, mut model, id) = board_with_task("Fix flake", HumanStatus::Todo);
     model.set_selected_project(Some(PathBuf::from(THIS_REPO)));
     let hits = board_hit_map(STANDARD, &model);
@@ -215,23 +195,6 @@ fn hit_map_covers_selection_rows_verbs_drawer_selector_chip_dropdown_palette_row
             .iter()
             .any(|hit| matches!(hit.target, QueueHitTarget::Drawer)),
         "no drawer hit region while open: {hits:?}"
-    );
-
-    // Dropdown: the project-scope selector open.
-    let (mut domain, mut model, _id) = scoped_board();
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open selector");
-    let hits = board_hit_map(STANDARD, &model);
-    assert!(
-        hits.regions
-            .iter()
-            .any(|hit| matches!(hit.target, QueueHitTarget::ProjectOption(_))),
-        "no dropdown option hit region: {hits:?}"
     );
 
     // Palette rows.
@@ -709,102 +672,6 @@ fn click_and_wheel_match_keyboard_effects_for_each_control() {
         map_board_mouse(&model_mouse, &hits, wheel_up(0, 0)),
         Some(BoardIntent::ListScrollTo(0))
     );
-
-    // Project selector chip: no the key binds it (mouse-only, like `SelectIndex`), so its
-    // effect is proved against the same `OpenProjectSelector` the reducer would apply for
-    // any future key bound to it, on an independently built, otherwise-identical board.
-    let (mut domain_direct, mut model_direct, _id3) = board_with_task("chip a", HumanStatus::Todo);
-    let (mut domain_mouse, mut model_mouse, _id4) = board_with_task("chip b", HumanStatus::Todo);
-    model_direct.set_selected_project(Some(PathBuf::from(THIS_REPO)));
-    model_mouse.set_selected_project(Some(PathBuf::from(THIS_REPO)));
-    apply_intent(
-        &mut domain_direct,
-        &mut model_direct,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("direct open");
-    let hits = board_hit_map(STANDARD, &model_mouse);
-    let scope_hit = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ScopeChip))
-        .expect("scope control hit region");
-    let mouse_intent = click(scope_hit, &model_mouse, &hits).expect("scope click intent");
-    assert_eq!(mouse_intent, BoardIntent::OpenProjectSelector);
-    apply_intent(&mut domain_mouse, &mut model_mouse, mouse_intent, None).expect("mouse open");
-    assert_eq!(
-        model_direct.project_picker_index(),
-        model_mouse.project_picker_index()
-    );
-    assert_eq!(model_direct.message(), model_mouse.message());
-
-    // Dropdown option: a single click on a non-selected row must land exactly where
-    // stepping the keyboard's `ProjectPickerNext` there and pressing Enter would.
-    let (mut domain_key, mut model_key, _id5) = scoped_board();
-    let (mut domain_mouse, mut model_mouse, _id6) = scoped_board();
-    for (domain, model) in [
-        (&mut domain_key, &mut model_key),
-        (&mut domain_mouse, &mut model_mouse),
-    ] {
-        apply_intent(domain, model, BoardIntent::OpenProjectSelector, None).expect("open selector");
-    }
-    let target_index = model_key
-        .project_options()
-        .iter()
-        .position(|option| {
-            *option == tsk_tui::ui::board::ProjectScopeOption::Project(PathBuf::from(OTHER_REPO))
-        })
-        .expect("the other repo is an offered option");
-    assert!(
-        target_index > 0,
-        "the test needs a non-selected option to jump to"
-    );
-    let next_key = map_key(BoardInputMode::ProjectPicker, press(KeyCode::Down))
-        .expect("project picker down key");
-    // The picker opens highlighting the current destination; step from there.
-    let start = model_key
-        .project_picker_index()
-        .expect("highlighted option");
-    let options_len = model_key.project_options().len();
-    let steps = (target_index + options_len - start) % options_len;
-    for _ in 0..steps {
-        apply_intent(&mut domain_key, &mut model_key, next_key.clone(), None)
-            .expect("step to option");
-    }
-    let confirm_key = map_key(BoardInputMode::ProjectPicker, press(KeyCode::Enter))
-        .expect("project picker enter key");
-    apply_intent(&mut domain_key, &mut model_key, confirm_key, None).expect("confirm choice");
-
-    let hits = board_hit_map(STANDARD, &model_mouse);
-    let option_hit = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ProjectOption(i) if i == target_index))
-        .expect("dropdown option hit region");
-    let mouse_intent = click(option_hit, &model_mouse, &hits).expect("dropdown click intent");
-    assert_eq!(mouse_intent, BoardIntent::SelectProjectOption(target_index));
-    apply_intent(&mut domain_mouse, &mut model_mouse, mouse_intent, None).expect("mouse choice");
-
-    assert!(
-        model_key.project_picker_index().is_none(),
-        "keyboard route must close the picker"
-    );
-    assert!(
-        model_mouse.project_picker_index().is_none(),
-        "mouse route must close the picker"
-    );
-    assert_eq!(
-        model_key.message(),
-        model_mouse.message(),
-        "the two routes must scope the deck to the same project"
-    );
-    // Each board created its own tasks (different uuids), so compare the *shape* of what
-    // is now visible -- one ON DECK task, the one scoped to the chosen project -- rather
-    // than exact ids.
-    // The selected project contains one open task plus its inbox heading.
-    assert_eq!(model_key.visible_ids().len(), 1);
-    assert_eq!(model_mouse.visible_ids().len(), 1);
 }
 
 #[test]
@@ -872,59 +739,6 @@ fn a_palette_row_over_a_full_deck_still_runs_its_own_command_not_the_task_row_un
     assert_eq!(
         resolve_board_command(&mut resolved_model, clicked),
         Some(expected)
-    );
-}
-
-/// C1: the scope dropdown's own regression net. `scoped_board` offers four
-/// project options starting at the same row the task list starts on, so later options sit
-/// directly over real task rows; a click on one of those rows must select that option, not
-/// cancel the picker the way the region underneath it used to win. Confirmed to fail before
-/// the `hit_at` fix the same way the palette case does.
-#[test]
-fn a_dropdown_option_over_a_task_row_still_selects_that_option_not_the_task_under_it() {
-    let (mut domain, mut model, _id) = scoped_board();
-    domain
-        .create(
-            "third repo",
-            None,
-            project("/repos/third"),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create third project for a longer selector");
-    // The project board lists only its own rows; fill it deep enough that the picker's
-    // later options sit over real task rows.
-    for i in 0..12 {
-        domain
-            .create(
-                format!("filler {i}"),
-                None,
-                project(THIS_REPO),
-                ProvenanceOrigin::Manual,
-            )
-            .expect("create filler rows");
-    }
-    model.sync_from_domain(&domain);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open selector");
-    let hits = board_hit_map(STANDARD, &model);
-    let option_hit =
-        overlay_row_over_a_task(&hits, |t| matches!(t, QueueHitTarget::ProjectOption(_)))
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture is not long enough to overlap an option row with a task row: {hits:?}"
-                )
-            });
-    let QueueHitTarget::ProjectOption(index) = option_hit.target else {
-        unreachable!()
-    };
-    assert_eq!(
-        click(option_hit, &model, &hits),
-        Some(BoardIntent::SelectProjectOption(index))
     );
 }
 
@@ -1122,11 +936,10 @@ fn a_click_on_the_palettes_own_chrome_does_not_dismiss_it() {
 
 /// The shared modal card's own `[x]` closes/cancels whichever surface painted it, its
 /// border+footer chrome is inert (not a second, redundant dismiss route on top of the
-/// palette's `CommandChrome`/project picker's outside-click fallthrough already proved
-/// above), and a click on the board behind the card still dismisses -- for all three
-/// surfaces the card now shares (Palette, `?` help, `P` project picker).
+/// palette's `CommandChrome` fallthrough already proved above), and a click on the board
+/// behind the card still dismisses -- for both surfaces the card shares (Palette, `?` help).
 #[test]
-fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_project_picker() {
+fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_and_help() {
     // Palette: `[x]` closes the command surface; the card's own border is inert.
     let (mut domain, mut model, _id) = board_with_task("modal card palette", HumanStatus::Todo);
     apply_intent(
@@ -1151,36 +964,6 @@ fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_help_and_
         .iter()
         .find(|hit| matches!(hit.target, QueueHitTarget::ModalChrome))
         .expect("the palette card must paint its own border/footer chrome");
-    assert_eq!(
-        click(chrome_hit, &model, &hits),
-        None,
-        "a click on the card's border/footer must be inert"
-    );
-
-    // Project picker: `[x]` cancels the picker; the card's own border is inert.
-    let (mut domain, mut model, _id) = board_with_task("modal card scope", HumanStatus::Todo);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open project selector");
-    let hits = board_hit_map(STANDARD, &model);
-    let close_hit = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ModalClose))
-        .expect("the project picker card must paint an `[x]` close control");
-    assert_eq!(
-        click(close_hit, &model, &hits),
-        Some(BoardIntent::CancelProjectPicker)
-    );
-    let chrome_hit = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ModalChrome))
-        .expect("the project picker card must paint its own border/footer chrome");
     assert_eq!(
         click(chrome_hit, &model, &hits),
         None,
@@ -2328,6 +2111,10 @@ fn the_modal_cards_copyable_rects_exclude_its_own_border_and_footer() {
     use tsk_tui::ui::text_select::{selection_text, TextSelection};
 
     let (mut domain, mut model, _id) = board_with_task("modal card copyable", HumanStatus::Todo);
+    // Pin the project scope so the one task row sits clear of the card's top border: the
+    // grouped every-project board's heading row would push it onto the border row, and a
+    // base list row's own copyable rect is not what this test is about.
+    model.set_selected_project(Some(PathBuf::from(THIS_REPO)));
     apply_intent(&mut domain, &mut model, BoardIntent::OpenHelp, None).expect("open help");
     let hits = board_hit_map(STANDARD, &model);
 
@@ -2869,38 +2656,6 @@ fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header
     assert!(
         !model.visible_ids().contains(&archived),
         "the second click collapsed the group"
-    );
-}
-
-#[test]
-fn the_project_picker_tab_row_click_selects_the_tab() {
-    let (mut domain, mut model, _id) = board_with_task("tab click", HumanStatus::Todo);
-    apply_intent(
-        &mut domain,
-        &mut model,
-        BoardIntent::OpenProjectSelector,
-        None,
-    )
-    .expect("open picker");
-    let hits = board_hit_map(STANDARD, &model);
-    let tab_hit = hits
-        .regions
-        .iter()
-        .find(|hit| {
-            matches!(hit.target, QueueHitTarget::PickerTab(t) if t == tsk_tui::ui::board::PickerTab::Archived)
-        })
-        .expect("the picker paints tab hit regions");
-    let intent = map_board_mouse(&model, &hits, left_click(tab_hit.area.x, tab_hit.area.y))
-        .expect("a tab click maps to an intent");
-    assert_eq!(
-        intent,
-        BoardIntent::SelectPickerTab(tsk_tui::ui::board::PickerTab::Archived)
-    );
-    apply_intent(&mut domain, &mut model, intent, None).expect("switch via click");
-    assert_eq!(
-        model.picker_tab(),
-        Some(tsk_tui::ui::board::PickerTab::Archived),
-        "the click switched to the archived tab"
     );
 }
 
