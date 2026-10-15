@@ -156,6 +156,11 @@ pub fn live_agent<'a>(reference: &ThreadRef, agents: &'a [ThreadRow]) -> Option<
     matches.next().is_none().then_some(first)
 }
 
+/// Whether exactly one live agent carries `name`; `herdr agent prompt` targets by name.
+pub fn unique_name(name: &str, agents: &[ThreadRow]) -> bool {
+    agents.iter().filter(|row| row.name == name).count() == 1
+}
+
 /// Whether `time` lies within `threshold` of `now` (a future time counts as recent).
 fn recent(time: SystemTime, now: SystemTime, threshold: Duration) -> bool {
     now.duration_since(time)
@@ -409,5 +414,14 @@ mod tests {
             agent("lead-b", AgentStatus::Idle)
         ])
         .is_err());
+    }
+
+    #[test]
+    fn a_name_two_live_panes_share_is_not_a_prompt_target() {
+        let mut other = agent("thr-a", AgentStatus::Idle);
+        other.pane_id = "w1:p9".into();
+        let agents = vec![agent("thr-a", AgentStatus::Idle), other];
+        assert!(!unique_name("thr-a", &agents));
+        assert!(unique_name("thr-a", &agents[..1]));
     }
 }

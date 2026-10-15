@@ -1572,6 +1572,13 @@ fn refresh_task(model: &mut BoardModel, id: Uuid) -> String {
             reference.name
         );
     };
+    // `herdr agent prompt` addresses by name only: refuse when the name is not unique.
+    if !crate::stall::unique_name(&row.name, &agents) {
+        return format!(
+            "{identifier} check not sent: several live agents are named {}",
+            row.name
+        );
+    }
     let now = SystemTime::now();
     let hint = crate::stall::task_hint(&identifier, id, crate::stall::quiet_minutes(&task, now));
     match crate::threads::herdr::prompt(&row.name, &hint) {
@@ -1653,7 +1660,18 @@ fn handle_board_intent(
         copy_task_number(domain, model, id);
         return Ok(false);
     }
-    // Stall checks only prompt Herdr agents; the board save path never sees them.
+    // Stall checks only prompt Herdr agents; the board save path never sees them. They
+    // read the store first so a task another board or the CLI just moved is not listed.
+    if matches!(
+        intent,
+        BoardIntent::RefreshTask(_) | BoardIntent::RefreshAll
+    ) && !save_recovery.is_pending()
+    {
+        if let Ok(disk) = store.load() {
+            domain.merge_tasks_from_disk(&disk);
+            model.sync_from_domain(domain);
+        }
+    }
     if let BoardIntent::RefreshTask(id) = intent {
         let message = refresh_task(model, id);
         model.set_message(message);
