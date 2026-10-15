@@ -306,14 +306,6 @@ fn a_comment_rides_the_approval_decision_but_is_never_itself_one() {
     assert_eq!(blank.code, 2, "{}", blank.stderr);
     assert_eq!(record(&dir, &id)["answers"], json!([]));
 
-    // A comment never substitutes for approve/reject: it still needs one of them.
-    let comment_alone = ui_answer(
-        &dir,
-        "Q1",
-        &json!({"expected_revision": revision, "comment": "looks fine"}),
-    );
-    assert_eq!(comment_alone.code, 2, "{}", comment_alone.stderr);
-
     // Rejecting with a comment saves the comment beside the rejection, and the decision
     // is still exactly `rejected` with no approval terms attached.
     let rejected = ui_answer(
@@ -325,6 +317,41 @@ fn a_comment_rides_the_approval_decision_but_is_never_itself_one() {
     let answer = record(&dir, &id)["answers"][0].clone();
     assert_eq!(answer["text"], json!("rejected"));
     assert_eq!(answer["comment"], json!("not ready yet"));
+    assert_eq!(answer["approval"], Value::Null);
+}
+
+#[test]
+fn an_approval_takes_a_comment_alone_as_an_unapproved_answer() {
+    let dir = TempDir::new("comment-alone");
+    let (id, revision) = ask(&dir, "approval", Some("user"));
+    let (plain_id, plain_revision) = ask(&dir, "question", Some("user"));
+
+    // Alone, a comment answers only an approval, and never when blank.
+    let plain = ui_answer(
+        &dir,
+        "Q2",
+        &json!({"expected_revision": plain_revision, "comment": "note"}),
+    );
+    assert_eq!(plain.code, 2, "{}", plain.stderr);
+    assert_eq!(record(&dir, &plain_id)["answers"], json!([]));
+    let blank = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "comment": "  "}),
+    );
+    assert_eq!(blank.code, 2, "{}", blank.stderr);
+    assert_eq!(record(&dir, &id)["answers"], json!([]));
+
+    let commented = ui_answer(
+        &dir,
+        "Q1",
+        &json!({"expected_revision": revision, "comment": "scope를 줄여서 다시 올려줘"}),
+    );
+    assert_eq!(commented.code, 0, "{}", commented.stderr);
+    let answer = record(&dir, &id)["answers"][0].clone();
+    assert_eq!(answer["text"], json!("commented"));
+    assert_eq!(answer["comment"], json!("scope를 줄여서 다시 올려줘"));
+    assert_eq!(answer["origin"], json!("user_ui"));
     assert_eq!(answer["approval"], Value::Null);
 }
 

@@ -14,7 +14,7 @@ use crate::domain::{
 };
 use crate::store::{
     default_state_dir, notify_question, valid_secret_question, QuestionDurability, QuestionError,
-    QuestionNotification, QuestionSaveResult, QuestionStore, TaskStore, SECRET_REJECTED,
+    QuestionNotification, QuestionSaveResult, QuestionStore, TaskStore, COMMENTED, SECRET_REJECTED,
     SECRET_SET,
 };
 use crate::threads::herdr;
@@ -374,9 +374,9 @@ fn correct(model: &mut BoardModel) {
     ));
 }
 
-/// The comment row (or `m`): write or edit the comment staged beside an open approval's
-/// decision. The text is kept in session state until approve or reject saves it, or the
-/// record closes.
+/// The comment row (or `m`): write the comment for an open approval. `Enter` saves it as
+/// the whole answer; `Esc` keeps it in session state until approve or reject saves it
+/// with that decision, or the record closes.
 fn comment(model: &mut BoardModel) {
     let Some(record) = page_record(model) else {
         return;
@@ -407,7 +407,9 @@ fn comment(model: &mut BoardModel) {
         .cloned()
         .unwrap_or_default();
     model.questions_mut().answer = Some(AnswerInput::comment(id, revision, staged));
-    model.set_message("type a comment for this decision · enter or esc keeps it");
+    model.set_message(
+        "type a comment · enter answers with it alone · esc keeps it for approve or reject",
+    );
 }
 
 fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -437,7 +439,8 @@ fn enter(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
     }
 }
 
-/// `Enter` in a focused field: stage a comment, hand a secret to fnox, or save the answer.
+/// `Enter` in a focused field: answer an approval with its comment alone, hand a secret
+/// to fnox, or save the answer.
 fn submit_typed(
     store: &TaskStore,
     domain: &mut DomainState,
@@ -448,9 +451,29 @@ fn submit_typed(
         return;
     };
     if input.comment {
-        // A comment never saves on its own: it stages beside the still-open decision
-        // until approve or reject writes it with that answer.
-        stage_comment(model);
+        // `Enter` answers the approval with the comment alone: nothing is approved and
+        // the person's words go back to the asking Thread. `Esc` keeps it staged for
+        // approve or reject instead.
+        let text = input.text.trim().to_string();
+        if text.is_empty() {
+            model.set_message("type a comment first · esc leaves the field");
+            return;
+        }
+        if record.reference.kind != QuestionKind::Approval || !record.is_open() {
+            return;
+        }
+        model.questions_mut().comments.remove(&record.reference.id);
+        let mut answer = draft(input.revision, COMMENTED.to_string());
+        answer.comment = Some(text);
+        save(
+            store,
+            domain,
+            model,
+            record,
+            answer,
+            FollowUp::NotifyOrigin,
+            None,
+        );
         return;
     }
     if input.secret {

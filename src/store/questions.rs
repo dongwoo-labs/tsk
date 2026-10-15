@@ -17,6 +17,10 @@ pub const SECRET_SET: &str = "set";
 /// The only other answer text a secret question records: closed without a value.
 pub const SECRET_REJECTED: &str = "rejected";
 
+/// An approval answered with a comment alone: neither approved nor rejected, the
+/// comment carries the person's words and the terms stay unapproved.
+pub const COMMENTED: &str = "commented";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuestionDurability {

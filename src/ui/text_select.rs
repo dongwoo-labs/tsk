@@ -333,11 +333,16 @@ pub fn frame_text_rows(buffer: &Buffer) -> Vec<String> {
     let mut rows = Vec::with_capacity(height);
     for y in 0..height {
         let mut row = String::with_capacity(width);
-        for x in 0..width {
-            // Default cells are already `" "`; wide-glyph continuations leave an
-            // empty symbol and must not invent a column or unicode-width walks
-            // drift from the buffer.
-            row.push_str(buffer[(x as u16, y as u16)].symbol());
+        let mut x = 0;
+        while x < width {
+            // Default cells are already `" "`. A wide glyph's continuation cells
+            // are reset to `" "` by ratatui as well, so they are skipped by the
+            // glyph's own width: reading them would put a space inside every
+            // Hangul or CJK word (`테 스 트`) and drift the unicode-width walk in
+            // `slice_cells` from the buffer.
+            let symbol = buffer[(x as u16, y as u16)].symbol();
+            row.push_str(symbol);
+            x += unicode_width::UnicodeWidthStr::width(symbol).max(1);
         }
         rows.push(row);
     }
@@ -642,6 +647,25 @@ mod tests {
         assert!(seq.contains(&base64_encode(text.as_bytes())));
         let seq = osc52_clipboard("foo");
         assert_eq!(seq, format!("\u{1b}]52;c;{}\u{7}", base64_encode(b"foo")));
+    }
+
+    #[test]
+    fn wide_glyphs_copy_without_inner_spaces() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 1));
+        buffer.set_string(0, 0, "테스트 ok", ratatui::style::Style::default());
+        let rows = frame_text_rows(&buffer);
+        assert_eq!(rows[0].trim_end(), "테스트 ok");
+        let copyable = [Rect::new(0, 0, 12, 1)];
+        let sel = TextSelection::new(pos(0, 0), pos(5, 0));
+        assert_eq!(
+            selection_text(&rows, &copyable, &sel).as_deref(),
+            Some("테스트")
+        );
+        let sel = TextSelection::new(pos(2, 0), pos(9, 0));
+        assert_eq!(
+            selection_text(&rows, &copyable, &sel).as_deref(),
+            Some("스트 ok")
+        );
     }
 
     #[test]

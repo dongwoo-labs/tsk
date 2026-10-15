@@ -73,8 +73,8 @@ pub struct AnswerInput {
     pub text: String,
     /// A secret question's value: painted as `•`, handed only to fnox, wiped on drop.
     pub secret: bool,
-    /// Free text beside an approval's decision: `Enter` or `Esc` stages it for the next
-    /// approve or reject pick, it is never itself an answer and never saved on its own.
+    /// An approval's comment: `Enter` saves it as the whole answer (`commented`, nothing
+    /// approved); `Esc` stages it for the next approve or reject pick instead.
     pub comment: bool,
     /// Whether the field owns the keyboard. `Esc` leaves a typed answer's field and keeps the
     /// draft on the page; secret and comment inputs exist only while focused.
@@ -500,6 +500,7 @@ pub fn state_label(record: &QuestionRecord, tasks: &[Task]) -> String {
     };
     match record.reference.kind {
         QuestionKind::Approval if answer.approval.is_some() => "approved".to_string(),
+        QuestionKind::Approval if answer.text == crate::store::COMMENTED => "commented".to_string(),
         QuestionKind::Approval => "rejected".to_string(),
         QuestionKind::Finding => match (record.finding_link(), answer.action) {
             (FindingLink::Ambiguous, _) => "several tasks linked".to_string(),
@@ -1319,7 +1320,7 @@ fn form_choices(
     let n = rows.len();
     let hint = match (input.map(|input| (input.focused, input.comment)), correcting) {
         (Some((true, true)), _) => {
-            "enter or esc keeps the comment · it saves with approve or reject, either way"
+            "enter answers with the comment alone · esc keeps it for approve or reject"
                 .to_string()
         }
         (Some((true, false)), true) => {
@@ -1333,7 +1334,7 @@ fn form_choices(
             "enter or 1-{n} saves the correction · the earlier answer stays in history"
         ),
         _ if record.reference.kind == QuestionKind::Approval => {
-            "1 approves exactly these terms · a comment rides approve or reject · no answer keeps waiting"
+            "1 approves exactly these terms · a comment answers alone or rides approve or reject · no answer keeps waiting"
                 .to_string()
         }
         _ => format!("enter or 1-{n} picks at once"),
@@ -1355,7 +1356,7 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> String {
         return if input.secret {
             "enter fnox set · esc cancel"
         } else if input.comment {
-            "enter keep · esc keep"
+            "enter send · esc keep"
         } else {
             "enter save · esc leave"
         }
@@ -2287,7 +2288,7 @@ mod tests {
         ));
         let typing = text(&state);
         assert!(typing.contains("▸ 3. looks safe▏"), "{typing}");
-        assert_eq!(footer_hint(&state, false), "enter keep · esc keep");
+        assert_eq!(footer_hint(&state, false), "enter send · esc keep");
         state.answer = None;
         state.comments.insert(id, "looks safe".into());
         let staged = text(&state);
