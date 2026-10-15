@@ -1178,7 +1178,7 @@ fn explain_prompt(record: &QuestionRecord) -> String {
     let number = record.reference.number;
     let dir = default_state_dir();
     [
-        format!("Use the /mattpocock-skills:wait-what skill to explain tsk Q{number} to me before I answer it."),
+        format!("Use the /wait-what skill to explain tsk Q{number} to me before I answer it."),
         format!("Read it with `tsk questions Q{number} --json --state-dir {}`, and the task and thread it came from if that helps.", dir.display()),
         "Explain what it asks, why the thread needs it, and what each option (or approve/reject) would lead to, then sum it up in a few lines with your recommendation.".to_string(),
         format!("Do not answer it yourself: I answer it in the tsk board or with /tsk Q{number}."),
