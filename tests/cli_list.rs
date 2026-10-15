@@ -2390,17 +2390,32 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
 
 #[test]
 fn list_reads_done_tasks_moved_to_the_dated_done_files() {
+    let _env = env_lock();
     let dir = temp_state_dir("done-history");
+    let repo = project_repo("history-repo");
+    let project = TaskScope::Project {
+        path: repo.to_string_lossy().into_owned(),
+    };
     let mut state = DomainState::new();
     let moved = state
         .create(
             "moved done",
             Some("moved notes".into()),
-            TaskScope::Global,
+            project.clone(),
             ProvenanceOrigin::Manual,
         )
         .expect("create moved task");
     state.set_status(moved, HumanStatus::Done).expect("finish");
+    let child = state
+        .create(
+            "moved child",
+            None,
+            project.clone(),
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create moved child");
+    state.set_parent(child, Some(moved)).expect("parent");
+    state.set_status(child, HumanStatus::Done).expect("finish");
     let live = state
         .create(
             "live done",
@@ -2412,22 +2427,29 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
     state.set_status(live, HumanStatus::Done).expect("finish");
     TaskStore::new(&dir).save(&state).expect("seed store");
 
-    // Move one task into its dated file the way a save does.
+    // Move the parent and child into their dated file the way a save does.
     let path = dir.join("tsk.json");
     let mut document: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
     let tasks = document["tasks"].as_array_mut().expect("tasks");
-    let at = tasks
-        .iter()
-        .position(|task| task["id"] == moved.to_string())
-        .expect("moved task");
-    let task = tasks.remove(at);
-    let number = task["number"].as_u64().expect("number");
+    let mut lines = String::new();
+    let mut number = 0;
+    for id in [moved, child] {
+        let at = tasks
+            .iter()
+            .position(|task| task["id"] == id.to_string())
+            .expect("moved task");
+        let task = tasks.remove(at);
+        if id == moved {
+            number = task["number"].as_u64().expect("number");
+        }
+        let line = serde_json::json!({ "done_at": task["updated_at"], "task": task });
+        lines.push_str(&format!("{line}\n"));
+    }
     document["undo_stack"] = serde_json::json!([]);
     std::fs::write(&path, serde_json::to_vec(&document).expect("json")).expect("write");
     std::fs::create_dir(dir.join("done")).expect("done dir");
-    let line = serde_json::json!({ "done_at": task["updated_at"], "task": task });
-    std::fs::write(dir.join("done/2026-10-01.jsonl"), format!("{line}\n")).expect("line");
+    std::fs::write(dir.join("done/2026-10-01.jsonl"), lines).expect("lines");
 
     let detail = list(&[
         "tsk".into(),
@@ -2439,6 +2461,34 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
     assert_eq!(detail.code, 0, "{}", detail.stderr);
     assert!(detail.stdout.contains("moved done"), "{}", detail.stdout);
     assert!(detail.stdout.contains("moved notes"), "{}", detail.stdout);
+    assert!(
+        detail.stdout.contains("moved child"),
+        "a moved task keeps its moved children: {}",
+        detail.stdout
+    );
+
+    let basename = repo
+        .file_name()
+        .expect("repo name")
+        .to_string_lossy()
+        .into_owned();
+    let scoped = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--done".into(),
+        "--history".into(),
+        "-p".into(),
+        basename,
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(scoped.code, 0, "{}", scoped.stderr);
+    assert!(
+        scoped.stdout.contains("moved done"),
+        "a project known only from history resolves: {}",
+        scoped.stdout
+    );
+    assert!(!scoped.stdout.contains("live done"), "{}", scoped.stdout);
 
     let recent = list(&[
         "tsk".into(),

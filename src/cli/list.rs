@@ -227,29 +227,26 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
 /// Load tasks in the requested scope and view, ordered by their displayed status groups.
 pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     let store = TaskStore::new(input.state_dir.unwrap_or_else(default_state_dir));
-    let domain = store
+    let live = store
         .load()
         .map_err(|error| ListError::Store(error.to_string()))?;
+    // A direct lookup and `--history` also read the dated done files, so moved tasks,
+    // their relationships, and their project names resolve like live ones.
+    let domain = if input.task.is_some() || input.history {
+        let moved = store
+            .load_done_history()
+            .map_err(|error| ListError::Store(error.to_string()))?;
+        live.with_moved_tasks(moved.into_iter().map(|line| line.task))
+    } else {
+        live
+    };
     if let Some(task_address) = input.task {
         // Single-task listing ignores cwd and filters, and includes complete readable detail.
-        let moved;
-        let task = match domain
+        let task = domain
             .tasks()
             .iter()
             .find(|task| task_address.matches(task))
-        {
-            Some(task) => task,
-            None => {
-                // A done task that left the live document reads from its dated file.
-                moved = store
-                    .load_done_history()
-                    .map_err(|error| ListError::Store(error.to_string()))?
-                    .into_iter()
-                    .find(|line| task_address.matches(&line.task))
-                    .ok_or(ListError::UnknownTask)?;
-                &moved.task
-            }
-        };
+            .ok_or(ListError::UnknownTask)?;
         let view = if task.soft_deleted {
             ListView::Deleted
         } else if task.status == HumanStatus::Done {
@@ -342,7 +339,7 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             .cmp(&status_group_rank(b.status))
             .then_with(|| crate::ui::queue::cmp_within_status(a, b))
     });
-    let mut rows = tasks
+    let rows = tasks
         .into_iter()
         .map(|task| {
             let mut row = row_for(task, &domain);
@@ -357,25 +354,6 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
             row
         })
         .collect::<Vec<_>>();
-    if input.history {
-        // Moved done tasks follow the live ones, newest first; a task in both places
-        // is listed once, from the live copy.
-        let live_ids: std::collections::BTreeSet<Uuid> =
-            domain.tasks().iter().map(|task| task.id).collect();
-        let moved = store
-            .load_done_history()
-            .map_err(|error| ListError::Store(error.to_string()))?;
-        rows.extend(
-            moved
-                .iter()
-                .map(|line| &line.task)
-                .filter(|task| {
-                    !live_ids.contains(&task.id) && !task.is_notice() && !domain.is_hidden(task)
-                })
-                .filter(|task| scope.as_ref().is_none_or(|scope| task.scope == *scope))
-                .map(|task| row_for(task, &domain)),
-        );
-    }
     Ok(ListResult {
         rows,
         view,

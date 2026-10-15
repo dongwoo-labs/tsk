@@ -1335,6 +1335,18 @@ impl DomainState {
             .collect()
     }
 
+    /// A read-only view that also holds tasks moved to the dated done files, so
+    /// relationships, counts, and project names cover them. A live copy wins.
+    pub(crate) fn with_moved_tasks(&self, moved: impl IntoIterator<Item = Task>) -> DomainState {
+        let mut view = self.clone();
+        for task in moved {
+            if view.get(task.id).is_none() {
+                view.tasks.push(task);
+            }
+        }
+        view
+    }
+
     /// Remove the given tasks and every undo entry targeting one of them.
     pub(crate) fn remove_tasks(&mut self, ids: &BTreeSet<Uuid>) {
         self.tasks.retain(|task| !ids.contains(&task.id));
