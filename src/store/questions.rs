@@ -211,6 +211,9 @@ impl QuestionStore {
         if draft.kind == QuestionKind::Secret && !valid_secret_question(&draft) {
             return Err(QuestionError::InvalidSecret);
         }
+        if draft.audience.is_none() {
+            return Err(QuestionError::InvalidInput);
+        }
         let _guard = self
             .store
             .lock_exclusive()
@@ -711,11 +714,20 @@ fn draft_problems(draft: &QuestionDraft) -> Vec<(bool, String)> {
 /// Field-level problems with a draft, all at once, for the refusal text. Empty means the
 /// shape is valid; whether the task exists is checked under the store lock.
 pub fn question_problems(draft: &QuestionDraft) -> Vec<String> {
-    draft_problems(draft)
+    let mut problems: Vec<String> = draft_problems(draft)
         .into_iter()
         .map(|(_, message)| message)
-        .collect()
+        .collect();
+    // A secret without audience already says so above.
+    if draft.audience.is_none() && draft.kind != QuestionKind::Secret {
+        problems.push(AUDIENCE_REQUIRED.into());
+    }
+    problems
 }
+
+/// Only `ask` requires it: records saved before this rule stay readable and answerable.
+const AUDIENCE_REQUIRED: &str =
+    "audience: required, \"user\" or \"lead\"; add it to the question JSON";
 
 fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
     match draft_problems(draft).first() {

@@ -107,8 +107,8 @@ An approval answer may carry an optional `comment`: free text beside the `approv
 decision, never itself an approval and never checked against the stored terms, refused on anything
 but an approval or when blank.
 Private originals stay in Git-excluded `questions-private/`; put only shareable summaries in references.
-Set `audience` (`user` or `lead`) on every new question: the user's questions tab and waiting line
-count only `user` questions, and a question without one shows as target unknown. Change it later
+`audience` (`user` or `lead`) is required on every new question: `tsk ask` refuses one without it
+(exit 1, nothing saved). The user's questions tab and waiting line count only `user` questions. Change it later
 with `tsk route <Q> --file` and the current `expected_revision`; routing keeps the number, text, and
 answers. A finding that may need follow-up work carries `lead_recipient`, the exact live Lead name
 the board sends its run request to. Routing and that address grant no approval or execution authority.

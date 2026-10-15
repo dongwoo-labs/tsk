@@ -371,9 +371,9 @@ fn a_plain_question_refuses_approve_and_approval_terms() {
 }
 
 #[test]
-fn an_unknown_or_unrouted_question_is_refused() {
+fn an_unknown_question_is_refused() {
     let dir = TempDir::new("unknown");
-    let (id, revision) = ask(&dir, "question", None);
+    let (id, revision) = ask(&dir, "question", Some("user"));
     for address in ["Q9", "00000000-0000-4000-8000-000000000000"] {
         let out = ui_answer(
             &dir,
@@ -387,14 +387,35 @@ fn an_unknown_or_unrouted_question_is_refused() {
             out.stderr
         );
     }
-    let out = ui_answer(
-        &dir,
-        "Q1",
-        &json!({"expected_revision": revision, "choice": 0}),
-    );
-    assert_eq!(out.code, 1);
-    assert!(out.stderr.contains("unrouted-question"), "{}", out.stderr);
     assert_eq!(record(&dir, &id)["answers"], json!([]));
+}
+
+#[test]
+fn ask_without_audience_is_refused_and_saves_nothing() {
+    let dir = TempDir::new("no-audience");
+    let task = task_id(&dir);
+    let question = json!({
+        "task_id": task,
+        "kind": "question",
+        "summary": "pick one",
+        "origin_thread": "thr-a",
+        "recipient": "lead-a",
+        "text": "Which one?",
+        "options": [],
+        "recommendation": null,
+        "impact": null,
+        "blocking_scope": null,
+        "approval": null,
+        "finding": null,
+        "source": null
+    });
+    let file = dir.write("question.json", &question);
+    let out = cli(&["ask", "--file", &file, "--state-dir", &dir.state()]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("audience: required"), "{}", out.stderr);
+    let listed = cli(&["questions", "--state-dir", &dir.state()]);
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    assert_eq!(stdout_json(&listed), json!([]));
 }
 
 #[test]
