@@ -29,8 +29,6 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Fold or unfold archived in the done drawer | `g` |
 | Board tab, list focus | `1` |
 | Questions tab | `2` |
-| Scope picker: all, desk, or a project | `p` |
-| Sort by number / by project | `S` |
 | Search current board rows | `/` |
 | Command palette | `:` |
 | All shortcuts | `?` |
@@ -40,9 +38,9 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 
 `ctrl+q` quits from task views, Help, and pickers too. It does not quit while editing text, using board search, typing a quick-add line, or filtering the palette. Save or cancel any unsaved draft first. During save recovery, resolve the pending save instead.
 
-`Esc` leaves multi-select and clears its marks first, then closes the current layer. At the board root on any scope, with multi-select inactive, it quits without confirmation rather than switching scope. In the wide layout, `Esc` from the detail returns focus to the list after any editor or overlay is dismissed. A further `Esc` at the list root quits, unless a parked draft blocks quitting.
+`Esc` leaves multi-select and clears its marks first, then closes the current layer. At the board root, with multi-select inactive, it quits without confirmation. In the wide layout, `Esc` from the detail returns focus to the list after any editor or overlay is dismissed. A further `Esc` at the list root quits, unless a parked draft blocks quitting.
 
-`Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a scope change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
+`Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a view change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
 When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` changes Todo tasks to Doing and leaves Doing tasks unchanged. Marked Done tasks are skipped, and the status row says so: `doing N · skipped M done (ctrl+o reopens them)`. `ctrl+o` sets Todo, including for Done tasks. The old `ctrl+n`, `ctrl+b`, and `ctrl+r` status shortcuts are removed. One `ctrl+u` reverses an entire marked completion or deletion.
 
@@ -149,9 +147,6 @@ In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes a
 
 | Surface | Controls |
 | --- | --- |
-| Scope picker | Arrows or `j`/`k` select **all**, **desk**, or a project; `Tab` or `←`/`→` switch tabs; `Enter` opens; `?` opens Help; `Esc` or `q` closes |
-| Project archive | `ctrl+f` archives; on archived tab, `ctrl+f` or `ctrl+u` restores |
-| Archived project view | `ctrl+u` restores; `Esc` or `p` leaves |
 | Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select, and on a long wrapped title `↑` / `↓` first show its other rows; the wheel scrolls rows; `Enter` saves the parent (or **no parent**); a click on any row of an option saves it; `Esc` closes without saving |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
 | Palette | Type to filter; arrows or `Tab` select; `Enter` runs; `Esc` closes |

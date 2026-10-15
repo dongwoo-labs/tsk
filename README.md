@@ -129,7 +129,12 @@ the bug.”
 
 ## Usage
 
-Mouse or keyboard, your choice. Click the scope and sort controls to change what the board shows, double-click a task
+The board shows every task at once, grouped by project: your desk first, then each
+project under its own heading. Run it inside a repo and the cursor starts on that
+project. Rows show checked steps as `✓2/5`, and the notes' `Now:` or `Blocked:` line
+under the title, so progress reads at a glance.
+
+Mouse or keyboard, your choice. Double-click a task
 to open it, and scroll through your board. The actions along the bottom are
 clickable too, including adding a task and changing its status. `Shift+M` marks
 several tasks so one action covers them all.
@@ -143,13 +148,11 @@ Prefer the keyboard? A few keys for everyday use:
 | `Shift+↑` / `Shift+↓` | In multi-select, mark the current task, then move |
 | `Space` or click | In multi-select, mark or unmark a task |
 | `→` / `←` or `l` / `h` | In wide panes, move between the task list and the task detail beside it |
-| `S` | Order tasks by number or group them by project |
 | `+` | Add a task |
 | `Enter` | Open the selected task |
 | `ctrl+s` | Set a Todo task to Doing |
 | `ctrl+o` | Set Todo, including reopening Done |
 | `ctrl+d` | Mark the selected task done |
-| `p` | Show all tasks, your desk, or one project |
 | `d` | Show or hide completed tasks |
 | `?` | Show all shortcuts |
 

@@ -22,7 +22,7 @@ fn key(
     let intent = match route_responsive_key(
         model.input_mode(),
         model.wide_stage(),
-        tsk_tui::ui::tier::resolve_responsive(width, 24, model.wide_stage()).presentation,
+        tsk_tui::ui::tier::resolve_responsive(width, 40, model.wide_stage()).presentation,
         event,
     ) {
         ResponsiveKeyRoute::Intent(intent) => Some(intent),
@@ -34,14 +34,14 @@ fn key(
     }
 }
 fn capture(model: &BoardModel, width: u16, _name: &str) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
     terminal
         .draw(|f| {
             draw_board(f, model);
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
-    let text = (0..24)
+    let text = (0..40)
         .map(|y| {
             (0..width)
                 .map(|x| buffer[(x, y)].symbol())
@@ -97,11 +97,16 @@ fn export_reference(text: &str, width: u16, name: &str) {
                         && (line.contains("T13") || line.starts_with("       "))
                 })
                 .map(|line| {
-                    line.chars()
-                        .skip(7)
-                        .collect::<String>()
-                        .trim_end()
-                        .to_string()
+                    let line = line.chars().skip(7).collect::<String>();
+                    let line = line.trim_end_matches(['▌', ' ']);
+                    // The demo paints the right-edge marks (`✓1/2`, `⊂n/m`) outside the
+                    // title lines; keep only the title text.
+                    match line.rsplit_once("  ") {
+                        Some((title, tail)) if tail.starts_with(['✓', '⊂', '!', '?']) => {
+                            title.trim_end().to_string()
+                        }
+                        _ => line.to_string(),
+                    }
                 })
                 .collect();
             fs::write(
@@ -136,7 +141,6 @@ fn fixture_flow(export: bool) {
         let mut state: DomainState =
             serde_json::from_str(include_str!("fixtures/demo-parity/store.json")).unwrap();
         let mut model = BoardModel::from_domain(&state, Some(PathBuf::from("/tmp/tsk-parity")));
-        model.set_selected_project(None);
         let initial = capture(&model, width, "initial");
         // The v7 fixture already holds a doing task; ctrl+s below adds T13 to it.
         assert!(initial.contains("DOING"));
@@ -239,14 +243,7 @@ fn fixture_flow(export: bool) {
             width,
         );
         assert!(capture(&model, width, "back").contains("DOING"));
-        // `S` regroups the same rows by project without changing any task.
-        key(
-            &mut state,
-            &mut model,
-            KeyCode::Char('S'),
-            KeyModifiers::NONE,
-            width,
-        );
+        // The board always groups rows by project; the reference keeps the frame's name.
         let grouped = capture(&model, width, "project-order");
         assert!(grouped.contains("tsk-parity"), "{grouped}");
     }

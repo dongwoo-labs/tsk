@@ -25,7 +25,7 @@ Select a step with a click, `Tab`, or the arrows. Press `Enter` to check or unch
 | `✓` | Done |
 | `✗` | Marked for removal |
 
-The heading shows completed/total steps and, once the task has steps, the percent done, such as `steps 1/3 · 33%` (rounded down, so 100% means every step is checked). `tsk list T12` prints the same count as `Steps: 1/3 done (33%)`. The count is read from the steps, never saved, and never completes the task. In view mode, status shortcuts change the task, not the selected step.
+The heading shows completed/total steps and, once the task has steps, the percent done, such as `steps 1/3 · 33%` (rounded down, so 100% means every step is checked). `tsk list T12` prints the same count as `Steps: 1/3 done (33%)`. On the board, the task's row ends in a dim `✓1/3`. The count is read from the steps, never saved, and never completes the task. In view mode, status shortcuts change the task, not the selected step.
 
 ## Rename
 

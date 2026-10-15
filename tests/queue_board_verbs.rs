@@ -1477,7 +1477,6 @@ fn help_card_lists_every_binding_scrolls_and_closes_on_esc() {
         ("ctrl+←", "word left (text input)"),
         ("home", "line start (text input)"),
         ("backspace", "delete backward (text input)"),
-        ("q", "close project picker"),
         ("y", "unarchive launch project"),
         ("r / enter", "retry failed save"),
         ("↑↓ / page keys", "scroll Help"),

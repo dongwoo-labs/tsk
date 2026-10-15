@@ -1098,12 +1098,6 @@ fn help_bindings() -> Vec<HelpBinding> {
         ),
         help_binding(
             HelpGroup::SurfaceControls,
-            "q",
-            "close project picker",
-            "cancel",
-        ),
-        help_binding(
-            HelpGroup::SurfaceControls,
             "shift+tab",
             "previous option (picker / palette)",
             "select move",
