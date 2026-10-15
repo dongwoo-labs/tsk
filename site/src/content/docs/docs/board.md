@@ -21,7 +21,7 @@ Press `ctrl+q` to quit from the board or a task view, including Help and pickers
 
 ## Projects
 
-**DOING** and **TODO** group their rows by project: the desk first, then each live project by path. A dim project name heads each group. Inside a group, rows keep [board order](#status). Grouping is permanent and never changes a task; the [CLI](/docs/cli/#list) keeps its own order.
+**DOING** and **TODO** group their rows by project: the desk first, then each live project by path. A bold project name heads each group, each project in one of five terminal colours chosen from its path so it stays the same between launches; the desk heading stays uncoloured, and `NO_COLOR` turns the colours off. Inside a group, rows keep [board order](#status). Grouping is permanent and never changes a task; the [CLI](/docs/cli/#list) keeps its own order.
 
 Quick-add (`+`) files a new task under the project you launched tsk in when that project is live, and on your desk otherwise. A `!p` token in the title still picks another destination ([capture](/docs/capture/)).
 
@@ -103,13 +103,15 @@ A record waiting on you is answered with one form, the way Claude Code asks: the
 
 | Record | Choices |
 | --- | --- |
-| Question with options | its options, then `n. Type something…` |
+| Question with options | its options, then `n. Type something…`, then `Explain it first` |
 | Question without options | one answer field, already focused |
-| Approval | `1. Approve these exact terms` · `2. Reject` · `3. Add a comment…`, below the exact terms |
-| Finding | `1. Create the task and run it` · `2. Create the task only` · `3. Close` |
+| Approval | `1. Approve these exact terms` · `2. Reject` · `3. Add a comment…` · `4. Explain it first`, below the exact terms |
+| Finding | `1. Create the task and run it` · `2. Create the task only` · `3. Close` · `4. Explain it first` |
 | Secret | `1.` its masked field, already focused · `2. Reject` |
 
 Answered, closed, lead-addressed, and target-unknown records show no choices.
+
+An option written as two lines (`label` then a newline and what picking it leads to) shows the label as the choice and the second line dim beneath it; picking saves the label line as the answer, and a recommendation may name either the label or the whole option. **Explain it first** saves nothing: inside Herdr it sends the one live `lead-` agent a prompt to explain the question with the wait-what skill and sum it up with a recommendation, and the record stays open for you to answer afterwards. Outside Herdr, or with no single live lead, the status row says why nothing was sent.
 
 | Key | Action |
 | --- | --- |

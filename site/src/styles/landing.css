@@ -2823,6 +2823,11 @@ html[data-theme="light"] .pane {
 .tsk-row-tail { flex: none; margin-left: auto; padding-left: 1ch; white-space: pre; }
 .tsk-alert { font-weight: 700; color: var(--ink); }
 .tsk-sub-label { white-space: pre; }
+.tsk-hue-0 { color: #0891b2; }
+.tsk-hue-1 { color: #c026d3; }
+.tsk-hue-2 { color: #ca8a04; }
+.tsk-hue-3 { color: #16a34a; }
+.tsk-hue-4 { color: #2563eb; }
 .tsk-waiting { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; margin: 0 0 1lh; }
 .tsk-waiting > span { display: block; white-space: pre; }
 .tsk-relations { margin-top: 1lh; }

@@ -58,6 +58,37 @@ pub const MONO_MODIFIERS: Modifier = Modifier::BOLD
     .union(Modifier::UNDERLINED)
     .union(Modifier::REVERSED);
 
+/// The one place the board uses colour: project group headings, so groups read apart at
+/// a glance (user-confirmed 2026-10-15). Standard 16-colour foregrounds only, never a
+/// background; the desk heading stays uncoloured. `NO_COLOR` turns it off.
+pub const GROUP_PALETTE: [Color; 5] = [
+    Color::Cyan,
+    Color::Magenta,
+    Color::Yellow,
+    Color::Green,
+    Color::Blue,
+];
+
+/// SGR foreground codes of [`GROUP_PALETTE`], allowed by the colour scanners.
+const GROUP_PALETTE_SGR: [u32; 5] = [36, 35, 33, 32, 34];
+
+/// A project heading's style: bold, in a colour picked stably from the stored path, so a
+/// project keeps its colour across sessions and boards. The desk (`None`) stays bold only.
+pub fn style_group_heading(project: Option<&str>) -> Style {
+    let style = style_bold();
+    let Some(path) = project else {
+        return style;
+    };
+    if std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return style;
+    }
+    // FNV-1a: stable across runs and platforms, unlike the std hasher.
+    let hash = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    style.fg(GROUP_PALETTE[(hash % GROUP_PALETTE.len() as u64) as usize])
+}
+
 /// Style with only the allowed mono modifiers; never sets fg/bg.
 pub fn mono_style(modifier: Modifier) -> Style {
     Style::default().add_modifier(modifier.intersection(MONO_MODIFIERS))
@@ -387,7 +418,7 @@ pub fn assert_buffer_mono(buffer: &Buffer) {
         for x in area.left()..area.right() {
             let cell = &buffer[(x, y)];
             assert!(
-                cell.fg == Color::Reset,
+                cell.fg == Color::Reset || GROUP_PALETTE.contains(&cell.fg),
                 "AC-13: cell ({x},{y}) has fg color {:?}",
                 cell.fg
             );
@@ -3931,7 +3962,7 @@ fn build_list_rows(
             out.push(ListRow::Hint(paint_bounded_line(
                 &format!("   {label}"),
                 geo.row_width,
-                style_dim(),
+                style_group_heading((rank != 0).then_some(path)),
             )));
             *last = Some(key);
         }
@@ -4551,6 +4582,8 @@ fn sgr_params_contain_color(params: &str) -> bool {
             // reset / mono intensity / underline / reverse and their offs,
             // including resets to default fg/bg/underline color.
             0 | 1 | 2 | 4 | 7 | 22 | 24 | 27 | 39 | 49 | 59 => {}
+            // the project group headings' palette (foreground only)
+            code if GROUP_PALETTE_SGR.contains(&code) => {}
             // classic/bright fg/bg and extended color selectors
             30..=38 | 40..=48 | 58 | 90..=107 => return true,
             // italic / blink / hidden / strike etc. are outside the mono set
@@ -5003,5 +5036,23 @@ mod tests {
         assert!(cleaned.fg.is_none());
         assert!(cleaned.bg.is_none());
         assert_eq!(cleaned.add_modifier, Modifier::BOLD);
+    }
+
+    #[test]
+    fn a_project_group_heading_takes_a_stable_palette_colour_and_the_desk_none() {
+        if std::env::var_os("NO_COLOR").is_some() {
+            return;
+        }
+        let first = super::style_group_heading(Some("/repos/alpha"));
+        let again = super::style_group_heading(Some("/repos/alpha"));
+        assert!(first
+            .fg
+            .is_some_and(|fg| super::GROUP_PALETTE.contains(&fg)));
+        assert_eq!(first, again, "the same path keeps its colour");
+        assert_eq!(
+            super::style_group_heading(None).fg,
+            None,
+            "the desk stays plain"
+        );
     }
 }

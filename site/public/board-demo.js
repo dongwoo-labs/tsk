@@ -612,6 +612,12 @@ import { parseCapture } from "./capture.js";
     ["create_only", "create the task only (todo)"],
     ["close", "close · no task"],
   ];
+  // A project heading's colour, one of five, stable per name (the app hashes the path).
+  const hueOf = (name) => {
+    let hash = 0;
+    for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+    return hash % 5;
+  };
   // The finding form's rows; the saved answer text stays FINDING_ACTIONS.
   const FINDING_LABELS = [
     "Create the task and run it",
@@ -623,27 +629,49 @@ import { parseCapture } from "./capture.js";
     if (!q.audience) return [];
     const open = isOpen(q);
     const correcting = state.q.correcting === q.id;
+    // An open record with numbered choices ends with "Explain it first".
+    const explain = open && !correcting ? [{ kind: "explain" }] : [];
     if (q.kind === "approval")
       return open
-        ? ["approve", "reject", "comment"].map((kind) => ({ kind }))
+        ? [...["approve", "reject", "comment"].map((kind) => ({ kind })), ...explain]
         : [];
     if (q.kind === "finding")
       return open || correcting
-        ? FINDING_ACTIONS.map((_, index) => ({ kind: "finding", index }))
+        ? [
+            ...FINDING_ACTIONS.map((_, index) => ({ kind: "finding", index })),
+            ...explain,
+          ]
         : [];
-    if (q.kind === "question" && (open || correcting))
+    if (q.kind === "question" && (open || correcting)) {
+      if (!q.options.length) return [{ kind: "text" }];
       return [
         ...q.options.map((_, index) => ({ kind: "option", index })),
         { kind: "text" },
+        ...explain,
       ];
+    }
     return [];
   }
+  // An option's label (first line) and description (the lines after it).
+  const optionParts = (option) => {
+    const at = option.indexOf("\n");
+    return at < 0
+      ? [option, ""]
+      : [option.slice(0, at).trimEnd(), option.slice(at + 1).trim()];
+  };
+  const recommends = (q, option) =>
+    !!q.recommendation &&
+    (q.recommendation.trim() === option.trim() ||
+      q.recommendation.trim() === optionParts(option)[0].trim());
   const loneField = (rows) => rows.length === 1 && rows[0].kind === "text";
   function highlight(q) {
     const rows = formChoices(q);
     const fallback =
       q.kind === "question"
-        ? Math.max(0, q.options.indexOf(q.recommendation))
+        ? Math.max(
+            0,
+            q.options.findIndex((option) => recommends(q, option)),
+          )
         : 0;
     return Math.min(
       state.q.highlight[q.id] ?? fallback,
@@ -731,10 +759,16 @@ import { parseCapture } from "./capture.js";
           return;
         }
         let text;
+        let description = "";
         if (row.kind === "option") {
-          const label = q.options[row.index];
-          text = label === q.recommendation ? `${label} · recommended` : label;
-        } else if (row.kind === "text")
+          const [label, rest] = optionParts(q.options[row.index]);
+          description = rest;
+          text = recommends(q, q.options[row.index])
+            ? `${label} · recommended`
+            : label;
+        } else if (row.kind === "explain")
+          text = "Explain it first · the lead walks you through it";
+        else if (row.kind === "text")
           text = (!draft?.comment && draft?.text) || "Type something…";
         else if (row.kind === "approve") text = "Approve these exact terms";
         else if (row.kind === "reject") text = "Reject";
@@ -749,6 +783,8 @@ import { parseCapture } from "./capture.js";
           i === on ? "is-chosen" : "",
           `data-q-option="${i}"`,
         );
+        if (description)
+          indented(" ".repeat(lead.length), description, "dim", `data-q-option="${i}"`);
       });
       push(
         draft?.focused && draft.comment
@@ -942,8 +978,12 @@ import { parseCapture } from "./capture.js";
     if (!row) return;
     state.q.highlight[q.id] = i;
     if (state.q.answer?.comment && row.kind !== "comment") stageComment();
+    if (row.kind === "explain") {
+      state.message = `sample: the app asks the lead to explain Q${q.number} · nothing is saved`;
+      return;
+    }
     if (row.kind === "option") {
-      const correction = saveAnswer(q, q.options[row.index]);
+      const correction = saveAnswer(q, optionParts(q.options[row.index])[0]);
       report(
         q,
         `sample: ${correction ? "correction" : "answer"} kept in this page only · nothing is sent (the app hints ${q.origin})`,
@@ -1787,7 +1827,9 @@ import { parseCapture } from "./capture.js";
         if (row.kind === "section")
           return `<div class="tsk-sec"><span class="sec">${esc(row.label)}</span><span class="rule" aria-hidden="true"></span><span class="count">${row.count}</span></div>`;
         if (row.kind === "sub")
-          return `<div class="tsk-sub-label dim">   ${esc(row.label)}</div>`;
+          return row.label === "desk"
+            ? `<div class="tsk-sub-label"><strong>   desk</strong></div>`
+            : `<div class="tsk-sub-label tsk-hue-${hueOf(row.label)}"><strong>   ${esc(row.label)}</strong></div>`;
         if (row.kind === "archived") {
           const selected = row.id === state.selectedId;
           return `<button type="button" class="tsk-group" data-archived-header="1"><span class="dim"> ${state.archivedOpen ? "▾" : "▸"}</span> <span class="sec">${selected ? "<strong>archived</strong>" : "archived"}</span><span class="rule" aria-hidden="true"></span><span class="count dim">${row.count}</span></button>`;

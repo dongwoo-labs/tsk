@@ -315,6 +315,25 @@ pub enum Choice {
     Comment,
     /// The finding action at this index into [`FINDING_ACTIONS`].
     Finding(usize),
+    /// Ask the live lead to explain the question first (wait-what); answers nothing.
+    Explain,
+}
+
+/// An option's label (its first line) and its description (the lines after it). A thread
+/// writes `label\nwhat picking it leads to`; a one-line option has no description.
+pub fn option_parts(option: &str) -> (&str, &str) {
+    match option.split_once('\n') {
+        Some((label, description)) => (label.trim_end(), description.trim()),
+        None => (option, ""),
+    }
+}
+
+/// Whether the recommendation names this option, by its whole text or its label line.
+pub fn recommends(recommendation: Option<&str>, option: &str) -> bool {
+    recommendation.is_some_and(|rec| {
+        let rec = rec.trim();
+        !rec.is_empty() && (rec == option.trim() || rec == option_parts(option).0.trim())
+    })
 }
 
 /// The groups of the list, in paint order. `Unrouted` is the compatibility block for open
@@ -541,18 +560,30 @@ pub fn form(state: &QuestionsState, record: &QuestionRecord) -> Vec<Choice> {
         .correcting
         .is_some_and(|(id, _)| id == record.reference.id);
     let open = record.is_open();
-    match record.reference.kind {
+    // A still-open question with numbered choices also offers to have the lead explain it
+    // first; a correction or a lone text field does not.
+    let explain = open && !correcting;
+    let mut rows = match record.reference.kind {
         QuestionKind::Approval if open => vec![Choice::Approve, Choice::Reject, Choice::Comment],
-        QuestionKind::Secret if open => vec![Choice::Text, Choice::Reject],
+        QuestionKind::Secret if open => return vec![Choice::Text, Choice::Reject],
         QuestionKind::Finding if open || correcting => {
             (0..FINDING_ACTIONS.len()).map(Choice::Finding).collect()
         }
-        QuestionKind::Question if open || correcting => (0..record.draft.options.len())
-            .map(Choice::Option)
-            .chain(std::iter::once(Choice::Text))
-            .collect(),
-        _ => Vec::new(),
+        QuestionKind::Question if open || correcting => {
+            if record.draft.options.is_empty() {
+                return vec![Choice::Text];
+            }
+            (0..record.draft.options.len())
+                .map(Choice::Option)
+                .chain(std::iter::once(Choice::Text))
+                .collect()
+        }
+        _ => return Vec::new(),
+    };
+    if explain {
+        rows.push(Choice::Explain);
     }
+    rows
 }
 
 /// Whether the form is one text field and nothing else (no numbered choices).
@@ -574,7 +605,7 @@ fn default_highlight(record: &QuestionRecord) -> usize {
                 .draft
                 .options
                 .iter()
-                .position(|option| option.trim() == rec.trim())
+                .position(|option| recommends(Some(rec), option))
         })
         .unwrap_or(0)
 }
@@ -1269,12 +1300,13 @@ fn form_choices(
         };
         let text = match *choice {
             Choice::Option(at) => {
-                let label = draft.options.get(at).cloned().unwrap_or_default();
-                let recommended = draft
-                    .recommendation
-                    .as_deref()
-                    .is_some_and(|rec| rec.trim() == label.trim());
-                if recommended {
+                let option = draft
+                    .options
+                    .get(at)
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                let label = option_parts(option).0.to_string();
+                if recommends(draft.recommendation.as_deref(), option) {
                     format!("{label} · recommended")
                 } else {
                     label
@@ -1311,10 +1343,23 @@ fn form_choices(
                 },
             },
             Choice::Finding(at) => FINDING_LABELS[at].to_string(),
+            Choice::Explain => "Explain it first · the lead walks you through it".to_string(),
         };
         let marker = if on { "▸ " } else { "  " };
         let at = page.rows.len();
-        page.indented(&format!("{marker}{}. ", index + 1), &text, style, on);
+        let lead = format!("{marker}{}. ", index + 1);
+        page.indented(&lead, &text, style, on);
+        if let Choice::Option(option) = *choice {
+            let description = draft
+                .options
+                .get(option)
+                .map(|option| option_parts(option).1)
+                .unwrap_or_default();
+            if !description.is_empty() {
+                let pad = " ".repeat(render::display_width(&lead));
+                page.indented(&pad, description, RowStyle::Dim, false);
+            }
+        }
         page.click_from(at, PageClick::Choice(index));
     }
     let n = rows.len();
@@ -2251,10 +2296,16 @@ mod tests {
         assert!(terms < first, "{page}");
         assert!(page.contains("  2. Reject"), "{page}");
         assert!(page.contains("  3. Add a comment…"), "{page}");
+        assert!(page.contains("  4. Explain it first"), "{page}");
         assert!(!page.contains("[ ]"), "no check line: {page}");
         assert_eq!(
             form(&state, &record),
-            vec![Choice::Approve, Choice::Reject, Choice::Comment]
+            vec![
+                Choice::Approve,
+                Choice::Reject,
+                Choice::Comment,
+                Choice::Explain
+            ]
         );
         let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
         // Digits pick at once; the old check and decide keys are gone.
@@ -2266,7 +2317,7 @@ mod tests {
             key(&state, KeyCode::Char('3')),
             Some(BoardIntent::Question(QuestionIntent::Pick(2)))
         );
-        assert_eq!(key(&state, KeyCode::Char('4')), None);
+        assert_eq!(key(&state, KeyCode::Char('5')), None);
         for gone in [' ', 'y', 'n'] {
             assert_eq!(key(&state, KeyCode::Char(gone)), None, "{gone:?}");
         }
@@ -2276,7 +2327,7 @@ mod tests {
         );
         assert_eq!(
             footer_hint(&state, false),
-            "↑↓ move · enter pick · 1-3 pick · J/K next · t task · esc back"
+            "↑↓ move · enter pick · 1-4 pick · J/K next · t task · esc back"
         );
 
         // The comment row is an inline field; once kept, the row shows it.
@@ -2364,6 +2415,40 @@ mod tests {
     }
 
     #[test]
+    fn an_option_shows_its_label_line_and_its_description_dim_below() {
+        let mut record = options_record();
+        record.draft.options = vec![
+            "A) Ship now\nThe fix reaches users today; no data repair.".into(),
+            "B) Wait".into(),
+        ];
+        record.draft.recommendation = Some("A) Ship now".into());
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record.clone()]),
+            active: true,
+            ..QuestionsState::default()
+        };
+        state.open(id);
+        let rows = page_rows(&state, &record, &[], 80);
+        let label = rows
+            .iter()
+            .position(|row| row.text == "▸ 1. A) Ship now · recommended")
+            .expect("label row, recommended by its label line");
+        let description = &rows[label + 1];
+        assert_eq!(
+            description.text,
+            "     The fix reaches users today; no data repair."
+        );
+        assert_eq!(description.style, RowStyle::Dim);
+        assert_eq!(
+            description.click, rows[label].click,
+            "the description picks too"
+        );
+        assert!(rows.iter().any(|row| row.text == "  2. B) Wait"));
+        assert_eq!(option_parts("B) Wait"), ("B) Wait", ""));
+    }
+
+    #[test]
     fn a_question_form_numbers_its_options_then_a_text_row_and_starts_on_the_recommendation() {
         let record = options_record();
         let id = record.reference.id;
@@ -2381,6 +2466,7 @@ mod tests {
         assert!(page.contains("  1. alpha"), "{page}");
         assert!(page.contains("▸ 2. beta · recommended"), "{page}");
         assert!(page.contains("  3. Type something…"), "{page}");
+        assert!(page.contains("  4. Explain it first"), "{page}");
         assert!(state.typing().is_none(), "no field is focused yet");
         let key = |state: &QuestionsState, code| map_key(state, false, KeyEvent::from(code));
         assert_eq!(
@@ -2395,11 +2481,10 @@ mod tests {
         assert_eq!(key(&state, KeyCode::Char('x')), None);
         state.move_on_page(true);
         assert_eq!(state.highlighted_choice(), Some(Choice::Text));
-        state.move_on_page(true);
         assert_eq!(state.highlighted(&record), 2);
         assert_eq!(
             footer_hint(&state, false),
-            "↑↓ move · enter type · 1-3 pick · J/K next · esc back"
+            "↑↓ move · enter type · 1-4 pick · J/K next · esc back"
         );
         assert_eq!(
             key(&state, KeyCode::Char('x')),
