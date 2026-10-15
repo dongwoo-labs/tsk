@@ -62,6 +62,14 @@ tsk trash restore T12
 
 The list includes both recently deleted tasks still in the main store and tasks in trash. Restore reads trash; use board undo for a recent deletion that has not moved there yet.
 
+## Stall checks
+
+The board's [stall checks](/docs/board/#stall-checks) store nothing: the Herdr agent snapshot and when each task was last asked about live only in the open board session.
+
+| Setting | Purpose |
+| --- | --- |
+| `TSK_STALE_MINUTES` | Minutes a Doing task must stay unchanged, with its thread not working, before the board marks it stalled (a positive whole number; default `30`) |
+
 ## Update check
 
 On launch, tsk checks for a newer release if its cached check is older than 24 hours. A newer version appears on the board's idle status row as `vX.Y.Z available, run tsk update`.

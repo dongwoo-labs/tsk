@@ -4,7 +4,9 @@ use std::env;
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
+
+use uuid::Uuid;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Position, Rect};
@@ -106,6 +108,7 @@ fn load_board_inner(
     if full_board_open {
         model.offer_launch_card(&state, &snapshot);
         model.set_question_feed(crate::question_actions::load_feed());
+        model.stall_mut().enabled = crate::stall::inside_herdr();
     }
     model.set_update_notice(crate::update::startup(
         &state_dir,
@@ -213,6 +216,10 @@ pub fn board_idle_tick(
     let poll = board_frame(model, paint, wait, active_animations)?;
     if poll == FramePoll::Idle {
         revalidate_board_from_store(store, domain, model, watch, save_recovery);
+        // Inside Herdr only: refresh the agent snapshot the stall marks read, off-thread.
+        model
+            .stall_mut()
+            .tick(Instant::now(), crate::threads::herdr::list_agents);
     }
     Ok(poll)
 }
@@ -1534,6 +1541,107 @@ fn copy_task_number_with(
     model.set_ephemeral_message(message, Duration::from_secs(2));
 }
 
+/// Ask a task's own thread for its status card. Sends only to the one live pane matching
+/// the task's whole `Thread:` tuple; returns the status line either way.
+fn refresh_task(model: &mut BoardModel, id: Uuid) -> String {
+    let Some(task) = model
+        .loaded_tasks()
+        .iter()
+        .find(|task| task.id == id)
+        .cloned()
+    else {
+        return "that task is gone · nothing sent".to_string();
+    };
+    let identifier = task
+        .board_identifier()
+        .unwrap_or_else(|| "task".to_string());
+    let Some(reference) = crate::stall::thread_of(&task) else {
+        return format!("{identifier} has no single complete Thread line · nothing sent");
+    };
+    if !crate::stall::inside_herdr() {
+        return format!("{identifier} check not sent: outside Herdr");
+    }
+    let agents = match crate::threads::herdr::list_agents() {
+        Ok(agents) => agents,
+        Err(_) => return format!("{identifier} check not sent: cannot list live agents"),
+    };
+    model.stall_mut().agents = Some(agents.clone());
+    let Some(row) = crate::stall::live_agent(&reference, &agents) else {
+        return format!(
+            "{identifier} check not sent: no live thread matches {}",
+            reference.name
+        );
+    };
+    // `herdr agent prompt` addresses by name only: refuse when the name is not unique.
+    if !crate::stall::unique_name(&row.name, &agents) {
+        return format!(
+            "{identifier} check not sent: several live agents are named {}",
+            row.name
+        );
+    }
+    let now = SystemTime::now();
+    let hint = crate::stall::task_hint(&identifier, id, crate::stall::quiet_minutes(&task, now));
+    match crate::threads::herdr::prompt(&row.name, &hint) {
+        Ok(()) => {
+            model.stall_mut().asked.insert(id, now);
+            format!("asked {} about {identifier}", row.name)
+        }
+        Err(_) => format!("{identifier} check to {} failed to send", row.name),
+    }
+}
+
+/// Check all: one prompt to the single live lead naming the stale Doing tasks and every
+/// Todo task. Marks the listed stale tasks asked; returns the status line.
+fn refresh_all(model: &mut BoardModel) -> String {
+    if !crate::stall::inside_herdr() {
+        return "stall check not sent: outside Herdr".to_string();
+    }
+    let agents = match crate::threads::herdr::list_agents() {
+        Ok(agents) => agents,
+        Err(_) => return "stall check not sent: cannot list live agents".to_string(),
+    };
+    model.stall_mut().agents = Some(agents.clone());
+    let stale = model.stale_ids();
+    let todo = model.todo_check_ids();
+    let label = |id: &Uuid| {
+        model
+            .loaded_tasks()
+            .iter()
+            .find(|task| task.id == *id)
+            .and_then(crate::domain::Task::board_identifier)
+    };
+    let stale_ids: Vec<Uuid> = model
+        .loaded_tasks()
+        .iter()
+        .filter(|task| stale.contains(&task.id))
+        .map(|task| task.id)
+        .collect();
+    let stale_labels: Vec<String> = stale_ids.iter().filter_map(label).collect();
+    let todo_labels: Vec<String> = todo.iter().filter_map(label).collect();
+    if stale_labels.is_empty() && todo_labels.is_empty() {
+        return "nothing to check: no stale doing or todo tasks".to_string();
+    }
+    let lead = match crate::stall::single_lead(&agents) {
+        Ok(lead) => lead.to_string(),
+        Err(why) => return format!("stall check not sent: {why}"),
+    };
+    let hint = crate::stall::lead_hint(&stale_labels, &todo_labels);
+    match crate::threads::herdr::prompt(&lead, &hint) {
+        Ok(()) => {
+            let now = SystemTime::now();
+            for id in stale_ids {
+                model.stall_mut().asked.insert(id, now);
+            }
+            format!(
+                "asked {lead} to check {} stale doing, {} todo",
+                stale_labels.len(),
+                todo_labels.len()
+            )
+        }
+        Err(_) => format!("stall check to {lead} failed to send"),
+    }
+}
+
 /// Apply a board intent. Returns `true` when the board loop should quit.
 ///
 /// In the quick-capture popup (`quick_capture`), the loop also quits once the capture
@@ -1550,6 +1658,28 @@ fn handle_board_intent(
 ) -> io::Result<bool> {
     if let BoardIntent::CopyTaskNumber(id) = intent {
         copy_task_number(domain, model, id);
+        return Ok(false);
+    }
+    // Stall checks only prompt Herdr agents; the board save path never sees them. They
+    // read the store first so a task another board or the CLI just moved is not listed.
+    if matches!(
+        intent,
+        BoardIntent::RefreshTask(_) | BoardIntent::RefreshAll
+    ) && !save_recovery.is_pending()
+    {
+        if let Ok(disk) = store.load() {
+            domain.merge_tasks_from_disk(&disk);
+            model.sync_from_domain(domain);
+        }
+    }
+    if let BoardIntent::RefreshTask(id) = intent {
+        let message = refresh_task(model, id);
+        model.set_message(message);
+        return Ok(false);
+    }
+    if intent == BoardIntent::RefreshAll {
+        let message = refresh_all(model);
+        model.set_message(message);
         return Ok(false);
     }
     // Question actions own their store writes and Herdr hints; the board save path never
@@ -2340,6 +2470,125 @@ mod tests {
         let after = model.responsive_geometry(area);
         assert_eq!(before.board, after.board);
         assert_eq!(before.task, after.task);
+    }
+
+    /// A quiet Doing task whose Thread line names `thr-a-1`, two hours past its last change.
+    fn stale_board() -> (Uuid, BoardModel) {
+        let notes = "Now: building\nThread: thr-a-1 w1 w1:t2 w1:p3".to_string();
+        let (mut domain, _) = board_fixture("quiet work", Some(notes));
+        domain.assign_numbers_for_persistence();
+        let id = domain.tasks()[0].id;
+        domain.set_status(id, HumanStatus::Doing).expect("doing");
+        let mut tasks = domain.tasks().to_vec();
+        tasks[0].updated_at -= Duration::from_secs(2 * 60 * 60);
+        (id, BoardModel::from_tasks(tasks, None))
+    }
+
+    fn painted(
+        model: &BoardModel,
+        area: Rect,
+    ) -> (ratatui::buffer::Buffer, crate::ui::render::QueueHitMap) {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(area.width, area.height))
+                .expect("terminal");
+        let mut hits = None;
+        terminal
+            .draw(|frame| hits = Some(crate::ui::board::draw_board(frame, model)))
+            .expect("draw");
+        (terminal.backend().buffer().clone(), hits.expect("hits"))
+    }
+
+    #[test]
+    fn a_stale_row_paints_a_refresh_mark_whose_click_asks_its_thread() {
+        for width in [80u16, 130] {
+            let area = Rect::new(0, 0, width, 24);
+            let (id, mut model) = stale_board();
+            // No agent snapshot yet: no mark, no target.
+            let (_, hits) = painted(&model, area);
+            assert!(!hits.regions.iter().any(|hit| matches!(
+                hit.target,
+                crate::ui::render::QueueHitTarget::RefreshTask(_)
+            )));
+            // The snapshot has no live `thr-a-1`: the row is stale.
+            model.stall_mut().agents = Some(Vec::new());
+            let (buffer, hits) = painted(&model, area);
+            let mark = hits
+                .regions
+                .iter()
+                .find(|hit| hit.target == crate::ui::render::QueueHitTarget::RefreshTask(id))
+                .unwrap_or_else(|| panic!("a refresh target at width {width}"))
+                .area;
+            assert_eq!(mark.width, 1);
+            let cell = buffer.cell((mark.x, mark.y)).expect("cell");
+            assert_eq!(cell.symbol(), crate::stall::REFRESH_MARK, "width {width}");
+            assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
+            assert_eq!(
+                map_responsive_board_mouse(&model, &hits, area, click_at(mark)),
+                Some(BoardIntent::RefreshTask(id))
+            );
+        }
+    }
+
+    #[test]
+    fn the_check_button_paints_only_inside_herdr_and_clicks_to_check_all() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (_, mut model) = stale_board();
+        let check = |hits: &crate::ui::render::QueueHitMap| {
+            hits.regions
+                .iter()
+                .find(|hit| hit.target == crate::ui::render::QueueHitTarget::CheckAll)
+                .map(|hit| hit.area)
+        };
+        let (_, hits) = painted(&model, area);
+        assert!(check(&hits).is_none(), "outside Herdr there is no button");
+        assert!(!model
+            .available_commands()
+            .iter()
+            .any(|command| command.intent == BoardIntent::RefreshAll));
+
+        model.stall_mut().enabled = true;
+        let (buffer, hits) = painted(&model, area);
+        let button = check(&hits).expect("the check button");
+        let text: String = (button.x..button.x + button.width)
+            .map(|x| {
+                buffer
+                    .cell((x, button.y))
+                    .expect("cell")
+                    .symbol()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(text, format!(" {} check ", crate::stall::REFRESH_MARK));
+        assert_eq!(button.x + button.width, area.width, "right-aligned");
+        assert_eq!(
+            map_responsive_board_mouse(&model, &hits, area, click_at(button)),
+            Some(BoardIntent::RefreshAll)
+        );
+        let labels: Vec<&str> = model
+            .available_commands()
+            .iter()
+            .map(|command| command.label)
+            .collect();
+        assert!(labels.contains(&"check stalled tasks"), "{labels:?}");
+        assert!(labels.contains(&"check task's thread"), "{labels:?}");
+    }
+
+    #[test]
+    fn ctrl_l_on_the_board_checks_all_and_bare_l_stays_inert() {
+        assert_eq!(
+            map_key(
+                BoardInputMode::Normal,
+                KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)
+            ),
+            Some(BoardIntent::RefreshAll)
+        );
+        assert_eq!(
+            map_key(
+                BoardInputMode::Normal,
+                KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)
+            ),
+            None
+        );
     }
 
     #[test]

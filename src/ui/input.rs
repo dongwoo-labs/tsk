@@ -349,6 +349,12 @@ pub enum BoardIntent {
     /// Wheel over the parent chooser: scroll its wrapped rows; the selection stays.
     ListPickerScrollUp,
     ListPickerScrollDown,
+    /// A click on a stale row's `↻`, or the palette's `check task's thread`: ask the task's
+    /// own thread for its status card through Herdr. Writes nothing to the store.
+    RefreshTask(uuid::Uuid),
+    /// `ctrl+l`, the top `↻ check` button, or the palette: hand the single live lead one
+    /// stall check listing the stale Doing tasks and every Todo task. Writes nothing.
+    RefreshAll,
 }
 
 /// Bottom chrome: compact key legend for primary board actions.
@@ -533,6 +539,15 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "fold / unfold group",
         modifier: NormalModifier::Bare,
     },
+    // Asks Herdr agents; writes nothing to the store, but it sends prompts, so it takes Ctrl.
+    // Not `ctrl+r`: that retired status chord stays dead.
+    NormalKeyEntry {
+        code: KeyCode::Char('l'),
+        intent: BoardIntent::RefreshAll,
+        help_chord: "l",
+        help_label: "check stalled tasks (Herdr)",
+        modifier: NormalModifier::Ctrl,
+    },
     NormalKeyEntry {
         code: KeyCode::Char('/'),
         intent: BoardIntent::FocusSearch,
@@ -678,7 +693,8 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         | BoardIntent::Reopen
         | BoardIntent::SoftDelete
         | BoardIntent::Undo
-        | BoardIntent::File => HelpGroup::TaskActions,
+        | BoardIntent::File
+        | BoardIntent::RefreshAll => HelpGroup::TaskActions,
         BoardIntent::OpenCapture | BoardIntent::BeginEditTitle => HelpGroup::CreateEdit,
         BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleAllGroups
@@ -1610,6 +1626,8 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         BoardIntent::BeginEditTitle => Some(PrimaryBoardAction::EditTitle),
         BoardIntent::OpenCapture => Some(PrimaryBoardAction::OpenCapture),
         BoardIntent::SetStatus(_)
+        | BoardIntent::RefreshTask(_)
+        | BoardIntent::RefreshAll
         | BoardIntent::ToggleMarkMode
         | BoardIntent::MarkToggle
         | BoardIntent::MarkToggleAt(_)

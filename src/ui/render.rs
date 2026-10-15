@@ -172,6 +172,8 @@ pub struct TaskRowLine {
     pub content_width: u16,
     /// The leading identifier's exact cells, on the first line only.
     pub identifier: Option<(u16, u16)>,
+    /// The stall check's `↻` cell, on the first line only, when the alert leads with it.
+    pub refresh: Option<(u16, u16)>,
 }
 
 /// Paint one task as ONE OR MORE list lines. Persisted tasks lead with a dim,
@@ -219,11 +221,19 @@ pub fn paint_task_row_lines(
     };
     let mut title_geo = *geo;
     title_geo.row_width = row_w as u16;
+    // The right-aligned tail starts `tail_width - 1` cells before the row's end (its leading
+    // gap is the leader's last cell); a stall mark is the tail's first cell.
+    let refresh = row
+        .alert
+        .filter(|alert| alert.starts_with(crate::stall::REFRESH_MARK))
+        .and_then(|_| row_w.checked_sub(row.tail_width().saturating_sub(1)))
+        .map(|x| (u16::try_from(x).unwrap_or(u16::MAX), 1));
     lines.push(TaskRowLine {
         line: paint_task_row_with_indent(&head, &title_geo, leading_indent),
         content_x: head_content_x,
         content_width: head_content_width,
         identifier,
+        refresh,
     });
     let indent = " ".repeat(title_x);
     let continuation_style = if row.dim {
@@ -245,6 +255,7 @@ pub fn paint_task_row_lines(
             content_x: title_content_x,
             content_width: title_content_width,
             identifier: None,
+            refresh: None,
         });
     }
     if let Some((status, bold)) = row.status {
@@ -265,6 +276,7 @@ pub fn paint_task_row_lines(
                 content_x: title_content_x,
                 content_width: u16::try_from(status_room).unwrap_or(u16::MAX).max(1),
                 identifier: None,
+                refresh: None,
             });
         }
     }
@@ -765,6 +777,8 @@ pub struct NavPaint {
     pub active: NavTab,
     /// The questions tab's text, with its waiting count when one is known.
     pub questions_tab: String,
+    /// Paint the right-aligned `↻ check` button (inside Herdr only).
+    pub check: bool,
 }
 
 /// Which board surface owns the list (drives section titles).
@@ -788,6 +802,10 @@ pub enum QueueHitTarget {
     QuestionKey(crossterm::event::KeyCode),
     /// The board's waiting-on-you line: opens the questions tab.
     Waiting,
+    /// A stale task row's `↻` mark: asks that task's thread for its status card.
+    RefreshTask(Uuid),
+    /// The top row's `↻ check` button: one stall check to the lead.
+    CheckAll,
     /// The visible board search field.
     Search,
     /// The quick-add input row. Clicking it keeps the already-focused line focused.
@@ -3775,6 +3793,8 @@ enum ListRow {
         line: Line<'static>,
         /// Exact first-line identifier cells, if this persisted task has one.
         identifier: Option<(u16, u16)>,
+        /// The first line's stall mark cell, when the task is stale.
+        refresh: Option<(u16, u16)>,
         /// First copyable content column, past indent + glyph.
         content_x: u16,
         /// Content width (identifier + title on the first line, title only on continuations).
@@ -3860,6 +3880,7 @@ fn paint_list_row(
             id,
             line,
             identifier,
+            refresh,
             content_x,
             content_width: copy_w,
         } => {
@@ -3868,6 +3889,12 @@ fn paint_list_row(
                 hits.push(QueueHitTarget::Task(*id), Rect::new(0, y, content_width, 1));
                 if let Some((x, width)) = identifier {
                     hits.push(QueueHitTarget::TaskNumber(*id), Rect::new(*x, y, *width, 1));
+                }
+                if let Some((x, width)) = refresh {
+                    hits.push(
+                        QueueHitTarget::RefreshTask(*id),
+                        Rect::new(*x, y, *width, 1),
+                    );
                 }
             }
             hits.push_copyable(Rect::new(*content_x, y, *copy_w, 1));
@@ -3949,6 +3976,7 @@ fn build_list_rows(
                     id: task.id,
                     line: painted.line,
                     identifier: painted.identifier,
+                    refresh: painted.refresh,
                     content_x: painted.content_x,
                     content_width: painted.content_width,
                 });
@@ -4445,6 +4473,17 @@ fn paint_selector_row(
         push_selector_tab_spans(&mut spans, &shown, active);
         left_width += w;
     }
+    // Right-aligned check-all button, only when it fits beside the tabs with a gap.
+    if model.nav.check {
+        let button = format!(" {} check ", crate::stall::REFRESH_MARK);
+        let button_w = display_width(&button);
+        if left_width + 1 + button_w <= width {
+            let x = width - button_w;
+            spans.push(Span::styled(" ".repeat(x - left_width), style_plain()));
+            spans.push(Span::styled(button, style_bold()));
+            hits.push((QueueHitTarget::CheckAll, x as u16, button_w as u16));
+        }
+    }
 
     (bound_line(Line::from(spans), width), hits)
 }
@@ -4655,6 +4694,7 @@ mod tests {
             nav: NavPaint {
                 questions_tab: " 2 questions ".to_string(),
                 active: NavTab::Board,
+                check: false,
             },
             surface: BoardSurface::All,
             project_groups: false,

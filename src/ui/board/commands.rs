@@ -99,6 +99,20 @@ impl BoardModel {
             command("undo", BoardIntent::Undo),
             command("done drawer", BoardIntent::ToggleDoneDrawer),
         ]);
+        // Stall checks only exist inside Herdr: the task's own thread, then check-all.
+        if self.stall.enabled {
+            if let Some(id) = self.action_target_id().filter(|id| {
+                self.tasks
+                    .iter()
+                    .any(|t| t.id == *id && crate::stall::thread_of(t).is_some())
+            }) {
+                commands.push(BoardCommand {
+                    label: "check task's thread",
+                    intent: BoardIntent::RefreshTask(id),
+                });
+            }
+            commands.push(command("check stalled tasks", BoardIntent::RefreshAll));
+        }
         commands.extend_from_slice(&[
             command("help", BoardIntent::OpenHelp),
             command("quit", BoardIntent::Quit),

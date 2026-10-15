@@ -462,6 +462,15 @@ pub fn map_responsive_board_mouse(
                 | BoardInputMode::EditScope
                 | BoardInputMode::FormScopeDropdown
         );
+    // The stall buttons ask Herdr agents and touch no board state, so they act from either
+    // view-mode column, including a wide board beside a focused task page.
+    if view_mode {
+        match hit_at(hits, pos) {
+            Some(QueueHitTarget::RefreshTask(id)) => return Some(BoardIntent::RefreshTask(id)),
+            Some(QueueHitTarget::CheckAll) => return Some(BoardIntent::RefreshAll),
+            _ => {}
+        }
+    }
     // A task-row click retargets the detail column and gives the list focus (the reducer
     // moves it). In mark mode, a plain click stays on the list and toggles that row.
     if responsive.board.contains(pos)
@@ -878,6 +887,8 @@ pub fn map_board_mouse(
         },
         BoardInputMode::Normal => match hit_at(hits, pos) {
             Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
+            Some(QueueHitTarget::CheckAll) => Some(BoardIntent::RefreshAll),
+            Some(QueueHitTarget::RefreshTask(id)) => Some(BoardIntent::RefreshTask(id)),
             Some(QueueHitTarget::Waiting) => Some(BoardIntent::SelectNavTab(NavTab::Questions)),
             Some(QueueHitTarget::Search) => Some(BoardIntent::FocusSearch),
             Some(QueueHitTarget::Drawer) => Some(BoardIntent::ToggleDoneDrawer),

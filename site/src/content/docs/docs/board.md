@@ -7,7 +7,7 @@ Click to navigate, or use the keyboard. The footer shows actions for the cursor 
 
 ## Navigate
 
-The top row holds the **1 board** and **2 questions** tabs. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions).
+The top row holds the **1 board** and **2 questions** tabs. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions). Inside Herdr, the board tab's top row also shows a bold **↻ check** button at its right edge; see [stall checks](#stall-checks).
 
 The board always shows every live task: your desk and every live project. Launching inside a Git repository puts the cursor on that project's first row; it does not hide the rest. See [Projects](#projects) and [Rows](#rows).
 
@@ -29,7 +29,7 @@ Archived projects and their tasks stay off the board. Archive or restore a proje
 
 ## Rows
 
-Rows show the `T`/`N` number and the title; the section already names the status. A bold `!` follows when an approval on the task waits on you, and `?n` counts its other questions and findings waiting on you.
+Rows show the `T`/`N` number and the title; the section already names the status. A bold `!` follows when an approval on the task waits on you, and `?n` counts its other questions and findings waiting on you. Inside Herdr, a bold `↻` before them marks a [stalled task](#stall-checks); click it to ask that task's thread.
 
 At the right edge, dim counts show progress at a glance:
 
@@ -144,6 +144,21 @@ A finding offers **Create the task and run it**, **Create the task only** (Todo)
 
 `c` on an answered question or finding shows its form again; the next pick or typed answer saves as a correction, and the earlier answer stays in history. A typed answer to a record that changed meanwhile is not saved and not moved onto the newer revision: the text stays on the page until `Esc` discards it. When the store cannot prove a save durable, the page keeps it and `Enter` confirms that exact revision. When a save's outcome is unknown, tsk reads the record back first and never retries on its own; it treats the visible answer as that save only when it matches what you chose, and otherwise sends no hint. While an answer is typed or a save is unresolved, quitting is refused on every tab until you save, confirm, or cancel it.
 
+## Stall checks
+
+Inside Herdr (`HERDR_ENV=1`), the board reads Herdr's live agent list in the background about every 30 seconds. It never blocks the board, writes nothing to your tasks, and shows no marks when the list cannot be read. Outside Herdr there is no button and no mark.
+
+A Doing task is **stalled** when all of these hold:
+
+- its notes carry exactly one complete `Thread: <agent> <workspace> <tab> <pane>` line;
+- the task has not changed for 30 minutes (`TSK_STALE_MINUTES` sets another whole number of minutes);
+- the agent on that exact pane is not working, or is no longer live;
+- this board session has not asked about the task within the same time.
+
+A stalled row shows a bold `↻` at its right edge. Click it, or run the palette's **check task's thread** on the cursor task, to send that task's own thread one short Herdr prompt asking it to update the task's status card (`Now:`, `Next:`, `Blocked:`) with `tsk edit`. Only the one live pane matching the whole Thread line is prompted; otherwise the status row says why nothing was sent. The mark then stays off for one threshold while the thread answers; its notes edit reaches the board like any other change.
+
+**↻ check** on the top row, `ctrl+l`, or the palette's **check stalled tasks** sends one prompt to the single live lead (the one agent whose name starts with `lead-`). It lists every stalled Doing task and every Todo task by number, asks the lead to get a status card from each stalled task's thread, and to start a thread for each Todo task that can proceed without asking you (it still asks before deploys or irreversible actions). The listed stalled tasks count as asked. With no live lead, several leads, or nothing to list, nothing is sent and the status row says so. The board never changes a task's status itself.
+
 ## Notices
 
 Your first board open seeds four desk tasks with `N` ids (not `T`). They teach the board by being ordinary tasks: open, change status, archive, or delete. `ctrl+d`, `ctrl+f`, and `ctrl+x` all dismiss a notice the same way; that starter task never re-seeds. After an upgrade, one `What's new in tsk` task can appear the same way. Details and the delivery record live under [storage](/docs/storage/#starter-guides-and-release-notes). Starter notices keep their seeded statuses so the tour order stays useful; a new release notice lands in NEEDS YOU as `review`, so it sits where you look first.
@@ -158,6 +173,8 @@ Your first board open seeds four desk tasks with `N` ids (not `T`). They teach t
 | Double-click a task | Open it: full screen in narrow panes, focused in the detail column in wide panes |
 | Click inside the detail column | Focus the detail |
 | Click its `T` or `N` number | Copy that id |
+| Click a stalled row's `↻` (inside Herdr) | Ask that task's thread for its status card |
+| Click **↻ check** (inside Herdr) | Ask the lead to check stalled and Todo tasks |
 | Click a footer action | Run that action |
 | Wheel or drag a scrollbar | Scroll |
 | Drag across text | Select and copy on release |
@@ -225,6 +242,8 @@ Press `:` on the board or a task page and type to find an action. Use arrows or 
 | New task, undo, done drawer, help, quit | Always |
 | Set todo/doing/done, edit notes, change scope, delete | A task is selected |
 | Move step up, move step down | A task-page step is selected |
+| Check stalled tasks | Inside Herdr |
+| Check task's thread | Inside Herdr, the task has a Thread line |
 | Retry save, cancel save | A save has failed |
 
 Search matches letters in order: `ssd` finds `set status: doing`.

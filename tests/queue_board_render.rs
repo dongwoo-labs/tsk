@@ -374,6 +374,7 @@ fn fixture_model_on_scope<'a>(
         nav: NavPaint {
             questions_tab: " 2 questions ".to_string(),
             active: NavTab::Board,
+            check: false,
         },
         surface: if project {
             tsk_tui::ui::render::BoardSurface::Project

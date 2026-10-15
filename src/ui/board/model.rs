@@ -812,6 +812,9 @@ pub struct BoardModel {
     pub(super) frame_wide: Cell<bool>,
     /// The questions tab: its session snapshot and its own cursor and page. Session-only.
     pub(crate) questions: crate::ui::questions::QuestionsState,
+    /// Stall checks: the last Herdr agent snapshot and when each task was asked about.
+    /// Session-only.
+    pub(crate) stall: crate::stall::StallState,
 }
 
 /// How an unresolved failed save ended.
@@ -886,6 +889,7 @@ impl BoardModel {
             message_expires_at: None,
             message_restore: None,
             questions: crate::ui::questions::QuestionsState::default(),
+            stall: crate::stall::StallState::default(),
         };
         model.seed_selection();
         model
@@ -1198,6 +1202,67 @@ impl BoardModel {
 
     pub(crate) fn questions_mut(&mut self) -> &mut crate::ui::questions::QuestionsState {
         &mut self.questions
+    }
+
+    /// The session-only stall-check state.
+    pub fn stall(&self) -> &crate::stall::StallState {
+        &self.stall
+    }
+
+    pub fn stall_mut(&mut self) -> &mut crate::stall::StallState {
+        &mut self.stall
+    }
+
+    /// Doing tasks that look stuck right now (see [`crate::stall`]).
+    pub fn stale_ids(&self) -> BTreeSet<Uuid> {
+        let working: Vec<Task> = self
+            .tasks
+            .iter()
+            .filter(|task| self.on_working_board(task))
+            .cloned()
+            .collect();
+        self.stall.stale_ids(
+            &working,
+            std::time::SystemTime::now(),
+            crate::stall::threshold(),
+        )
+    }
+
+    /// Numbered Todo tasks on the working board (no notices, nothing archived or deleted),
+    /// in store order: the ones check-all offers the lead to start.
+    pub fn todo_check_ids(&self) -> Vec<Uuid> {
+        self.tasks
+            .iter()
+            .filter(|task| {
+                task.status == crate::domain::HumanStatus::Todo
+                    && task.number.is_some()
+                    && task.notice.is_none()
+                    && self.on_working_board(task)
+            })
+            .map(|task| task.id)
+            .collect()
+    }
+
+    /// Not deleted, not archived, and not in an archived project.
+    fn on_working_board(&self, task: &Task) -> bool {
+        !task.soft_deleted
+            && !task.archived
+            && match &task.scope {
+                TaskScope::Project { path } => {
+                    !archived_path_contains(&self.archived_projects, path)
+                }
+                TaskScope::Global => true,
+            }
+    }
+
+    /// The board's loaded tasks, in store order.
+    pub fn loaded_tasks(&self) -> &[Task] {
+        &self.tasks
+    }
+
+    /// The task a cursor command acts on: the focused page's task, else the selection.
+    pub fn command_target_id(&self) -> Option<Uuid> {
+        self.action_target_id()
     }
 
     /// Switch to a navigation tab. The board keeps a parked task page; the questions tab
