@@ -132,15 +132,24 @@ Reference lines (`PR:`, `Linear:`, `Issue:`, `CI:`, `Thread:`) follow the card. 
 
 ## Notes markdown
 
-Notes display basic Markdown. Editing shows the original text.
+Notes display Markdown in mono styles, the way agents usually write them. Editing shows the original text. Long lines wrap on the displayed text, so a hidden marker never moves a wrap point, and a wrapped list item, quote, or table row keeps its indent or bar on every row. Selecting and copying a row copies what it displays.
 
 | Write | Display |
 | --- | --- |
 | `**bold**` | Bold |
 | `*emphasis*` or `_emphasis_` | Underlined |
+| `~~struck~~` | Dim |
 | `` `code` `` | Dim, with backticks |
-| `# Heading` through `###### Heading` | Bold and underlined |
-| `- item` or `* item` | List |
+| `[text](https://…)` | `text` underlined, then the URL dim in parentheses; just the URL when the text is the URL |
+| `<https://…>` | The URL, underlined |
+| `\*` and other backslash escapes | The character itself |
+| `# Heading` through `###### Heading` | Bold and underlined, without the `#` |
+| `- item`, `* item`, or `+ item` | List with a dim marker |
+| `1. item` or `1) item` | Numbered list with a dim number |
+| `- [ ] item` / `- [x] item` | `☐ item` / `☑ item`, a checked item dim |
+| `> quote` | A dim `│` bar per level |
+| `---`, `***`, or `___` | A dim rule across the width |
+| `\| a \| b \|` table rows | Cells separated by a dim `│`; the row above a `\|---\|` divider bold, the divider hidden |
 | Triple-backtick fenced block | Dim block; inline styling disabled |
 
-Unmatched asterisks and underscores inside words stay literal. Markdown checkboxes such as `- [ ]` are text; use [steps](/docs/steps/) for an interactive checklist.
+Leading spaces stay, so nested lists keep their depth. Unmatched asterisks and underscores inside words stay literal. Checkbox items are display only; use [steps](/docs/steps/) for an interactive checklist. The questions tab renders [record bodies](/docs/board/#questions) the same way.

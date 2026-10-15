@@ -1,5 +1,5 @@
 import { TaskSteps } from "./task-steps.js";
-import { wrapText } from "./board-wrap.js";
+import { markdownRows, wrapText } from "./board-wrap.js";
 import { parseCapture } from "./capture.js";
 
 // The landing page's board: sample data only, disconnected from any store, Herdr, or Lead.
@@ -693,6 +693,17 @@ import { parseCapture } from "./capture.js";
         push((i ? " ".repeat(lead.length) : lead) + line, cls, attrs),
       );
     };
+    // A markdown body under a fixed lead, as the app renders it.
+    const rendered = (lead, text, cls = "") => {
+      markdownRows(text, Math.max(1, width - lead.length)).forEach((line, i) =>
+        push((i ? " ".repeat(lead.length) : lead) + line, cls),
+      );
+    };
+    const mdField = (lead, text, cls = "") => {
+      const at = rows.length;
+      rendered(lead, text, cls);
+      if (rows[at]) rows[at].label = lead.length;
+    };
     const blank = () => push("");
     // A `label  value` field: the label paints dim so the value reads first.
     const field = (lead, text, cls = "", attrs = "") => {
@@ -717,16 +728,16 @@ import { parseCapture } from "./capture.js";
     blank();
     indented("", q.summary, "is-bold");
     push("sample text · this demo holds no private records", "dim");
-    indented("  ", q.text);
-    if (q.finding) indented("  ", q.finding.detail);
+    rendered("  ", q.text);
+    if (q.finding) rendered("  ", q.finding.detail);
     if (q.approval) {
       blank();
       push("hard to undo · check the target, scope, and revision", "is-bold");
-      field("action    ", q.approval.action, "is-bold");
-      field("target    ", q.approval.target, "is-bold");
-      field("scope     ", q.approval.scope);
+      mdField("action    ", q.approval.action, "is-bold");
+      mdField("target    ", q.approval.target, "is-bold");
+      mdField("scope     ", q.approval.scope);
       field("revision  ", q.approval.h, "is-bold");
-      field("undo      ", q.approval.rollback);
+      mdField("undo      ", q.approval.rollback);
     }
     const form = formChoices(q);
     const draft = draftOf(q);
@@ -808,8 +819,8 @@ import { parseCapture } from "./capture.js";
     const answer = currentAnswer(q);
     if (answer) {
       blank();
-      field("answer  ", answer.text);
-      if (answer.comment) field("comment ", answer.comment);
+      mdField("answer  ", answer.text);
+      if (answer.comment) mdField("comment ", answer.comment);
       if (q.createdTask) field("task    ", taskLabel(q.createdTask));
       if (answer.action === "create_and_run")
         push(
@@ -1901,9 +1912,9 @@ import { parseCapture } from "./capture.js";
     const notes =
       field === "notes"
         ? `<textarea class="tsk-field tsk-notes" id="tsk-edit">${esc(edit.notes)}</textarea>`
-        : `<div class="tsk-page-notes">${wrapText(
-            notesText || "no notes yet",
-            width - 6,
+        : `<div class="tsk-page-notes">${(edit || !notesText
+            ? wrapText(notesText || "no notes yet", width - 6)
+            : markdownRows(notesText, width - 6)
           )
             .map((l) => `<span>${esc(l) || " "}</span>`)
             .join("")}</div>`;
