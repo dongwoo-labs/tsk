@@ -2416,6 +2416,34 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
         .expect("create moved child");
     state.set_parent(child, Some(moved)).expect("parent");
     state.set_status(child, HumanStatus::Done).expect("finish");
+    let archived = state
+        .create(
+            "moved archived task",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create archived task");
+    state
+        .set_status(archived, HumanStatus::Done)
+        .expect("finish");
+    state.archive_task(archived).expect("archive task");
+    let in_archived_project = state
+        .create(
+            "moved task in archived project",
+            None,
+            TaskScope::Project {
+                path: "/repos/archived-history".into(),
+            },
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create task in archived project");
+    state
+        .set_status(in_archived_project, HumanStatus::Done)
+        .expect("finish");
+    state
+        .archive_project("/repos/archived-history")
+        .expect("archive project");
     let live = state
         .create(
             "live done",
@@ -2434,7 +2462,7 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
     let tasks = document["tasks"].as_array_mut().expect("tasks");
     let mut lines = String::new();
     let mut number = 0;
-    for id in [moved, child] {
+    for id in [moved, child, archived, in_archived_project] {
         let at = tasks
             .iter()
             .position(|task| task["id"] == id.to_string())
@@ -2450,6 +2478,8 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
     std::fs::write(&path, serde_json::to_vec(&document).expect("json")).expect("write");
     std::fs::create_dir(dir.join("done")).expect("done dir");
     std::fs::write(dir.join("done/2026-10-01.jsonl"), lines).expect("lines");
+    let live_before = std::fs::read(&path).expect("live bytes");
+    let dated_before = std::fs::read(dir.join("done/2026-10-01.jsonl")).expect("dated bytes");
 
     let detail = list(&[
         "tsk".into(),
@@ -2515,6 +2545,35 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
     let live_at = history.stdout.find("live done").expect("live row");
     let moved_at = history.stdout.find("moved done").expect("moved row");
     assert!(live_at < moved_at, "{}", history.stdout);
+    assert!(
+        !history.stdout.contains("moved archived task")
+            && !history.stdout.contains("moved task in archived project"),
+        "the done view still excludes archived tasks and projects: {}",
+        history.stdout
+    );
+
+    let archived_output = cli(&dir, &["list", "--archived", "--all", "--json"]);
+    assert_eq!(archived_output.code, 0, "{}", archived_output.stderr);
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&archived_output.stdout).expect("archived JSON rows");
+    assert_eq!(rows.len(), 2, "both moved archived tasks list exactly once");
+    for (id, mark) in [
+        (archived, "archived"),
+        (in_archived_project, "project archived"),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == id.to_string())
+            .expect("moved archived row");
+        assert_eq!(row["archived"], mark);
+        assert_eq!(row["status"], "done");
+    }
+    assert_eq!(std::fs::read(&path).expect("live bytes"), live_before);
+    assert_eq!(
+        std::fs::read(dir.join("done/2026-10-01.jsonl")).expect("dated bytes"),
+        dated_before,
+        "listing must not rewrite dated tasks"
+    );
 
     let refused = list(&[
         "tsk".into(),
