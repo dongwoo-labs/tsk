@@ -2424,7 +2424,9 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
             ProvenanceOrigin::Manual,
         )
         .expect("create archived task");
-    state.set_status(archived, HumanStatus::Done).expect("finish");
+    state
+        .set_status(archived, HumanStatus::Done)
+        .expect("finish");
     state.archive_task(archived).expect("archive task");
     let in_archived_project = state
         .create(
