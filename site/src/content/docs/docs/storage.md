@@ -61,7 +61,7 @@ tsk list --done --history --all
 tsk list T12
 ```
 
-The board's done drawer shows only the tasks still in `tsk.json`. `tsk list --done --history` adds the moved tasks in the usual done order, and `tsk list T<n>` finds a moved task by number with its parent and children. Project names and child counts include moved tasks. Moved tasks are read-only: reopening one is not supported yet. Each file is plain JSON lines (`done_at` and the task), written atomically before the live file loses the tasks.
+The board's done drawer shows only the tasks still in `tsk.json`. `tsk list --done --history` adds the moved non-archived tasks in the usual done order. `tsk list --archived` includes moved tasks that are individually archived or belong to an archived project, without `--history`. `tsk list T<n>` finds a moved task by number with its parent and children. Project names and child counts include moved tasks. Moved tasks are read-only: reopening one is not supported yet. Each file is plain JSON lines (`done_at` and the task), written atomically before the live file loses the tasks.
 
 ## Deleted tasks
 

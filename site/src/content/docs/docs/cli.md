@@ -224,8 +224,8 @@ tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done [--
 | `--todo` | Tasks with status `todo` |
 | `--doing` | Tasks with status `doing` |
 | `--done` | Completed tasks still in `tsk.json` (done within the last day by default) |
-| `--history` | With `--done`: also the done tasks moved to the dated files under `done/`, in the same order; `-p` also matches projects known only from those files. See [storage](/docs/storage/#older-done-tasks). |
-| `--archived` | Individually archived tasks and tasks in archived projects, across statuses |
+| `--history` | With `--done`: also the non-archived done tasks moved to the dated files under `done/`, in the same order; `-p` also matches projects known only from those files. See [storage](/docs/storage/#older-done-tasks). |
+| `--archived` | Individually archived tasks and tasks in archived projects, across statuses, including tasks moved to the dated files under `done/` |
 | `--deleted` | Live soft-deleted tasks and `trash.jsonl` entries, deduped by task with the live copy winning, newest deletion first. Trash is retained for 30 days, see [storage](/docs/storage/#deleted-tasks). |
 
 Scope flags are mutually exclusive. So are `--todo`, `--doing`, `--done`, `--deleted`, and `--archived`.

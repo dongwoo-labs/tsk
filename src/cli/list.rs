@@ -230,9 +230,9 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     let live = store
         .load()
         .map_err(|error| ListError::Store(error.to_string()))?;
-    // A direct lookup and `--history` also read the dated done files, so moved tasks,
-    // their relationships, and their project names resolve like live ones.
-    let domain = if input.task.is_some() || input.history {
+    // Direct lookup, `--history`, and `--archived` also read the dated done files,
+    // so moved tasks, their relationships, and project names resolve like live ones.
+    let domain = if input.task.is_some() || input.history || input.archived {
         let moved = store
             .load_done_history()
             .map_err(|error| ListError::Store(error.to_string()))?;
