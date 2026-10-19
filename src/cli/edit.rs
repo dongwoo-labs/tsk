@@ -177,6 +177,11 @@ fn apply(
             Some(ids)
         }
     };
+    let (next_title, next_notes) = if fields.title.is_some() {
+        super::add::fit_title(&next_title, next_notes)
+    } else {
+        (next_title, next_notes)
+    };
     let next_scope = scope.unwrap_or_else(|| found.scope.clone());
     if next_scope != found.scope {
         if let TaskScope::Project { path } = &next_scope {

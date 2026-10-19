@@ -164,7 +164,7 @@ JSON output: `outcome` (`created` or `existing`), `id`, `number`, `title`, and `
 
 Values starting with `-` use equals syntax: `--title="-fix parser"`, `--notes="-5 degrees"`, `--project="-maintenance"`, `--file=...`, or `--state-dir=...`.
 
-Blank notes are omitted. C0 control characters in titles are rejected before trimming.
+Blank notes are omitted. C0 control characters in titles are rejected before trimming. A title longer than 60 characters is never refused: `tsk add` and `tsk edit --title` (and JSON plan items) cut it at a word end, append `…` so the stored title is at most 60 characters, and put the full title at the top of the notes.
 
 ### JSON plans
 

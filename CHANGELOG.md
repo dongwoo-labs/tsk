@@ -2,7 +2,10 @@
 
 One `## vX.Y.Z` section per release, newest first, with `## Unreleased` on top. Inside a
 section the subsections are, in this order and only when non-empty: `### Breaking`,
-`### Added`, `### Changed`, `### Fixed`. Every user-visible change lands here in the PR
+`### Added
+
+- A title over 60 characters no longer needs shortening by hand: `tsk add`, `tsk edit --title`, and JSON plan items cut it at a word end, add `…` (60 characters at most), and keep the full title at the top of the notes. Nothing is refused.
+, `### Changed`, `### Fixed`. Every user-visible change lands here in the PR
 that makes it, written for a user, not a contributor: omit demo alignment, CI wiring,
 review history, and other maintainer-only work. On release the version's section becomes
 the GitHub release notes verbatim.
