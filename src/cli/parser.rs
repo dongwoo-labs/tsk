@@ -365,6 +365,7 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
         return Err("expected edit command".into());
     }
 
+    let mut no_after = false;
     let mut parsed = FlagEdit {
         task: None,
         parent: None,
@@ -412,6 +413,9 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
                 index += 1;
             }
             "--after" => {
+                if no_after {
+                    return Err("--no-after cannot be combined with --after".into());
+                }
                 parsed
                     .after
                     .get_or_insert_with(Vec::new)
@@ -419,6 +423,9 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
                 index += 2;
             }
             flag if flag.starts_with("--after=") => {
+                if no_after {
+                    return Err("--no-after cannot be combined with --after".into());
+                }
                 parsed
                     .after
                     .get_or_insert_with(Vec::new)
@@ -429,6 +436,7 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
                 if parsed.after.is_some() {
                     return Err("--no-after cannot be combined with --after".into());
                 }
+                no_after = true;
                 parsed.after = Some(Vec::new());
                 index += 1;
             }

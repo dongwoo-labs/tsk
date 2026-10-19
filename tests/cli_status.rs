@@ -254,3 +254,32 @@ mod after {
         assert_eq!(run(&dir, &["status", "2", "doing"]).code, 0);
     }
 }
+
+mod after_regressions {
+    use super::*;
+
+    fn run(dir: &Path, args: &[&str]) -> CliOutput {
+        let mut argv: Vec<String> = vec!["tsk".into()];
+        argv.extend(args.iter().map(|a| a.to_string()));
+        argv.push("--state-dir".into());
+        argv.push(dir.display().to_string());
+        cli(argv)
+    }
+
+    #[test]
+    fn no_after_before_after_still_refuses_the_conflict() {
+        let dir = temp_state_dir("after-flag-order");
+        let _guard = TempDirGuard(dir.clone());
+        run(&dir, &["add", "-t", "a"]);
+        run(&dir, &["add", "-t", "b"]);
+        let refused = run(&dir, &["edit", "2", "--no-after", "--after", "1"]);
+        assert_eq!(refused.code, 2, "{}", refused.stderr);
+        assert!(
+            refused
+                .stderr
+                .contains("--no-after cannot be combined with --after"),
+            "{}",
+            refused.stderr
+        );
+    }
+}

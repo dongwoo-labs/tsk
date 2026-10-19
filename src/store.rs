@@ -2624,6 +2624,42 @@ mod tests {
     }
 
     #[test]
+    fn done_predecessor_stays_live_while_a_task_still_waits_on_it() {
+        let dir = temp_dir("done-files-after");
+        let _guard = TempDirGuard(dir.clone());
+        let store = TaskStore::new(&dir);
+        let mut seed = DomainState::new();
+        let create = |state: &mut DomainState, title: &str| {
+            state
+                .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
+                .expect("create")
+        };
+        let predecessor = create(&mut seed, "old done predecessor");
+        let waiting = create(&mut seed, "still waits");
+        let unrelated_old = create(&mut seed, "old done unrelated");
+        seed.set_after(waiting, vec![predecessor]).expect("after");
+        for id in [predecessor, unrelated_old] {
+            seed.set_status(id, HumanStatus::Done).expect("done");
+        }
+        store.save(&seed).expect("seed");
+        backdate_done(&dir, &[predecessor, unrelated_old], 3);
+
+        let state = store.load().expect("load backdated");
+        store.save(&state).expect("save moves");
+
+        let live = store.load().expect("reload");
+        assert!(
+            live.get(predecessor).is_some(),
+            "a done predecessor a live task still waits on stays in tsk.json"
+        );
+        assert!(
+            live.get(unrelated_old).is_none(),
+            "an unrelated old done task still moves to its dated file"
+        );
+        assert!(live.unfinished_after(waiting).is_empty());
+    }
+
+    #[test]
     fn eight_day_old_soft_delete_moves_to_trash_even_as_top_undo_entry() {
         let dir = temp_dir("trash-aged");
         let _guard = TempDirGuard(dir.clone());

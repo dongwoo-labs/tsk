@@ -1413,14 +1413,19 @@ impl DomainState {
             })
             .map(|task| task.id)
             .collect();
-        // A parent leaves only after every child that names it has left.
+        // A parent leaves only after every child that names it has left, and a predecessor
+        // leaves only after every live task that still waits on it has left (or itself left).
         loop {
             let pinned: BTreeSet<Uuid> = self
                 .tasks
                 .iter()
                 .filter(|task| !eligible.contains(&task.id))
-                .filter_map(|task| task.parent_task_id)
-                .filter(|parent| eligible.contains(parent))
+                .flat_map(|task| {
+                    task.parent_task_id
+                        .into_iter()
+                        .chain(task.after.iter().copied())
+                })
+                .filter(|id| eligible.contains(id))
                 .collect();
             if pinned.is_empty() {
                 break;
