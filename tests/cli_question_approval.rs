@@ -201,6 +201,22 @@ fn a_valid_approval_and_a_plain_question_save_as_before() {
 }
 
 #[test]
+fn an_approval_with_options_is_refused_and_saves_nothing() {
+    let dir = TempDir::new("approval-options");
+    let task = task_id(&dir);
+    let mut with_options = draft(&task, "approval", terms(H));
+    with_options["options"] = json!(["yes", "no"]);
+    let out = ask(&dir, &with_options);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("options: kind approval takes none"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(questions(&dir), json!([]));
+}
+
+#[test]
 fn a_repeat_ask_is_a_new_record_and_never_inherits_the_earlier_approval() {
     let dir = TempDir::new("reask");
     let task = task_id(&dir);
