@@ -419,6 +419,7 @@ fn run_board_loop(
                     let Some(intent) = intent else {
                         continue;
                     };
+                    show_working_phrase(terminal, &mut model, &intent)?;
                     if handle_board_intent(
                         &store,
                         &mut domain,
@@ -625,6 +626,7 @@ fn run_board_loop(
                     let Some(intent) = intent else {
                         continue;
                     };
+                    show_working_phrase(terminal, &mut model, &intent)?;
                     if handle_board_intent(
                         &store,
                         &mut domain,
@@ -1539,6 +1541,33 @@ fn copy_task_number_with(
         "copy failed".to_string()
     };
     model.set_ephemeral_message(message, Duration::from_secs(2));
+}
+
+/// Intents whose work blocks the loop on Herdr: the phrase is painted before they run, so the
+/// key shows something at once instead of a frozen board. The result message replaces it.
+fn working_phrase(intent: &BoardIntent) -> Option<&'static str> {
+    match intent {
+        BoardIntent::RefreshTask(_) => Some("Checking…"),
+        BoardIntent::RefreshAll => Some("Checking stalled tasks…"),
+        _ => None,
+    }
+}
+
+fn show_working_phrase(
+    terminal: &mut DefaultTerminal,
+    model: &mut BoardModel,
+    intent: &BoardIntent,
+) -> io::Result<()> {
+    let Some(phrase) = working_phrase(intent) else {
+        return Ok(());
+    };
+    model.set_message(phrase);
+    let area = terminal_area(terminal)?;
+    sync_frame_presentation(area, model);
+    terminal.draw(|frame| {
+        draw_board(frame, model);
+    })?;
+    Ok(())
 }
 
 /// Ask a task's own thread for its status card. Sends only to the one live pane matching
@@ -2530,6 +2559,19 @@ mod tests {
                 Some(BoardIntent::RefreshTask(id))
             );
         }
+    }
+
+    #[test]
+    fn only_the_blocking_herdr_checks_get_a_working_phrase() {
+        assert_eq!(
+            working_phrase(&BoardIntent::RefreshTask(Uuid::nil())),
+            Some("Checking…")
+        );
+        assert_eq!(
+            working_phrase(&BoardIntent::RefreshAll),
+            Some("Checking stalled tasks…")
+        );
+        assert_eq!(working_phrase(&BoardIntent::CloseLayer), None);
     }
 
     #[test]
