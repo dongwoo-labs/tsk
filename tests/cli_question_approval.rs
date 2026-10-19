@@ -217,6 +217,55 @@ fn an_approval_with_options_is_refused_and_saves_nothing() {
 }
 
 #[test]
+fn an_approval_record_saved_with_options_before_the_rule_stays_readable() {
+    // The options-takes-none rule for kind approval only refuses new `ask` input
+    // (tested above). It must not also apply on read: an approval record an older
+    // binary saved with options present stays readable, and a sibling record in the
+    // same store is not dragged down with it (D3826).
+    let dir = TempDir::new("legacy-options");
+    let task = task_id(&dir);
+    let saved = stdout_json(&ask(&dir, &draft(&task, "approval", terms(H))));
+    let revision = saved["saved"]["record"]["reference"]["revision"]
+        .as_str()
+        .expect("revision")
+        .to_string();
+    let other = stdout_json(&ask(&dir, &draft(&task, "question", Value::Null)));
+    assert_eq!(other["saved"]["record"]["reference"]["number"], json!(2));
+
+    let private_file = dir
+        .0
+        .join("state")
+        .join("questions-private")
+        .join(format!("{revision}.json"));
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(&private_file).expect("read private record"))
+            .expect("parse private record");
+    record["draft"]["options"] = json!(["yes", "no"]);
+    fs::write(&private_file, serde_json::to_vec_pretty(&record).unwrap())
+        .expect("rewrite private record with legacy options");
+
+    let records = questions(&dir);
+    let records = records.as_array().expect("array");
+    assert_eq!(records.len(), 2, "{records:?}");
+    let approval = records
+        .iter()
+        .find(|record| record["reference"]["number"] == json!(1))
+        .expect("approval record present");
+    assert_eq!(
+        approval["draft"]["options"],
+        json!(["yes", "no"]),
+        "{approval:?}"
+    );
+
+    let by_q1 = cli(&["questions", "Q1", "--state-dir", &dir.state()]);
+    assert_eq!(by_q1.code, 0, "{}", by_q1.stderr);
+    assert_eq!(
+        stdout_json(&by_q1)["draft"]["options"],
+        json!(["yes", "no"])
+    );
+}
+
+#[test]
 fn a_repeat_ask_is_a_new_record_and_never_inherits_the_earlier_approval() {
     let dir = TempDir::new("reask");
     let task = task_id(&dir);

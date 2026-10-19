@@ -214,6 +214,9 @@ impl QuestionStore {
         if draft.audience.is_none() {
             return Err(QuestionError::InvalidInput);
         }
+        if draft.kind == QuestionKind::Approval && !draft.options.is_empty() {
+            return Err(QuestionError::InvalidInput);
+        }
         let _guard = self
             .store
             .lock_exclusive()
@@ -667,11 +670,11 @@ fn draft_problems(draft: &QuestionDraft) -> Vec<(bool, String)> {
             if draft.finding.is_some() {
                 note(false, "finding: not allowed for kind approval".into());
             }
-            // The board paints Approve/Reject/Comment for an approval, never options, so a
-            // numbered pick would reach the lead as a Reject.
-            if !draft.options.is_empty() {
-                note(false, "options: kind approval takes none".into());
-            }
+            // The options-takes-none rule for kind approval is checked in `ask` (and its
+            // message added in `question_problems`) rather than here: `draft_problems` also
+            // runs on every read (`read_private`), and a rule added here would retroactively
+            // invalidate approval records saved before the rule existed, refusing an entire
+            // `list`/`read` call for one old record (same reasoning as `audience` below).
         }
         QuestionKind::Finding => {
             if draft
@@ -727,12 +730,21 @@ pub fn question_problems(draft: &QuestionDraft) -> Vec<String> {
     if draft.audience.is_none() && draft.kind != QuestionKind::Secret {
         problems.push(AUDIENCE_REQUIRED.into());
     }
+    // The board paints Approve/Reject/Comment for an approval, never options, so a
+    // numbered pick would reach the lead as a Reject.
+    if draft.kind == QuestionKind::Approval && !draft.options.is_empty() {
+        problems.push(APPROVAL_TAKES_NO_OPTIONS.into());
+    }
     problems
 }
 
 /// Only `ask` requires it: records saved before this rule stay readable and answerable.
 const AUDIENCE_REQUIRED: &str =
     "audience: required, \"user\" or \"lead\"; add it to the question JSON";
+
+/// Only `ask` refuses it: an approval record saved before this rule stays readable and
+/// answerable.
+const APPROVAL_TAKES_NO_OPTIONS: &str = "options: kind approval takes none";
 
 fn validate_question(draft: &QuestionDraft) -> Result<(), QuestionError> {
     match draft_problems(draft).first() {
