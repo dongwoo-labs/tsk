@@ -667,6 +667,11 @@ fn draft_problems(draft: &QuestionDraft) -> Vec<(bool, String)> {
             if draft.finding.is_some() {
                 note(false, "finding: not allowed for kind approval".into());
             }
+            // The board paints Approve/Reject/Comment for an approval, never options, so a
+            // numbered pick would reach the lead as a Reject.
+            if !draft.options.is_empty() {
+                note(false, "options: kind approval takes none".into());
+            }
         }
         QuestionKind::Finding => {
             if draft
