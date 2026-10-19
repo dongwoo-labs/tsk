@@ -710,6 +710,7 @@ mod tests {
             id: Uuid::from_u128(id),
             number: None,
             parent_task_id: None,
+            after: Vec::new(),
             notice: None,
             revision: Uuid::from_u128(id),
             merge_base_revision: None,

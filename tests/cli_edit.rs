@@ -210,7 +210,7 @@ fn edit_without_fields_is_usage() {
     assert_eq!(output.code, 2);
     assert!(output
         .stderr
-        .contains("title, notes, parent, or project is required"));
+        .contains("title, notes, parent, after, or project is required"));
 }
 
 #[test]

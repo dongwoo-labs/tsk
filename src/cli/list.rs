@@ -59,6 +59,9 @@ pub(crate) struct ListRow {
     pub(crate) parent_task_id: Option<Uuid>,
     pub(crate) children_done: usize,
     pub(crate) children_total: usize,
+    /// Numbers of the `--after` predecessors not done yet.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) waiting_for: Vec<u64>,
     /// `archived` / `project archived` mark, set only in the archived view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) archived: Option<&'static str>,
@@ -413,6 +416,11 @@ fn row_for(task: &crate::domain::Task, domain: &crate::domain::DomainState) -> L
         parent_task_id: task.parent_task_id,
         children_done,
         children_total,
+        waiting_for: if task.status == HumanStatus::Done {
+            Vec::new()
+        } else {
+            domain.unfinished_after(task.id)
+        },
         id: task.id,
         number: task
             .number

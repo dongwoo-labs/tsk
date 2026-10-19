@@ -20,6 +20,8 @@ pub struct StatusResult {
 pub enum StatusError {
     UnknownTask,
     SoftDeletedTask,
+    /// Start refused: these predecessor task numbers are not done.
+    WaitingForAfter(Vec<u64>),
     Store(String),
 }
 
@@ -28,6 +30,7 @@ impl StatusError {
         match self {
             Self::UnknownTask => "unknown-task",
             Self::SoftDeletedTask => "soft-deleted-task",
+            Self::WaitingForAfter(_) => "waiting-for-after",
             Self::Store(_) => "store-error",
         }
     }
@@ -93,6 +96,9 @@ fn apply(
     match state.set_status(found.id, status) {
         Ok(()) => (Ok(result), true),
         Err(DomainError::UnknownId(_)) => (Err(StatusError::UnknownTask), false),
+        Err(DomainError::WaitingForAfter(numbers)) => {
+            (Err(StatusError::WaitingForAfter(numbers)), false)
+        }
         Err(other) => (Err(StatusError::Store(other.to_string())), false),
     }
 }

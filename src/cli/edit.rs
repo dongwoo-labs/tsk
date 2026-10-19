@@ -14,6 +14,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditFields {
     pub parent: Option<Option<TaskAddress>>,
+    pub after: Option<Vec<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
     /// Move to this project (name or path), resolved like `add`.
@@ -38,6 +39,8 @@ pub enum EditError {
     InvalidTitle,
     InvalidParent,
     ParentCycle,
+    InvalidAfter,
+    AfterCycle,
     UnknownProject(String),
     ProjectArchived(String),
     Store(String),
@@ -52,6 +55,8 @@ impl EditError {
             Self::InvalidTitle => "invalid-title",
             Self::InvalidParent => "invalid-parent",
             Self::ParentCycle => "parent-cycle",
+            Self::InvalidAfter => "invalid-after",
+            Self::AfterCycle => "after-cycle",
             Self::UnknownProject(_) => "unknown-project",
             Self::ProjectArchived(_) => "project-archived",
             Self::Store(_) => "store-error",
@@ -155,6 +160,23 @@ fn apply(
             _ => return (Err(EditError::InvalidParent), false),
         },
     };
+    let next_after = match &fields.after {
+        None => None,
+        Some(addresses) => {
+            let mut ids = Vec::with_capacity(addresses.len());
+            for address in addresses {
+                match state
+                    .tasks()
+                    .iter()
+                    .find(|task| address.matches(task) && !task.soft_deleted)
+                {
+                    Some(task) => ids.push(task.id),
+                    None => return (Err(EditError::InvalidAfter), false),
+                }
+            }
+            Some(ids)
+        }
+    };
     let (next_title, next_notes) = if fields.title.is_some() {
         super::add::fit_title(&next_title, next_notes)
     } else {
@@ -169,7 +191,31 @@ fn apply(
             }
         }
     }
+    let after_changed = match &next_after {
+        None => false,
+        Some(ids) => {
+            let mut deduped: Vec<Uuid> = Vec::new();
+            for id in ids {
+                if !deduped.contains(id) {
+                    deduped.push(*id);
+                }
+            }
+            if let Err(error) = state.validate_after(found.id, &deduped) {
+                return (
+                    Err(match error {
+                        DomainError::AfterCycle(_) => EditError::AfterCycle,
+                        _ => EditError::InvalidAfter,
+                    }),
+                    false,
+                );
+            }
+            state
+                .get(found.id)
+                .is_some_and(|task| task.after != deduped)
+        }
+    };
     if next_title == found.title
+        && !after_changed
         && next_notes == found.notes
         && parent_task_id == found.parent_task_id
         && next_scope == found.scope
@@ -180,6 +226,25 @@ fn apply(
                 title: found.title,
             }),
             false,
+        );
+    }
+    if after_changed {
+        let ids = next_after.expect("after_changed implies a new list");
+        if let Err(error) = state.set_after(found.id, ids) {
+            return (Err(EditError::Store(error.to_string())), false);
+        }
+    }
+    let unchanged_rest = next_title == found.title
+        && next_notes == found.notes
+        && parent_task_id == found.parent_task_id
+        && next_scope == found.scope;
+    if unchanged_rest {
+        return (
+            Ok(EditResult {
+                number,
+                title: found.title,
+            }),
+            true,
         );
     }
     match state.edit_with_parent(

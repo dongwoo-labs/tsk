@@ -187,20 +187,21 @@ pub fn help_usage(reason: &str) -> CliOutput {
 pub fn add_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--json] [--state-dir <dir>]".into(),
+            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--after <task>]... [--json] [--state-dir <dir>]".into(),
             "tsk add [--file <path|->] [--state-dir <dir>]".into(),
         ],
         purpose: "Create one task or apply a JSON plan.".into(),
         groups: vec![
             group("Scope", &[("-p, --project <project>", "create in a project"), ("--desk", "create on your desk")]),
             group("Output", &[("--json", "print one result object for a flag add")]),
-            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--parent <task>", "optional direct parent task number or UUID"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
+            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--parent <task>", "optional direct parent task number or UUID"), ("--after <task>", "wait for this task to be done before starting; repeat for several"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
         ],
         examples: vec!["tsk add -t \"Draft release notes\"".into(), "tsk add -t \"Buy milk\" --desk".into(), "tsk add -t \"Fix widget\" --project widget".into(), "tsk add --file plan.json".into(), "cat plan.json | tsk add".into()],
         refusals: vec![
             "empty-title".into(),
             "invalid-title".into(),
             "invalid-parent".into(),
+            "invalid-after".into(),
             "invalid-item (JSON plan)".into(),
             "unknown-project".into(),
             "project-archived".into(),
@@ -283,7 +284,7 @@ pub fn usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--json] [--state-dir <dir>]\n",
+            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--after <task>]... [--json] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,
@@ -321,6 +322,8 @@ fn list_json(result: &ListResult) -> String {
             notes: &'a Option<String>,
             steps: &'a [StepLine],
             parent_task_id: Option<uuid::Uuid>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            waiting_for: &'a Vec<u64>,
             parent: &'a Option<crate::cli::list::ParentRow>,
             children_done: usize,
             children_total: usize,
@@ -335,6 +338,7 @@ fn list_json(result: &ListResult) -> String {
             notes: &direct.notes,
             steps: &direct.steps,
             parent_task_id: row.parent_task_id,
+            waiting_for: &row.waiting_for,
             parent: &direct.parent,
             children_done: row.children_done,
             children_total: row.children_total,
@@ -473,6 +477,11 @@ fn append_rows(output: &mut String, rows: &[&ListRow], indent: &str, output_widt
         if let Some(mark) = row.archived {
             content.push_str(" · ");
             content.push_str(mark);
+        }
+        if !row.waiting_for.is_empty() {
+            let list: Vec<String> = row.waiting_for.iter().map(|n| format!("T{n}")).collect();
+            content.push_str(" · after ");
+            content.push_str(&list.join(", "));
         }
         let first_prefix = format!("{indent}- {} ", row.number);
         let continuation_prefix = " ".repeat(first_prefix.len());
@@ -938,6 +947,8 @@ fn task_refusal_message(code: &str, task: TaskAddress) -> String {
         "soft-deleted-task" => format!("{display} is deleted"),
         "invalid-parent" => "parent is missing, deleted, or a notice".into(),
         "parent-cycle" => "parent relationship would form a cycle".into(),
+        "invalid-after" => "after is missing, deleted, or a notice".into(),
+        "after-cycle" => "after relationship would wait in a circle".into(),
         "empty-title" => "the title is empty".to_string(),
         "invalid-title" => "the title contains control characters".to_string(),
         "empty-step-text" => "the step text is empty".to_string(),
@@ -1019,6 +1030,20 @@ pub fn status_usage(reason: &str) -> CliOutput {
 pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
     let (detail, code) = match error {
         StatusError::Store(detail) => (detail, 3),
+        StatusError::WaitingForAfter(numbers) => {
+            let list = numbers
+                .iter()
+                .map(|number| format!("T{number}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!(
+                    "waiting-for-after: {} waits for {list} to be done",
+                    task.display()
+                ),
+                1,
+            )
+        }
         other => (task_refusal_message(other.code(), task), 1),
     };
     CliOutput {
@@ -1031,7 +1056,7 @@ pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
 pub fn edit_help() -> CliOutput {
     help(HelpDoc {
         usage: vec![
-            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [-p <project> | --desk] [--state-dir <dir>]".into(),
+            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--after <task>]... [--no-after] [-p <project> | --desk] [--state-dir <dir>]".into(),
         ],
         purpose: "Update a task's title, notes, direct parent, or project.".into(),
         groups: vec![group(
@@ -1042,6 +1067,8 @@ pub fn edit_help() -> CliOutput {
                 ("--notes <notes>", "replace notes, or clear them when blank"),
                 ("--parent <task>", "replace the direct parent by task number or UUID"),
                 ("--no-parent", "clear the direct parent"),
+                ("--after <task>", "replace the wait list; repeat for several. The task cannot start until all are done"),
+                ("--no-after", "clear the wait list"),
                 ("-p, --project <project>", "move to a project, resolved like add"),
                 ("--desk", "move to the desk"),
                 ("--state-dir <dir>", "use another board store"),
@@ -1063,6 +1090,8 @@ pub fn edit_help() -> CliOutput {
             "invalid-title".into(),
             "invalid-parent".into(),
             "parent-cycle".into(),
+            "invalid-after".into(),
+            "after-cycle".into(),
             "unknown-project".into(),
             "project-archived".into(),
         ],
@@ -1090,7 +1119,7 @@ pub fn edit_usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
         stderr: format!(
-            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [-p <project> | --desk] [--state-dir <dir>]\n",
+            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--after <task>]... [--no-after] [-p <project> | --desk] [--state-dir <dir>]\n",
             human_reason(reason)
         ),
         code: 2,
