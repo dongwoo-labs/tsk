@@ -126,6 +126,7 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
     let project = input.project;
     let global = input.global;
     let notes = input.notes.filter(|notes| !notes.trim().is_empty());
+    let (title, notes) = fit_title(&title, notes);
     store
         .locked_transition_if_changed(|domain| {
             let scope = match resolve_flag_scope(project.as_deref(), global, domain, &snapshot) {
@@ -442,6 +443,7 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
                 ))
             }
         };
+    let (trimmed_title, notes) = fit_title(&trimmed_title, notes);
     Ok(PlanItem {
         parent,
         i,
@@ -463,6 +465,37 @@ fn fail_item(
         code,
         error: error.into(),
     }
+}
+
+/// Longest stored title, in characters, counting the closing `…`.
+pub(crate) const TITLE_MAX_CHARS: usize = 60;
+
+/// Fit a title into `TITLE_MAX_CHARS`: cut at a word end, append `…`, and keep the full
+/// title in the notes. A title that already fits passes through unchanged.
+pub(crate) fn fit_title(title: &str, notes: Option<String>) -> (String, Option<String>) {
+    if title.chars().count() <= TITLE_MAX_CHARS {
+        return (title.to_string(), notes);
+    }
+    let head: String = title.chars().take(TITLE_MAX_CHARS - 1).collect();
+    let next_is_space = title
+        .chars()
+        .nth(TITLE_MAX_CHARS - 1)
+        .is_some_and(char::is_whitespace);
+    let cut = if next_is_space {
+        head.as_str()
+    } else {
+        match head.rfind(char::is_whitespace) {
+            Some(at) if !head[..at].trim().is_empty() => &head[..at],
+            _ => head.as_str(),
+        }
+    };
+    let short = format!("{}…", cut.trim_end());
+    let notes = match notes {
+        Some(existing) if existing.contains(title) => Some(existing),
+        Some(existing) => Some(format!("{title}\n\n{existing}")),
+        None => Some(title.to_string()),
+    };
+    (short, notes)
 }
 
 pub(crate) fn has_c0_control(value: &str) -> bool {
@@ -489,5 +522,33 @@ mod tests {
             help: false,
         };
         assert_eq!(run(input).unwrap_err().code(), "invalid-title");
+    }
+}
+
+#[cfg(test)]
+mod fit_title_tests {
+    use super::*;
+
+    #[test]
+    fn short_title_passes_through() {
+        assert_eq!(fit_title("short", None), ("short".into(), None));
+    }
+
+    #[test]
+    fn long_title_cuts_at_word_end_and_keeps_full_in_notes() {
+        let long = "word ".repeat(30);
+        let long = long.trim();
+        let (title, notes) = fit_title(long, Some("extra".into()));
+        assert!(title.chars().count() <= TITLE_MAX_CHARS);
+        assert!(title.ends_with("word…"));
+        assert_eq!(notes.unwrap(), format!("{long}\n\nextra"));
+    }
+
+    #[test]
+    fn unbroken_long_title_hard_cuts_by_chars() {
+        let long = "한".repeat(80);
+        let (title, notes) = fit_title(&long, None);
+        assert_eq!(title.chars().count(), TITLE_MAX_CHARS);
+        assert_eq!(notes.unwrap(), long);
     }
 }
