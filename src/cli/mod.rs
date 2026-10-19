@@ -171,15 +171,17 @@ fn run_edit(args: Vec<String>) -> CliOutput {
     if input.title.is_none()
         && input.notes.is_none()
         && input.parent.is_none()
+        && input.after.is_none()
         && input.project.is_none()
         && !input.global
     {
-        return presenter::edit_usage("title, notes, parent, or project is required");
+        return presenter::edit_usage("title, notes, parent, after, or project is required");
     }
     match edit::run(
         task,
         edit::EditFields {
             parent: input.parent,
+            after: input.after,
             title: input.title,
             notes: input.notes,
             project: input.project,

@@ -348,6 +348,8 @@ fn parse_human_status(value: &str) -> Result<HumanStatus, String> {
 pub struct FlagEdit {
     pub task: Option<TaskAddress>,
     pub parent: Option<Option<TaskAddress>>,
+    /// `Some(vec![])` clears the wait list (`--no-after`).
+    pub after: Option<Vec<TaskAddress>>,
     pub title: Option<String>,
     pub notes: Option<String>,
     pub project: Option<String>,
@@ -366,6 +368,7 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
     let mut parsed = FlagEdit {
         task: None,
         parent: None,
+        after: None,
         title: None,
         notes: None,
         project: None,
@@ -406,6 +409,27 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
             }
             "--desk" => {
                 parsed.global = true;
+                index += 1;
+            }
+            "--after" => {
+                parsed
+                    .after
+                    .get_or_insert_with(Vec::new)
+                    .push(parse_task_address(&value(flag)?)?);
+                index += 2;
+            }
+            flag if flag.starts_with("--after=") => {
+                parsed
+                    .after
+                    .get_or_insert_with(Vec::new)
+                    .push(parse_task_address(&flag["--after=".len()..])?);
+                index += 1;
+            }
+            "--no-after" => {
+                if parsed.after.is_some() {
+                    return Err("--no-after cannot be combined with --after".into());
+                }
+                parsed.after = Some(Vec::new());
                 index += 1;
             }
             "--parent" | "--no-parent" => {
@@ -568,6 +592,7 @@ mod tests {
             parsed,
             FlagEdit {
                 parent: None,
+                after: None,
                 task: Some(TaskAddress::Number(12)),
                 title: Some("-fix parser".into()),
                 notes: Some("-5 degrees".into()),
@@ -709,6 +734,7 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagAdd {
     pub parent: Option<TaskAddress>,
+    pub after: Vec<TaskAddress>,
     pub title: Option<String>,
     pub notes: Option<String>,
     pub project: Option<String>,
@@ -728,6 +754,7 @@ pub fn parse_flag_add(args: &[String]) -> Result<FlagAdd, String> {
 
     let mut parsed = FlagAdd {
         parent: None,
+        after: Vec::new(),
         title: None,
         notes: None,
         project: None,
@@ -778,6 +805,18 @@ pub fn parse_flag_add(args: &[String]) -> Result<FlagAdd, String> {
                 parsed.project = Some(value(flag)?);
                 parsed.has_item_flags = true;
                 index += 2;
+            }
+            "--after" => {
+                parsed.after.push(parse_task_address(&value(flag)?)?);
+                parsed.has_item_flags = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--after=") => {
+                parsed
+                    .after
+                    .push(parse_task_address(&flag["--after=".len()..])?);
+                parsed.has_item_flags = true;
+                index += 1;
             }
             "--parent" => {
                 parsed.parent = Some(parse_task_address(&value(flag)?)?);

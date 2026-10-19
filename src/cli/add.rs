@@ -20,6 +20,8 @@ pub enum AddError {
     /// The resolved scope is an archived project (cwd default or explicit `-p`).
     ProjectArchived(String),
     InvalidParent,
+    InvalidAfter,
+    AfterCycle,
     Store(String),
 }
 
@@ -31,6 +33,8 @@ impl AddError {
             Self::UnknownProject(_) => "unknown-project",
             Self::ProjectArchived(_) => "project-archived",
             Self::InvalidParent => "invalid-parent",
+            Self::InvalidAfter => "invalid-after",
+            Self::AfterCycle => "after-cycle",
             Self::Store(_) => "store-error",
         }
     }
@@ -160,6 +164,22 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     Ok(parent) => parent,
                     Err(error) => return Ok((Err(error), false)),
                 };
+                let after = match input
+                    .after
+                    .iter()
+                    .map(|address| {
+                        domain
+                            .tasks()
+                            .iter()
+                            .find(|task| address.matches(task) && !task.soft_deleted)
+                            .map(|task| task.id)
+                            .ok_or(AddError::InvalidAfter)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(after) => after,
+                    Err(error) => return Ok((Err(error), false)),
+                };
                 let id = match domain.create_with_parent(
                     &title,
                     notes,
@@ -172,6 +192,11 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                         return Ok((Err(AddError::Store(error.to_string())), false));
                     }
                 };
+                if !after.is_empty() {
+                    if let Err(error) = domain.set_after(id, after) {
+                        return Ok((Err(AddError::Store(error.to_string())), false));
+                    }
+                }
                 domain.assign_numbers_for_persistence();
                 let number = domain
                     .get(id)
@@ -478,6 +503,7 @@ mod tests {
     fn title_controls_are_rejected_before_end_trimming() {
         let input = FlagAdd {
             parent: None,
+            after: Vec::new(),
             title: Some("hello\n".into()),
             notes: None,
             project: None,

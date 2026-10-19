@@ -151,6 +151,7 @@ tsk add -t "Draft release notes" -p atlas --json
 | `-n`, `--notes` | Optional notes |
 | `-p`, `--project` or `--desk` | Destination |
 | `--parent <task>` | Optional direct parent, addressed by task number or UUID |
+| `--after <task>` | Wait for this task to be done before starting; repeat for several |
 | `--json` | One result object |
 | `--file <path>` or `--file -` | Read a JSON plan |
 | `--state-dir <dir>` | Alternate state directory |
@@ -261,7 +262,9 @@ tsk edit T12 --title "Fix timeout on slow connections"
 tsk edit T12 --notes "Reproduced with a delayed response"
 ```
 
-Requires at least one of `--title`, `--notes`, `--parent <task>`, `--no-parent`, `-p <project>`, or `--desk`. Scope changes only with `-p`/`--project` or `--desk`, which move the task to that project or the desk. The destination resolves like [`add`](#scope): a bare name must match one known project, a new project needs an existing absolute directory, and an archived project refuses with `project-archived`. `-p` and `--desk` cannot be combined. Moving keeps the task's number, status, notes, steps, and parent. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
+Requires at least one of `--title`, `--notes`, `--parent <task>`, `--no-parent`, `--after <task>`, `--no-after`, `-p <project>`, or `--desk`. Scope changes only with `-p`/`--project` or `--desk`, which move the task to that project or the desk. The destination resolves like [`add`](#scope): a bare name must match one known project, a new project needs an existing absolute directory, and an archived project refuses with `project-archived`. `-p` and `--desk` cannot be combined. Moving keeps the task's number, status, notes, steps, and parent. `--parent` replaces the direct parent; `--no-parent` clears it. These two options cannot be combined. A parent must exist and must not be deleted or a notice. Self-parenting and cycles refuse without saving any requested fields.
+
+`--after <task>` (repeatable) replaces the wait list and `--no-after` clears it. A task with unfinished predecessors cannot start: `tsk status <task> doing` refuses with `waiting-for-after` and writes nothing, and it works once every predecessor is done (an archived done task counts). `tsk list` appends `· after T<n>` to the task's row for each predecessor not done yet, and JSON rows carry `waiting_for` (task numbers, omitted when empty). A predecessor must exist and not be deleted or a notice; the task itself and a circle refuse with `invalid-after` or `after-cycle`. It is only a condition: nothing starts by itself, and parent and children stay unordered.
 
 ```sh
 tsk add -t "Implement parser" --desk --parent T10

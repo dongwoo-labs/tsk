@@ -202,3 +202,55 @@ fn status_help_names_statuses_and_done_token() {
         );
     }
 }
+
+mod after {
+    use super::*;
+
+    fn run(dir: &Path, args: &[&str]) -> CliOutput {
+        let mut argv: Vec<String> = vec!["tsk".into()];
+        argv.extend(args.iter().map(|a| a.to_string()));
+        argv.push("--state-dir".into());
+        argv.push(dir.display().to_string());
+        cli(argv)
+    }
+
+    #[test]
+    fn start_refused_until_after_is_done() {
+        let dir = temp_state_dir("after");
+        let _guard = TempDirGuard(dir.clone());
+        assert_eq!(run(&dir, &["add", "-t", "first"]).code, 0);
+        assert_eq!(run(&dir, &["add", "-t", "second", "--after", "1"]).code, 0);
+
+        let refused = run(&dir, &["status", "2", "doing"]);
+        assert_eq!(refused.code, 1);
+        assert!(
+            refused.stderr.contains("waiting-for-after"),
+            "{}",
+            refused.stderr
+        );
+        assert!(run(&dir, &["list"]).stdout.contains("after T1"));
+
+        assert_eq!(run(&dir, &["status", "1", "done"]).code, 0);
+        assert_eq!(run(&dir, &["status", "2", "doing"]).code, 0);
+        assert!(!run(&dir, &["list"]).stdout.contains("after T1"));
+    }
+
+    #[test]
+    fn edit_after_refuses_missing_and_cycle() {
+        let dir = temp_state_dir("after-edit");
+        let _guard = TempDirGuard(dir.clone());
+        run(&dir, &["add", "-t", "a"]);
+        run(&dir, &["add", "-t", "b", "--after", "1"]);
+        let cycle = run(&dir, &["edit", "1", "--after", "2"]);
+        assert_eq!(cycle.code, 1);
+        assert!(cycle.stderr.contains("after-cycle"), "{}", cycle.stderr);
+        let missing = run(&dir, &["edit", "1", "--after", "99"]);
+        assert!(
+            missing.stderr.contains("invalid-after"),
+            "{}",
+            missing.stderr
+        );
+        assert_eq!(run(&dir, &["edit", "2", "--no-after"]).code, 0);
+        assert_eq!(run(&dir, &["status", "2", "doing"]).code, 0);
+    }
+}

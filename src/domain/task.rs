@@ -72,6 +72,10 @@ pub struct Task {
     /// One direct parent by stable UUID; missing/deleted parents remain referenced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<Uuid>,
+    /// Tasks that must be done before this one may start. A condition only: no order among
+    /// parent and children, and nothing starts by itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<Uuid>,
     pub status: HumanStatus,
     pub scope: TaskScope,
     pub provenance: ProvenanceOrigin,
@@ -110,6 +114,12 @@ pub enum DomainError {
     UnknownProject(String),
     InvalidParent(Uuid),
     ParentCycle(Uuid),
+    /// An `after` entry is missing, deleted, a notice, or the task itself.
+    InvalidAfter(Uuid),
+    /// The `after` chain would wait in a circle through this task.
+    AfterCycle(Uuid),
+    /// Start refused: the task still waits for these predecessors (task numbers).
+    WaitingForAfter(Vec<u64>),
 }
 
 impl std::fmt::Display for DomainError {
@@ -129,6 +139,19 @@ impl std::fmt::Display for DomainError {
             }
             DomainError::ParentCycle(id) => {
                 write!(f, "parent relationship would form a cycle at {id}")
+            }
+            DomainError::InvalidAfter(id) => {
+                write!(
+                    f,
+                    "after {id} is missing, deleted, a notice, or the task itself"
+                )
+            }
+            DomainError::AfterCycle(id) => {
+                write!(f, "after relationship would wait in a circle at {id}")
+            }
+            DomainError::WaitingForAfter(numbers) => {
+                let list: Vec<String> = numbers.iter().map(|n| format!("T{n}")).collect();
+                write!(f, "waiting for {} to be done", list.join(", "))
             }
         }
     }
@@ -164,7 +187,7 @@ fn moved_to_done_file(task: &Task, disk: &DomainState) -> bool {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 9;
+pub const STORE_FORMAT_VERSION: u32 = 10;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]
@@ -509,6 +532,78 @@ impl DomainState {
         Ok(())
     }
 
+    /// Predecessors of `task_id` that are not done yet, as task numbers. A missing or deleted
+    /// predecessor counts as not done; an archived one counts when its status is done.
+    pub fn unfinished_after(&self, task_id: Uuid) -> Vec<u64> {
+        let Some(task) = self.get(task_id) else {
+            return Vec::new();
+        };
+        task.after
+            .iter()
+            .filter_map(|id| match self.get(*id) {
+                Some(p) if !p.soft_deleted && p.status == HumanStatus::Done => None,
+                Some(p) => Some(p.number.unwrap_or_default()),
+                None => Some(0),
+            })
+            .collect()
+    }
+
+    fn ensure_after_done(&self, task_id: Uuid) -> Result<(), DomainError> {
+        let waiting = self.unfinished_after(task_id);
+        if waiting.is_empty() {
+            Ok(())
+        } else {
+            Err(DomainError::WaitingForAfter(waiting))
+        }
+    }
+
+    pub fn validate_after(&self, task_id: Uuid, after: &[Uuid]) -> Result<(), DomainError> {
+        let task = self.get(task_id).ok_or(DomainError::UnknownId(task_id))?;
+        if task.soft_deleted {
+            return Err(DomainError::SoftDeleted(task_id));
+        }
+        for id in after {
+            if *id == task_id
+                || !self
+                    .get(*id)
+                    .is_some_and(|t| !t.soft_deleted && !t.is_notice())
+            {
+                return Err(DomainError::InvalidAfter(*id));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        let mut stack: Vec<Uuid> = after.to_vec();
+        while let Some(id) = stack.pop() {
+            if id == task_id {
+                return Err(DomainError::AfterCycle(task_id));
+            }
+            if seen.insert(id) {
+                if let Some(t) = self.get(id) {
+                    stack.extend(t.after.iter().copied());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Replace the wait list. Returns whether anything changed.
+    pub fn set_after(&mut self, task_id: Uuid, after: Vec<Uuid>) -> Result<bool, DomainError> {
+        let mut deduped = Vec::with_capacity(after.len());
+        for id in after {
+            if !deduped.contains(&id) {
+                deduped.push(id);
+            }
+        }
+        self.validate_after(task_id, &deduped)?;
+        let task = self.task_mut(task_id)?;
+        if task.after == deduped {
+            return Ok(false);
+        }
+        task.after = deduped;
+        record_mutation(task, TaskEventKind::Edited);
+        Ok(true)
+    }
+
     pub fn set_parent(
         &mut self,
         task_id: Uuid,
@@ -579,6 +674,7 @@ impl DomainState {
             title: title.to_string(),
             notes,
             parent_task_id,
+            after: Vec::new(),
             status: HumanStatus::Todo,
             scope,
             provenance,
@@ -629,6 +725,9 @@ impl DomainState {
 
     /// Set human status. Human status is truth; callers are user commands only.
     pub fn set_status(&mut self, id: Uuid, status: HumanStatus) -> Result<(), DomainError> {
+        if status == HumanStatus::Doing && self.get(id).is_some_and(|t| t.status != status) {
+            self.ensure_after_done(id)?;
+        }
         self.apply_status(id, status, TaskEventKind::StatusSet)
     }
 
