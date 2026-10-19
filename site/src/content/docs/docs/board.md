@@ -159,6 +159,8 @@ A stalled row shows a bold `↻` at its right edge. Click it, or run the palette
 
 **↻ check** on the top row, `ctrl+l`, or the palette's **check stalled tasks** sends one prompt to the single live lead: the one agent whose Herdr name starts with `lead-`, or, for an agent Herdr lists without a name (a lead started by hand in its own pane), whose terminal title does. A nameless lead is prompted through its pane. It lists every stalled Doing task and every Todo task by number, asks the lead to get a status card from each stalled task's thread, and to start a thread for each Todo task that can proceed without asking you (it still asks before deploys or irreversible actions). The listed stalled tasks count as asked. With no live lead, several leads, or nothing to list, nothing is sent and the status row says so. The board never changes a task's status itself.
 
+Both checks paint `Checking…` (one task) or `Checking stalled tasks…` on the status row the moment you press the key, before Herdr is asked; the result replaces it when the call ends.
+
 ## Notices
 
 Your first board open seeds four desk tasks with `N` ids (not `T`). They teach the board by being ordinary tasks: open, change status, archive, or delete. `ctrl+d`, `ctrl+f`, and `ctrl+x` all dismiss a notice the same way; that starter task never re-seeds. After an upgrade, one `What's new in tsk` task can appear the same way. Details and the delivery record live under [storage](/docs/storage/#starter-guides-and-release-notes). Starter notices keep their seeded statuses so the tour order stays useful; a new release notice lands in NEEDS YOU as `review`, so it sits where you look first.
