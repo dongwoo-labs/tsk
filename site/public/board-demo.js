@@ -1817,19 +1817,15 @@ import { parseCapture } from "./capture.js";
         (tailWidth ? tailWidth + 1 : 0),
     );
     const status = rowStatusLine(task);
+    const statusRoom = width - 2 - prefix.length - id.length - 1;
     const statusLines = status
-      ? wrapText(status.text, room)
-          .map((line) =>
-            status.bold && !row.dim
-              ? `<b class="tsk-title-line tsk-row-status">${esc(line)}</b>`
-              : `<span class="tsk-title-line tsk-row-status dim">${esc(line)}</span>`,
-          )
-          .join("")
+      ? status.bold && !row.dim
+        ? `<b class="tsk-title-line tsk-row-status" style="max-width:${statusRoom}ch">${esc(status.text)}</b>`
+        : `<span class="tsk-title-line tsk-row-status dim" style="max-width:${statusRoom}ch">${esc(status.text)}</span>`
       : "";
     const title =
-      wrapText(task.title, room)
-        .map((line) => `<span class="tsk-title-line">${esc(line)}</span>`)
-        .join("") + statusLines;
+      `<span class="tsk-title-line" style="max-width:${room}ch">${esc(task.title)}</span>` +
+      statusLines;
     const tail = tailWidth
       ? `<span class="tsk-row-tail">${alert ? `<b class="tsk-alert">${esc(alert)}</b>` : ""}${alert && badge ? " " : ""}${badge ? `<span class="dim">${esc(badge)}</span>` : ""}</span>`
       : "";

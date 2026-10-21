@@ -266,6 +266,8 @@ pub enum QuestionIntent {
     Comment,
     /// `t`: open the question's task.
     OpenTask,
+    /// `o`: focus the question's origin agent in Herdr.
+    OpenThread,
     /// `r`: resend the run request of a finding decided as create-and-run.
     Resend,
     /// `z` on the list, or a click on the CLOSED header: fold or unfold answered records.
@@ -1466,11 +1468,11 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> String {
         return "enter confirm · J/K next · esc back".to_string();
     }
     if record.draft.audience.is_none() {
-        return "J/K next · t task · esc back".to_string();
+        return "J/K next · t task · o thread · esc back".to_string();
     }
     let rows = form(state, record);
     if lone_field(&rows) {
-        return "enter type · J/K next · t task · esc back".to_string();
+        return "enter type · J/K next · t task · o thread · esc back".to_string();
     }
     if !rows.is_empty() {
         let n = rows.len();
@@ -1478,15 +1480,17 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> String {
         if rows.get(state.highlighted(record)) == Some(&Choice::Text) {
             return format!("↑↓ move · enter type · 1-{n} pick · J/K next · esc back");
         }
-        return format!("↑↓ move · enter pick · 1-{n} pick · J/K next · t task · esc back");
+        return format!(
+            "↑↓ move · enter pick · 1-{n} pick · J/K next · t task · o thread · esc back"
+        );
     }
     if matches!(
         record.reference.kind,
         QuestionKind::Approval | QuestionKind::Secret
     ) {
-        return "t task · J/K next · esc back".to_string();
+        return "t task · o thread · J/K next · esc back".to_string();
     }
-    "c correct · t task · J/K next · esc back".to_string()
+    "c correct · t task · o thread · J/K next · esc back".to_string()
 }
 
 /// The key a footer entry names, or none for a pair that only moves (`j/k`).
@@ -1582,6 +1586,7 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
         KeyCode::Char('c') => q(QuestionIntent::Correct),
         KeyCode::Char('m') => q(QuestionIntent::Comment),
         KeyCode::Char('t') => q(QuestionIntent::OpenTask),
+        KeyCode::Char('o') => q(QuestionIntent::OpenThread),
         KeyCode::Char('r') => q(QuestionIntent::Resend),
         _ => None,
     }
@@ -2187,6 +2192,35 @@ mod tests {
     }
 
     #[test]
+    fn origin_thread_key_is_page_only_and_keeps_text_entry() {
+        let mut record = approval_record();
+        record.draft.audience = Some(Audience::Lead);
+        let id = record.reference.id;
+        let mut state = QuestionsState {
+            feed: QuestionFeed::Loaded(vec![record]),
+            ..QuestionsState::default()
+        };
+        let key = KeyEvent::from(KeyCode::Char('o'));
+        for wide in [false, true] {
+            assert_eq!(map_key(&state, wide, key), None, "list never focuses");
+        }
+        state.open(id);
+        for wide in [false, true] {
+            assert_eq!(
+                map_key(&state, wide, key),
+                Some(BoardIntent::Question(QuestionIntent::OpenThread))
+            );
+        }
+        state.answer = Some(AnswerInput::typed(id, Uuid::from_u128(1), None));
+        assert_eq!(
+            map_key(&state, false, key),
+            Some(BoardIntent::Question(QuestionIntent::AnswerInsert(
+                "o".into()
+            )))
+        );
+    }
+
+    #[test]
     fn a_set_secret_offers_no_correction() {
         let mut record = secret_record();
         record.answers.push(crate::domain::QuestionAnswer {
@@ -2217,7 +2251,10 @@ mod tests {
             .join("\n");
         assert!(page.contains("set in fnox"), "{page}");
         assert!(!page.contains("c corrects"), "{page}");
-        assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
+        assert_eq!(
+            footer_hint(&state, false),
+            "t task · o thread · J/K next · esc back"
+        );
     }
 
     #[test]
@@ -2287,7 +2324,10 @@ mod tests {
             !page.contains("c corrects"),
             "a secret is never corrected: {page}"
         );
-        assert_eq!(footer_hint(&state, false), "t task · J/K next · esc back");
+        assert_eq!(
+            footer_hint(&state, false),
+            "t task · o thread · J/K next · esc back"
+        );
     }
 
     fn approval_record() -> QuestionRecord {
@@ -2469,7 +2509,7 @@ mod tests {
         );
         assert_eq!(
             footer_hint(&state, false),
-            "↑↓ move · enter pick · 1-4 pick · J/K next · t task · esc back"
+            "↑↓ move · enter pick · 1-4 pick · J/K next · t task · o thread · esc back"
         );
 
         // The comment row is an inline field; once kept, the row shows it.
@@ -2709,7 +2749,7 @@ mod tests {
         );
         assert_eq!(
             footer_hint(&state, false),
-            "enter type · J/K next · t task · esc back"
+            "enter type · J/K next · t task · o thread · esc back"
         );
     }
 

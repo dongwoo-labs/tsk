@@ -176,8 +176,8 @@ pub struct TaskRowLine {
     pub refresh: Option<(u16, u16)>,
 }
 
-/// Paint one task as ONE OR MORE list lines. Persisted tasks lead with a dim,
-/// presentation-only identifier; wrapped title continuations align under the title text.
+/// Paint one board task as a title line and an optional status line, each truncated
+/// with `…`. Persisted tasks lead with a dim, presentation-only identifier.
 pub fn paint_task_row_lines(
     row: &TaskRowPaint<'_>,
     geo: &TierGeometry,
@@ -202,21 +202,16 @@ pub fn paint_task_row_lines(
         .unwrap_or(u16::MAX)
         .max(1);
     let title_content_x = u16::try_from(title_x).unwrap_or(u16::MAX);
-    let title_content_width = u16::try_from(room).unwrap_or(1).max(1);
     let identifier = row.identifier.map(|_| {
         (
             head_content_x,
             u16::try_from(identifier_width).unwrap_or(u16::MAX),
         )
     });
-    let segments: Vec<String> = crate::ui::edit::wrap_text(row.title, room)
-        .into_iter()
-        .map(|wrapped| wrapped.text)
-        .collect();
-
-    let mut lines = Vec::with_capacity(segments.len());
+    let title = super::present_line(row.title, room);
+    let mut lines = Vec::with_capacity(2);
     let head = TaskRowPaint {
-        title: &segments[0],
+        title: &title,
         ..*row
     };
     let mut title_geo = *geo;
@@ -236,28 +231,6 @@ pub fn paint_task_row_lines(
         refresh,
     });
     let indent = " ".repeat(title_x);
-    let continuation_style = if row.dim {
-        style_dim()
-    } else if row.title_bold {
-        style_bold()
-    } else {
-        style_plain()
-    };
-    for segment in segments.iter().skip(1) {
-        lines.push(TaskRowLine {
-            line: bound_line(
-                Line::from(Span::styled(
-                    format!("{indent}{segment}"),
-                    continuation_style,
-                )),
-                row_w,
-            ),
-            content_x: title_content_x,
-            content_width: title_content_width,
-            identifier: None,
-            refresh: None,
-        });
-    }
     if let Some((status, bold)) = row.status {
         let style = if row.dim {
             style_dim()
@@ -267,18 +240,17 @@ pub fn paint_task_row_lines(
             style_dim()
         };
         let status_room = row_w.saturating_sub(title_x).max(1);
-        for wrapped in crate::ui::edit::wrap_text(status, status_room) {
-            lines.push(TaskRowLine {
-                line: bound_line(
-                    Line::from(Span::styled(format!("{indent}{}", wrapped.text), style)),
-                    row_w,
-                ),
-                content_x: title_content_x,
-                content_width: u16::try_from(status_room).unwrap_or(u16::MAX).max(1),
-                identifier: None,
-                refresh: None,
-            });
-        }
+        let status = super::present_line(status, status_room);
+        lines.push(TaskRowLine {
+            line: bound_line(
+                Line::from(Span::styled(format!("{indent}{status}"), style)),
+                row_w,
+            ),
+            content_x: title_content_x,
+            content_width: u16::try_from(status_room).unwrap_or(u16::MAX).max(1),
+            identifier: None,
+            refresh: None,
+        });
     }
     lines
 }
@@ -308,7 +280,7 @@ pub fn row_status_line(task: &crate::domain::Task) -> Option<(String, bool)> {
     None
 }
 
-// Unit-test adapter: inspect the same first wrapped line the board paints.
+// Unit-test adapter: inspect the same title line the board paints.
 #[cfg(test)]
 fn paint_task_row(row: &TaskRowPaint<'_>, geo: &TierGeometry) -> Line<'static> {
     paint_task_row_lines(row, geo, 0).remove(0).line
@@ -4838,7 +4810,7 @@ mod tests {
     }
 
     #[test]
-    fn status_line_wraps_under_the_title_text() {
+    fn status_line_truncates_on_one_line_under_the_title_text() {
         let geo = tier::resolve(40, 20);
         let lines = paint_task_row_lines(
             &TaskRowPaint {
@@ -4861,15 +4833,14 @@ mod tests {
             .map(|line| line.line.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
         assert!(text[0].contains("T7 short") && text[0].trim_end().ends_with("\u{2713}1/3"));
-        assert!(lines.len() >= 3, "{text:?}");
+        assert_eq!(lines.len(), 2, "{text:?}");
         let title_col = text[0].find("short").unwrap();
-        for row in &text[1..] {
-            assert_eq!(row.len() - row.trim_start().len(), title_col, "{text:?}");
-        }
+        assert_eq!(text[1].len() - text[1].trim_start().len(), title_col);
+        assert_eq!(text[1].trim(), "running the full test suite on …");
     }
 
     #[test]
-    fn task_titles_use_full_width_with_two_cells_at_right_edge() {
+    fn task_titles_truncate_on_one_line_with_two_cells_at_right_edge() {
         let geo = tier::resolve(80, 24);
         let room = geo.row_width as usize - 8 - 2;
         let title = "X".repeat(room + 1);
@@ -4887,9 +4858,9 @@ mod tests {
                 status: None,
             };
             let lines = paint_task_row_lines(&row, &geo, 0);
-            assert_eq!(lines.len(), 2);
-            assert_eq!(plain(&lines[0].line).matches('X').count(), room);
-            assert!(!plain(&lines[0].line).contains("public-launch"));
+            assert_eq!(lines.len(), 1);
+            assert_eq!(plain(&lines[0].line).matches('X').count(), room - 1);
+            assert!(plain(&lines[0].line).ends_with('…'));
             assert!(lines
                 .iter()
                 .all(|line| line.line.width() <= geo.row_width as usize - 2));

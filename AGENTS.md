@@ -218,7 +218,9 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   mismatch refuses and rebinds. There is no `Space`/`y`/`n`. Do not add another non-Ctrl
   mutating chord.
 - Mono modifiers only, at every width, with one exception: board project-group headings take one of five ANSI colours hashed from the project path (`render::GROUP_PALETTE`; the desk stays plain; `NO_COLOR` turns it off). User-confirmed 2026-10-15. There is no theme module; add no other colour.
-- Text wraps, never truncates. One wrap engine (`edit::wrap_text`) feeds every surface;
+- Text wraps, never truncates, except for board-list titles and status lines: each
+  stays on one line and truncates with `…` through `present_line`. All wrapping uses
+  one engine (`edit::wrap_text`); task-page titles and notes still wrap in full.
   `escaped_draft_rows` remains only for the single-line Title editor.
 - `src/ui/capture.rs` is unreachable from the binary and stays that way; creation
   detail lives on the task page and the expanded quick-add draft owns the whole frame.
