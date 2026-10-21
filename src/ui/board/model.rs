@@ -706,6 +706,8 @@ pub struct BoardModel {
     pub(super) list_picker: Option<ListPickerState>,
     /// Whether the done drawer lists completed tasks. Session-only.
     pub(super) drawer_open: bool,
+    /// Notes status lines start hidden; the board-list `v` key toggles them for this session.
+    pub(super) show_status_lines: bool,
     /// The done drawer's archived group starts collapsed on every launch. Session-only.
     pub(super) archived_collapsed: bool,
     /// The ON DECK inbox group starts expanded. Session-only.
@@ -847,6 +849,7 @@ impl BoardModel {
             search_pinned: false,
             list_picker: None,
             drawer_open: false,
+            show_status_lines: false,
             archived_collapsed: true,
             inbox_collapsed: false,
             launch_card: None,

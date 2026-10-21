@@ -1530,6 +1530,7 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: row_marks(model),
+        show_status_lines: model.show_status_lines,
         report_marks: crate::ui::reports::task_marks(&model.reports.feed),
     };
     let (hits, painted_list_scroll) = render::draw_queue_frame(frame, &frame_model, &geo, area);
@@ -1689,6 +1690,7 @@ fn draw_wide_board(
         rows_dim: false,
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: row_marks(model),
+        show_status_lines: model.show_status_lines,
         report_marks: crate::ui::reports::task_marks(&model.reports.feed),
     };
     let task_frame = QueueFrameModel {

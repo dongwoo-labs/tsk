@@ -353,6 +353,72 @@ fn fixture_view_projects(tasks: &[Task], drawer_open: bool) -> QueueView {
     )
 }
 
+#[test]
+fn board_rows_default_to_one_line_and_v_restores_status_lines() {
+    let mut domain = DomainState::new();
+    for index in 1..=26 {
+        let notes = if index % 3 == 0 {
+            "- bLoCkEd: waiting on the API owner\nNow: running checks"
+        } else {
+            "Now: running checks"
+        };
+        let id = domain
+            .create(
+                format!("Work item {index:02}"),
+                Some(notes.into()),
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+            )
+            .unwrap();
+        domain.set_status(id, HumanStatus::Doing).unwrap();
+        domain.add_step(id, "Verify the result").unwrap();
+    }
+    let mut model = BoardModel::from_domain(&domain, None);
+    for width in [40, 78, 109, 110] {
+        let rows: Vec<String> = board_rows(&model, width, 45)
+            .into_iter()
+            .map(|row| row.split('│').next().unwrap().to_string())
+            .collect();
+        let list = rows.join("\n");
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("Work item")).count(),
+            26,
+            "{width}: every Doing task must fit on one screen:\n{list}"
+        );
+        assert!(!list.contains("running checks"), "{width}: {list}");
+        assert!(!list.contains("waiting on"), "{width}: {list}");
+        assert_eq!(list.matches('×').count(), 8, "{width}: {list}");
+        assert_eq!(list.matches("✓0/1").count(), 26, "{width}: {list}");
+    }
+    let toggle = || {
+        map_key(
+            BoardInputMode::Normal,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        )
+        .expect("v toggles board status lines")
+    };
+    let before = domain.clone();
+    assert_eq!(
+        apply_intent(&mut domain, &mut model, toggle(), None).unwrap(),
+        tsk_tui::ui::IntentOutcome::None
+    );
+    let expanded = board_rows(&model, 78, 80).join("\n");
+    assert!(expanded.contains("running checks"), "{expanded}");
+    assert!(
+        expanded.contains("blocked: waiting on the API owner"),
+        "{expanded}"
+    );
+    apply_intent(&mut domain, &mut model, toggle(), None).unwrap();
+    let collapsed = board_rows(&model, 78, 45).join("\n");
+    assert!(!collapsed.contains("running checks"));
+    assert!(!collapsed.contains("blocked:"));
+    assert_eq!(
+        domain.tasks(),
+        before.tasks(),
+        "the toggle must not change tasks"
+    );
+}
+
 fn fixture_model<'a>(tasks: &'a [Task], view: &'a QueueView) -> QueueFrameModel<'a> {
     fixture_model_on_scope(tasks, view, false)
 }
@@ -404,6 +470,7 @@ fn fixture_model_on_scope<'a>(
         rows_dim: false,
         waiting: None,
         task_marks: Default::default(),
+        show_status_lines: false,
         report_marks: Default::default(),
     }
 }

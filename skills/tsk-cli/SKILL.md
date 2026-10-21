@@ -1,7 +1,7 @@
 ---
 name: tsk-cli
 description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|steps|archive|trash|import|ask|questions|answer|route`), never the TUI.
-version: 1.5.0
+version: 1.6.0
 ---
 
 # tsk: the user's task board
@@ -65,8 +65,9 @@ alias are usage errors, not alternate spellings.
    `Next: <next action>` (optional), `Blocked: <what, waiting on whom>` (only while blocked), and
    `Done when: <completion condition>`; reference lines follow. Replace a card line in place
    (`tsk list T12 --json`, then `tsk edit T12 --notes "…"` with the whole body), never append a
-   second one, and drop `Blocked:` once unblocked. The board shows only the first `Blocked:` line
-   (bold, on any task not done) or else the `Now:` line of a Doing task, under the row's title.
+   second one, and drop `Blocked:` once unblocked. The board uses one line per task by default, with a bold `×` for a non-empty
+   `Blocked:` line on a task not done. `v` from the board list shows or hides the second line
+   for this session: the first `Blocked:` line (bold) or else the `Now:` line of a Doing task.
 
 ## Task-command exit contract
 

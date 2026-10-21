@@ -784,6 +784,8 @@ pub struct QueueFrameModel<'a> {
     pub waiting: Option<String>,
     /// Per-task question marks (`!`, `?n`) painted before the child badge.
     pub task_marks: BTreeMap<Uuid, String>,
+    /// Show the optional second notes status line; false keeps each task on one line.
+    pub show_status_lines: bool,
     /// Per-task completion-report marker: `true` unread (bold), `false` read (dim).
     pub report_marks: BTreeMap<Uuid, bool>,
 }
@@ -3975,7 +3977,15 @@ fn build_list_rows(
                 (steps, children) => steps.or(children),
             };
             let status = row_status_line(task);
-            // The row is number, title, and marks only: the section already names the status.
+            // Keep the stall mark first: its leading position owns the refresh hit target.
+            let mut alert = model.task_marks.get(&task.id).cloned().unwrap_or_default();
+            if status.as_ref().is_some_and(|(_, blocked)| *blocked) {
+                if !alert.is_empty() {
+                    alert.push(' ');
+                }
+                alert.push('×');
+            }
+            // The section names the status; notes need a second row only when requested.
             let lines = paint_task_row_lines(
                 &TaskRowPaint {
                     glyph: "",
@@ -3987,9 +3997,12 @@ fn build_list_rows(
                     // AC-41: every row of a read-only archived focus paints dim.
                     dim: dim || model.rows_dim,
                     badge: badge.as_deref(),
-                    alert: model.task_marks.get(&task.id).map(String::as_str),
+                    alert: (!alert.is_empty()).then_some(alert.as_str()),
                     report_mark: model.report_marks.get(&task.id).copied(),
-                    status: status.as_ref().map(|(text, bold)| (text.as_str(), *bold)),
+                    status: status
+                        .as_ref()
+                        .filter(|_| model.show_status_lines)
+                        .map(|(text, bold)| (text.as_str(), *bold)),
                 },
                 geo,
                 0,
@@ -4786,6 +4799,7 @@ mod tests {
             rows_dim: false,
             waiting: None,
             task_marks: Default::default(),
+            show_status_lines: false,
             report_marks: Default::default(),
         }
     }
