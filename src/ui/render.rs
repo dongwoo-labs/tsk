@@ -144,23 +144,39 @@ pub struct TaskRowPaint<'a> {
     /// Dim right-aligned tag on the first line, such as the `⊂1/3` child count. The title
     /// wraps inside the room left beside it.
     pub badge: Option<&'a str>,
-    /// Bold right-aligned marks before the badge: `!` and `?n` for questions waiting on you.
+    /// Bold right-aligned marks before the badge: a stale task's `↻` and question marks
+    /// (`!`, `?n`), composed by the caller (`crate::ui::board::draw::row_marks`).
     pub alert: Option<&'a str>,
+    /// The task's completion-report marker (`▤`): `Some(true)` while unread (bold),
+    /// `Some(false)` once read (dim). `None` when the task has no report. Painted as its own
+    /// span, right of `alert` and left of `badge`, so its style stays independent of either.
+    pub report_mark: Option<bool>,
     /// The task's status-card line under the title (its notes' `Now:` or `Blocked:` line),
     /// wrapped and indented under the title text. `true` paints it bold (a blocker).
     pub status: Option<(&'a str, bool)>,
 }
 
+/// The report marker glyph: `▤` (U+25A4), filed as a named constant so its one call site and
+/// the reports tab's own list/page marker stay the same character.
+pub const REPORT_MARK: &str = "\u{25a4}";
+
 impl TaskRowPaint<'_> {
-    /// Cells the right-aligned marks take, with their one-cell gaps.
+    /// Cells the right-aligned marks take: `alert`, the report mark, and `badge`, in that
+    /// order, each only counted when present, with a one-cell gap before the whole block and
+    /// a one-cell gap between every pair of present parts (matching the two-part arithmetic
+    /// this already had: `(0,0) -> 0`, one part present `-> width+1`, both `-> a+b+2`).
     fn tail_width(&self) -> usize {
         let alert = self.alert.map(display_width).unwrap_or(0);
-        let badge = self.badge.map(display_width).unwrap_or(0);
-        match (alert, badge) {
-            (0, 0) => 0,
-            (0, b) => b + 1,
-            (a, 0) => a + 1,
-            (a, b) => a + b + 2,
+        let report = self.report_mark.map(|_| display_width(REPORT_MARK));
+        let badge = self.badge.map(display_width);
+        let parts: Vec<usize> = [self.alert.map(|_| alert), report, badge]
+            .into_iter()
+            .flatten()
+            .collect();
+        if parts.is_empty() {
+            0
+        } else {
+            1 + parts.iter().sum::<usize>() + (parts.len() - 1)
         }
     }
 }
@@ -313,9 +329,18 @@ fn paint_task_row_with_indent(
     let identifier_gap = if identifier.is_empty() { "" } else { " " };
     let badge = row.badge.unwrap_or_default();
     let alert = row.alert.unwrap_or_default();
-    let tail = match (alert.is_empty(), badge.is_empty()) {
-        (false, false) => format!("{alert} "),
-        (false, true) => alert.to_string(),
+    let report_mark = row.report_mark.map(|_| REPORT_MARK).unwrap_or_default();
+    // `alert` and the report mark are painted as separate spans (the report mark needs its
+    // own bold/dim by read state, independent of `alert`'s), joined by one-cell gaps ahead of
+    // the dim `badge`.
+    let alert_tail = [alert, report_mark]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let tail = match (alert_tail.is_empty(), badge.is_empty()) {
+        (false, false) => format!("{alert_tail} "),
+        (false, true) => alert_tail.clone(),
         _ => String::new(),
     };
     let badge_w = display_width(badge) + display_width(&tail);
@@ -346,7 +371,7 @@ fn paint_task_row_with_indent(
         )
     };
 
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(5);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(6);
     spans.push(Span::styled(prefix, title_style));
     if !identifier.is_empty() {
         spans.push(Span::styled(identifier.to_string(), identifier_style));
@@ -356,11 +381,30 @@ fn paint_task_row_with_indent(
     if !leader.is_empty() {
         spans.push(Span::styled(leader, leader_style));
     }
-    if !tail.is_empty() {
+    let alert_style = if row.dim { style_dim() } else { style_bold() };
+    if !alert.is_empty() {
+        spans.push(Span::styled(alert.to_string(), alert_style));
+    }
+    if !report_mark.is_empty() {
+        if !alert.is_empty() {
+            spans.push(Span::styled(" ", alert_style));
+        }
+        // Unread bold, read dim, independent of `alert` and of `row.dim`'s own override
+        // (an archived/read-only row still shows which of its reports are unread).
+        let unread = row.report_mark == Some(true);
         spans.push(Span::styled(
-            tail,
-            if row.dim { style_dim() } else { style_bold() },
+            report_mark.to_string(),
+            if row.dim {
+                style_dim()
+            } else if unread {
+                style_bold()
+            } else {
+                style_dim()
+            },
         ));
+    }
+    if !alert_tail.is_empty() && !badge.is_empty() {
+        spans.push(Span::styled(" ", title_style));
     }
     if !badge.is_empty() {
         spans.push(Span::styled(badge.to_string(), style_dim()));
@@ -742,15 +786,19 @@ pub struct QueueFrameModel<'a> {
     pub task_marks: BTreeMap<Uuid, String>,
     /// Show the optional second notes status line; false keeps each task on one line.
     pub show_status_lines: bool,
+    /// Per-task completion-report marker: `true` unread (bold), `false` read (dim).
+    pub report_marks: BTreeMap<Uuid, bool>,
 }
 
-/// Persistent navigation row paint: the board and questions tabs.
+/// Persistent navigation row paint: the board, questions, and reports tabs.
 #[derive(Debug, Clone)]
 pub struct NavPaint {
     /// Which tab is active (underlined).
     pub active: NavTab,
     /// The questions tab's text, with its waiting count when one is known.
     pub questions_tab: String,
+    /// The reports tab's text, with its unread count when one is known.
+    pub reports_tab: String,
     /// Paint the right-aligned `↻ check` button (inside Herdr only).
     pub check: bool,
 }
@@ -770,6 +818,8 @@ pub enum QueueHitTarget {
     NavTab(NavTab),
     /// One painted questions-tab row.
     Question(Uuid),
+    /// One painted reports-tab row (keyed by its task id).
+    Report(Uuid),
     /// An action line on the shown question page (an option, the check, a key hint).
     QuestionPage(super::questions::PageClick),
     /// One key of the questions-tab footer: the click maps exactly as that key press does.
@@ -3948,6 +3998,7 @@ fn build_list_rows(
                     dim: dim || model.rows_dim,
                     badge: badge.as_deref(),
                     alert: (!alert.is_empty()).then_some(alert.as_str()),
+                    report_mark: model.report_marks.get(&task.id).copied(),
                     status: status
                         .as_ref()
                         .filter(|_| model.show_status_lines)
@@ -4377,18 +4428,30 @@ fn paint_status_line(
     (bound_line(Line::from(spans), width as usize), undo_hit)
 }
 
-/// Measured selector tabs: the board tab and the questions tab. Only the questions tab drops
-/// its word at narrow widths. The same result drives paint, wrapping, and hit regions.
-fn selector_tab_texts(model: &QueueFrameModel<'_>, width: usize) -> [(QueueHitTarget, String); 2] {
+/// Measured selector tabs: the board, questions, and reports tabs. The questions and reports
+/// tabs drop their word at narrow widths, reports first (reading right to left) since it is
+/// the newer, lower-traffic tab. The same result drives paint, wrapping, and hit regions.
+fn selector_tab_texts(
+    questions_tab: &str,
+    reports_tab: &str,
+    width: usize,
+) -> Vec<(QueueHitTarget, String)> {
     let board = " 1 board ".to_string();
-    let mut questions = model.nav.questions_tab.clone();
-    // One ` · ` separator between the two tabs.
-    if display_width(&board) + 3 + display_width(&questions) > width {
+    let mut questions = questions_tab.to_string();
+    let mut reports = reports_tab.to_string();
+    let fits = |board: &str, questions: &str, reports: &str| {
+        display_width(board) + 3 + display_width(questions) + 3 + display_width(reports) <= width
+    };
+    if !fits(&board, &questions, &reports) {
+        reports = reports.replacen(" reports", "", 1);
+    }
+    if !fits(&board, &questions, &reports) {
         questions = questions.replacen(" questions", "", 1);
     }
-    [
+    vec![
         (QueueHitTarget::NavTab(NavTab::Board), board),
         (QueueHitTarget::NavTab(NavTab::Questions), questions),
+        (QueueHitTarget::NavTab(NavTab::Reports), reports),
     ]
 }
 
@@ -4432,6 +4495,46 @@ fn push_selector_tab_spans(spans: &mut Vec<Span<'static>>, text: &str, active: b
     }
 }
 
+/// The three navigation tabs fitted to `width`: their spans, each tab's hit span as
+/// `(target, x, width)`, and the painted width. The board, questions, and reports tabs all
+/// paint their top row through this, so the labels shrink and separate the same way on
+/// every tab.
+pub(crate) fn nav_tab_spans(
+    questions_tab: &str,
+    reports_tab: &str,
+    active: NavTab,
+    width: usize,
+) -> (Vec<Span<'static>>, Vec<(QueueHitTarget, u16, u16)>, usize) {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut hits = Vec::new();
+    let mut left_width = 0usize;
+    for (index, (target, text)) in selector_tab_texts(questions_tab, reports_tab, width)
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            if left_width + 3 >= width {
+                break;
+            }
+            spans.push(Span::styled(" \u{b7} ".to_string(), style_dim()));
+            left_width += 3;
+        }
+        let shown = present_line(text, width.saturating_sub(left_width));
+        let w = display_width(&shown);
+        if w == 0 {
+            break;
+        }
+        hits.push((*target, left_width as u16, w as u16));
+        push_selector_tab_spans(
+            &mut spans,
+            &shown,
+            *target == QueueHitTarget::NavTab(active),
+        );
+        left_width += w;
+    }
+    (spans, hits, left_width)
+}
+
 /// Paint the selector row: the board and questions tabs.
 fn paint_selector_row(
     model: &QueueFrameModel<'_>,
@@ -4443,21 +4546,13 @@ fn paint_selector_row(
         return (Line::from(""), hits);
     }
 
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut left_width = 0usize;
-    let tabs = selector_tab_texts(model, width);
-    for (index, (target, text)) in tabs.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(" \u{b7} ".to_string(), style_dim()));
-            left_width += 3;
-        }
-        let active = *target == QueueHitTarget::NavTab(model.nav.active);
-        let shown = present_line(text, width.saturating_sub(left_width));
-        let w = display_width(&shown);
-        hits.push((*target, left_width as u16, w.max(1) as u16));
-        push_selector_tab_spans(&mut spans, &shown, active);
-        left_width += w;
-    }
+    let (mut spans, tab_hits, left_width) = nav_tab_spans(
+        &model.nav.questions_tab,
+        &model.nav.reports_tab,
+        model.nav.active,
+        width,
+    );
+    hits.extend(tab_hits);
     // Right-aligned check-all button, only when it fits beside the tabs with a gap.
     if model.nav.check {
         let button = format!(" {} check ", crate::stall::REFRESH_MARK);
@@ -4678,6 +4773,7 @@ mod tests {
             marked_ids: BTreeSet::new(),
             nav: NavPaint {
                 questions_tab: " 2 questions ".to_string(),
+                reports_tab: " 3 reports ".to_string(),
                 active: NavTab::Board,
                 check: false,
             },
@@ -4704,30 +4800,49 @@ mod tests {
             waiting: None,
             task_marks: Default::default(),
             show_status_lines: false,
+            report_marks: Default::default(),
         }
     }
 
     #[test]
-    fn narrow_selector_keeps_both_tabs_and_drops_only_the_questions_word() {
+    fn narrow_selector_keeps_every_tab_and_drops_the_reports_then_questions_word() {
         let model = selector_model();
-        let (line, hits) = paint_selector_row(&model, &tier::resolve(40, 24));
+        let (line, hits) = paint_selector_row(&model, &tier::resolve(60, 24));
         let text = plain(&line);
         assert!(text.contains("1 board"), "{text}");
         assert!(text.contains("2 questions"), "{text}");
+        assert!(text.contains("3 reports"), "{text}");
         assert!(!text.contains('▾'), "no scope or sort control: {text}");
 
-        let (line, hits_narrow) = paint_selector_row(&model, &tier::resolve(20, 24));
+        // Narrow enough to force one drop: reports loses its word first (the newer,
+        // lower-traffic tab), questions keeps its own.
+        let (line, hits_reports_dropped) = paint_selector_row(&model, &tier::resolve(31, 24));
+        let text = plain(&line);
+        assert!(text.contains("1 board"), "{text}");
+        assert!(text.contains("2 questions"), "{text}");
+        assert!(!text.contains("reports"), "{text}");
+        assert!(display_width(&text) <= 31);
+
+        // Narrower still drops both words.
+        let (line, hits_both_dropped) = paint_selector_row(&model, &tier::resolve(21, 24));
         let text = plain(&line);
         assert!(text.contains("1 board"), "{text}");
         assert!(!text.contains("questions"), "{text}");
-        assert!(display_width(&text) <= 20);
-        for (width, hits) in [(40u16, hits), (20, hits_narrow)] {
+        assert!(!text.contains("reports"), "{text}");
+        assert!(display_width(&text) <= 21);
+
+        for (width, hits) in [
+            (60u16, hits),
+            (31, hits_reports_dropped),
+            (21, hits_both_dropped),
+        ] {
             let targets: Vec<QueueHitTarget> = hits.iter().map(|(target, _, _)| *target).collect();
             assert_eq!(
                 targets,
                 vec![
                     QueueHitTarget::NavTab(NavTab::Board),
                     QueueHitTarget::NavTab(NavTab::Questions),
+                    QueueHitTarget::NavTab(NavTab::Reports),
                 ]
             );
             for (target, x, w) in hits {
@@ -4837,6 +4952,7 @@ mod tests {
                 dim: false,
                 badge: Some("\u{2713}1/3"),
                 alert: None,
+                report_mark: None,
                 status: Some(("running the full test suite on the branch now", false)),
             },
             &geo,
@@ -4869,6 +4985,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             };
             let lines = paint_task_row_lines(&row, &geo, 0);
@@ -4904,6 +5021,7 @@ mod tests {
                         dim: false,
                         badge: None,
                         alert: None,
+                        report_mark: None,
                         status: None,
                     };
                     for line in paint_task_row_lines(&row, &geo, 0) {
@@ -4935,6 +5053,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             },
             &geo,
@@ -4958,6 +5077,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             },
             &geo,
@@ -5010,6 +5130,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             },
             TaskRowPaint {
@@ -5022,6 +5143,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             },
             TaskRowPaint {
@@ -5034,6 +5156,7 @@ mod tests {
                 dim: false,
                 badge: None,
                 alert: None,
+                report_mark: None,
                 status: None,
             },
         ];

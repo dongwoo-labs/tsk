@@ -10,6 +10,7 @@ pub mod mouse;
 pub mod questions;
 pub mod queue;
 pub mod render;
+pub mod reports;
 pub mod scheduler;
 pub mod scrollbar;
 pub mod selection;

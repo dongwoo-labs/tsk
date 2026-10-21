@@ -1,5 +1,6 @@
 AGENTS.local.md
 /HANDOFF.md
+/.artifacts/
 /target/
 **/*.rs.bk
 Cargo.lock.bak
@@ -26,6 +27,3 @@ questions-private/
 # Local release preparation and Python test caches
 /dist-release/
 __pycache__/
-
-# Local verification evidence and isolated task-store snapshots
-/.artifacts/

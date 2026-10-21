@@ -245,7 +245,7 @@ fn list_and_detail_render_the_standard_tier_at_130x24() {
     assert!(list(0).trim().is_empty(), "list row 0 blank: {:?}", list(0));
     assert_eq!(
         list(1).trim_end(),
-        " 1 board  ·  2 questions",
+        " 1 board  ·  2 questions  ·  3 reports",
         "selector row: {}",
         list(1)
     );
@@ -503,7 +503,7 @@ fn narrow_board_paints_one_surface_and_no_crumb() {
     let (rows, _) = render(&model, 109, 24);
     assert_eq!(
         rows[1].trim_end(),
-        " 1 board  ·  2 questions",
+        " 1 board  ·  2 questions  ·  3 reports",
         "{:?}",
         rows[1]
     );

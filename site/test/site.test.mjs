@@ -298,7 +298,7 @@ test("hero board pins reveal callout copy", async () => {
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);
   assert.doesNotMatch(css, /\.goto-label \{\s*display: none/);
   assert.match(page, /One board, every project/);
-  assert.match(page, /<span class="on">1 board<\/span><span class="dim">  ·  <\/span>2 questions ·3<\/span>/);
+  assert.match(page, /<span class="on">1 board<\/span><span class="dim">  ·  <\/span>2 questions ·3<span class="dim">  ·  <\/span>3 reports ·1<\/span>/);
   assert.doesNotMatch(page, /desk ▾|sort number ▾/);
   assert.match(page, /✓2\/5 ⊂1\/3/);
   assert.match(page, /waiting on you  approval 1 · question 2  → 2/);

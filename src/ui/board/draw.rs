@@ -598,6 +598,12 @@ fn build_task_page_overlay<'a>(
                 relation_cursor,
                 first,
             );
+            push_report_hint_row(
+                &mut rows,
+                model.reports.feed.get(task.id),
+                notes_width,
+                relation_cursor,
+            );
             rows
         })
         .unwrap_or_default();
@@ -985,6 +991,37 @@ fn question_and_link_rows(
     }
 }
 
+/// A dim, non-interactive hint row naming how to reach this task's completion report, when it
+/// has one: `r` is a navigation-only chord (never a verb bar seat), so this row is the
+/// discovery path for it, the same purpose `"c corrects"` serves on a question page.
+fn push_report_hint_row(
+    rows: &mut Vec<RelationRow>,
+    report: Option<&crate::store::ReportRecord>,
+    width: usize,
+    cursor: Option<usize>,
+) {
+    let Some(record) = report else {
+        return;
+    };
+    let text = if record.unread() {
+        "r opens the unread completion report"
+    } else {
+        "r opens the completion report (read)"
+    };
+    push_wrapped_relation(
+        rows,
+        RelationEntry {
+            lead: "",
+            text,
+            dim: true,
+            target: None,
+            after_steps: true,
+        },
+        width,
+        cursor,
+    );
+}
+
 /// Idle status-row context for the active lens. Stored paths reach the
 /// renderer only through its `present_line` path before they are painted.
 fn status_idle(model: &BoardModel, surface: BoardSurface, has_message: bool) -> String {
@@ -1015,6 +1052,7 @@ fn nav_paint(model: &BoardModel) -> NavPaint {
     NavPaint {
         active: model.nav_tab(),
         questions_tab: crate::ui::questions::tab_texts(&model.questions.feed).1,
+        reports_tab: crate::ui::reports::tab_texts(&model.reports.feed),
         check: model.stall.enabled,
     }
 }
@@ -1409,6 +1447,26 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
             frame,
             &crate::ui::questions::QuestionsFrame {
                 state: &model.questions,
+                reports_tab: &crate::ui::reports::tab_texts(&model.reports.feed),
+                tasks: &model.tasks,
+                message: message.as_deref(),
+            },
+            area,
+        );
+    }
+    // Tab 3 owns the frame unless help or the palette is open over it.
+    if model.reports.active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        let message = model.message().map(str::to_string);
+        return crate::ui::reports::draw(
+            frame,
+            &crate::ui::reports::ReportsFrame {
+                state: &model.reports,
+                questions_tab: &crate::ui::questions::tab_texts(&model.questions.feed).1,
                 tasks: &model.tasks,
                 message: message.as_deref(),
             },
@@ -1473,6 +1531,7 @@ fn draw_board_hits(frame: &mut Frame, model: &BoardModel) -> render::QueueHitMap
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: row_marks(model),
         show_status_lines: model.show_status_lines,
+        report_marks: crate::ui::reports::task_marks(&model.reports.feed),
     };
     let (hits, painted_list_scroll) = render::draw_queue_frame(frame, &frame_model, &geo, area);
     if let Some((scroll, max_scroll)) = painted_list_scroll {
@@ -1632,6 +1691,7 @@ fn draw_wide_board(
         waiting: crate::ui::questions::waiting_line(&model.questions.feed),
         task_marks: row_marks(model),
         show_status_lines: model.show_status_lines,
+        report_marks: crate::ui::reports::task_marks(&model.reports.feed),
     };
     let task_frame = QueueFrameModel {
         overlay: task_overlay.clone(),

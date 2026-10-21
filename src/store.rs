@@ -20,6 +20,8 @@ use crate::fsperm;
 
 mod questions;
 pub use questions::*;
+mod reports;
+pub use reports::*;
 
 /// On-disk document name under the state directory.
 const STATE_FILE: &str = "tsk.json";
@@ -437,6 +439,11 @@ impl TaskStore {
     /// The live document's change signature. `None` when the file does not exist
     /// yet (a fresh, never-saved store) or its metadata could not be read.
     pub fn state_signature(&self) -> Option<StoreSignature> {
+        Self::file_signature(&self.state_file())
+    }
+
+    /// [`Self::state_signature`] for any document under the state directory.
+    pub(crate) fn file_signature(path: &Path) -> Option<StoreSignature> {
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
@@ -444,7 +451,7 @@ impl TaskStore {
                 GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
             };
 
-            let file = fs::File::open(self.state_file()).ok()?;
+            let file = fs::File::open(path).ok()?;
             let metadata = file.metadata().ok()?;
             // SAFETY: zero is a valid initial state for this output-only C structure.
             let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
@@ -466,7 +473,7 @@ impl TaskStore {
         }
         #[cfg(not(windows))]
         {
-            let metadata = fs::metadata(self.state_file()).ok()?;
+            let metadata = fs::metadata(path).ok()?;
             let modified = metadata.modified().ok()?;
             let len = metadata.len();
             #[cfg(unix)]
@@ -960,6 +967,10 @@ impl TaskStore {
     /// Takes the exclusive lock so a read never races a rewrite.
     pub fn load_done_history(&self) -> Result<Vec<DoneLine>, StoreError> {
         let _guard = self.lock_exclusive()?;
+        self.load_done_history_unlocked()
+    }
+
+    fn load_done_history_unlocked(&self) -> Result<Vec<DoneLine>, StoreError> {
         let dir = self.path.join(DONE_DIR);
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,

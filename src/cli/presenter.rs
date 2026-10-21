@@ -138,6 +138,81 @@ pub fn questions_help() -> CliOutput {
     })
 }
 
+pub fn reports_help() -> CliOutput {
+    help(HelpDoc {
+        usage: vec![
+            "tsk report <T-number|UUID> [--file <report.md|->] [--state-dir <dir>] [--json]".into(),
+            "tsk reports [--unread] [--state-dir <dir>] [--json]".into(),
+        ],
+        purpose: "Register independent Markdown completion reports or inspect their revision history. Reads never mark reports read; registration never changes Task status, notes, or questions.".into(),
+        groups: vec![group("Options", &[
+            ("--file <path|->", "Register nonblank UTF-8 Markdown; - reads stdin; omit for lookup"),
+            ("--unread", "List only unread reports"),
+            ("--state-dir <dir>", "Use another board store; otherwise use TSK_STATE_DIR or the usual default"),
+            ("--json", "Full current Markdown, oldest-first revisions, and read state"),
+            ("--flag=<value>", "Equals syntax for file and state-dir values"),
+        ])],
+        examples: vec!["tsk report T12 --file completion.md --json".into(), "tsk reports --unread --json".into()],
+        refusals: vec!["unknown/deleted/notice Task on registration; unknown report on lookup".into(), "corrupt or unsupported reports.json; no overwrite".into()],
+        exit: "0 completed (identical Markdown keeps revision and read state); 1 refused; 2 usage or invalid input; 3 I/O or uncertain durability: read back before retrying. Visible readback alone does not prove durability.".into(),
+    })
+}
+
+pub fn reports_rejected(message: &str, code: u8) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk reports: {}\n", terminal_text(message)),
+        code,
+    }
+}
+
+pub fn report(record: &crate::store::ReportRecord, json: bool, registration: bool) -> CliOutput {
+    let stdout = if json {
+        match serde_json::to_string_pretty(record) {
+            Ok(value) => format!("{value}\n"),
+            Err(_) => return reports_rejected("output serialization failed", 3),
+        }
+    } else {
+        let heading = report_heading(record);
+        if registration {
+            heading
+        } else {
+            format!("{heading}\n{}", terminal_text(&record.markdown))
+        }
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn reports(records: &[crate::store::ReportRecord], json: bool) -> CliOutput {
+    let stdout = if json {
+        match serde_json::to_string_pretty(records) {
+            Ok(value) => format!("{value}\n"),
+            Err(_) => return reports_rejected("output serialization failed", 3),
+        }
+    } else {
+        records.iter().map(report_heading).collect()
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+fn report_heading(record: &crate::store::ReportRecord) -> String {
+    format!(
+        "T{} revision {} {} {}\n",
+        record.task_number,
+        record.revision,
+        if record.unread() { "unread" } else { "read" },
+        terminal_text(&record.task_title)
+    )
+}
+
 pub fn top_level_help() -> String {
     concat!(
         "usage: tsk [capture] | <command> [args] | help [<command>] | --help | --version\n\n",
@@ -147,7 +222,9 @@ pub fn top_level_help() -> String {
         "  status   set a task's human status\n",
         "  edit     update a task's title, notes, parent, or project\n",
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
-        "  import   import Linear issues as tasks (one way)\n\n",
+        "  import   import Linear issues as tasks (one way)\n",
+        "  report   register or read a Task completion report\n",
+        "  reports  list completion reports and unread revisions\n\n",
         "Agent questions (explicit non-personal state directory)\n",
         "  ask        save a full-text question from JSON\n",
         "  answer     append an answer or correction with expected revision\n",

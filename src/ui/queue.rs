@@ -9,12 +9,14 @@ use uuid::Uuid;
 use crate::domain::{HumanStatus, Task, TaskScope};
 use crate::scope::PathIdentityCache;
 
-/// The board's persistent navigation tabs: `1` the task board, `2` the questions.
+/// The board's persistent navigation tabs: `1` the task board, `2` the questions, `3` the
+/// completion reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NavTab {
     #[default]
     Board,
     Questions,
+    Reports,
 }
 
 /// Session-only row order of every board section. Task numbers are addresses, so the

@@ -23,6 +23,24 @@ The CLI can mark a task done with `tsk status <task> done`. Agent lifecycle does
 
 Use `--json` on `add`, `list`, or `import` for machine-readable output. Read the [exit contract](#exit-contract) before retrying a write.
 
+## Completion reports
+
+A report is an independent Markdown document attached to a Task, not a notes line or an approval. Register it before handing work back, then open **3 reports** on the board to read it.
+
+```sh
+tsk report T12 --file completion.md --state-dir /local/agent-board --json
+tsk report T12 --state-dir /local/agent-board --json
+tsk reports --unread --state-dir /local/agent-board --json
+```
+
+`report <task> --file <path>` registers UTF-8 Markdown (`--file -` reads stdin). Without `--file`, it reads the report. `reports` lists all reports across projects, including reports on Done tasks moved to dated history; `--unread` returns only unread reports. These commands use the usual Task state directory or its explicit override. Task numbers and UUIDs work as on `list`.
+
+With `--json`, registration and single lookup return one object with `task_id`, `task_number`, `task_title`, `revision` (integer starting at 1), `markdown` (the current original text), `read_revision` (integer or null), `unread` (boolean), and `revisions` (oldest first, each with `revision`, `markdown`, and `created_at`). The list returns an array of these objects. Re-registering identical Markdown keeps the revision and read state; changed text appends a revision without removing earlier text. Empty reports are refused. Existing reports stay readable by their saved Task number or UUID even after Task deletion. Registering or changing a report requires a non-deleted Task in the live store or dated done history; notice Tasks are refused.
+
+CLI reads never mark a report read. Opening the document in the TUI marks only the revision shown, not a newer concurrent edit. A document that wraps past 65,535 rows at the page width is not shown on the board and stays unread; read it in full with `tsk report <task> --json`. A new revision is unread until opened. Registration never changes Task status and never grants approval. Reports are shareable data, not private question snapshots: do not include authentication secrets or private question originals.
+
+Exit 0 means completed, 1 means a refused operation (including an unknown Task or report), 2 means usage or invalid input, and 3 means store I/O or uncertain durability. After exit 3, read the report before retrying; a visible result alone does not prove durability.
+
 ## Task-linked questions
 
 Question commands run only with an explicit non-personal Agent state directory. `TSK_STATE_DIR` also supplies that selection. They do not open or write the personal default board.
@@ -89,6 +107,7 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 | `tsk capture` | Open capture; save or discard exits |
 | `tsk add` | Add a task or JSON plan |
 | `tsk list` | Read tasks |
+| `tsk report` / `tsk reports` | Register or read Markdown completion reports, or list unread reports |
 | `tsk status` | Set task status |
 | `tsk edit` | Replace title, notes, or parent, or move to another project |
 | `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
