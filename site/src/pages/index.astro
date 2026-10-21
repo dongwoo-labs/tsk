@@ -32,7 +32,7 @@ const BOARD_PINS = [
   {
     n: 3,
     title: 'A task.',
-    body: 'A selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the wrapped title. A bold <code>!</code> or <code>?n</code> says an agent waits on you; dim <code>✓2/5</code> counts checked steps and <code>⊂1/3</code> done children. Under the title, the notes\' <code>Now:</code> line says where a Doing task stands, and a <code>Blocked:</code> line shows in bold.',
+    body: 'One line per task: a selection arrow without a filled highlight, a dim <code>T</code>-number you can click to copy, and the title, shortened with <code>…</code> when needed. A bold <code>×</code> marks a blocker, while <code>!</code> or <code>?n</code> says an agent waits on you; dim <code>✓2/5</code> counts checked steps and <code>⊂1/3</code> done children. Press <kbd>v</kbd> to show or hide the notes\' status line, or open the task to read the full notes.',
   },
   {
     n: 4,
@@ -244,17 +244,11 @@ const softwareApplication = {
                 <span class="l">   <span class="tid">T27</span> Proof the landing copy once more</span>
               </div>
               <div class="s-row s-task">
-                <span class="l">   <span class="tid">T29</span> Waiting on the pane label</span><span class="r"><b>?2</b></span>
-              </div>
-              <div class="s-row s-task">
-                <span class="l">       <b>blocked: pane label API, waiting on herdr</b></span>
+                <span class="l">   <span class="tid">T29</span> Waiting on the pane label</span><span class="r"><b>?2 ×</b></span>
               </div>
               <div class="s-row s-task is-sel">
                 <span class="l">▸  <span class="tid">T31</span> <span class="sel-text">Review the release checklist</span></span><span class="r"><b>!</b> <span class="dim">✓2/5 ⊂1/3</span></span>
                 <button type="button" class="pin" data-pin="3" aria-label={pinLabel(3)} aria-controls="pin-card" aria-expanded="false">3</button>
-              </div>
-              <div class="s-row s-task">
-                <span class="l meta">       running the release smoke on macOS</span>
               </div>
               <div class="s-gap"></div>
               <div class="s-row s-sec">
@@ -427,8 +421,9 @@ const softwareApplication = {
             <p class="band-lede">
               The board shows every task: your <b>desk</b> first, then each project under its
               own heading. Inside Git, the cursor starts on the repo’s project. Rows show
-              checked steps as <code>✓2/5</code> and the notes’ <code>Now:</code> or
-              <code>Blocked:</code> line under the title. Press <kbd>2</kbd> for the questions agents left for you.
+              one line per task, with checked steps as <code>✓2/5</code> and a bold
+              <code>×</code> for a blocker. Press <kbd>v</kbd> to show or hide the notes’
+              status line, or open the task for the full reason. Press <kbd>2</kbd> for the questions agents left for you.
               Give the board 110 columns and the selected task sits beside the list.
             </p>
           </header>

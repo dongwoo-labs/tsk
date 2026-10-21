@@ -1425,6 +1425,13 @@ fn apply_board_intent(
             model.reanchor_selection(previous, &previous_visible);
             return Ok(IntentOutcome::None);
         }
+        BoardIntent::ToggleStatusLines => {
+            model.show_status_lines = !model.show_status_lines;
+            model.follow_list.set(true);
+            model.text_selection = None;
+            model.clear_message();
+            return Ok(IntentOutcome::None);
+        }
         BoardIntent::ToggleAllGroups => {
             model.clear_marks();
             let previous_visible = model.visible_ids();

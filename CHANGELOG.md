@@ -50,6 +50,7 @@ the GitHub release notes verbatim.
 
 ### Changed
 
+- Board lists now use one line per task by default: number, title, and progress counts. A bold `×` marks a non-empty `Blocked:` notes line without showing the reason; open the task with `Enter` to read it. Press `v` with list focus to show or hide the second `Now:` / `Blocked:` status line for the current session; every launch starts with it hidden.
 - Board-list titles and status lines each stay on one line, shortened with `…` when they do not fit. Open a task with `Enter` to read its full title and notes with wrapping.
 - The stall-check keys answer at once. `ctrl+l`, **↻ check**, and the palette's **check task's thread** paint `Checking stalled tasks…` or `Checking…` on the status row before they ask Herdr, so a slow Herdr no longer leaves the board looking frozen. The result message replaces the phrase when the call ends.
 - Project group headings on the board are bold and coloured, each project in one of five terminal colours fixed by its path, so neighbouring groups are easy to tell apart. The desk heading stays uncoloured; set `NO_COLOR` to turn the colours off.

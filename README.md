@@ -131,8 +131,9 @@ the bug.”
 
 The board shows every task at once, grouped by project: your desk first, then each
 project under its own heading. Run it inside a repo and the cursor starts on that
-project. Rows show checked steps as `✓2/5`, and the notes' `Now:` or `Blocked:` line
-under the title, so progress reads at a glance.
+project. Each task uses one line: its number, title, and progress such as `✓2/5`.
+A bold `×` marks a task with a `Blocked:` notes line; open it to read the reason.
+Press `v` to show or hide the `Now:` or `Blocked:` line under the title for this session.
 
 Mouse or keyboard, your choice. Double-click a task
 to open it, and scroll through your board. The actions along the bottom are
@@ -154,6 +155,7 @@ Prefer the keyboard? A few keys for everyday use:
 | `ctrl+o` | Set Todo, including reopening Done |
 | `ctrl+d` | Mark the selected task done |
 | `d` | Show or hide completed tasks |
+| `v` | Show or hide notes status lines (session-only) |
 | `?` | Show all shortcuts |
 
 [Full keymap](https://gettsk.sh/docs/keys/) ·

@@ -46,6 +46,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('+'), BoardIntent::OpenCapture, false),
         (KeyCode::Char('d'), BoardIntent::ToggleDoneDrawer, false),
         (KeyCode::Char('g'), BoardIntent::ToggleAllGroups, false),
+        (KeyCode::Char('v'), BoardIntent::ToggleStatusLines, false),
         (KeyCode::Char('l'), BoardIntent::RefreshAll, true),
         (KeyCode::Char('/'), BoardIntent::FocusSearch, false),
         (KeyCode::Char(':'), BoardIntent::OpenCommandPalette, false),
@@ -110,7 +111,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
     assert_eq!(ctrl(KeyCode::Char('d')), Some(BoardIntent::Complete));
 
     for retired in [
-        'a', 'c', 'i', 'z', 'P', 'v', 'h', 'l', 'J', 'K', '1', '2', '3', '[', ']',
+        'a', 'c', 'i', 'z', 'P', 'h', 'l', 'J', 'K', '1', '2', '3', '[', ']',
     ] {
         assert_eq!(
             normal(KeyCode::Char(retired)),

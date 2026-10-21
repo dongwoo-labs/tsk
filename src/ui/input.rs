@@ -333,6 +333,7 @@ pub enum BoardIntent {
     CloseLayer,
     /// Toggle all group headers on the active home tab (`Ctrl+G`).
     ToggleAllGroups,
+    ToggleStatusLines,
     /// `P` on the task page: open the parent chooser for the page's task.
     OpenParentPicker,
     /// `U` on the task page: clear the page task's parent. Children and the parent itself
@@ -539,6 +540,13 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "fold / unfold group",
         modifier: NormalModifier::Bare,
     },
+    NormalKeyEntry {
+        code: KeyCode::Char('v'),
+        intent: BoardIntent::ToggleStatusLines,
+        help_chord: "v",
+        help_label: "show / hide status lines",
+        modifier: NormalModifier::Bare,
+    },
     // Asks Herdr agents; writes nothing to the store, but it sends prompts, so it takes Ctrl.
     // Not `ctrl+r`: that retired status chord stays dead.
     NormalKeyEntry {
@@ -698,6 +706,7 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         BoardIntent::OpenCapture | BoardIntent::BeginEditTitle => HelpGroup::CreateEdit,
         BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleAllGroups
+        | BoardIntent::ToggleStatusLines
         | BoardIntent::FocusSearch
         | BoardIntent::OpenCommandPalette => HelpGroup::ViewsFind,
         BoardIntent::CloseLayer | BoardIntent::OpenHelp | BoardIntent::Quit => {
@@ -1737,6 +1746,7 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::OpenHelp
         | BoardIntent::CloseLayer
         | BoardIntent::ToggleAllGroups
+        | BoardIntent::ToggleStatusLines
         | BoardIntent::OpenParentPicker
         | BoardIntent::ClearParent
         | BoardIntent::ConfirmParentPicker

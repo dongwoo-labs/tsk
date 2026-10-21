@@ -42,7 +42,9 @@ A task with both shows `✓2/5 ⊂1/3`.
 
 The title stays on one line, shortened with `…` when it does not fit. Open the task with `Enter` to read the full title and notes, which still wrap.
 
-Under the title, a row can show one status line from the task's notes, aligned with the title text. This also stays on one line and is shortened with `…` when it does not fit:
+Each task uses one line by default. A bold `×` beside the progress counts marks a task with a non-empty `Blocked:` notes line; it is not a separate status and does not replace approval or question marks. Open the task with `Enter` to read the full reason.
+
+Press `v` while the board list has focus to show or hide a second status line under each title. This view setting lasts only for the current session and starts hidden on every launch. When shown, the line is aligned with the title and shortened with `…` when it does not fit:
 
 | Notes line | Shown on | Paint |
 | --- | --- | --- |

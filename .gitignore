@@ -26,3 +26,6 @@ questions-private/
 # Local release preparation and Python test caches
 /dist-release/
 __pycache__/
+
+# Local verification evidence and isolated task-store snapshots
+/.artifacts/

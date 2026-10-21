@@ -28,6 +28,7 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Check stalled tasks: ask the Herdr lead about stalled and Todo tasks (inside Herdr) | `ctrl+l` |
 | Open / close done drawer | `d` |
 | Fold or unfold archived in the done drawer | `g` |
+| Show / hide notes status lines (hidden on launch, session-only) | `v` |
 | Board tab, list focus | `1` |
 | Questions tab | `2` |
 | Search current board rows | `/` |

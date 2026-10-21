@@ -71,8 +71,11 @@ test("rows carry question marks and the child count; the waiting line opens tab 
     "! ?1 ✓1/3 ⊂1/2",
   );
   await expect(row(page, 13).locator(".tsk-row-tail")).toHaveText("?2 ✓0/3");
-  // The notes' status card: a Doing task's Now line dim, a Blocked line bold.
-  // A long line wraps under the title onto more than one row.
+  await expect(page.locator(".tsk-row-status")).toHaveCount(0);
+  await expect(row(page, 15).locator(".tsk-row-tail")).toContainText("×");
+  await page.locator("#board-demo").focus();
+  await page.keyboard.press("v");
+  // The optional second line keeps Now dim and Blocked bold.
   expect(
     (await row(page, 12).locator(".tsk-row-status").allTextContents())
       .map((line) => line.trim())
@@ -83,6 +86,9 @@ test("rows carry question marks and the child count; the waiting line opens tab 
       .map((line) => line.trim())
       .join(" "),
   ).toMatch(/^blocked: staging client registration/);
+  await page.keyboard.press("v");
+  await expect(page.locator(".tsk-row-status")).toHaveCount(0);
+  await expect(row(page, 15).locator(".tsk-row-tail")).toContainText("×");
   await expect(page.locator("[data-waiting]")).toContainText(
     "waiting on you  approval 1 · question 2 · finding 1 · target unknown 1  → 2",
   );

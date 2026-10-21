@@ -281,6 +281,7 @@ import { parseCapture } from "./capture.js";
     copyNotice: "",
     drawer: false,
     archivedOpen: false,
+    showStatusLines: false,
     overlay: null,
     draft: "",
     paletteQ: "",
@@ -1751,6 +1752,7 @@ import { parseCapture } from "./capture.js";
     ["views & find", "2", "questions tab", "agent answer approve"],
     ["views & find", "z / D", "done drawer", "completed"],
     ["views & find", "g", "fold / unfold archived", "drawer"],
+    ["views & find", "v", "show / hide status lines", "board notes now blocked"],
     ["views & find", "/", "search board", "find filter"],
     ["views & find", ":", "command palette", "find actions"],
     ["questions", "enter", "open · pick the highlighted choice", "answer"],
@@ -1805,7 +1807,10 @@ import { parseCapture } from "./capture.js";
     ]
       .filter(Boolean)
       .join(" ");
-    const alert = taskMarks(task);
+    const status = rowStatusLine(task);
+    const alert = [taskMarks(task), status?.bold ? "×" : ""]
+      .filter(Boolean)
+      .join(" ");
     const tailWidth = alert.length + badge.length + (alert && badge ? 1 : 0);
     const room = Math.max(
       8,
@@ -1816,9 +1821,8 @@ import { parseCapture } from "./capture.js";
         1 -
         (tailWidth ? tailWidth + 1 : 0),
     );
-    const status = rowStatusLine(task);
     const statusRoom = width - 2 - prefix.length - id.length - 1;
-    const statusLines = status
+    const statusLines = state.showStatusLines && status
       ? status.bold && !row.dim
         ? `<b class="tsk-title-line tsk-row-status" style="max-width:${statusRoom}ch">${esc(status.text)}</b>`
         : `<span class="tsk-title-line tsk-row-status dim" style="max-width:${statusRoom}ch">${esc(status.text)}</span>`
@@ -2800,6 +2804,8 @@ import { parseCapture } from "./capture.js";
     else if (bare && (e.key === "z" || e.key === "D")) {
       clearMarks();
       state.drawer = !state.drawer;
+    } else if (bare && e.key === "v") {
+      state.showStatusLines = !state.showStatusLines;
     } else if (bare && e.key === "g" && state.drawer) {
       clearMarks();
       state.archivedOpen = !state.archivedOpen;
