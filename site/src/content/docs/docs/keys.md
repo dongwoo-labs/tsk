@@ -123,6 +123,7 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 | Write a comment on an approval (`Enter` answers with it alone, `Esc` keeps it for approve or reject) | `3` or `m` |
 | Correct an answer | `c` |
 | Open the task | `t` |
+| Focus the record's origin thread in Herdr (one live agent with that exact name) | `o` |
 | Resend a lead request | `r` |
 | Show or hide answered records (CLOSED) | `z` |
 | Next / previous record | `J` / `K` |

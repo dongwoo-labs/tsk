@@ -197,6 +197,16 @@ pub fn handle(
                 );
             }
         }
+        QuestionIntent::OpenThread => {
+            if let Some(record) = page_record(model) {
+                model.set_message(focus_origin_thread(
+                    &record.draft.origin_thread,
+                    std::env::var("HERDR_ENV").as_deref() == Ok("1"),
+                    herdr::list_agents,
+                    herdr::focus,
+                ));
+            }
+        }
         QuestionIntent::FromTask(id) => {
             reload(model);
             crate::ui::board::open_question_from_task(model, id);
@@ -1260,6 +1270,37 @@ fn link(domain: &DomainState, model: &mut BoardModel, task: Uuid, index: usize) 
     model.set_message(message);
 }
 
+/// A question names its origin agent, not a task's four-token Thread reference.
+fn focus_origin_thread(
+    name: &str,
+    in_herdr: bool,
+    list_agents: impl FnOnce() -> Result<Vec<crate::threads::ThreadRow>, String>,
+    focus: impl FnOnce(&crate::threads::ThreadRow) -> Result<(), String>,
+) -> String {
+    if !in_herdr {
+        return format!("{name} · outside Herdr · nothing focused");
+    }
+    let rows = match list_agents() {
+        Ok(rows) => rows,
+        Err(_) => return "cannot list live agents · nothing focused".to_string(),
+    };
+    if !crate::stall::unique_name(name, &rows) {
+        return if rows.iter().any(|row| row.name == name) {
+            format!("{name} · several live agents share that name · nothing focused")
+        } else {
+            format!("{name} · no live agent by that name · nothing focused")
+        };
+    }
+    let row = rows
+        .iter()
+        .find(|row| row.name == name)
+        .expect("unique name");
+    match focus(row) {
+        Ok(()) => format!("focused {name}"),
+        Err(error) => format!("focus failed: {error}"),
+    }
+}
+
 /// Focus the one live pane that matches the whole tuple, or say why not.
 fn focus_thread(reference: &ThreadRef) -> String {
     if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
@@ -1295,6 +1336,97 @@ fn focus_thread(reference: &ThreadRef) -> String {
 mod tests {
     use super::*;
     use crate::domain::{QuestionAnswer, QuestionDraft, QuestionRef, QuestionRoute};
+
+    fn origin_agents(names: &[&str]) -> Vec<crate::threads::ThreadRow> {
+        let agents: Vec<_> = names
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name, "agent_status": "idle", "workspace_id": "w1",
+                    "tab_id": "w1:t1", "pane_id": "w1:p1"
+                })
+            })
+            .collect();
+        crate::threads::parse_agent_list(
+            &serde_json::json!({"result": {"agents": agents}}).to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn origin_thread_focus_requires_one_exact_live_name() {
+        for names in [vec!["thr-a"], vec!["thr-ab", "thr-a", "lead-a"]] {
+            let message = focus_origin_thread(
+                "thr-a",
+                true,
+                || Ok(origin_agents(&names)),
+                |row| {
+                    assert_eq!(row.name, "thr-a");
+                    Ok(())
+                },
+            );
+            assert_eq!(message, "focused thr-a");
+        }
+    }
+
+    #[test]
+    fn origin_thread_focus_refuses_missing_and_ambiguous_names() {
+        for (names, expected) in [
+            (
+                vec!["thr-ab"],
+                "thr-a · no live agent by that name · nothing focused",
+            ),
+            (
+                vec!["thr-a", "thr-a"],
+                "thr-a · several live agents share that name · nothing focused",
+            ),
+        ] {
+            assert_eq!(
+                focus_origin_thread(
+                    "thr-a",
+                    true,
+                    || Ok(origin_agents(&names)),
+                    |_| { panic!("must not focus an absent or ambiguous origin") }
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn origin_thread_focus_refuses_outside_herdr_without_listing() {
+        assert_eq!(
+            focus_origin_thread(
+                "thr-a",
+                false,
+                || panic!("must not list"),
+                |_| panic!("must not focus")
+            ),
+            "thr-a · outside Herdr · nothing focused"
+        );
+    }
+
+    #[test]
+    fn origin_thread_focus_reports_host_failures() {
+        assert_eq!(
+            focus_origin_thread(
+                "thr-a",
+                true,
+                || Err("offline".into()),
+                |_| panic!("must not focus")
+            ),
+            "cannot list live agents · nothing focused"
+        );
+        assert_eq!(
+            focus_origin_thread(
+                "thr-a",
+                true,
+                || Ok(origin_agents(&["thr-a"])),
+                |_| Err("pane gone".into())
+            ),
+            "focus failed: pane gone"
+        );
+    }
 
     #[test]
     fn a_finding_task_is_never_created_in_an_archived_project() {

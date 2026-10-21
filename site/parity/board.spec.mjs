@@ -208,7 +208,7 @@ test("Escape closes Help, then the detail focus, then releases the board", async
 });
 
 for (const width of [40, 78, 109, 110]) {
-  test(`desk start, open, back, and wrapping at ${width} columns`, async ({
+  test(`desk start, open, back, and compact titles at ${width} columns`, async ({
     page,
   }, info) => {
     await open(page, width);
@@ -221,9 +221,17 @@ for (const width of [40, 78, 109, 110]) {
     const lines = await row(page, 13)
       .locator(".tsk-title-line")
       .allTextContents();
-    expect(lines.length).toBeGreaterThan(1);
+    expect(lines).toHaveLength(1);
+    const title = row(page, 13).locator(".tsk-title-line");
+    await expect(title).toHaveCSS("text-overflow", "ellipsis");
+    await expect(title).toHaveCSS("white-space", "pre");
+    expect(await title.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+      true,
+    );
     const appLines = await readReference(`title-${width}`);
-    expect(lines.map((line) => line.trimEnd())).toEqual(appLines);
+    expect(appLines).toHaveLength(1);
+    expect(appLines[0]).toMatch(/… ✓1\/2$/u);
+    expect(lines[0].startsWith(appLines[0].split("…")[0])).toBe(true);
     expect(lines.join("")).toBe(
       "Read every word of this long title before starting the task so the continuation must align beneath its title and retain the final boundary marker END",
     );

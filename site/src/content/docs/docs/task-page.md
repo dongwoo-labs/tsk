@@ -128,7 +128,7 @@ PR: https://github.com/acme/atlas/pull/12
 | `Blocked:` | What blocks the task and who it waits on; only while blocked |
 | `Done when:` | The completion condition |
 
-Reference lines (`PR:`, `Linear:`, `Issue:`, `CI:`, `Thread:`) follow the card. Only `Now:` and `Blocked:` show on the [board rows](/docs/board/#rows): a `Blocked:` line on any task that is not done paints bold as `blocked: …`; otherwise a `Now:` line on a Doing task paints dim under its title. Keys are case-insensitive, a leading `- ` is allowed, and only the first matching line counts. The card is a convention: tsk never sets a status from it.
+Reference lines (`PR:`, `Linear:`, `Issue:`, `CI:`, `Thread:`) follow the card. Only `Now:` and `Blocked:` show on the [board rows](/docs/board/#rows): a `Blocked:` line on any task that is not done paints bold as `blocked: …`; otherwise a `Now:` line on a Doing task paints dim under its title. Each board status line stays on one line and is shortened with `…` when it does not fit; the task page still shows the full notes with wrapping. Keys are case-insensitive, a leading `- ` is allowed, and only the first matching line counts. The card is a convention: tsk never sets a status from it.
 
 ## Notes markdown
 

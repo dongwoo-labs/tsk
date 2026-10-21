@@ -2645,6 +2645,8 @@ html[data-theme="light"] .pane {
 .tsk-title-line {
   display: block;
   white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tsk-peek, .tsk-attribution {
   padding: 0;

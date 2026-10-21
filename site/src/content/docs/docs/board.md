@@ -40,7 +40,9 @@ At the right edge, dim counts show progress at a glance:
 
 A task with both shows `✓2/5 ⊂1/3`.
 
-Under the title, a row can show one status line from the task's notes, wrapped under the title text:
+The title stays on one line, shortened with `…` when it does not fit. Open the task with `Enter` to read the full title and notes, which still wrap.
+
+Under the title, a row can show one status line from the task's notes, aligned with the title text. This also stays on one line and is shortened with `…` when it does not fit:
 
 | Notes line | Shown on | Paint |
 | --- | --- | --- |
@@ -122,6 +124,7 @@ An option written as two lines (`label` then a newline and what picking it leads
 | `m` | The approval's comment row, as picking it does |
 | `c` | Correct a saved answer; it becomes a new revision |
 | `t` | Open the record's task; `Esc` returns to the record |
+| `o` | Focus the record's origin thread in Herdr, including closed and lead-addressed records; no live agent or several with that exact name focuses nothing |
 | `r` | Resend the lead request of a create-and-run finding |
 | `J` / `K` | Next or previous record in list order |
 | `PgUp` / `PgDn` or the wheel | Scroll the page |

@@ -1320,7 +1320,7 @@ fn done_drawer_rows_lead_with_identifiers() {
 }
 
 #[test]
-fn numbered_board_at_40x10_paints_in_bounds_wraps_titles_and_keeps_tasks_reachable() {
+fn numbered_board_at_40x10_truncates_titles_and_keeps_tasks_reachable() {
     let mut tasks = (0..4)
         .map(|index| {
             let mut task = task(
@@ -1353,9 +1353,14 @@ fn numbered_board_at_40x10_paints_in_bounds_wraps_titles_and_keeps_tasks_reachab
             body.contains(&format!("100{index}")),
             "number must paint at 40x10:\n{body}"
         );
+        let title_row = rows
+            .iter()
+            .find(|row| row.contains(&format!("item {index}")))
+            .expect("selected title row");
+        assert!(title_row.contains('…'), "{body}");
         assert!(
-            body.contains(&format!("item {index}")) && body.contains("boundary"),
-            "title must wrap rather than truncate:\n{body}"
+            !body.contains("boundary"),
+            "title must not continue:\n{body}"
         );
         assert!(
             rows.iter().all(|row| row_display_width(row) == 40),
@@ -2955,10 +2960,9 @@ fn all_golden_frames_pass_no_color_sgr_scan() {
     );
 }
 
-/// The main list wraps a long title onto continuation lines indented under the
-/// task's own first row: nothing is cut, and no row ends in an omission marker.
+/// The main list keeps a long title on one line with an omission marker.
 #[test]
-fn board_list_wraps_a_long_title_onto_a_continuation_row() {
+fn board_list_truncates_a_long_title_without_a_continuation_row() {
     let mut domain = DomainState::new();
     let title =
         "alpha bravo charlie delta echo foxtrot golf india juliet kilo lima mike hotel".to_string();
@@ -2974,24 +2978,15 @@ fn board_list_wraps_a_long_title_onto_a_continuation_row() {
         "head row must keep the gutter + title shape:\n{}",
         rows.join("\n")
     );
-    // A continuation line indents exactly three cells into the title column (the gutter).
-    let continuation = rows
-        .iter()
-        .find(|row| row.contains("hotel"))
-        .unwrap_or_else(|| panic!("no wrapped continuation row:\n{}", rows.join("\n")));
-    assert!(
-        continuation.starts_with("   ") && !continuation.starts_with("    "),
-        "continuation rows indent three cells under the title column: {continuation:?}"
-    );
-    // Neither of the task's own rows may carry an omission marker (the verb bar's
-    // own tier budget is a different surface).
     let head = rows
         .iter()
         .find(|row| row.contains("▸  alpha"))
         .expect("head row");
+    assert!(head.trim_end().ends_with('…'), "{head:?}");
     assert!(
-        !head.contains('…') && !continuation.contains('…'),
-        "a wrapped task row carried an omission marker"
+        rows.iter().all(|row| !row.contains("hotel")),
+        "a truncated title must not continue:\n{}",
+        rows.join("\n")
     );
 }
 
