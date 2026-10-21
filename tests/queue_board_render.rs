@@ -374,6 +374,7 @@ fn fixture_model_on_scope<'a>(
         marked_ids: std::collections::BTreeSet::new(),
         nav: NavPaint {
             questions_tab: " 2 questions ".to_string(),
+            reports_tab: " 3 reports ".to_string(),
             active: NavTab::Board,
             check: false,
         },
@@ -403,6 +404,7 @@ fn fixture_model_on_scope<'a>(
         rows_dim: false,
         waiting: None,
         task_marks: Default::default(),
+        report_marks: Default::default(),
     }
 }
 

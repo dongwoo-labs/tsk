@@ -22,7 +22,7 @@ const BOARD_PINS = [
   {
     n: 1,
     title: 'One board, every project.',
-    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you. The board always shows your desk and every live project; opened inside a repo, the cursor starts on that project. The line below the tabs says what waits on you.',
+    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you, and <b>3 reports</b> keeps their Markdown completion documents until you open them. The board always shows your desk and every live project; opened inside a repo, the cursor starts on that project. The line below the tabs says what waits on you.',
   },
   {
     n: 2,
@@ -224,7 +224,7 @@ const softwareApplication = {
           <div class="hero-side" data-board-pins>
             <div class="screen" role="group" aria-label="A tsk board at 78 columns. Hover or click a number for its callout.">
               <div class="s-row s-tabs is-on">
-                <span class="l"><span class="on">1 board</span><span class="dim">  ·  </span>2 questions ·3</span>
+                <span class="l"><span class="on">1 board</span><span class="dim">  ·  </span>2 questions ·3<span class="dim">  ·  </span>3 reports ·1</span>
                 <button type="button" class="pin is-on" data-pin="1" aria-label={pinLabel(1)} aria-controls="pin-card" aria-expanded="true">1</button>
               </div>
               <div class="s-row s-task">
@@ -359,7 +359,7 @@ const softwareApplication = {
       <section class="stage" id="demo" aria-labelledby="demo-heading">
 
         <div class="stage-inner">
-          <div class="demo-invitation"><h2 id="demo-heading">Try it. This board is yours to play with.</h2><p>Double-click a task to open it, check off a step, or press + to add your own. Press 2 for the questions an agent left for you: approve one, answer one, or turn a finding into a task. Press Shift+M to mark several tasks and act on them at once. Everything here is sample data: nothing is saved, sent, or approved, and refresh starts over.</p></div>
+          <div class="demo-invitation"><h2 id="demo-heading">Try it. This board is yours to play with.</h2><p>Double-click a task to open it, check off a step, or press + to add your own. Press 2 for the questions an agent left for you: approve one, answer one, or turn a finding into a task. Press 3 to open a sample Markdown completion report; opening acknowledges only that revision. Press Shift+M to mark several tasks and act on them at once. Everything here is sample data: nothing is saved, sent, or approved, and refresh starts over.</p></div>
           <div
             class="pane"
             id="board-demo"

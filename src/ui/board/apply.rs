@@ -438,6 +438,9 @@ fn apply_board_intent(
         // The app boundary owns question actions (store, durability, Herdr hints); the pure
         // reducer has nothing to apply for them.
         BoardIntent::Question(_) => return Ok(IntentOutcome::None),
+        // Likewise report actions (store reads, `mark_read`) and the task-page report open,
+        // which the app boundary resolves through `command_target_id`.
+        BoardIntent::Report(_) | BoardIntent::OpenTaskReport => return Ok(IntentOutcome::None),
         BoardIntent::OpenCommandPalette => {
             model.open_command_surface(CommandSurface::Palette);
             return Ok(IntentOutcome::None);

@@ -7,7 +7,7 @@ Click to navigate, or use the keyboard. The footer shows actions for the cursor 
 
 ## Navigate
 
-The top row holds the **1 board** and **2 questions** tabs. Press `1` to return to the board tab and its list, or `2` for the [questions tab](#questions). Inside Herdr, the board tab's top row also shows a bold **↻ check** button at its right edge; see [stall checks](#stall-checks).
+The top row holds **1 board**, **2 questions**, and **3 reports**. Press `1` to return to the board tab and its list, `2` for the [questions tab](#questions), or `3` for [completion reports](#reports). Inside Herdr, the board tab's top row also shows a bold **↻ check** button at its right edge; see [stall checks](#stall-checks).
 
 The board always shows every live task: your desk and every live project. Launching inside a Git repository puts the cursor on that project's first row; it does not hide the rest. See [Projects](#projects) and [Rows](#rows).
 
@@ -84,6 +84,14 @@ On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act o
 Doing and Done tasks are skipped by `ctrl+s`; the status row reports skipped Done tasks. Repeating an absolute status does nothing. The old next, block and review status shortcuts are removed.
 
 Agents can set any status with [the CLI](/docs/cli/#status). Task status does not change automatically when steps are checked or an agent stops.
+
+## Reports
+
+The **3 reports** tab holds independent Markdown completion documents attached to Tasks. Unread reports come first; read reports remain available afterwards. The tab counts unread documents. Reports remain here when a Task is Done or moves out of the board's done drawer into dated history.
+
+Move with `↑` / `↓` or `j` / `k`, then press `Enter` to open the document. The page renders Markdown headings, lists, code, links, and tables through an OSS Markdown renderer. Use `↑` / `↓`, `j` / `k`, `PgUp` / `PgDn`, or the wheel to scroll; `Esc` returns to the report list. Merely selecting a report does not mark it read. Opening it marks only the revision shown; a later revision is unread again. A failed read-state save is reported and never presented as a successful acknowledgement.
+
+On the board, a Task with a report shows a report marker, bold while unread. Press `r` on that Task or its clean task page to open its report directly. If it has none, the status row says so. Task edits and question answer fields keep their own keys. Reports do not change Task status or approve an action. Agents register them with [`tsk report`](/docs/cli/#completion-reports).
 
 ## Questions
 

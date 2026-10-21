@@ -14,6 +14,7 @@ pub mod list;
 pub mod parser;
 pub mod presenter;
 pub mod questions;
+pub mod reports;
 pub mod router;
 pub mod status;
 pub mod steps;
@@ -74,6 +75,7 @@ where
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
         Some("import") => run_import(args),
+        Some("report" | "reports") => reports::run(args, &mut stdin),
         Some("ask" | "answer" | "route" | "questions" | "ui-answer") => {
             questions::run(args, &mut stdin)
         }
@@ -110,6 +112,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "project" => presenter::project_help(),
             "import" => presenter::import_help(),
             "ask" | "answer" | "route" | "questions" | "ui-answer" => questions::help(),
+            "report" | "reports" => presenter::reports_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
             "guide" => presenter::guide_help(),

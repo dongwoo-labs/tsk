@@ -1558,6 +1558,7 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
     match key.code {
         KeyCode::Char('1') => return Some(BoardIntent::SelectNavTab(NavTab::Board)),
         KeyCode::Char('2') => return Some(BoardIntent::SelectNavTab(NavTab::Questions)),
+        KeyCode::Char('3') => return Some(BoardIntent::SelectNavTab(NavTab::Reports)),
         KeyCode::Char('?') => return Some(BoardIntent::OpenHelp),
         KeyCode::Char('z') => return q(QuestionIntent::ToggleClosed),
         _ => {}
@@ -1635,6 +1636,8 @@ fn put(frame: &mut Frame<'_>, x: u16, y: u16, width: u16, text: &str, row_style:
 /// Inputs of one questions-tab frame.
 pub struct QuestionsFrame<'a> {
     pub state: &'a QuestionsState,
+    /// The reports tab's label with its unread count, as the board's own top row paints it.
+    pub reports_tab: &'a str,
     pub tasks: &'a [Task],
     pub message: Option<&'a str>,
 }
@@ -1897,39 +1900,22 @@ pub fn draw(out: &mut Frame<'_>, frame: &QuestionsFrame<'_>, area: Rect) -> Queu
     let state = frame.state;
     let wide = width >= tier::WIDE_SPLIT_MIN_WIDTH;
 
-    // Tabs.
+    // Tabs: the same three-tab row, shrink rules, and hit spans as the board's own.
     if let Some(row) = geo.selector_row {
-        let (board, questions) = tab_texts(&state.feed);
         let y = area.y + row;
-        let board_w = render::display_width(&board) as u16;
-        put(out, area.x, y, board_w.min(width), &board, RowStyle::Dim);
-        hits.push(
-            QueueHitTarget::NavTab(NavTab::Board),
-            Rect::new(area.x, y, board_w.min(width), 1),
+        let (spans, tab_hits, _) = render::nav_tab_spans(
+            &tab_texts(&state.feed).1,
+            frame.reports_tab,
+            NavTab::Questions,
+            width as usize,
         );
-        let sep_x = area.x + board_w.min(width);
-        put(
-            out,
-            sep_x,
-            y,
-            3.min(width.saturating_sub(board_w)),
-            " · ",
-            RowStyle::Dim,
-        );
-        let q_x = sep_x + 3;
-        let q_w =
-            (render::display_width(&questions) as u16).min(width.saturating_sub(q_x - area.x));
         out.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                crate::ui::present_line(&questions, q_w as usize),
-                render::style_heading(),
-            ))),
-            Rect::new(q_x, y, q_w, 1),
+            Paragraph::new(Line::from(spans)),
+            Rect::new(area.x, y, width, 1),
         );
-        hits.push(
-            QueueHitTarget::NavTab(NavTab::Questions),
-            Rect::new(q_x, y, q_w, 1),
-        );
+        for (target, x, w) in tab_hits {
+            hits.push(target, Rect::new(area.x + x, y, w, 1));
+        }
     }
 
     let body_top = area.y + geo.viewport_top;

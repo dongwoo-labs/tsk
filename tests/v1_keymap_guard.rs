@@ -51,6 +51,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char(':'), BoardIntent::OpenCommandPalette, false),
         (KeyCode::Char('?'), BoardIntent::OpenHelp, false),
         (KeyCode::Char('q'), BoardIntent::Quit, true),
+        (KeyCode::Char('r'), BoardIntent::OpenTaskReport, false),
     ];
     let mut table: Vec<(KeyCode, BoardIntent)> = documented
         .iter()

@@ -32,6 +32,14 @@ Legacy trash statuses are normalized and thread labels dropped before parsing. B
 
 Archived tasks stay in the task document with their existing status. [Archive and restore](/docs/board/#archive).
 
+## Completion report documents
+
+`reports.json` is a separate versioned document (`format_version: 1`) beside `tsk.json`. It stores Task identifiers and display metadata, every Markdown revision, and the last revision opened on the board. It uses the same store lock as Tasks and atomic replacement with file and directory synchronization. A corrupt or unsupported report file refuses the operation instead of being replaced with an empty list. Task format v10 and question storage are unchanged.
+
+Keep `reports.json` in the shared board's Git publication and backups. Unlike `questions-private/`, report documents are shareable and are not Git-excluded; never copy authentication secrets or private question originals into them. A report keeps its Task number and title so it remains readable after the Task moves into dated done history. Existing report history survives changes and read acknowledgements. Older binaries ignore the separate report document and cannot display or register reports.
+
+`unread` means the latest revision differs from `read_revision`. CLI reads leave it alone. A document opened on the board acknowledges the exact displayed revision under the store lock; a concurrent newer revision remains unread. A failed acknowledgement remains unconfirmed and is reported on the document page.
+
 ## Agent questions and private records
 
 Question commands require an explicit Agent `--state-dir` or `TSK_STATE_DIR` that is not the personal default directory. They never fall back to the personal board. The personal-root names (`.tsk` under `HOME` or `USERPROFILE`, and `tsk` under `LOCALAPPDATA`) and their ASCII case variants are reserved, including child paths when that root does not exist yet. Existing symlinks and parent components resolve before the isolation check. Shared `tsk.json` holds only a question UUID, display number, task UUID, kind, shareable summary, and immutable private-snapshot reference. Choose a non-sensitive summary: it is not automatically redacted.

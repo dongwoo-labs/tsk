@@ -1,6 +1,6 @@
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                            │                                                                 │
-│ 1 board  ·  2 questions                    │  ● T2 Edit target binding pin                     doing · herdr │
+│ 1 board  ·  2 questions  ·  3 reports      │  ● T2 Edit target binding pin                     doing · herdr │
 │                                            │ ────────────────────────────────────────────────────────────────│
 │ DOING ───────────────────────────────────4 │   no notes yet                                                  │
 │                                            │                                                                 │

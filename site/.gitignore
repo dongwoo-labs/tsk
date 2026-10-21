@@ -35,3 +35,6 @@ public/apple-touch-icon-light.png
 /parity-results/
 /playwright-report/
 /parity-reference/
+
+# Native E2E traces, screenshots, logs, and replay cache
+/.e2e/

@@ -18,8 +18,9 @@ test("selection uses an arrow and an underlined tab without reverse fill", async
     "underline",
   );
   const inactive = page.locator(".tsk-tab-group:not(.is-on)");
-  await expect(inactive).toHaveCount(1);
-  await expect(inactive).toHaveCSS("text-decoration-line", "none");
+  await expect(inactive).toHaveCount(2);
+  for (const tab of await inactive.all())
+    await expect(tab).toHaveCSS("text-decoration-line", "none");
   await page.locator('[data-tab="questions"]').click();
   await expect(page.locator('[data-tab="questions"]')).toHaveClass(/is-on/);
 });

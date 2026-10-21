@@ -1,5 +1,6 @@
 AGENTS.local.md
 /HANDOFF.md
+/.artifacts/
 /target/
 **/*.rs.bk
 Cargo.lock.bak
