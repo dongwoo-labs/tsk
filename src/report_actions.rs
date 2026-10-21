@@ -1,10 +1,11 @@
 //! The app boundary of the reports tab: `ReportStore` reads and the one write it owns
 //! (`mark_read`). The pure tab state lives in [`crate::ui::reports`].
 //!
-//! Opening a document acknowledges it: `mark_read` names the exact revision the page just
-//! snapshotted (never whatever the feed holds later), so a newer registration that lands
-//! meanwhile is refused as stale rather than silently marked read. Selecting a row, a list
-//! preview, and a feed refresh never write.
+//! Opening a document acknowledges it once a frame has shown it whole: `mark_read` names the
+//! exact revision the page snapshotted (never whatever the feed holds later), so a newer
+//! registration that lands meanwhile is refused as stale rather than silently marked read.
+//! Selecting a row, a list preview, a feed refresh, and a document too long to display never
+//! write.
 
 use std::path::Path;
 
@@ -31,21 +32,25 @@ pub fn handle(model: &mut BoardModel, state_dir: &Path, intent: ReportIntent) {
         ReportIntent::ScrollLine(forward) => model.reports().scroll_line(forward),
         ReportIntent::Open => {
             if let Some(id) = model.reports().cursor {
-                open_and_acknowledge(model, state_dir, id);
+                model.reports_mut().open(id);
             }
         }
-        ReportIntent::Row(id) => open_and_acknowledge(model, state_dir, id),
+        ReportIntent::Row(id) => model.reports_mut().open(id),
         ReportIntent::Back => model.reports_mut().back(),
         ReportIntent::RetryMarkRead => acknowledge(model, &ReportStore::new(state_dir)),
     }
 }
 
-/// Open `id`'s document at the feed's current snapshot, then acknowledge that revision.
-fn open_and_acknowledge(model: &mut BoardModel, state_dir: &Path, id: Uuid) {
-    model.reports_mut().open(id);
-    if model.reports().page == Some(id) {
-        acknowledge(model, &ReportStore::new(state_dir));
+/// After a paint: acknowledge the open page's snapshot if that paint showed the whole
+/// document. A document past the page's display limit stays unread (the page says why), and
+/// so does a page no frame has painted yet.
+pub fn acknowledge_painted(model: &mut BoardModel, state_dir: &Path) {
+    let reports = model.reports();
+    if !reports.active || !reports.ack_pending || reports.page_fits.get() != Some(true) {
+        return;
     }
+    model.reports_mut().ack_pending = false;
+    acknowledge(model, &ReportStore::new(state_dir));
 }
 
 /// Mark exactly the open page's snapshot revision read, then refresh the feed so the tab
@@ -88,13 +93,12 @@ fn mark_read_message(error: ReportError) -> String {
     }
 }
 
-/// Open a task's report from the board or its task page (`r`), acknowledging the shown
-/// revision the same way the tab's own `Enter` does.
+/// Open a task's report from the board or its clean task page (`r`). It changes tab exactly
+/// the way `3` does, so an unsaved edit refuses it with nothing opened or acknowledged; the
+/// shown revision is then acknowledged after paint, like the tab's own `Enter`.
 pub fn open_from_task(model: &mut BoardModel, state_dir: &Path, task_id: Uuid) {
     model.set_report_feed(load_feed(state_dir));
-    if open_from_task_with_feed(model, task_id) {
-        acknowledge(model, &ReportStore::new(state_dir));
-    }
+    open_from_task_with_feed(model, task_id);
 }
 
 /// The testable half of [`open_from_task`]: assumes the feed is already loaded, so a test can
@@ -104,10 +108,12 @@ fn open_from_task_with_feed(model: &mut BoardModel, task_id: Uuid) -> bool {
         model.set_message("no completion report on this task");
         return false;
     };
+    if !model.enter_reports_tab() {
+        return false;
+    }
     let id = record.task_id;
     let reports = model.reports_mut();
     reports.return_task = Some(task_id);
-    reports.active = true;
     reports.open(id);
     true
 }
@@ -217,6 +223,13 @@ mod tests {
         );
 
         handle(&mut model, &dir, ReportIntent::Open);
+        acknowledge_painted(&mut model, &dir);
+        assert!(
+            store.read(selected).unwrap().unread(),
+            "nothing is acknowledged before a frame has shown the page"
+        );
+        paint(&model, 110, 30);
+        acknowledge_painted(&mut model, &dir);
         let opened = store.read(selected).unwrap();
         assert_eq!(opened.read_revision, Some(1), "opening acknowledges rev 1");
         assert!(!opened.unread);
@@ -228,6 +241,79 @@ mod tests {
         assert!(
             model.reports().page_failure().is_none(),
             "a successful acknowledgement shows no failure"
+        );
+    }
+
+    fn paint(model: &BoardModel, width: u16, height: u16) {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::ui::board::draw_board(frame, model);
+            })
+            .unwrap();
+    }
+
+    /// A document that wraps past `tui-scrollview`'s `u16` row canvas at the page width must
+    /// say so and stay unread, instead of wrapping its row count around, cutting the body,
+    /// and acknowledging it. Blank-separated paragraphs cross the limit with a source line
+    /// count just above it, so the check has to be on wrapped rows.
+    #[test]
+    fn a_document_past_the_display_limit_stays_unread_and_says_why() {
+        let dir = seeded_dir();
+        let output = run_with(
+            [
+                "tsk",
+                "add",
+                "-t",
+                "huge",
+                "--desk",
+                "--state-dir",
+                dir.to_str().unwrap(),
+            ],
+            io::empty(),
+            true,
+        );
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        let id = TaskStore::new(&dir).load().unwrap().tasks()[0].id;
+        let mut markdown = String::new();
+        for index in 0..33_000 {
+            markdown.push_str(&format!("p {index:05}\n\n"));
+        }
+        let store = ReportStore::new(&dir);
+        store
+            .register(crate::store::TrashTarget::Id(id), markdown.clone())
+            .unwrap();
+        let mut model = BoardModel::from_tasks(Vec::new(), None);
+        model.set_report_feed(load_feed(&dir));
+        model.reports_mut().active = true;
+        handle(&mut model, &dir, ReportIntent::Open);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::ui::board::draw_board(frame, &model);
+            })
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("65535"), "{screen}");
+        assert!(screen.contains("stays unread"), "{screen}");
+        acknowledge_painted(&mut model, &dir);
+        let record = store.read(id).unwrap();
+        assert!(
+            record.unread,
+            "a document the page could not show stays unread"
+        );
+        assert_eq!(
+            record.markdown, markdown,
+            "the stored document is untouched"
         );
     }
 

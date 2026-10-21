@@ -130,6 +130,12 @@ pub struct ReportsState {
     pub mark_read_failure: Option<MarkReadFailure>,
     /// The task page a report was opened from: `Esc` returns to it.
     pub return_task: Option<Uuid>,
+    /// The open page still owes its acknowledgement: it is sent after a paint has shown the
+    /// whole document (`page_fits`), never before.
+    pub ack_pending: bool,
+    /// Whether the last paint of the open page showed the whole document (`Some(true)`) or
+    /// refused it as past the display limit (`Some(false)`); `None` until painted.
+    pub page_fits: Cell<Option<bool>>,
 }
 
 impl ReportsState {
@@ -171,6 +177,8 @@ impl ReportsState {
         self.page_snapshot = None;
         self.mark_read_failure = None;
         self.scroll.set(ScrollViewState::new());
+        self.ack_pending = false;
+        self.page_fits.set(None);
     }
 
     /// Move the list cursor; a no-op past either end.
@@ -202,6 +210,8 @@ impl ReportsState {
         self.page_snapshot = Some(record);
         self.mark_read_failure = None;
         self.scroll.set(ScrollViewState::new());
+        self.ack_pending = true;
+        self.page_fits.set(None);
     }
 
     /// `Esc` on the open page: back to the list (or the task page that opened it).
@@ -688,7 +698,35 @@ fn draw_page(out: &mut Frame<'_>, state: &ReportsState, rect: Rect, hits: &mut Q
     let content_width = body_rect.width.saturating_sub(1).max(1);
     let text = render_markdown(&safe_markdown_source(&record.markdown), content_width);
     let lines = wrap_markdown_text(text, content_width as usize);
-    let content_height = (lines.len() as u16).max(1);
+    // `tui-scrollview` measures its canvas in `u16` rows. A document that wraps past that at
+    // this width cannot be shown whole: say so on the page and leave it unread, rather than
+    // letting the row count wrap around and silently cut the body after acknowledging it.
+    let Ok(content_height) = u16::try_from(lines.len().max(1)) else {
+        state.page_fits.set(Some(false));
+        let note = format!(
+            "this document wraps to {} rows at this width; the board shows at most {} \u{b7} \
+             it stays unread \u{b7} read it in full with `tsk report T{} --json`",
+            lines.len(),
+            u16::MAX,
+            record.task_number
+        );
+        for (offset, row) in crate::ui::edit::wrap_text(&note, body_rect.width as usize)
+            .iter()
+            .take(body_rect.height as usize)
+            .enumerate()
+        {
+            put(
+                out,
+                body_rect.x,
+                body_rect.y + offset as u16,
+                body_rect.width,
+                &row.text,
+                true,
+            );
+        }
+        return;
+    };
+    state.page_fits.set(Some(true));
     let mut scroll_view = ScrollView::new(Size::new(content_width, content_height))
         .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
     scroll_view.render_widget(

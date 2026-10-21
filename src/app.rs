@@ -215,6 +215,11 @@ pub fn board_idle_tick(
 ) -> io::Result<FramePoll> {
     model.expire_ephemeral_message();
     let poll = board_frame(model, paint, wait, active_animations)?;
+    // The frame just painted is what the user saw: an open report page it showed whole owes
+    // its acknowledgement now, not before.
+    if board_background_work_allowed(save_recovery) {
+        crate::report_actions::acknowledge_painted(model, store.path());
+    }
     if poll == FramePoll::Idle {
         revalidate_board_from_store(store, domain, model, watch, save_recovery);
         // Inside Herdr only: refresh the agent snapshot the stall marks read, off-thread.
@@ -297,6 +302,16 @@ fn run_board_loop(
     // `load_board` just read the store, so seed the watch from that snapshot: the first idle
     // tick must not immediately re-merge what is already loaded.
     let mut store_watch = StoreWatch::seeded(&store);
+    // A board that could not read `reports.json` at open retries it on every idle tick, even
+    // if the file comes back with the very signature seeded here (a permission fix).
+    if !quick_capture
+        && matches!(
+            model.reports().feed,
+            crate::ui::reports::ReportFeed::Unavailable(_)
+        )
+    {
+        store_watch.reports_seen = None;
+    }
 
     // Every idle tick revalidates the store -- a `stat` on tsk.json, and only when its
     // mtime/size changed does it pay for `store.load()` + `merge_tasks_from_disk` +
@@ -5842,6 +5857,67 @@ mod tests {
             board_keyboard_intent(&model, BoardInputMode::EditTitle, key(KeyCode::Char('1'))),
             Some(BoardIntent::EditInsert('1'))
         ));
+    }
+
+    /// `r` changes tab the way `3` does: an unsaved edit refuses it with nothing opened or
+    /// acknowledged, and a clean move clears the marked set like every tab change.
+    #[test]
+    fn open_task_report_takes_the_tab_change_guard_and_clears_marks() {
+        let (mut domain, mut model) = board_fixture("reported", None);
+        let id = domain.tasks()[0].id;
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "tsk-open-task-report-{}-{}-{}",
+            std::process::id(),
+            Uuid::new_v4(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let store = TaskStore::new(&dir);
+        store.save(&domain).unwrap();
+        let reports = crate::store::ReportStore::new(&dir);
+        reports
+            .register(crate::store::TrashTarget::Id(id), "# Done".into())
+            .unwrap();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        // Title changed, then Tab past notes to `+ step`: the page is back in view mode with an
+        // unsaved edit, where a bare `r` still routes.
+        apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("edit");
+        apply_intent(&mut domain, &mut model, BoardIntent::EditInsert('Z'), None).expect("type");
+        for _ in 0..2 {
+            apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("tab");
+        }
+        assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
+        assert_eq!(
+            board_keyboard_intent(&model, BoardInputMode::TaskPage, key(KeyCode::Char('r'))),
+            Some(BoardIntent::OpenTaskReport)
+        );
+        crate::report_actions::open_from_task(&mut model, &dir, id);
+        assert!(!model.reports().active, "the edit stays in front");
+        assert_eq!(model.reports().page, None);
+        assert_eq!(
+            model.message(),
+            Some("save or cancel the edit before opening reports")
+        );
+        assert!(reports.read(id).unwrap().unread(), "nothing acknowledged");
+
+        // Clean board with a marked set: the move clears the marks like `3` does.
+        let mut domain = store.load().unwrap();
+        let mut model = BoardModel::from_domain(&domain, None);
+        for intent in [BoardIntent::ToggleMarkMode, BoardIntent::MarkToggle] {
+            apply_intent(&mut domain, &mut model, intent, None).expect("mark");
+        }
+        assert_eq!(model.marked_count(), 1);
+        crate::report_actions::open_from_task(&mut model, &dir, id);
+        assert!(model.reports().active);
+        assert_eq!(model.reports().page, Some(id));
+        assert_eq!(
+            model.marked_count(),
+            0,
+            "a tab change clears the marked set"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

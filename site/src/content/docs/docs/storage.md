@@ -38,7 +38,7 @@ Archived tasks stay in the task document with their existing status. [Archive an
 
 Keep `reports.json` in the shared board's Git publication and backups. Unlike `questions-private/`, report documents are shareable and are not Git-excluded; never copy authentication secrets or private question originals into them. A report keeps its Task number and title so it remains readable after the Task moves into dated done history. Existing report history survives changes and read acknowledgements. Older binaries ignore the separate report document and cannot display or register reports.
 
-`unread` means the latest revision differs from `read_revision`. CLI reads leave it alone. A document opened on the board acknowledges the exact displayed revision under the store lock; a concurrent newer revision remains unread. A failed acknowledgement remains unconfirmed and is reported on the document page.
+`unread` means the latest revision differs from `read_revision`. CLI reads leave it alone. A document opened on the board acknowledges the exact displayed revision under the store lock; a concurrent newer revision remains unread. A document too long for the board page (past 65,535 wrapped rows) is kept in full and stays unread. A failed acknowledgement remains unconfirmed and is reported on the document page.
 
 ## Agent questions and private records
 

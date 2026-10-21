@@ -1325,6 +1325,25 @@ impl BoardModel {
         }
     }
 
+    /// The tab change `3` makes (see `BoardIntent::SelectNavTab` in `apply`), for routes that
+    /// open tab 3 directly (`r`): the same edit guard and refusal message, and on a move the
+    /// same relation-trail and mark clearing. Returns whether tab 3 is active afterwards.
+    pub(crate) fn enter_reports_tab(&mut self) -> bool {
+        if self.reports.active {
+            return true;
+        }
+        if self.has_unsaved_task_work() || self.task_editing() {
+            // Refused before anything moves, exactly like `3`.
+            self.select_nav_tab(NavTab::Reports);
+            return false;
+        }
+        self.page_back.clear();
+        if self.select_nav_tab(NavTab::Reports) {
+            self.clear_marks();
+        }
+        self.reports.active
+    }
+
     /// Session-only row order of every section.
     pub fn sort(&self) -> BoardSort {
         self.sort
