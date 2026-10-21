@@ -228,6 +228,12 @@ pub enum BoardIntent {
     SelectNavTab(crate::ui::queue::NavTab),
     /// A questions-tab action, or a question/reference line opened from a task page.
     Question(crate::ui::questions::QuestionIntent),
+    /// A reports-tab action, or a completion-report line opened from a task page.
+    Report(crate::ui::reports::ReportIntent),
+    /// Bare `r` on the board list or a clean task page: open the cursor/page task's
+    /// completion report, if it has one. Navigation only -- it opens a read-only document,
+    /// it never mutates the task -- so it takes no Ctrl, the same as `Enter`.
+    OpenTaskReport,
     /// Focus the active board lens's search field (`/` or a click).
     FocusSearch,
     /// Pin the live query and return input to normal board keys.
@@ -576,6 +582,15 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "quit",
         modifier: NormalModifier::Ctrl,
     },
+    // Navigation only: opens the cursor task's completion report, read-only, so it stays
+    // bare like `Enter`. No row with a report, or none at all, leaves a visible message.
+    NormalKeyEntry {
+        code: KeyCode::Char('r'),
+        intent: BoardIntent::OpenTaskReport,
+        help_chord: "r",
+        help_label: "open completion report",
+        modifier: NormalModifier::Bare,
+    },
 ];
 
 /// Look up a normal-mode key's help label by its literal key code text (e.g. `"d"`,
@@ -756,6 +771,12 @@ fn help_bindings() -> Vec<HelpBinding> {
             "2",
             "questions tab (Agent board)",
             "switch view approval finding waiting",
+        ),
+        help_binding(
+            HelpGroup::ViewsFind,
+            "3",
+            "reports tab, completion documents",
+            "switch view markdown completion document",
         ),
         help_binding(
             HelpGroup::Navigation,
@@ -1684,6 +1705,8 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::SelectFormScopeOption(_)
         | BoardIntent::SelectNavTab(_)
         | BoardIntent::Question(_)
+        | BoardIntent::Report(_)
+        | BoardIntent::OpenTaskReport
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
         | BoardIntent::CancelListPicker
@@ -1858,6 +1881,8 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         // The task page's two bare editing keys: they open an editor, they never mutate.
         KeyCode::Char('e') if !extra => Some(BoardIntent::BeginEditTitle),
         KeyCode::Char('a') if !extra => Some(BoardIntent::BeginAddStep),
+        // Read-only navigation, like `Enter`: opens the page's own report, never mutates.
+        KeyCode::Char('r') if !extra => Some(BoardIntent::OpenTaskReport),
         KeyCode::Char('?') if !extra => Some(BoardIntent::OpenHelp),
         KeyCode::Char(':') if !extra => Some(BoardIntent::OpenCommandPalette),
         KeyCode::Char('J') if !extra => Some(BoardIntent::NextTask),

@@ -30,6 +30,8 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Fold or unfold archived in the done drawer | `g` |
 | Board tab, list focus | `1` |
 | Questions tab | `2` |
+| Reports tab | `3` |
+| Open this Task's completion report | `r` |
 | Search current board rows | `/` |
 | Command palette | `:` |
 | All shortcuts | `?` |
@@ -60,6 +62,8 @@ These keys apply in **view mode**:
 | Edit title or selected step | `ctrl+e` or `e` |
 | Open the selected question, show a link's URL, or focus a verified Thread | `Enter` |
 | Questions tab | `2` |
+| Reports tab | `3` |
+| Open this Task's completion report | `r` |
 | Change task status | Board status shortcuts above |
 | Next / previous task in list order | `J` / `K` |
 | Choose this task's parent | `P` |
@@ -133,6 +137,19 @@ Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `k
 Clicks follow the keys: a click on a choice picks it at once, and a line or footer entry naming a key acts as that key (`↑↓ move` and `1-n pick` only name the keys).
 
 These bare keys save answers on purpose: the tab owns the keyboard, and a pick submits at once, the way Claude Code's answer form does. Approve saves only the exact terms the page showed; if the record changed, it refuses and shows the new terms. On the `Type something…` row letters type (`j` / `k` / `J` / `K` and digits keep their meaning). While a field is open, every key is text, `Enter` saves, and `Esc` leaves the field; `ctrl+q` and `ctrl+c` do not quit. A secret's value types the same way but shows only `•`, and `Enter` runs `fnox set` instead of saving text.
+
+## Reports tab
+
+| Action | Key |
+| --- | --- |
+| Select a document in the list | `↑` / `↓` or `k` / `j` |
+| Open the selected document and acknowledge its displayed revision | `Enter` |
+| Scroll an open document | `↑` / `↓`, `k` / `j`, `PgUp` / `PgDn`, or wheel |
+| Back to the list | `Esc` |
+| Board / questions / reports tab | `1` / `2` / `3` |
+| Quit outside text entry | `ctrl+q` |
+
+A new report revision is unread even if an earlier revision was opened. Selecting a row and CLI lookup do not acknowledge it.
 
 ## Quick-add
 

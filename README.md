@@ -107,6 +107,14 @@ question (`kind: secret`) lets an agent ask for a key: you type it on the board,
 it to `fnox set`, and the agent only sees the answer `set`.
 [Question JSON and retry contract](https://gettsk.sh/docs/cli/#task-linked-questions).
 
+### Completion reports
+
+Register a Markdown document with `tsk report T12 --file completion.md --json` and read it back with `tsk report T12 --json`. Changed text creates a new revision; identical text keeps the existing one. `tsk reports --unread --json` lists the documents not yet opened, including those attached to older Done tasks.
+
+Press `3` on the board for the dedicated reports tab, then `Enter` to open a rendered document. Only opening acknowledges that revision; CLI lookup and selecting a row do not. A new revision becomes unread again. `r` on a Task opens its report directly. Reports are shareable, are separate from private questions, and never change Task status or grant approval.
+
+[Report commands and readback fields](https://gettsk.sh/docs/cli/#completion-reports).
+
 ### Open the board
 
 Run `tsk`, or press **prefix+t** in Herdr.

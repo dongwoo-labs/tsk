@@ -812,6 +812,8 @@ pub struct BoardModel {
     pub(super) frame_wide: Cell<bool>,
     /// The questions tab: its session snapshot and its own cursor and page. Session-only.
     pub(crate) questions: crate::ui::questions::QuestionsState,
+    /// The reports tab: its session snapshot and its own cursor and page. Session-only.
+    pub(crate) reports: crate::ui::reports::ReportsState,
     /// Stall checks: the last Herdr agent snapshot and when each task was asked about.
     /// Session-only.
     pub(crate) stall: crate::stall::StallState,
@@ -889,6 +891,7 @@ impl BoardModel {
             message_expires_at: None,
             message_restore: None,
             questions: crate::ui::questions::QuestionsState::default(),
+            reports: crate::ui::reports::ReportsState::default(),
             stall: crate::stall::StallState::default(),
         };
         model.seed_selection();
@@ -1185,6 +1188,8 @@ impl BoardModel {
     pub fn nav_tab(&self) -> NavTab {
         if self.questions.active {
             NavTab::Questions
+        } else if self.reports.active {
+            NavTab::Reports
         } else {
             NavTab::Board
         }
@@ -1202,6 +1207,20 @@ impl BoardModel {
 
     pub(crate) fn questions_mut(&mut self) -> &mut crate::ui::questions::QuestionsState {
         &mut self.questions
+    }
+
+    /// Replace the reports snapshot (board open, store change, after `mark_read`).
+    pub fn set_report_feed(&mut self, feed: crate::ui::reports::ReportFeed) {
+        self.reports.set_feed(feed);
+    }
+
+    /// The reports tab's session state.
+    pub fn reports(&self) -> &crate::ui::reports::ReportsState {
+        &self.reports
+    }
+
+    pub(crate) fn reports_mut(&mut self) -> &mut crate::ui::reports::ReportsState {
+        &mut self.reports
     }
 
     /// The session-only stall-check state.
@@ -1265,14 +1284,15 @@ impl BoardModel {
         self.action_target_id()
     }
 
-    /// Switch to a navigation tab. The board keeps a parked task page; the questions tab
-    /// refuses while a board edit is unsaved. Returns whether anything moved.
+    /// Switch to a navigation tab. The board keeps a parked task page; the questions and
+    /// reports tabs refuse while a board edit is unsaved. Returns whether anything moved.
     pub(super) fn select_nav_tab(&mut self, tab: NavTab) -> bool {
         match tab {
             NavTab::Board => {
-                let moved = self.questions.active;
+                let moved = self.questions.active || self.reports.active;
                 self.questions.active = false;
                 self.questions.return_question = None;
+                self.reports.active = false;
                 moved
             }
             NavTab::Questions => {
@@ -1283,12 +1303,45 @@ impl BoardModel {
                     self.set_message("save or cancel the edit before opening questions");
                     return false;
                 }
+                self.reports.active = false;
                 self.questions.active = true;
                 self.questions.return_question = None;
                 self.questions.reanchor();
                 true
             }
+            NavTab::Reports => {
+                if self.reports.active {
+                    return false;
+                }
+                if self.has_unsaved_task_work() || self.task_editing() {
+                    self.set_message("save or cancel the edit before opening reports");
+                    return false;
+                }
+                self.questions.active = false;
+                self.reports.active = true;
+                self.reports.reanchor();
+                true
+            }
         }
+    }
+
+    /// The tab change `3` makes (see `BoardIntent::SelectNavTab` in `apply`), for routes that
+    /// open tab 3 directly (`r`): the same edit guard and refusal message, and on a move the
+    /// same relation-trail and mark clearing. Returns whether tab 3 is active afterwards.
+    pub(crate) fn enter_reports_tab(&mut self) -> bool {
+        if self.reports.active {
+            return true;
+        }
+        if self.has_unsaved_task_work() || self.task_editing() {
+            // Refused before anything moves, exactly like `3`.
+            self.select_nav_tab(NavTab::Reports);
+            return false;
+        }
+        self.page_back.clear();
+        if self.select_nav_tab(NavTab::Reports) {
+            self.clear_marks();
+        }
+        self.reports.active
     }
 
     /// Session-only row order of every section.

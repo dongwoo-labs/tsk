@@ -376,8 +376,11 @@ pub fn press_on_focused_surface(
     area: Rect,
     pos: Position,
 ) -> bool {
-    // Tab 2 is one surface: every press on it is focused.
-    if model.questions().active || focused_mouse_area(model, area).contains(pos) {
+    // Tabs 2 and 3 are one surface each: every press on them is focused.
+    if model.questions().active
+        || model.reports().active
+        || focused_mouse_area(model, area).contains(pos)
+    {
         return true;
     }
     let responsive = model.responsive_geometry(area);
@@ -402,6 +405,7 @@ pub fn wide_mouse_focus_intent(
 ) -> Option<BoardIntent> {
     if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         || model.questions().active
+        || model.reports().active
         || model.wide_stage() != WideStage::Board
         || model.input_mode() != BoardInputMode::Normal
     {
@@ -426,8 +430,11 @@ pub fn map_responsive_board_mouse(
     mouse: MouseEvent,
 ) -> Option<BoardIntent> {
     let responsive = model.responsive_geometry(area);
-    // Tab 2 has no board focus columns: its own rows are the targets at every width.
-    if responsive.presentation != ResponsivePresentation::WideSplit || model.questions().active {
+    // Tabs 2 and 3 have no board focus columns: their own rows are the targets at every width.
+    if responsive.presentation != ResponsivePresentation::WideSplit
+        || model.questions().active
+        || model.reports().active
+    {
         return map_board_mouse(model, hits, mouse);
     }
     let pos = point(mouse.column, mouse.row);
@@ -643,6 +650,25 @@ fn wheel_board_intent(model: &BoardModel, kind: MouseEventKind) -> Option<BoardI
             crate::ui::questions::QuestionIntent::Scroll(kind == MouseEventKind::ScrollDown),
         ));
     }
+    // Tab 3: the wheel scrolls an open document one line, the way `j`/`k` do; on the list it
+    // moves the cursor, which the list follows.
+    if model.reports().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        let forward = match kind {
+            MouseEventKind::ScrollDown => true,
+            MouseEventKind::ScrollUp => false,
+            _ => return None,
+        };
+        return Some(BoardIntent::Report(if model.reports().page.is_some() {
+            crate::ui::reports::ReportIntent::ScrollLine(forward)
+        } else {
+            crate::ui::reports::ReportIntent::Move(forward)
+        }));
+    }
     match model.input_mode() {
         BoardInputMode::TaskPage
         | BoardInputMode::EditTitle
@@ -719,6 +745,21 @@ pub fn map_board_mouse(
                 model.frame_wide(),
                 crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
             ),
+            _ => None,
+        };
+    }
+    // Tab 3 paints its own frame too: only its tabs and report rows are targets.
+    if model.reports().active
+        && !matches!(
+            model.input_mode(),
+            BoardInputMode::Help | BoardInputMode::Palette
+        )
+    {
+        return match hit_at(hits, pos) {
+            Some(QueueHitTarget::NavTab(tab)) => Some(BoardIntent::SelectNavTab(tab)),
+            Some(QueueHitTarget::Report(id)) => Some(BoardIntent::Report(
+                crate::ui::reports::ReportIntent::Row(id),
+            )),
             _ => None,
         };
     }

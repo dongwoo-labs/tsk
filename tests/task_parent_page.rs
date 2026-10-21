@@ -11,10 +11,12 @@ use uuid::Uuid;
 use tsk_tui::app::{apply_board_intent_with_save_recovery, BoardSaveContext};
 use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::save_recovery::SaveRecovery;
+use tsk_tui::store::ReportRecord;
 use tsk_tui::ui::board::RelationTarget;
 use tsk_tui::ui::input::{map_key, route_responsive_key, ResponsiveKeyRoute};
 use tsk_tui::ui::mouse::{left_click, map_responsive_board_mouse};
 use tsk_tui::ui::render::{assert_buffer_mono, QueueHitMap, QueueHitTarget};
+use tsk_tui::ui::reports::ReportFeed;
 use tsk_tui::ui::tier::{ResponsivePresentation, WideStage};
 use tsk_tui::ui::{
     apply_intent, draw_board, BoardInputMode, BoardIntent, BoardModel, IntentOutcome,
@@ -1118,4 +1120,40 @@ fn the_step_header_adds_a_percent_and_changes_nothing() {
     let (page, _) = render(&board.model, 80, 24);
     assert!(page.contains("  steps 0/0 "), "{page}");
     assert!(!page.contains('%'), "{page}");
+}
+
+#[test]
+fn task_page_shows_a_discoverable_hint_for_its_own_completion_report() {
+    let mut board = board();
+    let id = board.parent;
+    // No report yet: the task page's relation block says nothing about one.
+    open_page(&mut board, id);
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(!page.contains("opens the"), "{page}");
+
+    board
+        .model
+        .set_report_feed(ReportFeed::Loaded(vec![ReportRecord {
+            task_id: id,
+            task_number: 10,
+            task_title: board.domain.get(id).expect("parent").title.clone(),
+            project: None,
+            revision: 1,
+            markdown: "# done".into(),
+            read_revision: None,
+            unread: true,
+            revisions: vec![],
+        }]));
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(
+        page.contains("r opens the unread completion report"),
+        "{page}"
+    );
+
+    // Another task's page carries no hint from an unrelated report.
+    let other = board.other;
+    apply(&mut board, BoardIntent::CloseLayer);
+    open_page(&mut board, other);
+    let (page, _) = render(&board.model, 80, 24);
+    assert!(!page.contains("opens the"), "{page}");
 }

@@ -264,7 +264,28 @@ import { parseCapture } from "./capture.js";
     ];
   };
 
+  const seedReports = () => {
+    const tasks = seed();
+    const task = tasks.find(
+      (t) => t.title === "Add a health check for the worker pool",
+    );
+    return [
+      {
+        taskId: task.id,
+        taskNumber: task.number,
+        title: task.title,
+        revision: 1,
+        readRevision: null,
+        markdown:
+          "# Worker health check\n\nThe worker pool now reports readiness separately from liveness.\n\n## What changed\n\n- Readiness fails when workers stop consuming jobs.\n- Liveness stays independent.\n\n## Verification\n\n| Check | Result |\n| --- | --- |\n| Healthy worker | PASS |\n| Stalled consumer | PASS |\n\n```sh\ncurl /health/ready\n```\n\nThis is a sample report, not a real check result.\n\n## Remaining work\n\nNo live integration was exercised in this demo.",
+      },
+    ];
+  };
+
   const state = {
+    reports: fixture ? structuredClone(fixture.reports ?? []) : seedReports(),
+    reportCursor: 0,
+    reportPage: null,
     tasks: fixture ? structuredClone(fixture.tasks) : seed(),
     // null: no Agent questions on this board (the parity fixture), as on a personal board.
     questions: fixture ? (fixture.questions ?? null) : seedQuestions(),
@@ -1229,13 +1250,14 @@ import { parseCapture } from "./capture.js";
       }
       return;
     }
-    if (tab === "questions" && hasUnsavedWork()) {
+    if (tab !== "board" && hasUnsavedWork()) {
       state.message = "save or cancel the edit first";
       return;
     }
     clearMarks();
     state.overlay = null;
     state.tab = tab;
+    state.reportPage = null;
     if (tab === "questions") {
       const order = questionOrder();
       if (!order.includes(state.q.cursor)) state.q.cursor = order[0] ?? null;
@@ -1687,6 +1709,11 @@ import { parseCapture } from "./capture.js";
   function resetDemo() {
     state.tasks = fixture ? structuredClone(fixture.tasks) : seed();
     state.questions = fixture ? (fixture.questions ?? null) : seedQuestions();
+    state.reports = fixture
+      ? structuredClone(fixture.reports ?? [])
+      : seedReports();
+    state.reportCursor = 0;
+    state.reportPage = null;
     Object.assign(state, {
       tab: "board",
       searchQuery: "",
@@ -1749,6 +1776,8 @@ import { parseCapture } from "./capture.js";
     ["create & edit", "P / U", "choose / clear the parent", "relation"],
     ["views & find", "1", "board tab", "switch"],
     ["views & find", "2", "questions tab", "agent answer approve"],
+    ["views & find", "3", "reports tab", "completion markdown unread"],
+    ["navigation", "r", "open this task's report", "completion markdown"],
     ["views & find", "z / D", "done drawer", "completed"],
     ["views & find", "g", "fold / unfold archived", "drawer"],
     ["views & find", "/", "search board", "find filter"],
@@ -1768,14 +1797,19 @@ import { parseCapture } from "./capture.js";
   function renderTabs(width) {
     const count = questionsLoaded() && forYou() ? ` ·${forYou()}` : "";
     const sep = "  ·  ";
-    // The top row holds only the two tabs; a narrow pane drops the word `questions`.
+    const unread = state.reports.filter(
+      (r) => r.readRevision !== r.revision,
+    ).length;
+    const reportCount = unread ? ` ·${unread}` : "";
     const full = `2 questions${count}`;
-    const qLabel =
-      (" " + ["1 board", full].join(sep)).length <= width ? full : `2${count}`;
+    const reports = `3 reports${reportCount}`;
+    const compact = (" " + ["1 board", full, reports].join(sep)).length > width;
+    const qLabel = compact ? `2${count}` : full;
+    const rLabel = compact ? `3${reportCount}` : reports;
     const tab = (name, text) =>
       `<span class="tsk-tab-group ${state.tab === name ? "is-on" : ""}"><button type="button" class="tsk-tab ${state.tab === name ? "is-on" : ""}" data-tab="${name}">${esc(text)}</button></span>`;
     const dot = `<span class="dim">${sep}</span>`;
-    const html = ` ${tab("board", "1 board")}${dot}${tab("questions", qLabel)}`;
+    const html = ` ${tab("board", "1 board")}${dot}${tab("questions", qLabel)}${dot}${tab("reports", rLabel)}`;
     return `<div class="tsk-tabs">${html}</div>`;
   }
 
@@ -1806,7 +1840,12 @@ import { parseCapture } from "./capture.js";
       .filter(Boolean)
       .join(" ");
     const alert = taskMarks(task);
-    const tailWidth = alert.length + badge.length + (alert && badge ? 1 : 0);
+    const report = state.reports.find((r) => r.taskId === task.id);
+    const reportMark = report ? "▤" : "";
+    const unread = report && report.readRevision !== report.revision;
+    const tailWidth = [alert, reportMark, badge]
+      .filter(Boolean)
+      .join(" ").length;
     const room = Math.max(
       8,
       width -
@@ -1827,7 +1866,7 @@ import { parseCapture } from "./capture.js";
       `<span class="tsk-title-line" style="max-width:${room}ch">${esc(task.title)}</span>` +
       statusLines;
     const tail = tailWidth
-      ? `<span class="tsk-row-tail">${alert ? `<b class="tsk-alert">${esc(alert)}</b>` : ""}${alert && badge ? " " : ""}${badge ? `<span class="dim">${esc(badge)}</span>` : ""}</span>`
+      ? `<span class="tsk-row-tail">${[alert ? `<b class="tsk-alert">${esc(alert)}</b>` : "", reportMark ? `<span class="${unread ? "is-bold" : "dim"}">${reportMark}</span>` : "", badge ? `<span class="dim">${esc(badge)}</span>` : ""].filter(Boolean).join(" ")}</span>`
       : "";
     return `<button type="button" class="tsk-row ${row.dim ? "dim" : ""} ${selected ? "is-sel" : ""} ${task.id === state.flashId ? "is-flash" : ""}" data-task="${esc(task.id)}"><span class="tsk-row-main"><span class="tsk-row-prefix">${prefix}<span class="tsk-task-id" data-copy-task="${esc(task.id)}" title="copy ${id}">${id}</span> </span><span class="tsk-row-title">${title}</span>${tail}</span></button>`;
   }
@@ -2106,6 +2145,91 @@ import { parseCapture } from "./capture.js";
       .join("")}</div>`;
   }
 
+  const reportOrder = () =>
+    [...state.reports].sort(
+      (a, b) =>
+        Number(b.readRevision !== b.revision) -
+          Number(a.readRevision !== a.revision) || b.taskNumber - a.taskNumber,
+    );
+  function openReport(report) {
+    if (!report || hasUnsavedWork()) {
+      state.message = report
+        ? "save or cancel the edit first"
+        : "this task has no report";
+      return;
+    }
+    selectTab("reports");
+    state.reportPage = structuredClone(report);
+    report.readRevision = report.revision;
+    state.message = `T${report.taskNumber} report revision ${report.revision} opened · sample`;
+  }
+  function renderReportsTab() {
+    const width = terminalColumns();
+    const shown = state.reportPage;
+    if (shown) {
+      const lines = markdownRows(shown.markdown, Math.max(1, width - 6));
+      return `${renderTabs(width)}<div class="tsk-list tsk-q-detail" data-report-page="${esc(shown.taskId)}" tabindex="0" aria-label="Completion report"><div class="tsk-q-group is-bold"> T${shown.taskNumber} ${esc(shown.title)}</div><div class="dim"> revision ${shown.revision} · sample document</div><div class="tsk-page-notes">${lines.map((line) => `<span>${esc(line) || " "}</span>`).join("")}</div></div>`;
+    }
+    const reports = reportOrder();
+    let previous = null;
+    const rows = reports
+      .map((report, index) => {
+        const unread = report.readRevision !== report.revision;
+        const group = unread ? "UNREAD" : "READ";
+        const heading =
+          previous === group
+            ? ""
+            : `<div class="tsk-q-group is-bold"> ${group}</div>`;
+        previous = group;
+        const text = `${index === state.reportCursor ? " ▸ " : "   "}T${report.taskNumber} ${report.title} · revision ${report.revision}`;
+        return `${heading}<button type="button" class="tsk-q-row ${unread ? "is-bold" : "dim"}" data-report="${esc(report.taskId)}">${wrapText(
+          text,
+          width - 2,
+        )
+          .map((line) => `<span>${esc(line)}</span>`)
+          .join("")}</button>`;
+      })
+      .join("");
+    return `${renderTabs(width)}<div class="tsk-list">${rows || '<div class="dim"> no reports yet · tsk report T12 --file completion.md</div>'}</div>`;
+  }
+  function handleReportsKey(e) {
+    if (!plain(e)) return false;
+    const reports = reportOrder();
+    if (["1", "2", "3"].includes(e.key)) {
+      selectTab({ 1: "board", 2: "questions", 3: "reports" }[e.key]);
+    } else if (e.key === "Escape") {
+      if (state.reportPage) state.reportPage = null;
+      else frame.blur();
+    } else if (state.reportPage) {
+      const delta = {
+        ArrowDown: 1,
+        j: 1,
+        ArrowUp: -1,
+        k: -1,
+        PageDown: 12,
+        PageUp: -12,
+      }[e.key];
+      if (!delta) return false;
+      root
+        .querySelector("[data-report-page]")
+        ?.scrollBy(0, delta * parseFloat(getComputedStyle(root).lineHeight));
+      e.preventDefault();
+      return false;
+    } else if (["ArrowDown", "j", "ArrowUp", "k"].includes(e.key)) {
+      state.reportCursor = Math.max(
+        0,
+        Math.min(
+          reports.length - 1,
+          state.reportCursor + (["ArrowDown", "j"].includes(e.key) ? 1 : -1),
+        ),
+      );
+    } else if (e.key === "Enter") {
+      openReport(reports[state.reportCursor]);
+    } else return false;
+    e.preventDefault();
+    return true;
+  }
+
   function renderQuestionsTab() {
     const wide = isWide();
     const width = wide ? listColumns() : terminalColumns();
@@ -2121,6 +2245,8 @@ import { parseCapture } from "./capture.js";
   }
 
   function contextLine() {
+    if (state.tab === "reports")
+      return "reports · sample documents · nothing is saved";
     if (state.tab === "questions") {
       if (!questionsLoaded()) return "questions · no Agent board here";
       return `questions · ${forYou()} waiting on you · ${(state.questions || []).length} total · sample, nothing is sent`;
@@ -2175,7 +2301,26 @@ import { parseCapture } from "./capture.js";
     const wide = isWide();
     let hint = "";
     let verbs;
-    if (state.tab === "questions") {
+    if (state.tab === "reports") {
+      const keys = state.reportPage
+        ? [
+            ["Escape", "esc list"],
+            ["1", "1 board"],
+          ]
+        : [
+            ["Enter", "enter open"],
+            ["1", "1 board"],
+          ];
+      verbs = keys
+        .map(
+          ([key, label]) =>
+            `<button type="button" class="tsk-verb" data-report-key="${key}">${label}</button>`,
+        )
+        .join(" · ");
+      hint = state.reportPage
+        ? "↑↓ / pgup pgdn scroll"
+        : "j/k move · unopened revisions are unread";
+    } else if (state.tab === "questions") {
       verbs = questionFooterButtons(questionFooterHint(wide));
     } else if (state.edit || steps.editor || steps.dirty) {
       verbs = "shift+enter save · tab next field · esc cancel";
@@ -2291,7 +2436,9 @@ import { parseCapture } from "./capture.js";
     try {
       const wide = isWide();
       let html;
-      if (state.tab === "questions") {
+      if (state.tab === "reports") {
+        html = renderReportsTab() + renderFooter();
+      } else if (state.tab === "questions") {
         html = renderQuestionsTab() + renderFooter();
       } else if (state.quickExpanded) {
         html = `<div class="tsk-single-task">${renderTaskPage(state.capture, { focused: true })}</div>${renderFooter()}`;
@@ -2555,9 +2702,9 @@ import { parseCapture } from "./capture.js";
       toggleClosed();
       return true;
     }
-    if (e.key === "1" || e.key === "2") {
+    if (["1", "2", "3"].includes(e.key)) {
       e.preventDefault();
-      selectTab(e.key === "1" ? "board" : "questions");
+      selectTab({ 1: "board", 2: "questions", 3: "reports" }[e.key]);
       return true;
     }
     if (e.key === "?") {
@@ -2795,8 +2942,8 @@ import { parseCapture } from "./capture.js";
       state.paletteQ = "";
       state.paletteI = 0;
     } else if (bare && e.key === "+") openQuickAdd();
-    else if (bare && (e.key === "1" || e.key === "2"))
-      selectTab(e.key === "1" ? "board" : "questions");
+    else if (bare && ["1", "2", "3"].includes(e.key))
+      selectTab({ 1: "board", 2: "questions", 3: "reports" }[e.key]);
     else if (bare && (e.key === "z" || e.key === "D")) {
       clearMarks();
       state.drawer = !state.drawer;
@@ -2875,8 +3022,29 @@ import { parseCapture } from "./capture.js";
       render();
       return;
     }
+    if (
+      state.tab === "board" &&
+      !state.quickExpanded &&
+      !hasUnsavedWork() &&
+      plain(e) &&
+      ["r", "3"].includes(e.key)
+    ) {
+      e.preventDefault();
+      if (e.key === "3") selectTab("reports");
+      else
+        openReport(
+          state.reports.find(
+            (report) =>
+              report.taskId ===
+              (state.page ? shownTask()?.id : state.selectedId),
+          ),
+        );
+      render();
+      return;
+    }
     let handled;
-    if (state.tab === "questions") handled = handleQuestionsKey(e);
+    if (state.tab === "reports") handled = handleReportsKey(e);
+    else if (state.tab === "questions") handled = handleQuestionsKey(e);
     else if (state.quickExpanded || state.page) handled = handlePageKey(e);
     else {
       if (!["Escape"].includes(e.key)) state.message = "";
@@ -2951,6 +3119,18 @@ import { parseCapture } from "./capture.js";
       cmd?.run();
     } else if ((node = hit("[data-parent-option]"))) {
       chooseParent(Number(node.dataset.parentOption));
+    } else if ((node = hit("[data-report]"))) {
+      openReport(
+        state.reports.find((report) => report.taskId === node.dataset.report),
+      );
+    } else if ((node = hit("[data-report-key]"))) {
+      handleReportsKey({
+        key: node.dataset.reportKey,
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        preventDefault() {},
+      });
     } else if ((node = hit("[data-tab]"))) {
       selectTab(node.dataset.tab);
     } else if (hit("[data-waiting]")) {

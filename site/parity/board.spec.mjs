@@ -78,14 +78,14 @@ for (const width of [78, 110]) {
   });
 }
 
-test("the tab row names only the two tabs and rows group by project", async ({
+test("the tab row names all three tabs and rows group by project", async ({
   page,
 }) => {
   await open(page, 78);
   await expect(page.locator(".tsk-tabs")).toHaveText(
-    " 1 board  ·  2 questions",
+    " 1 board  ·  2 questions  ·  3 reports",
   );
-  await expect(page.locator(".tsk-tab")).toHaveCount(2);
+  await expect(page.locator(".tsk-tab")).toHaveCount(3);
   await expect(page.locator("[data-scope], [data-sort]")).toHaveCount(0);
   await expect(
     page.locator(".tsk-sub-label").filter({ hasText: "desk" }),

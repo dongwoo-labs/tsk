@@ -19,3 +19,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+Third-party components added for Markdown completion reports
+MIT license (the MIT option is selected for dual-licensed components)
+
+- tui-markdown 0.3.12: https://github.com/joshka/tui-markdown
+  Copyright (c) 2024 Josh McKinney
+- tui-scrollview 0.6.8: https://github.com/ratatui/tui-widgets
+  Copyright (c) Josh McKinney
+  Copyright (c) The Ratatui Developers
+- getopts 0.2.24: https://github.com/rust-lang/getopts
+  Copyright (c) 2014 The Rust Project Developers
+- itertools 0.15.0: https://github.com/rust-itertools/itertools
+  Copyright (c) 2015
+- pulldown-cmark 0.13.4 and pulldown-cmark-escape 0.11.0:
+  https://github.com/raphlinus/pulldown-cmark
+  Copyright 2015 Google Inc. All rights reserved.
+- tracing 0.1.44, tracing-attributes 0.1.31, and tracing-core 0.1.36:
+  https://github.com/tokio-rs/tracing
+  Copyright (c) 2019 Tokio Contributors
+- unicase 2.10.0: https://github.com/seanmonstar/unicase
+  Copyright (c) 2014-2026 Sean McArthur
+
+The following permission notice and disclaimer apply to all components above:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

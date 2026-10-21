@@ -108,6 +108,7 @@ fn load_board_inner(
     if full_board_open {
         model.offer_launch_card(&state, &snapshot);
         model.set_question_feed(crate::question_actions::load_feed());
+        model.set_report_feed(crate::report_actions::load_feed(store.path()));
         model.stall_mut().enabled = crate::stall::inside_herdr();
     }
     model.set_update_notice(crate::update::startup(
@@ -214,6 +215,11 @@ pub fn board_idle_tick(
 ) -> io::Result<FramePoll> {
     model.expire_ephemeral_message();
     let poll = board_frame(model, paint, wait, active_animations)?;
+    // The frame just painted is what the user saw: an open report page it showed whole owes
+    // its acknowledgement now, not before.
+    if board_background_work_allowed(save_recovery) {
+        crate::report_actions::acknowledge_painted(model, store.path());
+    }
     if poll == FramePoll::Idle {
         revalidate_board_from_store(store, domain, model, watch, save_recovery);
         // Inside Herdr only: refresh the agent snapshot the stall marks read, off-thread.
@@ -296,6 +302,16 @@ fn run_board_loop(
     // `load_board` just read the store, so seed the watch from that snapshot: the first idle
     // tick must not immediately re-merge what is already loaded.
     let mut store_watch = StoreWatch::seeded(&store);
+    // A board that could not read `reports.json` at open retries it on every idle tick, even
+    // if the file comes back with the very signature seeded here (a permission fix).
+    if !quick_capture
+        && matches!(
+            model.reports().feed,
+            crate::ui::reports::ReportFeed::Unavailable(_)
+        )
+    {
+        store_watch.reports_seen = None;
+    }
 
     // Every idle tick revalidates the store -- a `stat` on tsk.json, and only when its
     // mtime/size changed does it pay for `store.load()` + `merge_tasks_from_disk` +
@@ -411,6 +427,8 @@ fn run_board_loop(
                             area.width >= crate::ui::tier::WIDE_SPLIT_MIN_WIDTH,
                             key,
                         )
+                    } else if reports_own_keyboard(&model, mode) {
+                        crate::ui::reports::map_key(model.reports(), key)
                     } else {
                         board_keyboard_intent_for_area(&model, area, mode, key)
                             .and_then(|intent| board_intent_for_area(area, intent))
@@ -801,27 +819,34 @@ fn board_background_work_allowed(recovery: &SaveRecovery<DomainState>) -> bool {
     !recovery.is_pending()
 }
 
-/// Cheap idle-tick change detector for the store's on-disk document.
+/// Cheap idle-tick change detector for the store's on-disk documents.
 ///
-/// Holds only `tsk.json`'s last-seen [`StoreSignature`], so the frame loop's Idle
-/// branch -- which runs about 4 times a second --
-/// pays for a `stat`, not a parse, on every tick where nothing changed.
+/// Holds `tsk.json`'s and `reports.json`'s last-seen [`StoreSignature`]s, so the frame
+/// loop's Idle branch -- which runs about 4 times a second --
+/// pays for a `stat`, not a parse, on every tick where nothing changed. The two are
+/// independent: a `tsk report` write touches only `reports.json`, and reloads only the
+/// report feed.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct StoreWatch {
     last_seen: Option<StoreSignature>,
+    reports_seen: Option<StoreSignature>,
 }
 
 impl StoreWatch {
     /// Unseeded: the first check always reports changed. Prefer [`Self::seeded`] right after a
     /// load so the first idle tick does not immediately re-merge what was just read.
     pub fn new() -> Self {
-        Self { last_seen: None }
+        Self {
+            last_seen: None,
+            reports_seen: None,
+        }
     }
 
     /// Seed from the store's current on-disk signature (e.g. right after `load_board()`).
     pub fn seeded(store: &TaskStore) -> Self {
         Self {
             last_seen: store.state_signature(),
+            reports_seen: crate::store::ReportStore::new(store.path()).signature(),
         }
     }
 
@@ -843,6 +868,12 @@ impl StoreWatch {
     /// succeeded.
     fn record(&mut self, signature: Option<StoreSignature>) {
         self.last_seen = signature;
+    }
+
+    /// [`Self::poll`] for `reports.json`.
+    fn poll_reports(&self, store: &TaskStore) -> Option<Option<StoreSignature>> {
+        let current = crate::store::ReportStore::new(store.path()).signature();
+        (current != self.reports_seen).then_some(current)
     }
 }
 
@@ -876,6 +907,17 @@ pub fn revalidate_board_from_store(
 ) -> bool {
     if !board_background_work_allowed(save_recovery) {
         return false;
+    }
+    // Report registrations and acknowledgements live in their own file: refresh the tab
+    // count and task markers from it alone. The feed swap never replaces an open page's
+    // snapshot and never writes. A failed read shows as unavailable (never as zero) and
+    // forgets the last-seen signature, so every tick retries until a read succeeds: a
+    // restored file can carry the exact signature seen before the failure.
+    if let Some(signature) = watch.poll_reports(store) {
+        let feed = crate::report_actions::load_feed(store.path());
+        let loaded = matches!(feed, crate::ui::reports::ReportFeed::Loaded(_));
+        model.set_report_feed(feed);
+        watch.reports_seen = if loaded { signature } else { None };
     }
     let Some(signature) = watch.poll(store) else {
         return false;
@@ -1036,6 +1078,16 @@ fn board_keyboard_intent(
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
     {
         return Some(BoardIntent::SelectNavTab(NavTab::Questions));
+    }
+    // `3` opens the reports tab from the list or a task page in view mode.
+    if matches!(mode, BoardInputMode::Normal | BoardInputMode::TaskPage)
+        && !model.task_editing()
+        && key.code == KeyCode::Char('3')
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return Some(BoardIntent::SelectNavTab(NavTab::Reports));
     }
 
     match model.form_focus().filter(|_| form_field_mode) {
@@ -1229,6 +1281,11 @@ fn board_intent_for_area(_area: Rect, intent: BoardIntent) -> Option<BoardIntent
 /// Tab 2 owns the keyboard unless help or the palette is open over it.
 fn questions_own_keyboard(model: &BoardModel, mode: BoardInputMode) -> bool {
     model.questions().active && matches!(mode, BoardInputMode::Normal | BoardInputMode::TaskPage)
+}
+
+/// Tab 3 owns the keyboard unless help or the palette is open over it.
+fn reports_own_keyboard(model: &BoardModel, mode: BoardInputMode) -> bool {
+    model.reports().active && matches!(mode, BoardInputMode::Normal | BoardInputMode::TaskPage)
 }
 
 fn board_paste_intent(area: Rect, model: &mut BoardModel, text: &str) -> Option<BoardIntent> {
@@ -1722,8 +1779,29 @@ fn handle_board_intent(
         }
         return Ok(false);
     }
+    // Report actions own the one store write they have (mark_read); the board save path
+    // never sees them.
+    if let BoardIntent::Report(report) = intent {
+        if !save_recovery.is_pending() {
+            crate::report_actions::handle(model, store.path(), report);
+        }
+        return Ok(false);
+    }
+    if intent == BoardIntent::OpenTaskReport {
+        if !save_recovery.is_pending() {
+            if let Some(task_id) = model.command_target_id() {
+                crate::report_actions::open_from_task(model, store.path(), task_id);
+            } else {
+                model.set_message("no task selected \u{b7} nothing to open");
+            }
+        }
+        return Ok(false);
+    }
     if intent == BoardIntent::SelectNavTab(NavTab::Questions) && !save_recovery.is_pending() {
         model.set_question_feed(crate::question_actions::load_feed());
+    }
+    if intent == BoardIntent::SelectNavTab(NavTab::Reports) && !save_recovery.is_pending() {
+        model.set_report_feed(crate::report_actions::load_feed(store.path()));
     }
     if intent == BoardIntent::CloseLayer
         && !save_recovery.is_pending()
@@ -1911,6 +1989,83 @@ mod idle_store_revalidation_tests {
         assert!(
             model.visible_ids().contains(&captured_id),
             "model must sync so the quick-capture task renders without a persisting intent"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A `tsk report` from another process writes only `reports.json`: the idle tick must
+    /// refresh the report feed (tab count, task markers) without a task merge, and without
+    /// touching an open page's snapshot.
+    #[test]
+    fn idle_tick_refreshes_reports_written_by_a_separate_writer() {
+        let dir = temp_store_dir("report-only");
+        let store = TaskStore::new(&dir);
+        let mut domain = DomainState::new();
+        let id = domain
+            .create("reported", None, project_scope(), ProvenanceOrigin::Capture)
+            .unwrap();
+        store.save(&domain).unwrap();
+        let mut model = BoardModel::from_domain(&domain, Some(std::path::PathBuf::from(THIS_REPO)));
+        model.set_report_feed(crate::report_actions::load_feed(store.path()));
+        let mut watch = StoreWatch::seeded(&store);
+        let save_recovery = SaveRecovery::<DomainState>::new();
+        assert_eq!(crate::ui::reports::tab_count(&model.reports().feed), None);
+
+        crate::store::ReportStore::new(&dir)
+            .register(crate::store::TrashTarget::Id(id), "# Done".into())
+            .unwrap();
+        let merged = revalidate_board_from_store(
+            &store,
+            &mut domain,
+            &mut model,
+            &mut watch,
+            &save_recovery,
+        );
+
+        assert!(!merged, "tsk.json did not change, so no task merge runs");
+        assert_eq!(
+            crate::ui::reports::tab_count(&model.reports().feed),
+            Some(1),
+            "the unread report counts without switching tabs"
+        );
+        assert_eq!(
+            crate::ui::reports::task_marks(&model.reports().feed).get(&id),
+            Some(&true),
+            "the task's report marker shows bold"
+        );
+        assert!(
+            crate::store::ReportStore::new(&dir)
+                .read(id)
+                .unwrap()
+                .unread(),
+            "refreshing the feed acknowledges nothing"
+        );
+
+        // An unreadable file is unavailable, not empty. Restoring it in place with its old
+        // mtime and length (`cp -p`) reproduces the signature seen before the failure; the
+        // feed must still come back.
+        let path = dir.join("reports.json");
+        let original = fs::read(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, b"{ not json").unwrap();
+        revalidate_board_from_store(&store, &mut domain, &mut model, &mut watch, &save_recovery);
+        assert!(matches!(
+            model.reports().feed,
+            crate::ui::reports::ReportFeed::Unavailable(_)
+        ));
+        fs::write(&path, &original).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        revalidate_board_from_store(&store, &mut domain, &mut model, &mut watch, &save_recovery);
+        assert_eq!(
+            crate::ui::reports::tab_count(&model.reports().feed),
+            Some(1),
+            "a restored file is read again"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -5499,7 +5654,11 @@ mod tests {
         // form mapper would handle differently, so this is an allowlist regression guard rather
         // than a test of identical fallthroughs.
         for (mode, code, expected) in [
-            (BoardInputMode::Normal, KeyCode::Char('r'), None),
+            (
+                BoardInputMode::Normal,
+                KeyCode::Char('r'),
+                Some(BoardIntent::OpenTaskReport),
+            ),
             (
                 BoardInputMode::TaskPage,
                 KeyCode::Char('e'),
@@ -5690,14 +5849,75 @@ mod tests {
         );
         assert_eq!(
             board_keyboard_intent(&model, BoardInputMode::Normal, key(KeyCode::Char('3'))),
-            None,
-            "3 is no longer a tab key"
+            Some(BoardIntent::SelectNavTab(NavTab::Reports)),
+            "3 opens the reports tab"
         );
         apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("edit");
         assert!(matches!(
             board_keyboard_intent(&model, BoardInputMode::EditTitle, key(KeyCode::Char('1'))),
             Some(BoardIntent::EditInsert('1'))
         ));
+    }
+
+    /// `r` changes tab the way `3` does: an unsaved edit refuses it with nothing opened or
+    /// acknowledged, and a clean move clears the marked set like every tab change.
+    #[test]
+    fn open_task_report_takes_the_tab_change_guard_and_clears_marks() {
+        let (mut domain, mut model) = board_fixture("reported", None);
+        let id = domain.tasks()[0].id;
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "tsk-open-task-report-{}-{}-{}",
+            std::process::id(),
+            Uuid::new_v4(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let store = TaskStore::new(&dir);
+        store.save(&domain).unwrap();
+        let reports = crate::store::ReportStore::new(&dir);
+        reports
+            .register(crate::store::TrashTarget::Id(id), "# Done".into())
+            .unwrap();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        // Title changed, then Tab past notes to `+ step`: the page is back in view mode with an
+        // unsaved edit, where a bare `r` still routes.
+        apply_intent(&mut domain, &mut model, BoardIntent::BeginEditTitle, None).expect("edit");
+        apply_intent(&mut domain, &mut model, BoardIntent::EditInsert('Z'), None).expect("type");
+        for _ in 0..2 {
+            apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("tab");
+        }
+        assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
+        assert_eq!(
+            board_keyboard_intent(&model, BoardInputMode::TaskPage, key(KeyCode::Char('r'))),
+            Some(BoardIntent::OpenTaskReport)
+        );
+        crate::report_actions::open_from_task(&mut model, &dir, id);
+        assert!(!model.reports().active, "the edit stays in front");
+        assert_eq!(model.reports().page, None);
+        assert_eq!(
+            model.message(),
+            Some("save or cancel the edit before opening reports")
+        );
+        assert!(reports.read(id).unwrap().unread(), "nothing acknowledged");
+
+        // Clean board with a marked set: the move clears the marks like `3` does.
+        let mut domain = store.load().unwrap();
+        let mut model = BoardModel::from_domain(&domain, None);
+        for intent in [BoardIntent::ToggleMarkMode, BoardIntent::MarkToggle] {
+            apply_intent(&mut domain, &mut model, intent, None).expect("mark");
+        }
+        assert_eq!(model.marked_count(), 1);
+        crate::report_actions::open_from_task(&mut model, &dir, id);
+        assert!(model.reports().active);
+        assert_eq!(model.reports().page, Some(id));
+        assert_eq!(
+            model.marked_count(),
+            0,
+            "a tab change clears the marked set"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
