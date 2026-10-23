@@ -3,7 +3,8 @@
 //! so nothing fnox prints can reach the board either.
 
 use std::ffi::{OsStr, OsString};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -103,6 +104,88 @@ pub fn set(bin: &OsStr, target: &SecretTarget, value: &[u8]) -> Result<(), FnoxF
             }
         }
     }
+}
+
+/// Match fnox's global write destination, never a config discovered from tsk's cwd.
+fn global_config() -> Option<PathBuf> {
+    let absolute_env = |key| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let directory = absolute_env("FNOX_CONFIG_DIR")
+        .or_else(|| absolute_env("XDG_CONFIG_HOME").map(|p| p.join("fnox")))
+        .or_else(|| {
+            #[cfg(unix)]
+            let (home, suffix) = (absolute_env("HOME"), ".config/fnox");
+            #[cfg(windows)]
+            let (home, suffix) = (absolute_env("USERPROFILE"), "AppData/Local/fnox");
+            home.map(|p| p.join(suffix))
+        })?;
+    Some(directory.join("config.toml"))
+}
+
+/// Check configured key names, not values or service validity. fnox 1.36's completion
+/// mode exits before value resolution. The selected config/profile's normal inheritance
+/// applies; this is not proof of a fresh write or a direct declaration in that file.
+/// A bounded reader drains stdout while the child runs so a pipe cannot deadlock it.
+pub(crate) fn contains(bin: &OsStr, target: &SecretTarget) -> Result<bool, FnoxFailure> {
+    let config = match target.config.as_deref() {
+        Some(path) => PathBuf::from(path),
+        None => global_config().ok_or(FnoxFailure::Io)?,
+    };
+    // A missing global config must not trigger fnox's parent-directory discovery.
+    if !config.is_file() {
+        return Err(FnoxFailure::Io);
+    }
+    let mut child = Command::new(bin)
+        .args([
+            "list",
+            "--complete",
+            "--no-color",
+            "--non-interactive",
+            "--config",
+        ])
+        .arg(config)
+        .args(["--profile", target.profile.as_deref().unwrap_or("default")])
+        .env_remove("FNOX_PROFILE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| FnoxFailure::Io)?;
+    let stdout = child.stdout.take().ok_or(FnoxFailure::Io)?;
+    const MAX_NAMES: u64 = 1024 * 1024;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(MAX_NAMES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| FnoxFailure::Io)?;
+        if bytes.len() as u64 > MAX_NAMES {
+            return Err(FnoxFailure::Io);
+        }
+        String::from_utf8(bytes).map_err(|_| FnoxFailure::Io)
+    });
+    let started = Instant::now();
+    let success = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if started.elapsed() < TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    let names = reader.join().map_err(|_| FnoxFailure::Io)??;
+    if !success {
+        return Err(FnoxFailure::Io);
+    }
+    Ok(names.lines().any(|name| name == target.key))
 }
 
 /// Overwrite a secret buffer before it is dropped. A best effort without unsafe code:

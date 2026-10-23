@@ -54,6 +54,7 @@ tsk questions Q1 --state-dir /local/agent-board --json
 tsk answer Q1 --file answer.json --state-dir /local/agent-board
 tsk route Q1 --file route.json --state-dir /local/agent-board
 tsk ui-answer Q1 --file - --state-dir /local/agent-board
+tsk secret-result Q1 --file - --state-dir /local/agent-board
 ```
 
 `--file -` reads the JSON input from stdin.
@@ -62,7 +63,7 @@ tsk ui-answer Q1 --file - --state-dir /local/agent-board
 
 `answer` takes `expected_revision`, `text`, `actor`, `origin`, `corrects_revision`, `approve`, `confirmed`, `approval`, `user_chat`, `source`, and the optional `comment`. Ordinary answers use `origin: "agent"`, `approve: false`, and null approval/evidence. A correction names the current answer's revision in `corrects_revision`; it appends instead of replacing history. A stale expected revision refuses without applying another answer. Use `questions` after every uncertain result and before a retry.
 
-Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. `tsk answer` refuses `origin: "user_ui"`; only the board's questions tab and [`ui-answer`](#ui-answer) record that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
+Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. `tsk answer` refuses `origin: "user_ui"`; the board's questions tab, [`ui-answer`](#ui-answer), and the fixed [`secret-result`](#secret-result) path record that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
 
 `comment` is free text beside an approval's `approve`/`reject` decision: non-null only on an approval question, and refused if blank. It is never itself an approval, never checked against the stored approval terms, and never weakens `approve`'s requirements. It is saved with whichever decision the same answer carries and shown in the record's history beside `approved` or `rejected`.
 
@@ -77,6 +78,16 @@ Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullabl
 Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means Herdr accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
 
 <span id="route"></span>`route` takes `expected_revision`, `audience` (`user` or `lead`), and an optional `lead_recipient` (a Herdr agent name; omitted or `null` keeps the current one). It writes a new revision under the same Q UUID and number and keeps the text, answers, and history; an answered question stays answered. A stale revision refuses and changes nothing. It sends no notification and returns `{ "saved": ... }`.
+
+<span id="secret-result"></span>**Record an external secret result.** After the user stores the value through an external secret-input interface, an agent or that interface can run `tsk secret-result <Q-number|UUID> --file <result.json|-> --state-dir <Agent-dir>`. The JSON object has exactly two fields:
+
+```json
+{"expected_revision": "<current question revision UUID>", "result": "set"}
+```
+
+This command accepts no value, text, actor, origin, or other fields. Invalid JSON, unknown fields, and any result other than `set` refuse with `secret-result: invalid-input` (exit 2), without echoing input. It accepts only an open `secret` question with the same revision and a valid stored target. It checks that target's key name with fnox before recording anything. It never runs `fnox get`, `fnox set`, or a values listing, and discards fnox diagnostics. A missing key or a failed check refuses with `secret-result: secret-not-found` or `secret-result: fnox-check-failed` (exit 1), leaving the question open. The check uses fnox 1.36's `list --complete --config <stored-config> --profile <stored-profile-or-default>` name-only output, with normal config/profile inheritance. For a global target it selects `config.toml` under `FNOX_CONFIG_DIR`, then `XDG_CONFIG_HOME/fnox`, or the platform's home-based fnox directory, never a config found from the current directory. It pins `default` when the stored profile is null, regardless of `FNOX_PROFILE`. This confirms an effective configured key name, not a direct declaration in that file/profile, its value, freshness, decryption, or validity at the service. Unsupported fnox versions fail closed rather than falling back to a values-capable command.
+
+Success records exactly the board's `set` answer (`actor: "user"`, `origin: "user_ui"`, no approval or evidence fields). It returns the same `saved`/`notification` JSON and durability semantics as `answer`; it is not approval authority or proof that this invocation stored a value. The same-OS-user trust boundary still applies. `stale-revision`, `secret-required`, `already-answered`, and `invalid-secret` are exit-1 refusals prefixed with `secret-result:`. Store failures use the ordinary question-store messages. Read back after an uncertain save before retrying. Existing `answer` and `ui-answer` restrictions remain unchanged.
 
 <span id="ui-answer"></span>`ui-answer` records the answer the user gave in another interface, such as the option they picked or the text they typed in a Claude Code ask prompt, with origin `user_ui` and actor `user`. It is the entrypoint for that interface's own process; agents never call it. Its JSON object takes `expected_revision` (the revision the user was shown) and exactly one of:
 
@@ -112,6 +123,7 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 | `tsk edit` | Replace title, notes, or parent, or move to another project |
 | `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
 | `tsk ui-answer` | Record the user's answer from another interface (not for agents) |
+| `tsk secret-result` | Record only `set` after checking the secret target's key name with fnox |
 | `tsk steps` | Add, toggle, rename, move, or remove steps |
 | `tsk archive` / `tsk unarchive` | Hide or restore a task |
 | `tsk project archive` / `tsk project unarchive` | Hide or restore a project |

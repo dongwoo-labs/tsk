@@ -76,7 +76,7 @@ where
         Some("project") => run_project(args),
         Some("import") => run_import(args),
         Some("report" | "reports") => reports::run(args, &mut stdin),
-        Some("ask" | "answer" | "route" | "questions" | "ui-answer") => {
+        Some("ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result") => {
             questions::run(args, &mut stdin)
         }
         verb @ (Some("archive") | Some("unarchive")) => {
@@ -111,7 +111,9 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "unarchive" => presenter::archive_help("unarchive"),
             "project" => presenter::project_help(),
             "import" => presenter::import_help(),
-            "ask" | "answer" | "route" | "questions" | "ui-answer" => questions::help(),
+            "ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result" => {
+                questions::help()
+            }
             "report" | "reports" => presenter::reports_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),
