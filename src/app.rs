@@ -3844,6 +3844,7 @@ mod tests {
                 audience: Some(Audience::User),
                 lead_recipient: None,
                 secret: None,
+                permission_context: None,
             },
             created_at: std::time::SystemTime::now(),
             answers: Vec::new(),

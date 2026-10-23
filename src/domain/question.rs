@@ -136,6 +136,18 @@ pub enum FindingAction {
     Close,
 }
 
+/// 권한 질문 시점의 비공개 메타데이터. 승인 권한을 부여하지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionContext {
+    pub cwd: Option<String>,
+    pub tool_name: String,
+    pub tool_input: Option<serde_json::Map<String, serde_json::Value>>,
+    pub task_number: u64,
+    pub task_scope: Option<String>,
+    pub holds: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionDraft {
@@ -163,6 +175,8 @@ pub struct QuestionDraft {
     /// A secret question's `fnox set` target. Only `kind: secret` carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<SecretTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_context: Option<PermissionContext>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

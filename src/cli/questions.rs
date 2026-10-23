@@ -161,7 +161,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
             if operand.is_some() {
                 return Err(("ask has no positional operand".into(), 2));
             }
-            // serde's text names the field or variant; it never echoes a field value.
+            // 타입 오류에는 입력값이 포함될 수 있으므로 호출측이 비밀 입력을 제외해야 한다.
             let draft: QuestionDraft = serde_json::from_slice(&read_input()?)
                 .map_err(|error| (format!("invalid question JSON: {error}"), 2))?;
             let problems = question_problems(&draft);
