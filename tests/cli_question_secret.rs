@@ -670,6 +670,10 @@ mod external_result {
         assert_ne!(record["reference"]["revision"], revision);
         let argv = fs::read_to_string(dir.0.join("argv")).unwrap();
         assert!(argv.lines().any(|a| a == "list"));
+        assert!(
+            argv.lines().any(|a| a == "--complete"),
+            "name-only mode is mandatory"
+        );
         assert!(!argv
             .lines()
             .any(|a| matches!(a, "get" | "set" | "--values" | "-V")));
@@ -693,6 +697,8 @@ mod external_result {
         let bin = fake_fnox(&dir, "STAGING_API_KEY", 0);
         let valid = json!({"expected_revision": revision, "result": "set"});
         let mut cases = vec![
+            json!([revision, "set"]),
+            json!({"expected_revision": revision, "result": {"set": null}}),
             json!({"expected_revision": revision, "result": "failed"}),
             json!({"expected_revision": revision}),
             json!({"expected_revision": "not-a-uuid", "result": "set"}),
@@ -728,6 +734,46 @@ mod external_result {
             assert!(!dir.0.join("argv").exists());
             assert_eq!(read(&dir), before);
         }
+    }
+
+    #[test]
+    #[ignore = "waits for the 30-second fnox deadline"]
+    fn fnox_stdout_from_a_descendant_cannot_extend_the_deadline() {
+        let dir = TempDir::new("stdout-deadline");
+        let revision = open_secret(&dir, global());
+        let before = read(&dir);
+        let bin = fake_fnox(&dir, "", 0);
+        let pid_file = dir.0.join("descendant.pid");
+        fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\nsleep 40 &\nprintf '%s' \"$!\" > '{}'\nprintf 'STAGING_API_KEY\\n'\nexit 0\n",
+                pid_file.display()
+            ),
+        ).unwrap();
+        let started = std::time::Instant::now();
+        let out = run(
+            &dir,
+            &bin,
+            &json!({"expected_revision":revision,"result":"set"}),
+        );
+        let elapsed = started.elapsed();
+        // Stop only the background fixture this invocation created, before any assertion.
+        if let Ok(pid) = fs::read_to_string(pid_file) {
+            let _ = Command::new("kill")
+                .arg(pid.trim())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(35),
+            "deadline exceeded: {elapsed:?}"
+        );
+        assert_eq!(out.status.code(), Some(1));
+        assert!(out.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("fnox-check-failed"));
+        assert_eq!(read(&dir), before);
     }
 
     #[test]

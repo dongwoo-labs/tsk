@@ -134,7 +134,7 @@ pub(crate) fn contains(bin: &OsStr, target: &SecretTarget) -> Result<bool, FnoxF
         Some(path) => PathBuf::from(path),
         None => global_config().ok_or(FnoxFailure::Io)?,
     };
-    // A missing global config must not trigger fnox's parent-directory discovery.
+    // Require the selected config to exist before asking fnox about its effective keys.
     if !config.is_file() {
         return Err(FnoxFailure::Io);
     }
@@ -156,16 +156,20 @@ pub(crate) fn contains(bin: &OsStr, target: &SecretTarget) -> Result<bool, FnoxF
         .map_err(|_| FnoxFailure::Io)?;
     let stdout = child.stdout.take().ok_or(FnoxFailure::Io)?;
     const MAX_NAMES: u64 = 1024 * 1024;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout
-            .take(MAX_NAMES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| FnoxFailure::Io)?;
-        if bytes.len() as u64 > MAX_NAMES {
-            return Err(FnoxFailure::Io);
-        }
-        String::from_utf8(bytes).map_err(|_| FnoxFailure::Io)
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let read = || {
+            let mut bytes = Vec::new();
+            stdout
+                .take(MAX_NAMES + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| FnoxFailure::Io)?;
+            if bytes.len() as u64 > MAX_NAMES {
+                return Err(FnoxFailure::Io);
+            }
+            String::from_utf8(bytes).map_err(|_| FnoxFailure::Io)
+        };
+        let _ = sender.send(read());
     });
     let started = Instant::now();
     let success = loop {
@@ -181,10 +185,14 @@ pub(crate) fn contains(bin: &OsStr, target: &SecretTarget) -> Result<bool, FnoxF
             }
         }
     };
-    let names = reader.join().map_err(|_| FnoxFailure::Io)??;
     if !success {
         return Err(FnoxFailure::Io);
     }
+    // A wrapper's descendant can keep stdout open after the direct child exits.
+    // Bound EOF waiting too; the CLI may exit without waiting for that reader thread.
+    let names = receiver
+        .recv_timeout(TIMEOUT.saturating_sub(started.elapsed()))
+        .map_err(|_| FnoxFailure::TimedOut)??;
     Ok(names.lines().any(|name| name == target.key))
 }
 

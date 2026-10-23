@@ -56,14 +56,7 @@ pub fn run(args: Vec<String>, stdin: &mut dyn Read) -> CliOutput {
 #[serde(deny_unknown_fields)]
 struct SecretResultInput {
     expected_revision: Uuid,
-    #[serde(rename = "result")]
-    _result: SecretResult,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SecretResult {
-    Set,
+    result: String,
 }
 
 /// The arguments every question verb shares.
@@ -193,9 +186,22 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         "secret-result" => {
             let operand = operand.ok_or_else(|| ("Q number or UUID required".into(), 2))?;
             let id = resolve(&store, &operand, None)?;
-            // Never echo serde errors: even an invalid enum or unknown field may be a value.
-            let input: SecretResultInput = serde_json::from_slice(&read_input()?)
-                .map_err(|_| ("secret-result: invalid-input: expected only expected_revision and result set".into(), 2))?;
+            // Never echo serde errors: invalid data or an unknown field may be a value.
+            let invalid = || {
+                (
+                    "secret-result: invalid-input: expected only expected_revision and result set"
+                        .into(),
+                    2,
+                )
+            };
+            let bytes = read_input()?;
+            if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+                return Err(invalid());
+            }
+            let input: SecretResultInput = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if input.result != SECRET_SET {
+                return Err(invalid());
+            }
             let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
             let refuse = |code: &str| (format!("secret-result: {code}"), 1);
             if input.expected_revision != record.reference.revision {

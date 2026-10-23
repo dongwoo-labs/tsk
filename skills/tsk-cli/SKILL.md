@@ -1,6 +1,6 @@
 ---
 name: tsk-cli
-description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|steps|archive|trash|import|ask|questions|answer|route`), never the TUI.
+description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|steps|archive|trash|import|ask|questions|answer|route|secret-result`), never the TUI.
 version: 1.6.0
 ---
 
@@ -129,9 +129,19 @@ question. File a secret question; the user types the value on the board, which h
 `rejected` means the user closed the request with no value: ask again only if the key is
 still needed. On `set`, read the value only inside your own process with
 `fnox exec -- <command>` or `fnox get <KEY>` piped straight into its use, never echoed to
-output. `tsk answer` always refuses a secret question with `secret-needs-board`; only the
-board can set the value, and only the board or `tsk ui-answer`'s `reject: true` can reject
-it with no value.
+output. An external secret-input interface can also store the value through fnox. After
+that interface confirms storage to the question's fixed target, an agent or the interface can
+run `tsk secret-result <Q UUID> --file - --state-dir <Agent-dir>` with only
+`{"expected_revision":"<revision shown to the user>","result":"set"}`. This path checks
+the effective fnox config/profile's key name and records the same `set` answer. It does not
+prove a fresh write, a direct declaration, or a valid value. It does not lock fnox storage:
+a stale CAS refuses the Tsk answer but cannot undo a value already written. Keep the Q UUID,
+revision, and target fixed; never replace a stale revision and automatically resend.
+For this path, pass the stored profile explicitly to fnox (`default` when null); do not let
+`FNOX_PROFILE` choose another target. Never put a value, text, actor, or origin in the result
+JSON. Read back after an uncertain save; notification failure alone is not a reason to retry.
+`tsk answer` always refuses a secret question with `secret-needs-board`; only the board or
+`tsk ui-answer`'s `reject: true` can reject it with no value. Neither takes an external `set`.
 
 **Plan as steps.** When the user wants order of work tracked on the task: `tsk steps T12 add
 "…"` per step, in order. Do not add steps for your own bookkeeping. To fit a step into an existing
