@@ -201,6 +201,61 @@ fn a_valid_approval_and_a_plain_question_save_as_before() {
 }
 
 #[test]
+fn permission_context_survives_private_save_and_cli_readback_when_present() {
+    let dir = TempDir::new("permission-context");
+    let task = task_id(&dir);
+    let contexts = [
+        json!({
+            "cwd": "/work/project",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test", "nested": {"flags": [true, 3, null]}},
+            "task_number": 12,
+            "task_scope": "질문 보존 확인\nGoal: permission metadata 보존\nDone when: readback 일치",
+            "holds": ["배포 보류", "Keep data unchanged"]
+        }),
+        json!({
+            "cwd": null, "tool_name": "Read", "tool_input": null,
+            "task_number": 12, "task_scope": null, "holds": null
+        }),
+        Value::Null,
+    ];
+    for context in contexts {
+        let mut input = draft(&task, "question", Value::Null);
+        input["permission_context"] = context.clone();
+        let out = ask(&dir, &input);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        let saved = stdout_json(&out);
+        assert_eq!(saved["saved"]["durability"], "durable");
+        let number = saved["saved"]["record"]["reference"]["number"]
+            .as_u64()
+            .expect("question number");
+        let read = cli(&[
+            "questions",
+            &format!("Q{number}"),
+            "--json",
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(read.code, 0, "{}", read.stderr);
+        let record = stdout_json(&read);
+        assert_eq!(record["draft"]["permission_context"], context);
+        assert_eq!(record["draft"]["text"], input["text"]);
+        assert_eq!(record["answers"], json!([]));
+        let shared: Value =
+            serde_json::from_slice(&fs::read(dir.0.join("state/tsk.json")).expect("shared store"))
+                .expect("shared JSON");
+        assert!(!shared.to_string().contains("permission_context"));
+    }
+    let out = ask(&dir, &draft(&task, "question", Value::Null));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let records = questions(&dir);
+    assert_eq!(records.as_array().expect("records").len(), 4);
+    for record in &records.as_array().expect("records")[2..] {
+        assert!(record["draft"].get("permission_context").is_none());
+    }
+}
+
+#[test]
 fn an_approval_with_options_is_refused_and_saves_nothing() {
     let dir = TempDir::new("approval-options");
     let task = task_id(&dir);

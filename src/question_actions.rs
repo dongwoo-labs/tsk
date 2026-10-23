@@ -1545,6 +1545,7 @@ mod tests {
                 audience: None,
                 lead_recipient: Some("lead-x".into()),
                 secret: None,
+                permission_context: None,
             },
             created_at: std::time::SystemTime::now(),
             answers,
@@ -1713,6 +1714,7 @@ mod secret_tests {
                 audience: Some(Audience::User),
                 lead_recipient: None,
                 secret: Some(target),
+                permission_context: None,
             })
             .expect("ask secret");
         (questions, saved.record)
