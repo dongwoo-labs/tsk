@@ -253,6 +253,37 @@ fn permission_context_survives_private_save_and_cli_readback_when_present() {
     for record in &records.as_array().expect("records")[2..] {
         assert!(record["draft"].get("permission_context").is_none());
     }
+
+    let number = "123456789012345678901234567890";
+    let mut input = draft(&task, "question", Value::Null);
+    input["permission_context"] = json!({
+        "tool_name": "Bash", "task_number": 12,
+        "tool_input": {"number": "NUMBER_LITERAL"}
+    });
+    let path = dir.0.join("large-number.json");
+    fs::write(
+        &path,
+        serde_json::to_string(&input)
+            .expect("input JSON")
+            .replace("\"NUMBER_LITERAL\"", number),
+    )
+    .expect("raw numeric input");
+    let out = cli(&[
+        "ask",
+        "--file",
+        path.to_str().expect("input path"),
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.contains(number), "{}", out.stdout);
+    let read = cli(&["questions", "Q5", "--json", "--state-dir", &dir.state()]);
+    assert_eq!(read.code, 0, "{}", read.stderr);
+    assert!(read.stdout.contains(number), "{}", read.stdout);
+    let context = &stdout_json(&read)["draft"]["permission_context"];
+    for field in ["cwd", "task_scope", "holds"] {
+        assert_eq!(context.get(field), Some(&Value::Null));
+    }
 }
 
 #[test]
