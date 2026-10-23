@@ -11,6 +11,7 @@ pub mod edit;
 pub mod guide;
 pub mod import;
 pub mod list;
+pub mod notes;
 pub mod parser;
 pub mod presenter;
 pub mod questions;
@@ -72,6 +73,7 @@ where
         Some("list") => run_list(args, terminal_width),
         Some("status") => run_status(args),
         Some("edit") => run_edit(args),
+        Some("notes") => notes::run(args),
         Some("trash") => run_trash(args),
         Some("project") => run_project(args),
         Some("import") => run_import(args),
@@ -106,6 +108,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "list" => presenter::list_help(None),
             "status" => presenter::status_help(),
             "edit" => presenter::edit_help(),
+            "notes" => presenter::notes_help(),
             "trash" => presenter::trash_help(),
             "archive" => presenter::archive_help("archive"),
             "unarchive" => presenter::archive_help("unarchive"),
@@ -261,8 +264,9 @@ fn run_list(args: Vec<String>, terminal_width: Option<usize>) -> CliOutput {
         return presenter::list_help(terminal_width);
     }
     let json = input.json;
+    let projection = input.projection.clone();
     match list::run(input) {
-        Ok(result) => presenter::list(result, json, terminal_width),
+        Ok(result) => presenter::list_projected(result, json, projection, terminal_width),
         Err(error) => presenter::list_rejected(error, terminal_width),
     }
 }

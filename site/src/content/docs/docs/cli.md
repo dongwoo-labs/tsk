@@ -123,6 +123,7 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 | `tsk report` / `tsk reports` | Register or read Markdown completion reports, or list unread reports |
 | `tsk status` | Set task status |
 | `tsk edit` | Replace title, notes, or parent, or move to another project |
+| `tsk notes` | Set or remove a prefixed notes line, or append one line |
 | `tsk ask` / `tsk answer` / `tsk route` / `tsk questions` | File, answer, route, or read task-linked questions |
 | `tsk ui-answer` | Record the user's answer from another interface (not for agents) |
 | `tsk secret-result` | Record only `set` after checking the secret target's key name with fnox |
@@ -274,6 +275,21 @@ JSON returns an array with `id`, `number`, `title`, `status`, and `project`. Dir
 
 Relationship fields add `parent_task_id` (`null` for no parent), `children_done`, and `children_total` to JSON rows. Direct lookup also returns `parent` (resolved task summary or unresolved UUID) and `children` (direct child summaries). Human direct lookup shows the same relationship blocks. Counts are calculated, not saved. Direct children include archived tasks and tasks in archived projects, across all statuses and scopes; deleted tasks and notices are excluded. A Done or archived parent remains resolved.
 
+### Read one field or notes line
+
+```sh
+tsk list T12 --field id
+tsk list T12 --field steps --json
+tsk list T12 --note Now:
+tsk list T12 --note "Done when:" --json
+```
+
+`--field <name>` and `--note <prefix>` require one Task address and are mutually exclusive. They return one value, not the usual array of Task rows. `--field` accepts `id`, `number`, `project`, `status`, `title`, `notes`, `steps`, `parent_task_id`, `parent`, `children_done`, `children_total`, `children`, or `waiting_for` (an empty array when no predecessors remain). Unknown fields and conflicting options exit 2 before reading the store.
+
+Without `--json`, strings and numbers print directly with a final newline; absent values print an empty line, and arrays or objects print compact JSON. String values retain their stored newlines and are not terminal-escaped: redirect machine output rather than displaying untrusted text in a terminal. With `--json`, every result is one JSON value, including `null` for absent values.
+
+`--note` returns the trimmed value after the first matching prefix, without the prefix. Prefixes use the same rules as [`notes`](#notes): case-insensitive, with optional indentation and a leading `- `. A missing line returns `null` in JSON or an empty line in plain output. Neither option changes the existing unprojected `list` output.
+
 ## status
 
 ```sh
@@ -312,6 +328,28 @@ Each task has at most one parent, stored by UUID, not its display number. Duplic
 Blank notes clear the field. Notes preserve newlines and tabs. Use `--title=...` or `--notes=...` for values starting with `-`.
 
 Output: `edited T12 <title>`. Repeating the same values is safe.
+
+## notes
+
+```sh
+tsk notes T12 set Now: "Running CI"
+tsk notes T12 set "Done when:" "PR merged and CLI smoke passes"
+tsk notes T12 remove Blocked:
+tsk notes T12 append "PR: https://github.com/example/project/pull/12"
+tsk notes T12 append -- "- Follow up after CI"
+```
+
+Each command reads the latest notes and updates them under the existing exclusive store lock, so concurrent line commands do not overwrite other lines. `edit --notes` still replaces the whole body; do not use a stale whole-body edit alongside line commands.
+
+- `set <prefix> <text>` replaces the first matching line in place and removes further matches. If there is no match, it appends the line. The saved line is `<prefix> <text>` with outer whitespace trimmed.
+- `remove <prefix>` removes every matching line. A missing prefix is a successful no-op.
+- `append <text>` adds one line at the end. It does not deduplicate: repeating it adds another line. Read back before retrying an uncertain append.
+
+A prefix is a non-empty label ending in `:` (for example `Now:`, `Next:`, `Blocked:`, `Done when:`, or `PR:`), with no other colon or leading `- `. Matching ignores ASCII case, indentation, and an optional leading `- ` on stored lines; it matches the complete label, not longer labels. Other lines, including blank lines and their line endings, are preserved byte for byte. A replaced line retains its line ending. New lines use LF and add a separator only when needed. Removing the last line leaves no notes.
+
+Text must be non-blank and on one line. Prefixes and text reject control characters and Unicode line/paragraph separators; tabs in text are allowed. `--` ends flag parsing for dash-leading positional text. `--state-dir <dir>` and `--state-dir=<dir>` select another board, as on `edit`.
+
+Output: `notes T12 <title>` (never the note text). `set` with the same normalized value and `remove` are safe to repeat and write nothing when unchanged. Unknown or deleted tasks refuse with `unknown-task` or `soft-deleted-task` (exit 1); invalid arguments exit 2; store I/O exits 3. Done and archived tasks still in the live store can be updated, just as with `edit`; tasks moved to dated done files remain read-only.
 
 ## steps
 

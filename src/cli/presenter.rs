@@ -223,6 +223,7 @@ pub fn top_level_help() -> String {
         "  list     inspect tasks\n",
         "  status   set a task's human status\n",
         "  edit     update a task's title, notes, parent, or project\n",
+        "  notes    set or remove a prefixed notes line, or append one line\n",
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
         "  import   import Linear issues as tasks (one way)\n",
         "  report   register or read a Task completion report\n",
@@ -297,13 +298,45 @@ pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
         groups: vec![
             group("Scope", &[("-p, --project <project>", "select a project"), ("--desk", "select your desk"), ("--all", "select every scope")]),
             group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--todo, --doing", "show todo or doing tasks"), ("--done, --archived", "show done or archived tasks"), ("--history", "with --done, also older done tasks from the dated done files"), ("--deleted", "show soft-deleted and trashed tasks")]),
-            group("Output", &[("--json", "print machine-readable task rows")]),
+            group("Output", &[("--json", "print machine-readable task rows, or one projected JSON value"), ("--field <name>", "one Task field: id, number, project, status, title, notes, steps, parent_task_id, parent, children_done, children_total, children, waiting_for"), ("--note <prefix>", "first prefixed notes value (for example Now:); mutually exclusive with --field; both require one Task address; plain strings are raw, missing values print an empty line, arrays/objects print JSON; --json returns null for missing values")]),
             group("Values", &[("--state-dir <dir>", "use another board store"), ("--project=<scope>", "use equals syntax for a dash-leading project or state-dir value")]),
         ],
         examples: vec!["tsk list".into(), "tsk list T12".into(), "tsk list --all --json".into(), "tsk list --archived --all".into()],
         refusals: Vec::new(),
         exit: exit_line("tasks listed", None, true),
     })
+}
+
+pub fn notes_help() -> CliOutput {
+    help(HelpDoc {
+        usage: vec![
+            "tsk notes <task> set <prefix> <text> [--state-dir <dir>]".into(),
+            "tsk notes <task> remove <prefix> [--state-dir <dir>]".into(),
+            "tsk notes <task> append <text> [--state-dir <dir>]".into(),
+        ],
+        purpose: "Update the latest notes under the store lock, preserving other lines. Set replaces the first matching line and removes duplicates; remove deletes all matches. Append adds a line and is NOT safe to repeat blindly. Read back before retrying an uncertain append.".into(),
+        groups: vec![group("Values", &[
+            ("<prefix>", "non-empty label ending in : (Now:, Next:, Blocked:, PR:, Done when:); no other colon or leading - ; ASCII case-insensitive matching ignores indentation and optional - "),
+            ("<text>", "one non-blank line, outer whitespace trimmed; no control characters or Unicode line/paragraph separators (tabs allowed)"),
+            ("--", "end flag parsing for dash-leading positional text"),
+            ("--state-dir <dir>", "use another board store; --state-dir=<dir> accepts dash-leading paths"),
+        ])],
+        examples: vec![
+            "tsk notes T12 set Now: \"Running CI\"".into(),
+            "tsk notes T12 remove Blocked:".into(),
+            "tsk notes T12 append \"PR: https://github.com/example/project/pull/12\"".into(),
+        ],
+        refusals: vec!["unknown-task".into(), "soft-deleted-task".into()],
+        exit: exit_line("notes updated, or already had the value", Some("task refused"), true),
+    })
+}
+
+pub fn notes_usage(reason: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk notes: {}\nusage: tsk notes <task> set <prefix> <text> | remove <prefix> | append <text> [--state-dir <dir>]\n", human_reason(reason)),
+        code: 2,
+    }
 }
 
 pub fn added(result: FlagAddResult, json: bool) -> CliOutput {
@@ -371,9 +404,14 @@ pub fn usage(reason: &str) -> CliOutput {
     }
 }
 
-pub fn list(result: ListResult, json: bool, terminal_width: Option<usize>) -> CliOutput {
-    let stdout = if json {
-        list_json(&result)
+pub fn list_projected(
+    result: ListResult,
+    json: bool,
+    projection: Option<crate::cli::list::Projection>,
+    terminal_width: Option<usize>,
+) -> CliOutput {
+    let stdout = if json || projection.is_some() {
+        list_json(&result, projection, json)
     } else {
         list_human(&result, terminal_width)
     };
@@ -386,7 +424,11 @@ pub fn list(result: ListResult, json: bool, terminal_width: Option<usize>) -> Cl
 
 /// Filtered listings keep the compact row schema. A directly addressed task
 /// carries its complete readable content in a stable field order.
-fn list_json(result: &ListResult) -> String {
+fn list_json(
+    result: &ListResult,
+    projection: Option<crate::cli::list::Projection>,
+    json: bool,
+) -> String {
     if let Some(direct) = result.direct.as_ref() {
         let row = result
             .rows
@@ -424,6 +466,29 @@ fn list_json(result: &ListResult) -> String {
             children_total: row.children_total,
             children: &direct.children,
         };
+        if let Some(projection) = projection {
+            use crate::cli::list::Projection;
+            let value = match projection {
+                Projection::Field(field) => {
+                    let mut row =
+                        serde_json::to_value(direct_row).expect("direct row is serializable");
+                    row.as_object_mut()
+                        .expect("direct row is an object")
+                        .remove(&field)
+                        .unwrap_or_else(|| serde_json::json!([]))
+                }
+                Projection::Note(prefix) => direct
+                    .notes
+                    .as_deref()
+                    .and_then(|notes| crate::cli::notes::value(notes, &prefix))
+                    .map_or(serde_json::Value::Null, |value| value.into()),
+            };
+            return match value {
+                serde_json::Value::String(value) if !json => format!("{value}\n"),
+                serde_json::Value::Null if !json => "\n".into(),
+                value => format!("{value}\n"),
+            };
+        }
         return format!(
             "{}\n",
             serde_json::to_string(&[direct_row]).expect("direct list row is serializable")
