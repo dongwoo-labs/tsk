@@ -2,7 +2,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{parser::parse_task_address, CliOutput};
@@ -11,7 +11,8 @@ use crate::domain::{
     RouteDraft,
 };
 use crate::store::{
-    notify_question, question_problems, QuestionDurability, QuestionError, QuestionStore, TaskStore,
+    notify_question, question_problems, valid_secret_question, QuestionDurability, QuestionError,
+    QuestionStore, TaskStore, SECRET_SET,
 };
 
 pub fn help() -> CliOutput {
@@ -48,6 +49,14 @@ pub fn run(args: Vec<String>, stdin: &mut dyn Read) -> CliOutput {
         Ok(output) => output,
         Err((message, code)) => rejected(message, code),
     }
+}
+
+/// Only a fixed result can cross the external-secret boundary, never a value or provenance.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretResultInput {
+    expected_revision: Uuid,
+    result: String,
 }
 
 /// The arguments every question verb shares.
@@ -164,6 +173,85 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                 _ => (error.to_string(), 1),
             })?;
             let notification = notify_question(&saved, true);
+            let code = if saved.durability == QuestionDurability::Uncertain {
+                1
+            } else {
+                0
+            };
+            Ok(json(
+                &serde_json::json!({"saved": saved, "notification": notification}),
+                code,
+            ))
+        }
+        "secret-result" => {
+            let operand = operand.ok_or_else(|| ("Q number or UUID required".into(), 2))?;
+            let id = resolve(&store, &operand, None)?;
+            // Never echo serde errors: invalid data or an unknown field may be a value.
+            let invalid = || {
+                (
+                    "secret-result: invalid-input: expected only expected_revision and result set"
+                        .into(),
+                    2,
+                )
+            };
+            let bytes = read_input()?;
+            if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+                return Err(invalid());
+            }
+            let input: SecretResultInput = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if input.result != SECRET_SET {
+                return Err(invalid());
+            }
+            let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
+            let refuse = |code: &str| (format!("secret-result: {code}"), 1);
+            if input.expected_revision != record.reference.revision {
+                return Err(refuse("stale-revision"));
+            }
+            if record.reference.kind != QuestionKind::Secret {
+                return Err(refuse("secret-required"));
+            }
+            if !record.is_open() {
+                return Err(refuse("already-answered"));
+            }
+            if !valid_secret_question(&record.draft) {
+                return Err(refuse("invalid-secret"));
+            }
+            let target = record
+                .draft
+                .secret
+                .as_ref()
+                .ok_or_else(|| refuse("invalid-secret"))?;
+            if !crate::fnox::contains(&crate::fnox::binary(), target)
+                .map_err(|_| refuse("fnox-check-failed"))?
+            {
+                return Err(refuse("secret-not-found"));
+            }
+            // A fixed, machine-checked result, never arbitrary UserUi text or authority.
+            // The store rechecks the revision under its lock after the fnox lookup.
+            let saved = store
+                .answer(
+                    id,
+                    AnswerDraft {
+                        expected_revision: input.expected_revision,
+                        text: SECRET_SET.into(),
+                        actor: crate::question_actions::USER.into(),
+                        origin: AnswerOrigin::UserUi,
+                        corrects_revision: None,
+                        approve: false,
+                        confirmed: false,
+                        approval: None,
+                        user_chat: None,
+                        source: None,
+                        action: None,
+                        comment: None,
+                        reject: false,
+                    },
+                )
+                .map_err(|error| match error {
+                    QuestionError::StaleRevision => refuse("stale-revision"),
+                    _ => (error.to_string(), 1),
+                })?;
+            let notification = notify_question(&saved, false);
             let code = if saved.durability == QuestionDurability::Uncertain {
                 1
             } else {

@@ -73,7 +73,9 @@ pub fn route<S: AsRef<str>>(
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
             "import" => Surface::Import,
-            "ask" | "answer" | "route" | "questions" | "ui-answer" => Surface::Questions,
+            "ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result" => {
+                Surface::Questions
+            }
             "report" | "reports" => Surface::Reports,
             "setup" => Surface::Setup,
             "update" => Surface::Update,

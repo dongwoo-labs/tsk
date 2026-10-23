@@ -120,8 +120,9 @@ pub fn questions_help() -> CliOutput {
             "tsk route <Q-number|UUID> --file <route.json> --state-dir <Agent-dir>".into(),
             "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
             "tsk ui-answer <Q-number|UUID> --file <answer.json|-> --state-dir <Agent-dir>".into(),
+            "tsk secret-result <Q-number|UUID> --file <result.json|-> --state-dir <Agent-dir>".into(),
         ],
-        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval. ui-answer records the user's pick from another interface with origin user_ui; agents never call it. A secret question (kind secret, audience user, secret {key, profile, config}) has its value set only on the board, which hands it to fnox set and records answer `set`; the board or ui-answer can instead reject it with no value, recording answer `rejected`.".into(),
+        purpose: "Save full-text task-linked questions and append answers with expected-revision CAS. Ordinary Agent replies never issue user approval. ui-answer records the user's pick from another interface with origin user_ui; agents never call it. A secret question (kind secret, audience user, secret {key, profile, config}) can take its value on the board, which hands it to fnox set and records answer `set`. After external storage, secret-result accepts only {expected_revision, result: set}, checks the stored target's key name with fnox, and records the same fixed answer; it never takes a value. The board or ui-answer can instead reject it with no value, recording answer `rejected`.".into(),
         groups: vec![group("Options", &[
             ("--file <path>", "Full JSON question, answer, or route input; no text truncation; - reads stdin"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
@@ -133,6 +134,7 @@ pub fn questions_help() -> CliOutput {
             "Personal or implicit board, missing/corrupt private record, stale expected revision, invalid correction".into(),
             "CLI UserUi origin; Agent/imported approval; unverified user evidence or mismatched target/action/H/scope".into(),
             "secret-needs-board: answer on a secret question, or ui-answer with anything but reject; invalid secret target or shape".into(),
+            "secret-result: invalid-input (exit 2); stale-revision, secret-required, already-answered, invalid-secret, secret-not-found, fnox-check-failed (exit 1)".into(),
         ],
         exit: "0 saved/read; notification failure remains separate from save success. 1 refused/not saved/commit unknown/durability uncertain: read back before retrying. 2 usage or invalid JSON. A notified hint proves submission only, not receiver application.".into(),
     })
@@ -230,7 +232,8 @@ pub fn top_level_help() -> String {
         "  answer     append an answer or correction with expected revision\n",
         "  route      set who acts on a question (user or lead) with expected revision\n",
         "  questions  read full questions and answer history as JSON\n",
-        "  ui-answer  record the user's answer from another interface (not for agents)\n\n",
+        "  ui-answer  record the user's answer from another interface (not for agents)\n",
+        "  secret-result  record set after a name-only fnox check (no value input)\n\n",
         "Board\n",
         "  archive    keep a task off the working views\n",
         "  unarchive  put an archived task back\n",
