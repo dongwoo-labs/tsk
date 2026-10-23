@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         | Surface::List
         | Surface::Status
         | Surface::Edit
+        | Surface::Notes
         | Surface::Trash
         | Surface::Archive
         | Surface::Unarchive

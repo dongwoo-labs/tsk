@@ -1,6 +1,6 @@
 ---
 name: tsk-cli
-description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|steps|archive|trash|import|ask|questions|answer|route|secret-result`), never the TUI.
+description: Work the user's tsk task board from the command line. Use when asked to add, update, edit, start, block, finish, archive, or restore a task on the board (or "tsk", "the tsk board", "the desk"), to add or tick steps, to answer "what's on the board", "what's next", "what's on deck", "what needs me", or to refine a task ("refine T12", "let's discuss T12", "what's missing from T12", "improve / rewrite this task"). Always use the CLI (`tsk add|list|status|edit|notes|steps|archive|trash|import|ask|questions|answer|route|secret-result`), never the TUI.
 version: 1.6.0
 ---
 
@@ -45,8 +45,10 @@ alias are usage errors, not alternate spellings.
    project; unknown or ambiguous names refuse. An existing absolute directory is the only way to
    create a new project destination. `tsk edit T12 -p <project>` (or `--desk`) moves a task filed
    under the wrong scope; it resolves the destination the same way.
-3. **Read JSON, not presentation.** Always add `--json` to `tsk list`. Human output is for showing
-   the user or troubleshooting interactively. Mutation acknowledgements may be human-only: trust
+3. **Read JSON, not presentation.** Always add `--json` to `tsk list`. For one Task value, use
+   `--field <name>` or `--note <prefix>` to return that value without a Task-row array. Use
+   `tsk help list` for the field names. Omit `--json` only when a shell needs the raw scalar value.
+   Human output is for showing the user or troubleshooting interactively. Mutation acknowledgements may be human-only: trust
    the exit and refusal codes, then verify state with `tsk list … --json`.
 4. **Never blind-retry.** Read the exit code, then act (table below). `add`, `status`, `edit`,
    `archive` are idempotent; `steps toggle` and `steps remove` are not, so run
@@ -64,8 +66,11 @@ alias are usage errors, not alternate spellings.
 9. **Keep a status card at the top of the notes.** First lines `Now: <current state>`,
    `Next: <next action>` (optional), `Blocked: <what, waiting on whom>` (only while blocked), and
    `Done when: <completion condition>`; reference lines follow. Replace a card line in place
-   (`tsk list T12 --json`, then `tsk edit T12 --notes "…"` with the whole body), never append a
-   second one, and drop `Blocked:` once unblocked. The board uses one line per task by default, with a bold `×` for a non-empty
+   with `tsk notes T12 set Now: "…"`, never append a second one. Use
+   `tsk notes T12 remove Blocked:` once unblocked. These commands read and update under the store
+   lock and preserve other lines. `tsk notes T12 append "PR: <URL>"` appends a reference;
+   it is not idempotent, so read back before retrying an uncertain append. Use `set PR:` to keep
+   only one PR line. `tsk edit --notes` still replaces the full body; reserve it for a full rewrite. The board uses one line per task by default, with a bold `×` for a non-empty
    `Blocked:` line on a task not done. `v` from the board list shows or hides the second line
    for this session: the first `Blocked:` line (bold) or else the `Now:` line of a Doing task.
 

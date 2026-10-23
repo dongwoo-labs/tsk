@@ -11,10 +11,17 @@ use crate::domain::{HumanStatus, TaskScope};
 use crate::scope::resolve_permissive_project_path;
 use crate::store::{default_state_dir, TaskStore};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Projection {
+    Field(String),
+    Note(String),
+}
+
 /// Parsed `list` input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListInput {
     pub json: bool,
+    pub projection: Option<Projection>,
     pub project: Option<String>,
     pub global: bool,
     pub all: bool,
@@ -102,6 +109,7 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
 
     let mut input = ListInput {
         json: false,
+        projection: None,
         project: None,
         global: false,
         all: false,
@@ -122,6 +130,15 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
             _ => Err(format!("missing value for {name}")),
         };
         match flag {
+            "--field" | "--note" => {
+                set_projection(&mut input, flag, &value(flag)?)?;
+                index += 2;
+            }
+            flag if flag.starts_with("--field=") || flag.starts_with("--note=") => {
+                let (name, value) = flag.split_once('=').expect("matched equals flag");
+                set_projection(&mut input, name, value)?;
+                index += 1;
+            }
             flag if flag.starts_with("--project=") => {
                 input.project = Some(flag["--project=".len()..].to_owned());
                 index += 1;
@@ -189,6 +206,9 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         }
     }
 
+    if input.projection.is_some() && input.task.is_none() {
+        return Err("--field and --note require one task address".into());
+    }
     if input.task.is_some() && (input.all || input.global || input.project.is_some()) {
         return Err("task operand cannot be used with --project, --desk, or --all".into());
     }
@@ -225,6 +245,23 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
         );
     }
     Ok(input)
+}
+
+fn set_projection(input: &mut ListInput, flag: &str, value: &str) -> Result<(), String> {
+    if input.projection.is_some() {
+        return Err("use only one --field or --note".into());
+    }
+    input.projection = Some(if flag == "--note" {
+        Projection::Note(super::notes::prefix(value)?)
+    } else {
+        match value {
+            "id" | "number" | "project" | "status" | "title" | "notes" | "steps"
+            | "parent_task_id" | "parent" | "children_done" | "children_total" | "children"
+            | "waiting_for" => Projection::Field(value.to_string()),
+            _ => return Err(format!("unknown list field {value}")),
+        }
+    });
+    Ok(())
 }
 
 /// Load tasks in the requested scope and view, ordered by their displayed status groups.
