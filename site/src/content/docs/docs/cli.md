@@ -120,7 +120,7 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 
 **Trust boundary.** `ui-answer` is a local entrypoint, not authentication. Any process running as the same OS user can call it, as it can run the board. Keep agents' tool calls away from it with a hook: a Claude Code `PreToolUse` hook that refuses `tsk answer` and `tsk ui-answer` in every session but the Lead's. The Claude Code mod that shows the ask prompt calls it from its own process, outside any agent's tools.
 
-`questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task. Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
+`questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task, including a done Task already moved to the dated done files (its questions were all answered or closed). Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
 
 ## Commands
 
@@ -337,7 +337,7 @@ Each task has at most one parent, stored by UUID, not its display number. Duplic
 
 Blank notes clear the field. Notes preserve newlines and tabs. Use `--title=...` or `--notes=...` for values starting with `-`.
 
-Output: `edited T12 <title>`. Repeating the same values is safe.
+Output: `edited T12 <title>`. Repeating the same values is safe. When `--notes` leaves more than 4 KB of notes, the edit still saves and exits 0, and stderr carries one line, `tsk edit: warning: T12 notes are <size> KB, over 4 KB; …`. Notes are a status card; move logs to a PR, issue, or report.
 
 ## notes
 
@@ -359,7 +359,7 @@ A prefix is a non-empty label ending in `:` (for example `Now:`, `Next:`, `Block
 
 Text must be non-blank and on one line. Prefixes and text reject control characters and Unicode line/paragraph separators; tabs in text are allowed. `--` ends flag parsing for dash-leading positional text. `--state-dir <dir>` and `--state-dir=<dir>` select another board, as on `edit`.
 
-Output: `notes T12 <title>` (never the note text). `set` with the same normalized value and `remove` are safe to repeat and write nothing when unchanged. Unknown or deleted tasks refuse with `unknown-task` or `soft-deleted-task` (exit 1); invalid arguments exit 2; store I/O exits 3. Done and archived tasks still in the live store can be updated, just as with `edit`; tasks moved to dated done files remain read-only.
+Output: `notes T12 <title>` (never the note text). When the notes after the command pass 4 KB, it still succeeds with exit 0 and prints `tsk notes: warning: T12 notes are <size> KB, over 4 KB; …` on stderr. `set` with the same normalized value and `remove` are safe to repeat and write nothing when unchanged. Unknown or deleted tasks refuse with `unknown-task` or `soft-deleted-task` (exit 1); invalid arguments exit 2; store I/O exits 3. Done and archived tasks still in the live store can be updated, just as with `edit`; tasks moved to dated done files remain read-only.
 
 ## steps
 

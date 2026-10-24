@@ -70,7 +70,8 @@ alias are usage errors, not alternate spellings.
    `tsk notes T12 remove Blocked:` once unblocked. These commands read and update under the store
    lock and preserve other lines. `tsk notes T12 append "PR: <URL>"` appends a reference;
    it is not idempotent, so read back before retrying an uncertain append. Use `set PR:` to keep
-   only one PR line. `tsk edit --notes` still replaces the full body; reserve it for a full rewrite. The board uses one line per task by default, with a bold `×` for a non-empty
+   only one PR line. `tsk edit --notes` still replaces the full body; reserve it for a full rewrite. Past 4 KB both
+   still save (exit 0) but print a stderr `warning:`: trim the log and keep links, not history. The board uses one line per task by default, with a bold `×` for a non-empty
    `Blocked:` line on a task not done. `v` from the board list shows or hides the second line
    for this session: the first `Blocked:` line (bold) or else the `Now:` line of a Doing task.
 

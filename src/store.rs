@@ -903,7 +903,9 @@ impl TaskStore {
         filesystem: &F,
         keep: Duration,
     ) -> Result<(), StoreError> {
-        let eligible = state.done_archive_eligible(SystemTime::now(), keep);
+        let eligible = state.done_archive_eligible(SystemTime::now(), keep, |question| {
+            questions::reference_is_open(&self.path, question)
+        });
         if eligible.is_empty() {
             return Ok(());
         }
@@ -2632,6 +2634,108 @@ mod tests {
         assert!(board.get(old).is_none(), "the board forgets the moved task");
         assert!(store.load().expect("reload").get(old).is_none());
         assert_eq!(store.load_done_history().expect("history").len(), 1);
+    }
+
+    #[test]
+    fn only_an_open_question_keeps_an_old_done_task_live() {
+        use crate::domain::{AnswerDraft, AnswerOrigin, Audience, QuestionDraft, QuestionKind};
+        let dir = temp_dir("done-files-questions");
+        let _guard = TempDirGuard(dir.clone());
+        let store = TaskStore::new(&dir);
+        let mut seed = DomainState::new();
+        let create = |state: &mut DomainState, title: &str| {
+            state
+                .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
+                .expect("create")
+        };
+        let answered = create(&mut seed, "old done, question answered");
+        let waiting = create(&mut seed, "old done, question still open");
+        let unreadable = create(&mut seed, "old done, record unreadable");
+        store.save(&seed).expect("seed");
+        let questions = QuestionStore::new(dir.clone()).expect("agent store");
+        let ask = |task_id: Uuid| {
+            questions
+                .ask(QuestionDraft {
+                    task_id,
+                    kind: QuestionKind::Question,
+                    summary: "which one".into(),
+                    origin_thread: "thr-a".into(),
+                    recipient: "lead-a".into(),
+                    text: "Which one?".into(),
+                    options: Vec::new(),
+                    recommendation: None,
+                    impact: None,
+                    blocking_scope: None,
+                    approval: None,
+                    finding: None,
+                    source: None,
+                    audience: Some(Audience::User),
+                    lead_recipient: None,
+                    secret: None,
+                    permission_context: None,
+                })
+                .expect("ask")
+                .record
+        };
+        let closed = ask(answered);
+        ask(waiting);
+        let lost = ask(unreadable);
+        questions
+            .answer(
+                closed.reference.id,
+                AnswerDraft {
+                    expected_revision: closed.reference.revision,
+                    text: "the first".into(),
+                    actor: "user".into(),
+                    origin: AnswerOrigin::UserUi,
+                    corrects_revision: None,
+                    approve: false,
+                    confirmed: false,
+                    approval: None,
+                    user_chat: None,
+                    source: None,
+                    action: None,
+                    comment: None,
+                    reject: false,
+                },
+            )
+            .expect("answer");
+        fs::remove_file(
+            dir.join("questions-private")
+                .join(format!("{}.json", lost.reference.revision)),
+        )
+        .expect("lose the record");
+        let mut state = store.load().expect("load");
+        for id in [answered, waiting, unreadable] {
+            state.set_status(id, HumanStatus::Done).expect("done");
+        }
+        store.save(&state).expect("save done");
+        backdate_done(&dir, &[answered, waiting, unreadable], 3);
+
+        let state = store.load().expect("load backdated");
+        store.save(&state).expect("save moves");
+
+        let live = store.load().expect("reload");
+        assert!(
+            live.get(answered).is_none(),
+            "a done task whose questions are all closed moves to its dated file"
+        );
+        assert!(
+            live.get(waiting).is_some(),
+            "an open question keeps it live"
+        );
+        assert!(
+            live.get(unreadable).is_some(),
+            "a record that cannot be read counts as open"
+        );
+        assert_eq!(live.questions().len(), 3, "every reference stays");
+        let moved = store.load_done_history().expect("history");
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].task.id, answered);
+        // The closed question still reads back and names the moved task.
+        let record = questions.read(closed.reference.id).expect("read closed");
+        assert_eq!(record.reference.task_id, answered);
+        assert!(!record.is_open());
     }
 
     #[test]

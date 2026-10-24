@@ -132,17 +132,26 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         state_dir.ok_or_else(|| ("explicit Agent state directory required".into(), 1))?;
     let store = QuestionStore::new(state_dir.clone()).map_err(|error| (error.to_string(), 1))?;
     let task_id = if let Some(address) = task {
-        let state = TaskStore::new(&state_dir)
-            .load()
-            .map_err(|_| ("task store unavailable".into(), 1))?;
-        Some(
-            state
-                .tasks()
-                .iter()
-                .find(|task| address.matches(task))
-                .ok_or_else(|| ("unknown task".into(), 1))?
-                .id,
-        )
+        let tasks = TaskStore::new(&state_dir);
+        let unavailable = |_| ("task store unavailable".to_string(), 1);
+        let live = tasks.load().map_err(unavailable)?;
+        let found = live
+            .tasks()
+            .iter()
+            .find(|task| address.matches(task))
+            .map(|task| task.id);
+        // A done task whose questions are all closed may have moved to the done files;
+        // its questions still name it.
+        let found = match found {
+            Some(id) => Some(id),
+            None => tasks
+                .load_done_history()
+                .map_err(unavailable)?
+                .into_iter()
+                .find(|line| address.matches(&line.task))
+                .map(|line| line.task.id),
+        };
+        Some(found.ok_or_else(|| ("unknown task".to_string(), 1))?)
     } else {
         None
     };

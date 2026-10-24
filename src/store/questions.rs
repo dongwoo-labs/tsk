@@ -468,39 +468,11 @@ impl QuestionStore {
     }
 
     fn private_directory(&self) -> Result<PathBuf, QuestionError> {
-        let directory = self.path().join(PRIVATE_DIR);
-        if let Ok(metadata) = fs::symlink_metadata(&directory) {
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(QuestionError::PrivateRecordUnavailable);
-            }
-        }
-        Ok(directory)
+        private_directory(self.path())
     }
 
     fn read_private(&self, reference: &QuestionRef) -> Result<QuestionRecord, QuestionError> {
-        let file = self
-            .private_directory()?
-            .join(format!("{}.json", reference.revision));
-        let metadata =
-            fs::symlink_metadata(&file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
-            return Err(QuestionError::PrivateRecordUnavailable);
-        }
-        let content = fs::read(file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
-        let record: QuestionRecord = serde_json::from_slice(&content)
-            .map_err(|_| QuestionError::PrivateRecordUnavailable)?;
-        if record.reference != *reference
-            || record.draft.task_id != reference.task_id
-            || record.draft.kind != reference.kind
-            || record.draft.summary != reference.summary
-            || record
-                .head_revision()
-                .is_some_and(|revision| revision != reference.revision)
-        {
-            return Err(QuestionError::PrivateRecordUnavailable);
-        }
-        validate_question(&record.draft).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
-        Ok(record)
+        read_private(self.path(), reference)
     }
 
     fn commit(
@@ -593,6 +565,51 @@ impl QuestionStore {
             }
         }
     }
+}
+
+fn private_directory(state_dir: &Path) -> Result<PathBuf, QuestionError> {
+    let directory = state_dir.join(PRIVATE_DIR);
+    if let Ok(metadata) = fs::symlink_metadata(&directory) {
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(QuestionError::PrivateRecordUnavailable);
+        }
+    }
+    Ok(directory)
+}
+
+fn read_private(
+    state_dir: &Path,
+    reference: &QuestionRef,
+) -> Result<QuestionRecord, QuestionError> {
+    let file = private_directory(state_dir)?.join(format!("{}.json", reference.revision));
+    let metadata =
+        fs::symlink_metadata(&file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(QuestionError::PrivateRecordUnavailable);
+    }
+    let content = fs::read(file).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+    let record: QuestionRecord =
+        serde_json::from_slice(&content).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+    if record.reference != *reference
+        || record.draft.task_id != reference.task_id
+        || record.draft.kind != reference.kind
+        || record.draft.summary != reference.summary
+        || record
+            .head_revision()
+            .is_some_and(|revision| revision != reference.revision)
+    {
+        return Err(QuestionError::PrivateRecordUnavailable);
+    }
+    validate_question(&record.draft).map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+    Ok(record)
+}
+
+/// Whether the question `reference` names is still waiting for an answer. A record that
+/// cannot be read counts as open: a done task it names stays in `tsk.json`.
+pub(super) fn reference_is_open(state_dir: &Path, reference: &QuestionRef) -> bool {
+    read_private(state_dir, reference)
+        .ok()
+        .is_none_or(|record| record.is_open())
 }
 
 fn now() -> std::time::SystemTime {

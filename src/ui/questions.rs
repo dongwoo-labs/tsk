@@ -239,6 +239,9 @@ pub struct QuestionsState {
     /// comment row (or `m`), kept until approve or reject saves it beside the decision or
     /// the record closes.
     pub comments: BTreeMap<Uuid, String>,
+    /// Tasks the records name that already moved to the dated done files, by id. Read-only:
+    /// the page shows them and `t` points at `tsk list`, nothing opens them for editing.
+    pub moved: BTreeMap<Uuid, Task>,
 }
 
 /// One questions-tab action. Pure moves apply on [`QuestionsState`]; the rest go through
@@ -1080,6 +1083,15 @@ pub fn page_rows(
                 task.board_identifier().unwrap_or_default(),
                 task.title
             )
+        })
+        .or_else(|| {
+            state.moved.get(&record.reference.task_id).map(|task| {
+                format!(
+                    "{} {} · moved to done history",
+                    task.board_identifier().unwrap_or_default(),
+                    task.title
+                )
+            })
         })
         .unwrap_or_else(|| format!("{} not found", record.reference.task_id));
     let at = page.rows.len();

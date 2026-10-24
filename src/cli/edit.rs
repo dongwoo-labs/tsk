@@ -28,6 +28,8 @@ pub struct EditFields {
 pub struct EditResult {
     pub number: u64,
     pub title: String,
+    /// Size of the stored notes after an edit that supplied `--notes`, else `None`.
+    pub notes_bytes: Option<usize>,
 }
 
 /// An edit failure after parsing and before presenting output.
@@ -182,6 +184,10 @@ fn apply(
     } else {
         (next_title, next_notes)
     };
+    let notes_bytes = fields
+        .notes
+        .is_some()
+        .then(|| next_notes.as_ref().map_or(0, String::len));
     let next_scope = scope.unwrap_or_else(|| found.scope.clone());
     if next_scope != found.scope {
         if let TaskScope::Project { path } = &next_scope {
@@ -224,6 +230,7 @@ fn apply(
             Ok(EditResult {
                 number,
                 title: found.title,
+                notes_bytes,
             }),
             false,
         );
@@ -243,6 +250,7 @@ fn apply(
             Ok(EditResult {
                 number,
                 title: found.title,
+                notes_bytes,
             }),
             true,
         );
@@ -258,6 +266,7 @@ fn apply(
             Ok(EditResult {
                 number,
                 title: next_title,
+                notes_bytes,
             }),
             true,
         ),

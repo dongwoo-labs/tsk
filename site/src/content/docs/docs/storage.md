@@ -62,7 +62,7 @@ After an upgrade, the first board open adds one `What's new in tsk` task to your
 
 ## Older done tasks
 
-A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while an undo entry or a question still names it, or while a task that stays live names it as parent. Its number is never reused.
+A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while an undo entry or an open question still names it, or while a task that stays live names it as parent. Answered and closed questions do not hold it: their records stay readable and still name the moved task (a record that cannot be read counts as open). Its number is never reused.
 
 ```sh
 tsk list --done --history --all

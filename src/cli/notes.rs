@@ -36,17 +36,18 @@ pub fn run(args: Vec<String>) -> CliOutput {
         let number = task.number.expect("loaded tasks have numbers");
         let title = task.title.clone();
         let changed = next != task.notes;
+        let bytes = next.as_ref().map_or(0, String::len);
         if changed {
             state
                 .edit(task.id, &title, next, task.scope.clone())
                 .map_err(|error| error.to_string())?;
         }
-        Ok((Ok((number, title)), changed))
+        Ok((Ok((number, title, bytes)), changed))
     });
     match result {
-        Ok(Ok((number, title))) => CliOutput {
+        Ok(Ok((number, title, bytes))) => CliOutput {
             stdout: format!("notes T{number} {}\n", crate::ui::terminal_text(&title)),
-            stderr: String::new(),
+            stderr: presenter::notes_size_warning("notes", number, bytes),
             code: 0,
         },
         Ok(Err(code)) => CliOutput {
