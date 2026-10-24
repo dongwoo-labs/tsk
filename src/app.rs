@@ -107,7 +107,7 @@ fn load_board_inner(
     let mut model = BoardModel::from_domain_for_snapshot(&state, &snapshot);
     if full_board_open {
         model.offer_launch_card(&state, &snapshot);
-        model.set_question_feed(crate::question_actions::load_feed());
+        crate::question_actions::refresh_feed(&mut model);
         model.set_report_feed(crate::report_actions::load_feed(store.path()));
         model.stall_mut().enabled = crate::stall::inside_herdr();
     }
@@ -928,7 +928,7 @@ pub fn revalidate_board_from_store(
     domain.merge_tasks_from_disk(&disk);
     model.sync_from_domain(domain);
     // Question writes move the shared references in the same file: re-read the snapshot.
-    model.set_question_feed(crate::question_actions::load_feed());
+    crate::question_actions::refresh_feed(model);
     watch.record(signature);
     true
 }
@@ -1798,7 +1798,7 @@ fn handle_board_intent(
         return Ok(false);
     }
     if intent == BoardIntent::SelectNavTab(NavTab::Questions) && !save_recovery.is_pending() {
-        model.set_question_feed(crate::question_actions::load_feed());
+        crate::question_actions::refresh_feed(model);
     }
     if intent == BoardIntent::SelectNavTab(NavTab::Reports) && !save_recovery.is_pending() {
         model.set_report_feed(crate::report_actions::load_feed(store.path()));

@@ -1383,12 +1383,13 @@ impl DomainState {
     /// Done tasks eligible to move to the dated done files, with each task's `done_at`
     /// (its last `completed` event, else `updated_at`). A task moves when it is done,
     /// not deleted, not a notice, already numbered, done for longer than `keep`, no undo
-    /// entry targets it, no question reference names it, and no task that stays live
-    /// names it as parent.
+    /// entry targets it, no question that `open` calls open names it, and no task that
+    /// stays live names it as parent. `open` runs only for questions on such a task.
     pub(crate) fn done_archive_eligible(
         &self,
         now: SystemTime,
         keep: Duration,
+        open: impl Fn(&super::QuestionRef) -> bool,
     ) -> Vec<(SystemTime, Task)> {
         let targeted: BTreeSet<Uuid> = self
             .undo_stack
@@ -1396,7 +1397,6 @@ impl DomainState {
             .flat_map(UndoEntry::targets)
             .map(|(id, _)| id)
             .collect();
-        let asked: BTreeSet<Uuid> = self.questions.iter().map(|q| q.task_id).collect();
         let mut eligible: BTreeSet<Uuid> = self
             .tasks
             .iter()
@@ -1406,13 +1406,21 @@ impl DomainState {
                     && !task.is_notice()
                     && task.number.is_some()
                     && !targeted.contains(&task.id)
-                    && !asked.contains(&task.id)
                     && now
                         .duration_since(done_at(task))
                         .is_ok_and(|age| age > keep)
             })
             .map(|task| task.id)
             .collect();
+        // A closed question keeps its reference and finds the task in the done files; only
+        // a question still waiting holds the task live.
+        let waiting: BTreeSet<Uuid> = self
+            .questions
+            .iter()
+            .filter(|question| eligible.contains(&question.task_id) && open(question))
+            .map(|question| question.task_id)
+            .collect();
+        eligible.retain(|id| !waiting.contains(id));
         // A parent leaves only after every child that names it has left, and a predecessor
         // leaves only after every live task that still waits on it has left (or itself left).
         loop {

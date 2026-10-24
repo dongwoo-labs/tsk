@@ -285,3 +285,33 @@ fn notes_help_routes_through_binary_and_help_command() {
         assert!(String::from_utf8_lossy(&direct.stdout).contains(word));
     }
 }
+
+#[test]
+fn notes_past_four_kb_still_save_and_warn_on_stderr() {
+    let board = Board::new("Now: small");
+    assert_eq!(
+        board.ok(&["notes", "T1", "set", "Now:", "still small"]),
+        "notes T1 notes target\n"
+    );
+    let log = "x".repeat(4100);
+    let output = board.run(&["notes", "T1", "append", &log]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "notes T1 notes target\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.starts_with("tsk notes: warning: T1 notes are 4.0 KB, over 4 KB;"),
+        "{stderr}"
+    );
+    assert!(board.detail()["notes"].as_str().unwrap().ends_with(&log));
+    let output = board.run(&["edit", "T1", "--notes", &format!("Now: rewritten\n{log}")]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("tsk edit: warning: T1 notes are"));
+    // A title-only edit and a rewrite back under the limit say nothing.
+    let output = board.run(&["edit", "T1", "--title", "renamed"]);
+    assert!(output.status.success() && output.stderr.is_empty());
+    let output = board.run(&["edit", "T1", "--notes", "Now: short again"]);
+    assert!(output.status.success() && output.stderr.is_empty());
+}

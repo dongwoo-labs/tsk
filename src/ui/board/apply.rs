@@ -2465,6 +2465,15 @@ pub(crate) fn open_task_from_questions(
         model.set_message(DIRTY_TASK_SWITCH_REFUSAL);
         return;
     }
+    if domain.get(task).is_none() {
+        if let Some(moved) = model.questions.moved.get(&task) {
+            let label = moved.board_identifier().unwrap_or_default();
+            model.set_message(format!(
+                "{label} moved to done history \u{b7} read it with tsk list {label}"
+            ));
+            return;
+        }
+    }
     if domain.get(task).is_none_or(|found| found.soft_deleted) {
         model.set_message(related_not_found(task));
         return;

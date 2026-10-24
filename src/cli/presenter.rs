@@ -1255,9 +1255,28 @@ pub fn edited(result: EditResult) -> CliOutput {
             result.number,
             terminal_text(&result.title)
         ),
-        stderr: String::new(),
+        stderr: result
+            .notes_bytes
+            .map(|bytes| notes_size_warning("edit", result.number, bytes))
+            .unwrap_or_default(),
         code: 0,
     }
+}
+
+/// Notes above this size read as a log, not a status card.
+pub const NOTES_WARN_BYTES: usize = 4096;
+
+/// A one-line stderr nudge after a successful write whose notes outgrew a status card;
+/// empty at or below [`NOTES_WARN_BYTES`]. The write itself already succeeded.
+pub fn notes_size_warning(command: &str, number: u64, bytes: usize) -> String {
+    if bytes <= NOTES_WARN_BYTES {
+        return String::new();
+    }
+    format!(
+        "tsk {command}: warning: T{number} notes are {:.1} KB, over {} KB; keep them a short status card and move the log to a PR, issue, or report\n",
+        bytes as f64 / 1024.0,
+        NOTES_WARN_BYTES / 1024
+    )
 }
 
 pub fn edit_usage(reason: &str) -> CliOutput {

@@ -6,6 +6,8 @@
 //! revision (or reads the record back first when the commit itself is unknown). Nothing
 //! here retries a write or recreates a task.
 
+use std::collections::BTreeSet;
+
 use uuid::Uuid;
 
 use crate::domain::{
@@ -41,7 +43,36 @@ pub fn load_feed() -> QuestionFeed {
 }
 
 fn reload(model: &mut BoardModel) {
+    refresh_feed(model);
+}
+
+/// Re-read the question records, and the moved done tasks they name that the session has
+/// not read yet. Moved tasks never change, so the done files are read only for a new one.
+pub fn refresh_feed(model: &mut BoardModel) {
     model.set_question_feed(load_feed());
+    let missing: BTreeSet<Uuid> = model
+        .questions()
+        .feed
+        .records()
+        .iter()
+        .map(|record| record.reference.task_id)
+        .filter(|id| {
+            !model.loaded_tasks().iter().any(|task| task.id == *id)
+                && !model.questions().moved.contains_key(id)
+        })
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let Ok(history) = TaskStore::new(default_state_dir()).load_done_history() else {
+        return;
+    };
+    let moved = &mut model.questions_mut().moved;
+    for line in history {
+        if missing.contains(&line.task.id) {
+            moved.insert(line.task.id, line.task);
+        }
+    }
 }
 
 fn reload_tasks(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -1459,6 +1490,46 @@ mod tests {
             state.get(created).map(|task| &task.scope),
             Some(&TaskScope::Global)
         );
+    }
+
+    #[test]
+    fn a_question_on_a_moved_done_task_still_names_it_and_t_points_at_tsk_list() {
+        let mut history = DomainState::new();
+        let id = history
+            .create("shipped", None, TaskScope::Global, ProvenanceOrigin::Manual)
+            .expect("task");
+        history.assign_numbers_for_persistence();
+        let moved = history.get(id).expect("task").clone();
+        let label = moved.board_identifier().expect("numbered");
+        let mut record = finding(Vec::new(), Vec::new());
+        record.reference.task_id = id;
+        record.draft.task_id = id;
+        // The live board no longer holds the task: it moved to the done files.
+        let live = DomainState::new();
+        let mut model = BoardModel::from_domain(&live, None);
+        model.set_question_feed(QuestionFeed::Loaded(vec![record.clone()]));
+        model.questions_mut().moved.insert(id, moved);
+        model.questions_mut().active = true;
+        let page = crate::ui::questions::page_rows(model.questions(), &record, &[], 80)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            page.contains(&format!("{label} shipped · moved to done history")),
+            "{page}"
+        );
+        crate::ui::board::open_task_from_questions(
+            &live,
+            &mut model,
+            id,
+            Some(record.reference.id),
+        );
+        assert_eq!(
+            model.message(),
+            Some(format!("{label} moved to done history · read it with tsk list {label}").as_str())
+        );
+        assert!(model.questions().active, "the questions tab stays");
     }
 
     #[test]

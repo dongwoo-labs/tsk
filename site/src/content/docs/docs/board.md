@@ -133,7 +133,7 @@ An option written as two lines (`label` then a newline and what picking it leads
 | `Esc` | In a field, leave it (the draft stays); otherwise back to the list; at the list, quit |
 | `m` | The approval's comment row, as picking it does |
 | `c` | Correct a saved answer; it becomes a new revision |
-| `t` | Open the record's task; `Esc` returns to the record |
+| `t` | Open the record's task; `Esc` returns to the record. A task already moved to done history opens nothing and the status row names `tsk list T<n>` |
 | `o` | Focus the record's origin thread in Herdr, including closed and lead-addressed records; no live agent or several with that exact name focuses nothing |
 | `r` | Resend the lead request of a create-and-run finding |
 | `J` / `K` | Next or previous record in list order |
