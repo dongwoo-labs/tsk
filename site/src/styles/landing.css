@@ -730,6 +730,21 @@ html[data-theme="light"] .pane {
   color: var(--ink);
 }
 
+.tsk-row.has-live {
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.tsk-live {
+  flex: 0 0 100%;
+  text-align: left;
+}
+
+.tsk-live-line {
+  display: block;
+  white-space: pre;
+}
+
 .tsk-row-main {
   min-width: 0;
   overflow: hidden;
@@ -888,6 +903,28 @@ html[data-theme="light"] .pane {
   color: var(--dim);
 }
 
+/* The Filter / View picker's `threads · @assignees` tab row. */
+.tsk-filter-tabs {
+  display: flex;
+  gap: 1ch;
+  padding: 0.3rem 1ch 0.2rem;
+  border-bottom: 1px solid var(--dim);
+}
+
+.tsk-filter-tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0 1ch;
+  cursor: pointer;
+}
+
+.tsk-filter-tab.is-on {
+  font-weight: 700;
+}
+
 .tsk-pal-row {
   padding: 0.05rem 1ch;
   white-space: pre;
@@ -961,11 +998,12 @@ html[data-theme="light"] .pane {
   color: var(--ink);
 }
 
+/* One row: the demo drops whole hints to fit, as the app does, so nothing wraps or clips. */
 .tsk-verbs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.15rem 0;
+  flex-wrap: nowrap;
   white-space: pre;
+  overflow: hidden;
 }
 
 .tsk-verb:hover {
@@ -1192,13 +1230,13 @@ html[data-theme="light"] .pane {
   margin-bottom: 0;
 }
 
+/* The crumb, then the keys, drop whole when the row is short; the hint is never cut. */
 .tsk-stage-hint {
   flex: 1 1 auto;
   min-width: 0;
   text-align: right;
   white-space: pre;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ── demo: the two layouts (beside an agent · full terminal) ─────────────── */
@@ -2371,6 +2409,11 @@ html[data-theme="light"] .pane {
   color: var(--accent);
 }
 
+.foot-links a.foot-gh {
+  width: auto;
+  font-size: 0.82rem;
+}
+
 .foot-links svg {
   width: 1.1rem;
   height: 1.1rem;
@@ -2714,6 +2757,11 @@ html[data-theme="light"] .pane {
 .tsk-page-meta { flex: none; min-height: 1lh; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tsk-page-meta .tsk-meta-selected { color: var(--bg); background: var(--ink); }
 .tsk-steps { margin-top: 2lh; }
+.tsk-trail { margin-top: 1lh; }
+.tsk-trail-heading { display: block; font: inherit; color: inherit; border: 0; background: none; padding: 0; text-align: left; cursor: pointer; }
+.tsk-page-block > span { display: block; white-space: pre; }
+.tsk-page-block-rule { height: 1px; margin: 0.25rem 2ch 1lh 0; background: var(--line-2); }
+.tsk-trail-entry { white-space: pre-wrap; overflow-wrap: anywhere; }
 .tsk-step { display: flex; align-items: start; cursor: pointer; }
 .tsk-step-glyph { flex: none; white-space: pre; }
 .tsk-step-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
@@ -2725,7 +2773,18 @@ html[data-theme="light"] .pane {
 .tsk-step { margin-left: -2ch; }
 .tsk-step-text > span { display: block; white-space: pre; }
 .tsk-step-add { white-space: pre; margin-left: -2ch; }
-.tsk-page-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tsk-page-meta { white-space: pre; overflow: visible; margin-right: -2ch; }
+.tsk-meta-row { display: block; }
+.tsk-task-column { position: relative; }
+.tsk-task-column .tsk-task-surface.tsk-page { padding-bottom: 1lh; scrollbar-width: none; }
+.tsk-task-surface.tsk-page::-webkit-scrollbar { display: none; }
+.tsk-step-add { display: block; height: 1lh; line-height: inherit; }
+.tsk-page-scrollbar { position: absolute; right: 0; width: 1ch; pointer-events: none; white-space: pre; }
+.tsk-page-scrollbar > span { display: block; height: 1lh; }
+.board:has(.tsk-task-column) > .tsk-foot { flex: none; padding-top: 0; margin-top: 0; }
+.board:has(.tsk-task-column) > .tsk-foot .foot-rule { height: 1lh; margin: 0; background: linear-gradient(var(--line-2),var(--line-2)) center / 100% 1px no-repeat; }
+.board:has(.tsk-task-column) > .tsk-foot .tsk-verbs { height: 1lh; flex-wrap: nowrap; overflow: hidden; gap: 0; }
+.board:has(.tsk-task-column) > .tsk-foot .foot { font-size: inherit; line-height: inherit; }
 .tsk-task-column.is-narrow .tsk-task-rule { flex: none; height: 1lh; margin: 0; background: linear-gradient(var(--line-2), var(--line-2)) center / 100% 1px no-repeat; }
 
 .tsk-page-notes > span { display: block; white-space: pre; }
@@ -2843,7 +2902,7 @@ html[data-theme="light"] .pane {
 .tsk-q-row { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
 .tsk-q-row > span { display: block; white-space: pre; }
 .tsk-q-page { padding-top: 1lh; }
-.tsk-q-line { white-space: pre; min-height: 1lh; }
+.tsk-q-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1lh; }
 .tsk-q-line[data-q-option], .tsk-q-line[data-q-check], .tsk-q-line[data-q-key], .tsk-q-group[data-q-key] { cursor: pointer; }
 .tsk-q-line.is-chosen { color: var(--bg); background: var(--ink); width: max-content; max-width: 100%; }
 .tsk-q-line.is-chosen:has(input) { color: inherit; background: none; display: flex; width: auto; }
@@ -2863,3 +2922,4 @@ button.tsk-sec {
 button.tsk-sec:hover {
   color: var(--ink);
 }
+.tsk-task-column:not(.is-narrow) .tsk-page-meta { padding-right: 0; margin-right: 0; }

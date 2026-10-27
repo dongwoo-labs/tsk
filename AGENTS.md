@@ -33,16 +33,22 @@ For scriptable board work use `tsk add`, `tsk list`, `tsk status`, `tsk edit`,
 
 ### Product reference
 
+Docs pages live in `site/src/content/docs/docs/`.
+
 | Topic | Source of truth |
 | --- | --- |
-| Board surfaces, tabs, drawer, archive, wide slider | `site/src/content/docs/docs/board.md` |
-| Task page, editing, steps | `task-page.md`, `steps.md` |
+| Board surfaces, tabs, drawer, archive, wide slider | `board.md` |
+| Task page, editing, steps, block and review sections, paper trail | `task-page.md`, `steps.md` |
 | Quick-add and `tsk capture` | `capture.md` |
 | Every key of every surface | `keys.md`, code in `src/ui/input.rs` |
-| CLI verbs, exit codes, error codes | `cli.md`, code in `src/cli/`, glossary in `CONTEXT.md` |
-| Storage, env vars, update check | `storage.md` |
-| Install, Homebrew, `tsk setup herdr` | `install.md`, `packaging/README.md` |
+| CLI verbs, exit codes, error codes | `cli.md`, code in `src/cli/` |
+| Terms | `CONTEXT.md` |
+| Storage, env vars, update check, `config.toml` profiles, backups | `storage.md` |
+| Assignee, dispatch, cleanup | `dispatch.md`, code in `src/dispatch.rs` |
+| Install, Homebrew, `tsk setup herdr` | `install.md` |
+| Packaging, release steps, installer contracts | `packaging/README.md` |
 | Agent skill | `skills/tsk-cli/SKILL.md` (`tsk guide`, `/docs/agents/`) |
+| Coordinator skill | `skills/tsk-coordinator/SKILL.md` (`/docs/coordinator/`) |
 | Exact rendered output | golden fixtures in `tests/fixtures/` (`tests/queue_board_render.rs`) |
 
 If the docs and the code disagree, the code is the bug or the docs are; fix one in the
@@ -53,10 +59,20 @@ same PR, never leave them apart.
 | Path | What |
 | --- | --- |
 | `src/app.rs` | keyboard boundary, save recovery allowlist |
-| `src/ui/` | chrome: `board/` (model · apply · commands · chrome · draw), `input`, `mouse`, `render`, `edit` (the one wrap engine), `markdown` |
+| `src/ui/` | chrome: `input`, `mouse`, `render`, `edit` (the one wrap engine), `markdown`, `queue` (board sections), `tier` (width tiers, wide stage) |
+| `src/ui/board/` | board model · apply · commands · chrome · draw; `block` (block and review cards), `cleanup_card`, `dispatch_card`, `launch_card`, `selector` (shared option cursor) |
 | `src/cli/` | headless verbs, `parser`, `router`, `presenter` |
-| `src/store.rs`, `src/domain/` | `tsk.json` format, migrations, trash |
-| `src/setup.rs`, `src/setup/`, `src/setup_agent.rs` | `tsk setup herdr`, agent skill install |
+| `src/store.rs`, `src/domain/` | `tsk.json` format, migrations, trash; `domain/` holds `after`, `block` (blocks, reviews, replies), `undo`, `events` |
+| `src/activity.rs` | paper trail entries for the task page and `tsk list T12` |
+| `src/backup.rs` | git backups and the versions `tsk restore` picks from |
+| `src/agents.rs` | `config.toml` profile loader, prompt/argv rendering, starter seed |
+| `src/dispatch.rs`, `src/dispatch/pr.rs` | dispatch and cleanup engine behind a `DispatchHost` seam (git, herdr, and `gh` calls), cleanup guardrails, pull request merge |
+| `src/git_base.rs` | dispatch base branches, resolved in the task's repository |
+| `src/context.rs`, `src/scope.rs` | invocation context from Herdr and the cwd, project path resolution |
+| `src/save_recovery.rs` | retry or cancel of one failed save |
+| `src/fsperm.rs` | private file modes for the state directory |
+| `src/setup.rs`, `src/setup/`, `src/setup_agent.rs` | `tsk setup herdr`, agent skill install (`tsk-cli` and `tsk-coordinator`) |
+| `src/board_pane.rs` | `--find-board-pane` lookup for the launchers |
 | `src/guides.rs`, `src/announcements.rs`, `src/delivery.rs` | seeded notice tasks |
 | `src/update.rs` | release check, `tsk update` |
 | `scripts/open-board.sh`, `scripts/open-capture.sh`, `scripts/*.ps1` | Herdr launchers (embedded via `src/setup.rs`) |
@@ -66,64 +82,89 @@ same PR, never leave them apart.
 
 ## Build, test, verify
 
-- Build: `cargo build --release`. `herdr-plugin.toml` launches `./target/release/tsk`;
-  rebuild before live smoke. A running board keeps the old binary until you quit it.
-- Test: `cargo test` (plain, parallel; 1000+ tests, well under a minute warm).
-- Green bar, run once at the end as a single chain, not after every edit:
-  `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-  (under a minute warm, about three after a lib change). CI runs the same chain plus the
-  release build and is the gate that matters. Add `cargo build --release` only before a
-  live smoke or packaging work.
-- Before starting it, `pgrep -lx 'cargo|rustc'` must print nothing; a second cargo holds the
-  `target/` lock. Wait, do not kill a process you did not start.
-- Integration suites share `tests/integration.rs`; run one with
-  `cargo test --test integration <module>::`. Six process-state-mutating suites retain
+| Job | Command |
+| --- | --- |
+| Build | `cargo build --release` |
+| Test | `cargo test` (plain, parallel; 1000+ tests, well under a minute warm) |
+| Green bar | `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` |
+| One integration suite | `cargo test --test integration <module>::` |
+| Targeted run | `cargo test --lib` or `cargo test --test <name>` |
+| Regenerate golden fixtures | `cargo test --test integration queue_board_render::regenerate_golden_fixtures -- --ignored` |
+| Packaging tests | `python3 -m unittest discover -s tests/packaging` (Python 3.11+) |
+| Site | `npm ci && npm test && npm run build` in `site/` |
+
+### Run the green bar
+
+1. `pgrep -lx 'cargo|rustc'` must print nothing: a second cargo holds the `target/` lock.
+   Wait; do not kill a process you did not start.
+2. Run the green bar once at the end, as a single chain, not after every edit. It takes
+   under a minute warm, about three after a lib change.
+3. Add `cargo build --release` only before a live smoke or packaging work.
+
+CI runs the same chain plus the release build and is the gate that matters.
+
+### Rules
+
+- `herdr-plugin.toml` launches `./target/release/tsk`: rebuild before live smoke. A running
+  board keeps the old binary until you quit it.
+- `cargo test <filter>` still compiles every test binary; use `--lib` or `--test <name>`.
+- Integration suites share `tests/integration.rs`. Six process-state-mutating suites keep
   dedicated targets, as do `queue_board_bench` and the site's `demo_parity` reference
-  generator (so parity jobs do not compile unrelated suites). `autotests = false` prevents duplicate
-  binaries: register new suites in the shared harness (or an explicit `[[test]]` when
-  isolation is necessary). The layout regression test checks every root suite is registered.
-- For a targeted run use `--lib` or `--test <name>`; `cargo test <filter>` still compiles
-  every test binary.
-- macOS: if the bar takes tens of minutes with idle CPU, Gatekeeper is scanning each freshly
-  linked test binary on first launch (`cp target/debug/deps/<any test binary> /tmp/x && time
-  /tmp/x` shows seconds instead of milliseconds). Fix is the owner's: add the terminal app
-  under System Settings → Privacy & Security → Developer Tools and relaunch it and any
-  server under it (herdr). Report and stop, do not keep polling.
-- Never delete anything under `target/` unasked. Cargo does not garbage-collect old
-  artifacts, so the directory grows with every branch. If `du -sh target` is above 10 GB,
-  say so and suggest the owner run `rm -rf target/debug/incremental` at session end when
-  no cargo is running (then optionally `cargo test --no-run` in the background so the next
-  session is warm). `cargo clean` is the full reset and costs one cold build of everything.
+  generator, so parity jobs do not compile unrelated suites.
+- `autotests = false` prevents duplicate binaries: register a new suite in the shared
+  harness, or as an explicit `[[test]]` when isolation is necessary. The layout regression
+  test checks every root suite is registered.
 - Toolchain is pinned in `rust-toolchain.toml` and matched by CI (`rustfmt` + `clippy`,
   ubuntu and macos). `clippy::if_same_then_else` fails the bar: merge the conditions.
-- A regression test must fail without its fix. Write it, revert the fix, watch it fail,
-  restore the fix. Use content that actually crosses the boundary under test. Revert the
-  hunk by hand, never `git checkout <file>`, which discards every other edit in that file.
 - Temp state dirs need a per-binary atomic counter, not just `SystemTime::now()`.
-- Golden fixtures regenerate via
-  `cargo test --test integration queue_board_render::regenerate_golden_fixtures -- --ignored`;
-  never hand-edit the `.txt` files.
-- Packaging tests: `python3 -m unittest discover -s tests/packaging` (Python 3.11+); set
-  `TSK_TEST_BINARY` to a built binary to include the installer and setup PTY smoke.
-  Installer tests must isolate `HOME` and `ZDOTDIR`, never the caller's startup files.
-- Site CI is `npm ci && npm test && npm run build` in `site/`. `npm test` validates
-  `site/vercel.json` with Vercel's own route parser; never edit that file without it, a
-  bad pattern fails every production deploy silently.
-- CI runs on pushes to `main` and PRs targeting `main`. A site-only push skips the Rust
-  matrix; a site-only PR still runs it (the `Verify` checks are required), but a change
-  probe skips every expensive step so each job goes green in seconds. Installer-only
-  changes run the `Installer` workflow (packaging tests, ShellCheck, and native x86-64
-  and ARM64 Windows PowerShell smokes) on the PR and again on the push, since gettsk.sh
-  serves both installers straight from `main`.
-  Vercel production deploys only on pushes to `main`.
+- Golden fixtures only regenerate (command above); never hand-edit the `.txt` files.
+- Packaging tests: set `TSK_TEST_BINARY` to a built binary to include the installer and
+  setup PTY smoke. Installer tests must isolate `HOME` and `ZDOTDIR`, never touch the
+  caller's startup files.
+- `npm test` validates `site/vercel.json` with Vercel's own route parser. Never edit that
+  file without it: a bad pattern fails every production deploy silently.
+
+A regression test must fail without its fix:
+
+1. Write the test, with content that actually crosses the boundary under test.
+2. Revert the fix hunk by hand. Never `git checkout <file>`: it discards every other edit
+   in that file.
+3. Watch the test fail.
+4. Restore the fix.
+
+### CI
+
+- CI runs on pushes to `main` and PRs targeting `main`.
+- A site-only push skips the Rust matrix. A site-only PR still runs it (the `Verify` checks
+  are required), but a change probe skips every expensive step, so each job goes green in
+  seconds.
+- Installer-only changes run the `Installer` workflow (packaging tests, ShellCheck, and
+  native x86-64 and ARM64 Windows PowerShell smokes) on the PR and again on the push:
+  gettsk.sh serves both installers straight from `main`.
+- Vercel production deploys only on pushes to `main`.
+
+### Troubleshooting
+
+- **Slow bar on macOS.** If the bar takes tens of minutes with idle CPU, Gatekeeper is
+  scanning each freshly linked test binary on first launch.
+  `cp target/debug/deps/<any test binary> /tmp/x && time /tmp/x` shows seconds instead of
+  milliseconds. The fix is the maintainer's: add the terminal app under System Settings →
+  Privacy & Security → Developer Tools, then relaunch it and any server under it (herdr).
+  Report and stop; do not keep polling.
+- **Large `target/`.** Never delete anything under `target/` unasked. Cargo does not
+  garbage-collect old artifacts, so the directory grows with every branch. If
+  `du -sh target` is above 10 GB, say so and suggest the maintainer run
+  `rm -rf target/debug/incremental` at session end, when no cargo is running (then
+  optionally `cargo test --no-run` in the background so the next session is warm).
+  `cargo clean` is the full reset and costs one cold build of everything.
 
 ### Isolated state
 
 Anything that writes tasks or touches herdr config runs against isolated roots:
 `TSK_STATE_DIR` for tsk; additionally `XDG_CONFIG_HOME`, `XDG_STATE_HOME` **and**
-`HERDR_SOCKET_PATH` for `tsk setup herdr` (the state override
-alone does not isolate Herdr's plugin registry). Never smoke setup against, or relink,
-a daily plugin.
+`HERDR_SOCKET_PATH` for `tsk setup herdr`. Neither the state override nor
+`HERDR_CONFIG_PATH` alone isolates Herdr's running session or plugin registry. Never smoke
+setup against, or relink, a daily plugin.
 
 ### Live herdr smoke
 
@@ -136,31 +177,99 @@ back.
 
 ## Docs ship with the feature
 
-Any change that adds, removes, or alters user-visible behaviour (a key, verb, palette
-command, mouse target, status message, CLI flag or output, exit code, board section,
-file or env var) lands in the same PR as its `site/` update: the relevant page under
-`site/src/content/docs/docs/`, the landing page (`site/src/pages/index.astro`) and demo
-(`site/public/board-demo.js`) when they show it, `site/public/llms.txt`, the README when
-the claim lives there, and `CHANGELOG.md` under Unreleased in the right subsection
-(Breaking · Added · Changed · Fixed, format defined at the top of that file). Remove
-docs for what you remove. Docs describe only what ships; upcoming work is marked as such.
+A change that adds, removes, or alters user-visible behaviour lands in the same PR as its
+docs. User-visible means a key, verb, palette command, mouse target, status message, CLI
+flag or output, exit code, board section, file, or env var. The agent skills count too:
+`tsk-cli` is also `tsk guide` and `/docs/agents/`; `tsk-coordinator` is `/docs/coordinator/`.
 
-Before calling a docs pass done, diff the guide against `src/`: keymaps in
-`src/ui/input.rs`, palette in `src/ui/board/commands.rs`, CLI in `src/cli/`.
+In the same PR:
+
+- [ ] The page under `site/src/content/docs/docs/` that owns the fact
+      ([one owner per fact](#one-owner-per-fact)).
+- [ ] The landing page (`site/src/pages/index.astro`) and demo (`site/public/board-demo.js`),
+      when they show it.
+- [ ] `site/public/llms.txt`.
+- [ ] The README, when the claim lives there.
+- [ ] `CHANGELOG.md` under Unreleased, in the right subsection (Breaking · Added · Changed ·
+      Fixed; format at the top of that file, line rules [below](#per-surface)).
+- [ ] The skill version, when the skill changed ([below](#agent-skill-version)).
+- [ ] The docs diffed against `src/`: keymaps in `src/ui/input.rs`, palette in
+      `src/ui/board/commands.rs`, CLI in `src/cli/`.
+
+Remove docs for what you remove. Docs describe only what ships; upcoming work is marked as
+such.
 
 The web demo uses bare verb keys on purpose (browsers reserve control chords); do not
 "fix" that to match the TUI.
 
-The skill's frontmatter `version:` moves **once per release**, not once per edit. The first
-skill change after a release bumps it one minor above the version the last release shipped
-(check `git show vX.Y.Z:skills/tsk-cli/SKILL.md`); every further edit while that number is
-still unreleased keeps it and only refreshes the FNV-1a content hash pin in
-`embedded_skill_declares_semver` (`src/setup_agent.rs`). Never go below a shipped version:
-those copies are on users' disks. On failure the assertion's `left` value is the new hash;
-paste it in. `tsk setup <agent>` compares the version against the installed copy and only
-rewrites on a difference, so a skill edit without a bump since the last release leaves every
-installed skill silently stale. The skill is also `tsk guide` and `/docs/agents/`, so it
-counts as user-visible.
+### Agent skill version
+
+The skills' frontmatter `version:` moves **once per release**, not once per edit.
+`tsk setup <agent>` rewrites an installed skill only when the version differs, so a skill
+edit without a bump since the last release leaves every installed copy silently stale.
+
+`skills/tsk-cli` and `skills/tsk-coordinator` share one version and install as a unit: an
+edit to either moves both `version:` lines together. The installer probe keeps one row per
+agent, keyed on `tsk-cli`, so old installers keep working.
+
+1. Find the version the last release shipped: `git show vX.Y.Z:skills/tsk-cli/SKILL.md`.
+2. On the first skill change after that release, bump to one minor above it. Never go
+   below a shipped version: those copies are on users' disks.
+3. On every further edit while that number is unreleased, keep it.
+4. After every edit, refresh the FNV-1a content hash pin in `embedded_skill_declares_semver`
+   or `embedded_coordinator_skill_shares_the_version_and_pins_its_hash`
+   (`src/setup_agent.rs`). On failure the assertion's `left` value is the new hash; paste
+   it in.
+
+## Writing docs
+
+Every page, notice, and changelog line is written for its reader, in this shape.
+
+### Shape
+
+- Open with one or two sentences: what this page covers and who it is for.
+- One heading per surface or task. A screen of text without a heading is too long.
+- Keys, verbs, flags, options, refusal codes: tables. Procedures: numbered steps. Everything
+  else: short lists.
+- Paragraphs ≤ 60 words, one idea each. Sentences ≤ 25 words. No semicolon chains, no
+  nested parentheses.
+
+### Content
+
+- Present tense, what happens. Not why it was built, not what it used to do ("no longer",
+  "before, …", "now also").
+- Edge cases only when a user will hit them. Exhaustive cases belong in tests.
+- Quote exact output only where the reader must recognise it; one example, not the
+  catalogue.
+- No internals in user docs: no file paths, Rust names, store field names, store versions,
+  locking, retry timings.
+- Examples use the canonical tasks (T12, T202, T205) and `PR #42`. Never real task, PR, or
+  review-finding numbers; issue numbers only in changelog credits.
+- Words: maintainer, not owner. No brief, coordinator, golden, fixture, or invariant in
+  user-facing text.
+
+### One owner per fact
+
+Each fact lives on one page, the one [Product reference](#product-reference) names; other
+pages link to it instead of repeating it.
+
+### Notation and terms
+
+- Keys: `ctrl+d`, `alt+←`, `shift+M`, `Enter`, `Esc`, `Tab`, `Space` (lowercase
+  modifiers, named keys capitalised).
+- One name per thing: desk, project, thread, assignee, agent profile, dispatch, worktree,
+  workspace, block, review, check, round, paper trail, Projects view.
+
+### Per surface
+
+- **CHANGELOG**: one line per user-visible change, ≤ 30 words; details live in the docs. A
+  fix to something first added in the same Unreleased section is not an entry.
+- **Agent skill**: workflow first (numbered), then one-line rules that link to `cli.md`. No
+  human-only material.
+- **In-app text** (starter tasks, What's new, starter config): shorter than the docs, keys
+  in backticks.
+- **Contributor docs** (this file, `CONTEXT.md`, `packaging/README.md`): the same shape;
+  file paths and code names are fine here.
 
 ## Invariants
 
@@ -170,11 +279,28 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 
 ### Store and state
 
-- Human status is source of truth. Never auto-complete tasks from agent status.
-- Tasks carry no thread label since store v8. A Thread is named only by a `Thread:` notes
-  line and focused only on an exact four-token single live match; never infer it from a
-  question's `origin_thread`. A question without `audience` is target unknown: never guess
-  it, count it, or offer an answer on it.
+- Human status is source of truth. Never auto-complete tasks from agent status. The one
+  automatic status change is a `ready` task whose last `after` prerequisite became done: it
+  starts through `dispatch::start_route`, like any start. Undoing a reopen back to done
+  releases nothing: the release belonged to the original done.
+- A done and the starts it releases land together. Every done path (board, cleanup card,
+  missing-worktree converge, CLI) saves through `save_releasing_with_host` or its CLI twin,
+  which decides the release under the save's lock on the merged state, never a stale copy.
+  The done and every released start share one save and one undo entry.
+- A released assigned task's agent launches after that save; a failed launch puts the task
+  back to ready. The mechanism is in the doc comments of `src/dispatch.rs`.
+- A delete drops its number from every other task's `after` in the same undo entry
+  (`UndoEntry::SetAfter` leaves); trash purge drops leftovers as bookkeeping. A number no
+  live task carries waits on nothing. A delete never rewrites a task already soft-deleted:
+  its own delete's undo entry must keep matching.
+- A task's optional upstream `thread` label is grouping metadata, not an Agent session identity.
+  A working Thread is named only by a `Thread:` notes line and focused only on an exact
+  four-token single live match; never infer it from the label or a question's `origin_thread`.
+  A question without `audience` is target unknown: never guess it, count it, or offer an answer
+  on it.
+- Legacy Agent CLI consumers require `todo`/`doing`/`done` in list JSON and an array even for
+  one task. Rich status commands do not change that projection. Question reference/draft/answers,
+  expected-revision CAS, and answer durability fields keep their existing contract.
 - The projectless scope displays as `desk` but serializes as `global` and is
   `TaskScope::Global` internally. Do not rename either without a store migration.
 - Existing task scopes never move when scope resolution rules change.
@@ -187,7 +313,9 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   atomically, and readers dedupe by id and skip torn lines. Nothing on the board reads it.
 - A bulk verb on a marked set is one domain transaction, one save, and one undo entry
   (`UndoEntry::Batch`, store v5). Never persist it as per-task entries: one `ctrl+u`
-  reverses the whole set, and a stale batch refuses without touching any task.
+  reverses the whole set, and a stale batch refuses without touching any task. The one
+  exception is a start that dispatches: its launches land one by one and are not undoable
+  (see Assignee and dispatch).
 - The state dir must be a real directory on a local disk (flock plus rename replace);
   permission hardening refuses a symlink rather than chmodding its target. Host-injected
   `HERDR_PLUGIN_*` dirs are ignored on purpose.
@@ -259,6 +387,50 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   the one exception is an otherwise-empty view surfacing the first arriving task. A
   pinned save pins the selection only when the current lens renders the saved task.
 
+### Assignee and dispatch
+
+- Assignee is a label naming a `config.toml` profile; it never changes status or triggers
+  anything by itself, it only decides what a start does (below). Names normalize with the
+  thread normalizer and exact-match a defined profile at the boundary; a task keeps a name
+  whose profile was removed and renders it as-is.
+- Profiles are argv templates plus an optional prompt. tsk substitutes
+  `{number} {title} {notes} {steps} {worktree} {branch} {base} {on}` and nothing else; the
+  prompt is appended as the last argument; the launch is a per-workspace launcher script in
+  the state dir (`launchers/`, owner-only on Unix): POSIX `sh` on Unix, PowerShell on
+  Windows. The pane types only the fixed line that runs it (`sh_launch_line`,
+  `powershell_launch_line`); task text and `env` values never go through the pane's shell,
+  whichever it is. On Unix the script re-runs itself through `$SHELL -l -c` (a fixed string)
+  for the login environment, then execs the argv. tsk carries no knowledge of any harness's flags. A malformed
+  `config.toml` never blocks the board or CLI work that does not assign.
+- Starting an assigned task that was never dispatched dispatches it. Every start goes
+  through `dispatch::start_route`:
+  - unassigned, a running agent, or the assignee's own start (`TSK_AGENT`) is a plain
+    status change;
+  - uncertainty (Herdr cannot answer, not in Herdr) never launches;
+  - a gone agent asks (board) or refuses `agent-gone` (CLI).
+
+  Outside `HERDR_ENV=1` `tsk dispatch` refuses; a start there, or on a desk task, is plain
+  and says why (`dispatch::launch_unavailable`).
+- Dispatch sets `started` in the same save as the record; a failed launch leaves the task
+  unstarted. Only a single-task start that dispatched is undoable (`UndoEntry::Start`:
+  status only, the agent keeps running).
+- A marked set gets one confirm card, then every listed task takes the single-task path
+  (check, launch, commit in `src/dispatch.rs`) off the event loop and is saved as it lands.
+  Quit and further dispatches wait for a running batch, or launched agents lose their
+  record. Relaunch (the relaunch card, `dispatch again`) stays cursor-only; dispatched
+  tasks in a marked set only start.
+- The dispatch record stays on the task through every later status change. `◉` is derived
+  only from `record present && !record.cleaned && status == started`, never from agent or
+  pane state.
+- Cleanup never deletes uncommitted work or a branch it cannot confirm is merged into the
+  recorded base (a failed fetch keeps the branch), and only removes the recorded worktree
+  (registered with git, matching the herdr entry's path, never the project root). It runs
+  off the event loop after the completion is saved; quit waits for it. A missing worktree
+  converges to `cleaned`. CLI `status done` never prompts.
+- Every git and herdr call goes through the `DispatchHost` seam so tests use a fake host.
+  Changes to the real host need a live herdr smoke against a throwaway repo under `/tmp`,
+  never this one.
+
 ### Host integration
 
 - `tsk setup herdr` registers embedded plugin assets from `src/setup.rs` using the stable
@@ -282,63 +454,11 @@ migration or design work they imply. What the behaviour *is* lives in the docs
 
 ## Cutting a release
 
-Full detail and user contracts: `packaging/README.md`. Short form:
+[`packaging/README.md`](packaging/README.md#release-steps) owns the release steps. Hard
+rules:
 
-**Version bump (one PR).** Update `Cargo.toml`, `Cargo.lock`, `herdr-plugin.toml`, and
-`site/src/version.mjs` together; rename `CHANGELOG.md` Unreleased to `## vX.Y.Z` and open
-a fresh empty Unreleased above it; append a `[[announcement]]` if the release deserves a
-board notice. `scripts/release.py
-check-version vX.Y.Z` must pass. Merge, then push the stable tag `vX.Y.Z` with owner
-approval. Tags are `v[0-9]+.[0-9]+.[0-9]+` only: the workflow, `release.py`, and
-both installers refuse anything else, so there are no `-rc` tags.
-
-**Build (owner-run).** Dispatch `Prepare release` with the existing tag. It pins the tag
-to one commit, tests and builds six targets from it, and creates a **draft** with the
-archives, `SHA256SUMS`, both installers, and a version-pinned `tsk.rb`. It refuses a moved
-tag or an existing release; it never publishes or updates the tap. The draft is named with
-`--title "$TAG"`: an unnamed GitHub release displays the tagged commit's subject instead.
-
-**Test release (pre-release).** Flip the draft rather than publishing:
-`gh release edit vX.Y.Z --draft=false --prerelease`. GitHub excludes pre-releases from
-`releases/latest`, so the default installer path and the board's update nudge stay on the
-previous stable while the assets are public. It is listed on `/releases` with a
-`Pre-release` badge and notifies release watchers; only a draft is fully hidden, and a
-draft cannot serve the curl one-liner. Exercise the real user flow with isolated state:
-
-```
-TSK_VERSION=vX.Y.Z TSK_INSTALL_DIR=/tmp/tsk-rc/bin sh -c "$(curl -fsSL https://gettsk.sh/install.sh)"
-TSK_STATE_DIR=/tmp/tsk-rc/state /tmp/tsk-rc/bin/tsk
-gh release download vX.Y.Z -p tsk.rb -D /tmp/tsk-rc && HOMEBREW_DEVELOPER=1 brew install --formula /tmp/tsk-rc/tsk.rb
-```
-
-The site serves both installers from `main`; if one changed in this release fetch that
-installer from `releases/download/vX.Y.Z/` instead. Smoke `tsk setup herdr` under isolated
-roots. Rehearse the update path too, against a throwaway `HOME` holding an outdated skill
-and a Herdr config on a custom key:
-`env HOME=/tmp/x/home XDG_CONFIG_HOME=/tmp/x/home/.config HERDR_SOCKET_PATH=/tmp/x/none.sock TSK_VERSION=vX.Y.Z TSK_UPDATE=1 TSK_CURRENT_VERSION=vPREV TSK_INSTALL_DIR=/tmp/x/bin sh /tmp/x/install.sh`. A failed rehearsal burns the tag: fix forward with the next patch version and leave
-(or, with approval, delete) the bad pre-release.
-
-Rehearsal traps, learned the hard way:
-
-- Never run `tsk update` on a pre-release copy before promotion. It follows
-  `releases/latest`, which is still the previous stable, so it downgrades the binary,
-  and the downgraded binary then refuses the store the pre-release migrated.
-- Never point a candidate binary at a store you did not create for the rehearsal. Pass
-  the state override as `env TSK_STATE_DIR=… /path/tsk`, and in a Herdr pane
-  read until an idle prompt first: a pending shell prompt can eat the first character of a
-  `VAR=value` prefix, and the candidate then opens and migrates the real `~/.tsk`.
-- `brew install --formula tsk.rb` on a machine with the tap's `tsk` installed replaces the
-  daily copy (same formula name) and removes the old keg. Use a throwaway machine or
-  `brew unlink` first and expect to `brew reinstall smarzban/tap/tsk` afterwards.
-- Public installer flows plus Linux, Intel, and both Windows architecture smokes are owner
-  steps. An agent sandbox cannot execute a downloaded script, and the checked-in rehearsal
-  can only run the macOS ARM archive binary directly; the agent verifies checksums, the archive binary, the upgrade
-  path and setup, and says which of these it did not run.
-
-**Official release.** Replace the draft's skeleton and checklist with the version's
-`CHANGELOG.md` section verbatim (keep the one-line Install section), then promote the tested
-assets, no rebuild: `gh release edit vX.Y.Z --prerelease=false --latest`. Confirm
-`https://github.com/smarzban/tsk/releases/latest` redirects to the new tag. Then,
-and only then, copy the generated `tsk.rb` to `Formula/tsk.rb` in `smarzban/homebrew-tap`
-and push; a release alone never updates Homebrew. Finish with a smoke of the public
-one-liner and the tap on a clean machine.
+- Tags are `vX.Y.Z` only, never `-rc`; push one only with maintainer approval.
+- `Prepare release` makes a draft and never publishes; publishing is a maintainer step.
+- Rehearse as a pre-release with isolated state, then promote; the tap updates only after.
+- Never run `tsk update` on a pre-release copy: see the
+  [rehearsal traps](packaging/README.md#rehearsal-traps).

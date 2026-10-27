@@ -4,10 +4,13 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::agents::AgentProfiles;
 use crate::cli::parser::{parse_task_address, FlagAdd, TaskAddress};
 use crate::context::snapshot_from_env;
-use crate::domain::{DomainState, ProvenanceOrigin, TaskScope};
-use crate::scope::{resolve_flag_scope, resolve_project_path};
+use crate::domain::{
+    normalize_thread, thread_refusal_message, Assignee, DomainState, ProvenanceOrigin, TaskScope,
+};
+use crate::scope::{adopt_stored_identity, resolve_flag_scope, resolve_project_path};
 use crate::store::{default_state_dir, TaskStore};
 
 /// A flag-add failure after parsing and before presenting an output.
@@ -22,6 +25,8 @@ pub enum AddError {
     InvalidParent,
     InvalidAfter,
     AfterCycle,
+    UnknownBase(String),
+    AgentConfig(String),
     Store(String),
 }
 
@@ -35,6 +40,8 @@ impl AddError {
             Self::InvalidParent => "invalid-parent",
             Self::InvalidAfter => "invalid-after",
             Self::AfterCycle => "after-cycle",
+            Self::UnknownBase(_) => "unknown-base",
+            Self::AgentConfig(_) => "agent-config",
             Self::Store(_) => "store-error",
         }
     }
@@ -86,6 +93,14 @@ struct PlanItem {
     notes: Option<String>,
     /// `None` is omitted, `Some(None)` is JSON null/global.
     project: Option<Option<String>>,
+    /// Missing and JSON null both leave the item unthreaded.
+    thread: Option<String>,
+    /// Missing and JSON null both leave the item unassigned.
+    assignee: Option<String>,
+    /// Missing and JSON null both use dispatch's default base resolution.
+    base: Option<String>,
+    /// Task numbers the new task runs after.
+    after: Vec<u64>,
 }
 
 struct ResolvedPlanItem {
@@ -94,6 +109,10 @@ struct ResolvedPlanItem {
     title: String,
     notes: Option<String>,
     scope: TaskScope,
+    thread: Option<String>,
+    assignee: Option<Assignee>,
+    base: Option<String>,
+    after: Vec<u64>,
 }
 
 /// Result of one accepted flag add.
@@ -104,12 +123,14 @@ pub enum FlagAddResult {
         number: u64,
         title: String,
         project: Option<String>,
+        assignee: Option<Assignee>,
     },
     Existing {
         id: Uuid,
         number: u64,
         title: String,
         project: Option<String>,
+        assignee: Option<Assignee>,
     },
 }
 
@@ -125,14 +146,33 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
         return Err(AddError::EmptyTitle);
     }
 
-    let store = TaskStore::new(input.state_dir.unwrap_or_else(default_state_dir));
+    let state_dir = input.state_dir.unwrap_or_else(default_state_dir);
+    // The name rule: you, an agent profile, or any other name for a person. Broken profiles
+    // refuse rather than guess, so a profile's name never becomes a person by accident.
+    let assignee = match input.assignee.as_deref() {
+        Some(name) => {
+            let profiles = AgentProfiles::load(&state_dir)
+                .map_err(|error| AddError::AgentConfig(error.to_string()))?;
+            Some(
+                profiles
+                    .resolve_assignee(name)
+                    .map_err(AddError::AgentConfig)?,
+            )
+        }
+        None => None,
+    };
+    let store = TaskStore::new(state_dir);
     let snapshot = snapshot_from_env();
     let project = input.project;
     let global = input.global;
     let notes = input.notes.filter(|notes| !notes.trim().is_empty());
     let (title, notes) = fit_title(&title, notes);
+    let thread = input.thread;
+    let base = input.base;
     store
         .locked_transition_if_changed(|domain| {
+            let mut snapshot = snapshot.clone();
+            adopt_stored_identity(&mut snapshot, domain);
             let scope = match resolve_flag_scope(project.as_deref(), global, domain, &snapshot) {
                 Ok(scope) => scope,
                 Err(error) => {
@@ -150,7 +190,19 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     return Ok((Err(AddError::ProjectArchived(short)), false));
                 }
             }
-            let outcome = if let Some(task) = existing_task(domain, &title, &scope) {
+            if let Some(base) = base.as_deref() {
+                if let Err(error) = crate::git_base::validate_task_base(&scope, base, true) {
+                    return Ok((Err(AddError::UnknownBase(error)), false));
+                }
+            }
+            let outcome = if let Some(task) = existing_task(
+                domain,
+                &title,
+                &scope,
+                thread.as_deref(),
+                assignee.as_ref(),
+                base.as_deref(),
+            ) {
                 Ok(FlagAddResult::Existing {
                     id: task.id,
                     number: task
@@ -158,6 +210,7 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                         .expect("loaded tasks receive a number before CLI presentation"),
                     title: task.title.clone(),
                     project: scope_project(&task.scope),
+                    assignee: task.assigned(),
                 })
             } else {
                 let project = scope_project(&scope);
@@ -172,8 +225,10 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                         domain
                             .tasks()
                             .iter()
-                            .find(|task| address.matches(task) && !task.soft_deleted)
-                            .map(|task| task.id)
+                            .find(|task| {
+                                address.matches(task) && !task.soft_deleted && !task.is_notice()
+                            })
+                            .and_then(|task| task.number)
                             .ok_or(AddError::InvalidAfter)
                     })
                     .collect::<Result<Vec<_>, _>>()
@@ -181,24 +236,32 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     Ok(after) => after,
                     Err(error) => return Ok((Err(error), false)),
                 };
-                let id = match domain.create_with_parent(
+                if domain.check_new_after(&after).is_err() {
+                    return Ok((Err(AddError::InvalidAfter), false));
+                }
+                let id = match domain.create_configured(
                     &title,
                     notes,
                     scope,
                     ProvenanceOrigin::Capture,
-                    parent,
+                    thread,
+                    assignee,
+                    base,
                 ) {
                     Ok(id) => id,
                     Err(error) => {
                         return Ok((Err(AddError::Store(error.to_string())), false));
                     }
                 };
-                if !after.is_empty() {
-                    if let Err(error) = domain.set_after(id, after) {
-                        return Ok((Err(AddError::Store(error.to_string())), false));
-                    }
+                if let Some(parent) = parent {
+                    domain
+                        .set_parent(id, Some(parent))
+                        .map_err(|error| error.to_string())?;
                 }
                 domain.assign_numbers_for_persistence();
+                domain
+                    .set_after_on_create(id, &after)
+                    .map_err(|error| error.to_string())?;
                 let number = domain
                     .get(id)
                     .and_then(|task| task.number)
@@ -208,6 +271,7 @@ pub fn run(input: FlagAdd) -> Result<FlagAddResult, AddError> {
                     number,
                     title,
                     project,
+                    assignee: domain.get(id).and_then(crate::domain::Task::assigned),
                 })
             };
             let changed = matches!(outcome, Ok(FlagAddResult::Created { .. }));
@@ -239,11 +303,20 @@ pub fn run_plan(
         });
     }
 
-    let store = TaskStore::new(state_dir.unwrap_or_else(default_state_dir));
+    let state_dir = state_dir.unwrap_or_else(default_state_dir);
+    let profiles = if valid.iter().any(|item| item.assignee.is_some()) {
+        AgentProfiles::load(&state_dir).map_err(|error| AddError::AgentConfig(error.to_string()))?
+    } else {
+        AgentProfiles::default()
+    };
+    let store = TaskStore::new(state_dir);
     let snapshot = snapshot_from_env();
     store
         .locked_transition_if_changed(|domain| {
-            let (resolved, resolution_failures) = resolve_plan_items(valid, domain, &snapshot);
+            let mut snapshot = snapshot.clone();
+            adopt_stored_identity(&mut snapshot, domain);
+            let (resolved, resolution_failures) =
+                resolve_plan_items(valid, domain, &snapshot, &profiles);
             failed.extend(resolution_failures);
             let mut created = Vec::with_capacity(resolved.len());
             let mut existing = Vec::new();
@@ -259,7 +332,30 @@ pub fn run_plan(
                         continue;
                     }
                 }
-                if let Some(task) = existing_task(domain, &item.title, &item.scope) {
+                if let Some(base) = item.base.as_deref() {
+                    if let Err(error) = crate::git_base::validate_task_base(&item.scope, base, true)
+                    {
+                        failed.push(fail_item(item.i, Some(item.title), "unknown-base", error));
+                        continue;
+                    }
+                }
+                if let Err(error) = domain.check_new_after(&item.after) {
+                    failed.push(fail_item(
+                        item.i,
+                        Some(item.title),
+                        "invalid-after",
+                        error.to_string(),
+                    ));
+                    continue;
+                }
+                if let Some(task) = existing_task(
+                    domain,
+                    &item.title,
+                    &item.scope,
+                    item.thread.as_deref(),
+                    item.assignee.as_ref(),
+                    item.base.as_deref(),
+                ) {
                     existing.push(Existing {
                         i: item.i,
                         id: task.id,
@@ -283,15 +379,25 @@ pub fn run_plan(
                     }
                 };
                 let id = domain
-                    .create_with_parent(
+                    .create_configured(
                         &item.title,
                         item.notes,
                         item.scope,
                         ProvenanceOrigin::Capture,
-                        parent,
+                        item.thread,
+                        item.assignee,
+                        item.base,
                     )
                     .map_err(|error| error.to_string())?;
+                if let Some(parent) = parent {
+                    domain
+                        .set_parent(id, Some(parent))
+                        .map_err(|error| error.to_string())?;
+                }
                 domain.assign_numbers_for_persistence();
+                domain
+                    .set_after_on_create(id, &item.after)
+                    .expect("plan item after links are validated before domain creation");
                 let number = domain
                     .get(id)
                     .and_then(|task| task.number)
@@ -323,6 +429,7 @@ fn resolve_plan_items(
     items: Vec<PlanItem>,
     domain: &DomainState,
     snapshot: &crate::context::InvocationSnapshot,
+    profiles: &AgentProfiles,
 ) -> (Vec<ResolvedPlanItem>, Vec<Failed>) {
     let mut resolved = Vec::with_capacity(items.len());
     let mut failed = Vec::new();
@@ -343,12 +450,31 @@ fn resolve_plan_items(
             },
             None => snapshot.default_scope.clone(),
         };
+        let assignee = match item.assignee.as_deref() {
+            Some(name) => match profiles.resolve_assignee(name) {
+                Ok(assignee) => Some(assignee),
+                Err(error) => {
+                    failed.push(fail_item(
+                        item.i,
+                        Some(item.title),
+                        "invalid-assignee",
+                        error,
+                    ));
+                    continue;
+                }
+            },
+            None => None,
+        };
         resolved.push(ResolvedPlanItem {
             parent: item.parent,
             i: item.i,
             title: item.title,
             notes: item.notes,
             scope,
+            thread: item.thread,
+            assignee,
+            base: item.base,
+            after: item.after,
         });
     }
     (resolved, failed)
@@ -381,12 +507,21 @@ fn existing_task<'a>(
     domain: &'a DomainState,
     title: &str,
     scope: &TaskScope,
+    thread: Option<&str>,
+    assignee: Option<&Assignee>,
+    base: Option<&str>,
 ) -> Option<&'a crate::domain::Task> {
     // Notice rows are board-only (no CLI address reaches them, not even their UUID) and
     // deliberately carry no T number, so a title collision with a seeded guide or the
     // announcement must never resolve as existing: the add creates an ordinary task.
     domain.tasks().iter().find(|task| {
-        !task.soft_deleted && !task.is_notice() && task.title == title && &task.scope == scope
+        !task.soft_deleted
+            && !task.is_notice()
+            && task.title == title
+            && &task.scope == scope
+            && task.thread.as_deref() == thread
+            && task.assigned().as_ref() == assignee
+            && task.base.as_deref() == base
     })
 }
 
@@ -443,15 +578,25 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
             ));
         }
     };
-    // Thread labels left the store in v8. Refuse a value rather than drop it silently.
-    if object.get("thread").is_some_and(|thread| !thread.is_null()) {
-        return Err(fail_item(
-            i,
-            Some(trimmed_title),
-            "invalid-item",
-            "thread labels were removed; drop the thread field",
-        ));
-    }
+    let thread = match object.get("thread") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_thread(value).map_err(|error| {
+            fail_item(
+                i,
+                Some(trimmed_title.clone()),
+                "invalid-thread",
+                thread_refusal_message(error),
+            )
+        })?),
+        Some(_) => {
+            return Err(fail_item(
+                i,
+                Some(trimmed_title),
+                "invalid-item",
+                "thread must be a string or null",
+            ));
+        }
+    };
 
     let parent =
         match object.get("parent") {
@@ -465,16 +610,89 @@ fn parse_plan_item(i: usize, value: Value) -> Result<PlanItem, Failed> {
                     Some(trimmed_title),
                     "invalid-parent",
                     "parent must be a task address string or null",
-                ))
+                ));
             }
         };
     let (trimmed_title, notes) = fit_title(&trimmed_title, notes);
+    let assignee = match object.get("assignee") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(assignee)) => {
+            let name = assignee.strip_prefix('@').unwrap_or(assignee);
+            normalize_thread(name).map(Some).map_err(|error| {
+                fail_item(
+                    i,
+                    Some(trimmed_title.clone()),
+                    "invalid-assignee",
+                    thread_refusal_message(error).replacen("thread", "assignee", 1),
+                )
+            })?
+        }
+        Some(_) => {
+            return Err(fail_item(
+                i,
+                Some(trimmed_title),
+                "invalid-item",
+                "assignee must be a string or null",
+            ));
+        }
+    };
+    let base = match object.get("base") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(base)) => Some(base.clone()),
+        Some(_) => {
+            return Err(fail_item(
+                i,
+                Some(trimmed_title),
+                "invalid-item",
+                "base must be a string or null",
+            ));
+        }
+    };
+
+    let after = match object.get("after") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(values)) => {
+            let mut after = Vec::with_capacity(values.len());
+            for value in values {
+                let number = match value {
+                    Value::Number(number) => number.as_u64().filter(|number| *number > 0),
+                    Value::String(text) => crate::cli::parser::parse_after_number(text).ok(),
+                    _ => None,
+                };
+                match number {
+                    Some(number) => after.push(number),
+                    None => {
+                        return Err(fail_item(
+                            i,
+                            Some(trimmed_title),
+                            "invalid-item",
+                            "after must list task numbers",
+                        ));
+                    }
+                }
+            }
+            after
+        }
+        Some(_) => {
+            return Err(fail_item(
+                i,
+                Some(trimmed_title),
+                "invalid-item",
+                "after must be an array of task numbers or null",
+            ));
+        }
+    };
+
     Ok(PlanItem {
         parent,
         i,
         title: trimmed_title,
         notes,
         project,
+        thread,
+        assignee,
+        base,
+        after,
     })
 }
 
@@ -540,6 +758,11 @@ mod tests {
             title: Some("hello\n".into()),
             notes: None,
             project: None,
+            thread: None,
+            assignee: None,
+            unassign: false,
+            base: None,
+            clear_base: false,
             global: false,
             json: false,
             state_dir: None,

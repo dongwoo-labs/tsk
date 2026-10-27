@@ -1,57 +1,214 @@
 # Glossary
 
-Canonical terms for this repo. No implementation detail.
+Canonical terms for this repo, one short definition each. The docs pages own the behaviour;
+this file names things.
 
-- **add command**: headless `tsk add` subcommand that creates tasks without opening a TUI.
-- **list command**: headless `tsk list` subcommand that prints tasks from the board store without changing them.
-- **status command**: headless `tsk status` subcommand that sets a task's human status to open, ready, started, blocked, review, or done. `start` is an alias for `started`.
-- **edit command**: headless `tsk edit` subcommand that updates a task's title, notes, or parent, and moves it to another scope only with an explicit `-p`/`--desk`.
-- **import command**: headless `tsk import linear` subcommand that reads Linear issues and creates a task for each one without a **Linear copy**. One-way: nothing is written back to Linear. Fetching finishes before any write, so a missing key or Linear error is a refusal (exit `1`) that persisted nothing; exit `3` stays store I/O.
-- **Linear copy**: the live (not soft-deleted) task, in any scope or status, whose notes contain a line starting with `Linear: <IDENTIFIER> `. At most one per issue; `import` leaves it untouched unless `--update` is given.
-- **bulk add**: one `add` invocation that accepts many items, reports each, and makes one durable write of the successes.
-- **invocation default**: capture scope used when the caller omits `project` / `-p`. The cwd repo when known, otherwise the desk.
-- **desk**: your desk holds everything not tied to a project. Selected by `--desk` and by bare `!p`. Stored as scope value `global`.
-- **tiny result**: JSON report from a plan-shaped `add`. `created` and `existing` rows carry index, id, title. `failed` rows carry index, title (string or null), error code, and human error text. Notes are not echoed.
-- **exit contract**: `add`/`list`/`status`/`edit`/`steps`/`import` exit `0` means the write happened or was already true (or list succeeded). `1` means one or more item refusals: retry only the failed subset. `2` means usage or parse error: nothing persisted. `3` means store I/O: commit is indeterminate; verify with `list` and retry only what is missing.
-- **error code**: stable machine-matchable token on a failed item (`empty-title`, `invalid-title`, `invalid-item`). Any C0 control makes a title `invalid-title` before trimming, including a control-only title. The human `error` string is not a contract.
+## CLI contract
+
+- **data command**: a verb that reads or writes the board: `add`, `list`, `status`, `edit`,
+  `steps`, `reply`, `dispatch`, `clean`, `archive`, `unarchive`, `project`, `trash`,
+  `backup`, `restore`, `ask`, `questions`, `answer`, `route`, `ui-answer`, `secret-result`,
+  `report`, `reports`, `threads`, `notes`, `import`. Takes `--state-dir` where supported.
+- **add command**: `tsk add`, which creates tasks without opening a TUI.
+- **list command**: `tsk list`, which prints tasks without changing them.
+- **status command**: `tsk status`, which sets a task's human status. `start` is an alias
+  for `started`.
+- **edit command**: `tsk edit`, which changes a task's title, notes, assignee, base,
+  `after` list, or parent; scope changes require an explicit destination.
+- **import command**: `tsk import linear` reads Linear issues and creates tasks without
+  writing back. Fetching finishes before writes; errors persist nothing.
+- **Linear copy**: a live task whose notes contain `Linear: <IDENTIFIER> `. Import leaves
+  it unchanged unless `--update` is given.
+- **bulk add**: one `add` of many items. It reports each item and makes one durable write
+  of the successes.
+- **invocation default**: the scope `add` uses when no project or `--desk` is given: the
+  current repo when known, otherwise the desk.
+- **desk**: the scope for tasks not tied to a project. Selected by `--desk` or `!p`, and
+  stored as `global`.
+- **tiny result**: the JSON report of a plan-shaped `add`. `created` and `existing` rows
+  carry index, id, and title; `failed` rows carry index, title (or null), error code, and
+  human text. Notes are not echoed.
+- **exit contract**: `0` means success or already true; `1` means item refusal; `2` means
+  usage error with no write; `3` means storage error with an indeterminate commit. See
+  `cli.md`, Exit contract.
+- **error code**: a stable token on a refusal, such as `empty-title` or `unknown-project`.
+  Scripts match the code; the human text is not a contract.
+- **unknown-project**: the refusal when a project name is unknown or ambiguous, or a path
+  is not an existing absolute directory. Reads such as `list -p` stay permissive.
 - **persisted**: a later `list` against the same store returns that task.
-- **nothing persisted**: a later `list` against the same store shows no task created by that invocation.
-- **listed**: the task appears in `list` because it is not soft-deleted.
+- **nothing persisted**: a later `list` against the same store shows no task from that
+  invocation.
+- **listed**: not soft-deleted, so a `list` view returns it; done and archived tasks need
+  `--done` or `--archived`.
 - **exactly once**: one `list` row per task id.
-- **closed global-flag set**: `--find-board-pane` and `--help`. Recognized only before the first positional argument. Nothing else selects a surface.
-- **stdin_is_tty seam**: injected boolean the headless parser uses instead of asking the live process whether stdin is a TTY.
-- **steps**: the flat ordered list of step entries attached to one task. Exactly one level deep; there is no nesting (#159 decided against it). Order changes only by an explicit insert (`add --before/--after`, `ctrl+a` below the step cursor) or **move**.
-- **step**: a single step entry: stable identity, one line of text, a done flag. Nothing else.
-- **step done**: a step's checked state. Progress information only; it never implies, drives, or auto-applies a task status change.
-- **toggle**: flip one step's done flag. The only step state change that is not a text change.
-- **move**: change one step's position in its task's list. The step keeps its identity, short id and done flag; a move onto its own slot changes nothing.
-- **step cursor**: the task page's step-row focus. Inactive on page open; a bare ↓ activates it (again after any deactivation), ↑ from the first step deactivates it. While active, bare arrows move it and modifier-protected verbs act on it; a single click on a step row moves it.
-- **task number**: the store-global sequential integer assigned when a task is durably created. Spoken and typed as `12`. Unique across desk, every project, and every thread, including done and soft-deleted tasks. An address, not identity and not an ordering promise. Never reused.
-- **step short id**: an unambiguous prefix of a step's stable identity, used to address a step within one task from the CLI.
-- **thread**: an optional single name a task carries, grouping it with same-named tasks in the same scope. Not an entity: no identity beyond the name, no status, no lifecycle. It presents on the board exactly while at least one working task in its scope carries it; the field itself persists on the task regardless of status.
-- **thread token**: the `!t name` capture directive, sibling of `!p`; bare `!t` means unthreaded. Stripped from the saved title.
-- **thread label**: the thread name painted beside a project-board task row. It is chrome, not a task; selecting a local thread filter hides redundant labels.
-- **unthreaded**: carrying no thread. Unthreaded tasks remain in the project's flat task board.
-- **wide stage**: the session-only slider position of a wide (≥110 column) board: 0 `FullBoard`, A `Split`, G `Rail`, F `FullTask` (`ui::tier::WideStage`). Focus and geometry derive from the stage; it is never persisted and survives resizes.
-- **rail**: the 32-column dim board column of stage G: tabs, section rules, and wrapped task rows, without the meta column. It keeps the board's done drawer and archived fold state.
-- **single-pane view**: a presentation that shows only the focused board or task surface.
-- **focused surface**: the board or task view that currently owns interaction; at wide widths it derives from the wide stage (0/A board-owned, G/F task-owned), below 110 from the single-pane presentation.
-- **working task**: a non-done task with human status open, ready, started, blocked, or review, not soft-deleted and not archived.
-- **archived**: a flag on a task meaning "kept, off the radar". The task keeps its human status and leaves every working lens; it is visible only in the archived group of the done drawer. Not a status, not a place, nothing expires.
-- **archived project**: a project whose project record carries the archived flag. It leaves the projects index, desk IN MOTION and the picker's main list; it is visible only on the picker's archived tab. Its tasks' own archived flags are independent of it.
-- **project record**: the per-project entry in the store, keyed by the project's scope path. Lazy: exists only while the project is archived. The set of projects the board shows is still derived from tasks.
-- **archived group**: the collapsible `archived · n` header and its rows inside the done drawer, closed by default, session-only collapse state. Chrome plus dimmed task rows.
-- **multi-select**: the explicit board mode entered and left with `Shift+M`. While active, `space`, `shift+↑`/`shift+↓`, and a plain click mark tasks; outside it those keys keep their ordinary meaning. Session-only; clears on a verb, `Esc`, or a lens change.
-- **marked set**: the tasks currently marked in multi-select, painted `▪` in the gutter beside the cursor's `▸`. Status, archive, and delete verbs act on the set when it is non-empty, otherwise on the cursor. Never persisted.
-- **batch undo**: the single undo entry a bulk done or delete records for a marked set. One `ctrl+u` reverses all of it; a stale batch refuses without changing any task.
-- **board search**: the `/` filter over the rows the current tab shows: project rows on the overview, task rows (title, notes, steps, thread, number) everywhere else. Every query word must match. **Pinned** once `Enter` hands keys back to the board; `Esc` clears it before closing anything else.
-- **unknown-project**: the `add` refusal code (exit 1) for a bare project name that matches no known project, or more than one, and for a path that is not an existing absolute directory. Reads (`list -p`) stay permissive.
-- **file**: the `ctrl+f` verb. On a task row it toggles the task's archived flag; in the picker it archives the project, on the picker's archived tab it unarchives it. Has no undo entry. `ctrl+u` on an archived selection also unarchives; on anything else it stays undo.
-- **working lens**: any board or CLI view meant for current work: desk, selected project, projects index, cross-project thread View, project focus, NEEDS YOU, IN MOTION, ON DECK, the rail, and default `tsk list` views. Archived tasks and archived projects never paint in one.
-- **NEEDS YOU**: queue section for non-deleted, non-archived blocked and review tasks. Desk shows desk/global ones; project focus shows that project's. Omitted when empty. Sits above IN MOTION.
-- **session**: one board process from launch to quit. Session-only state (collapse, wide stage, the launch card having been shown) resets on relaunch.
-- **hidden**: a task that is archived, or whose project is archived. The single predicate every working lens filters on; distinct from soft-deleted.
-- **guide**: the agent workflow doc, `skills/tsk-cli/SKILL.md`, printed by `tsk guide` and published at `/docs/agents/`.
-- **twin**: the Markdown representation of a docs page at `/docs/<slug>.md`.
-- **bootstrap prompt**: the three-line text a human pastes to an agent to start using tsk.
-- **definition sentence**: `tsk is a terminal task board for you and your agents: one shared queue, a TUI for you, a CLI for them.`
+- **global flags**: the closed set `--help`, `--version` (`-V`), and the launcher lookups
+  `--find-board-pane` and `--find-board-tab`. Each works alone, before any command;
+  nothing else selects a surface.
+
+## Tasks & steps
+
+- **human status**: `open`, `ready`, `started`, `blocked`, `review`, or `done`. The board's
+  source of truth, never derived from agent state.
+- **task number**: the board-wide integer a task gets when it is created, shown as `T12`.
+  Unique across the desk, every project and thread, done and deleted tasks included, and
+  never reused. An address, not identity and not an order.
+- **working task**: a task that is not done, archived, or soft-deleted.
+- **desk**: the scope for tasks not tied to a project. Selected by `--desk` and by a bare
+  `!p`.
+- **project**: the directory a task belongs to, usually a Git repo root, named by its
+  basename.
+- **thread**: an optional name grouping tasks in the same scope. Not an entity: no
+  identity beyond the name, no status, no lifecycle. It shows on the board while at least
+  one working task in its scope carries it; the task keeps the name whatever its status.
+- **thread token**: the `!t name` capture directive, sibling of `!p`; bare `!t` means
+  unthreaded. Stripped from the saved title.
+- **unthreaded**: carrying no thread. Unthreaded tasks stay in the project's flat board.
+- **after / before**: a task runs *after* the tasks it names by number and waits while any
+  of them is not done. Each unfinished prerequisite shows its waiters as *before*. When the
+  last prerequisite is done, a waiting `ready` task starts.
+- **block**: what a `blocked` task carries: why, what it needs, optional numbered options,
+  and who or what it waits on (you, a task, an agent, or something else). It closes when
+  the task leaves `blocked`.
+- **reply**: an entry in a block's thread, from you or the agent. Unblocking sends the
+  unsent replies to the running agent; `tsk reply --send` sends one at once.
+- **review round**: what a task in `review` carries: what was done, checks, what is next,
+  and who the review is on. Rounds are numbered from 1 and close as approved (done), sent
+  back (started), or unresolved by any other route out of review.
+- **check**: one item a review round asks the reviewer to verify: open, passed, or failed.
+  Checks never become steps.
+- **feedback**: a reply in a review round. A send-back sends the unsent feedback and the
+  failed checks to the running agent.
+- **paper trail**: a task's history, newest first: who did what and when, including its
+  closed blocks and review rounds. Shown on the task page and by `tsk list T12`.
+- **steps**: the flat ordered list of steps on one task, one level deep. Order changes only
+  by an explicit insert (`steps add --before/--after`, `ctrl+a` below the step cursor) or a
+  move.
+- **step**: one entry in a task's steps: a stable identity, one line of text, and a done
+  flag.
+- **step done**: a step's checked state. Progress only: it never implies or changes a task
+  status.
+- **toggle**: flip one step's done flag. The only step change that is not a text change.
+- **move**: change one step's position in its task's list. The step keeps its identity,
+  short id, and done flag; a move onto its own slot changes nothing.
+- **step short id**: an unambiguous prefix of a step's identity, used to address a step
+  within one task from the CLI.
+- **step cursor**: the task page's focus on a step row. Inactive when the page opens; a
+  bare `↓` activates it and `↑` from the first step deactivates it. While active, bare
+  arrows move it and modifier verbs act on its step; a click on a step row moves it there.
+
+## Board surfaces
+
+- **NEEDS YOU**: blocked and review tasks that wait on you, including a block on a task
+  that is now done or deleted. Omitted when empty; sits above DOING.
+- **DOING**: started tasks, plus blocked and review tasks that wait on an agent, an
+  unfinished task, or something else.
+- **TODO**: ready and open tasks in the selected scope.
+- **row tail**: question and report marks, step completion, and child completion counts
+  after the one-line task title.
+- **live line**: the optional second line under a row, shown with `v`: a block or review
+  summary, or the task's status note.
+- **notice**: a seeded desk task with an `N` id: a starter task or a `What's new in tsk`
+  release note. Human-only: the CLI never lists or addresses it.
+- **wide split**: the fixed list-and-task layout at 110 columns or wider. Changing focus
+  does not change its column widths.
+- **single-pane view**: the layout below 110 columns, showing the focused board or task.
+- **focused surface**: the board or task view that owns interaction, whether beside the
+  other surface in the wide split or alone in the single-pane view.
+- **session**: one board process from launch to quit. Session-only state (folds, focus,
+  the launch card having been shown) resets on relaunch.
+
+## Archive & hiding
+
+- **archived**: a task flag meaning "kept, off the radar". The task keeps its human status,
+  leaves every working lens, and shows only in the done drawer's archived group. Not a
+  status, not a place; nothing expires.
+- **archived project**: a project carrying the archived flag. It leaves the Projects view,
+  the desk's sections, and the picker's main list; it shows only on the picker's archived
+  tab. Its tasks' own archived flags are independent of it.
+- **project record**: the store's entry for one project, keyed by its path. It exists only
+  while the project is archived; the projects the board shows are still derived from
+  tasks.
+- **archived group**: the `archived · n` fold and its dimmed rows inside the done drawer.
+  Folded by default; the fold is session-only.
+- **hidden**: archived, or in an archived project. The one test every working lens filters
+  on; distinct from soft-deleted.
+- **working lens**: a current-work view, such as the desk, a project board, the Projects
+  view, board search, or default `tsk list`. Hidden tasks and projects never show in one.
+- **file**: the `ctrl+f` verb. On a task it toggles the archived flag, with an undo entry.
+  In the project picker it archives the selected project, or unarchives it on the archived
+  tab, with no undo entry. `ctrl+u` on an archived selection also unarchives.
+
+## Select & search
+
+- **multi-select**: the board mode `shift+M` enters and leaves. While it is on, `Space`,
+  `shift+↑`/`shift+↓`, and a plain click mark tasks; outside it those keys keep their usual
+  meaning. Session-only; it clears on a verb, `Esc`, or a lens change.
+- **marked set**: the tasks marked in multi-select, painted `▪` in the gutter beside the
+  cursor's `▸`. Status, archive, delete, and assignee verbs act on the set when it is
+  non-empty, otherwise on the cursor. Never persisted.
+- **batch undo**: the one undo entry a verb on a marked set records. One `ctrl+u` reverses
+  all of it; a stale batch refuses without changing any task. A start that dispatches is
+  the exception: only its start-only tasks share the entry, and its launches are not
+  undoable.
+- **board search**: the `/` filter over the rows the current view shows: project rows on
+  the Projects view, task rows (title, notes, steps, thread, number) everywhere else. Every
+  query word must match. **Pinned** once `Enter` hands keys back to the board; `Esc` clears
+  it before closing anything else.
+
+## Agents & dispatch
+
+- **agent profile**: a named entry in `config.toml` that says how to launch one agent: an
+  argv template with placeholders, an optional prompt template, and optional environment.
+  tsk knows nothing about any harness's flags.
+- **assignee**: the name a task may carry, shown as `@name`: an agent profile, the maintainer
+  (`you`), or a person. It never changes status or triggers anything by itself.
+- **assignee kind**: whether an assignee is an agent or a person, stored on the task. Only an
+  agent dispatches; a removed profile stays an agent. Older stores' assignees are agents.
+- **name rule**: how every typed assignee or "on" value reads: `you`, `me`, or the configured
+  `[board] me` name is you; a profile name is that agent; any other name is a person (or
+  other text for "on"); a task number is a task for a block's "on".
+- **owner name**: `[board] me` in `config.toml`, shown wherever the board names you as a
+  handle. Stored data and JSON keep `you`.
+- **assignee token**: the `!a name` capture directive, sibling of `!p` and `!t`; bare `!a`
+  means unassigned. The name follows the name rule.
+- **unassigned**: carrying no assignee.
+- **dispatch**: what starting an assigned, never-dispatched task does (`ctrl+s`,
+  `tsk status T12 started`, `tsk dispatch`). It creates a worktree from the task's base,
+  launches the assignee's profile there in a Herdr workspace, records the launch on the
+  task, and sets `started`.
+- **start route**: how a start treats a task: plain for an unassigned task, a running agent,
+  or the agent's own start; dispatch for an assigned task never dispatched; ask (board) or
+  refuse `agent-gone` (CLI) when a dispatched agent is gone.
+- **dispatch record**: what dispatch writes on the task: the rendered command, worktree
+  path, branch, base and starting commit, Herdr workspace, and time. It stays through later
+  status changes and is marked cleaned after cleanup; a stale record renders as-is.
+- **dispatched**: carrying a dispatch record. Independent of human status.
+- **base**: the branch a dispatch starts from: the task's explicit base, otherwise the
+  repository's remote default (`origin/HEAD`).
+- **cleanup**: removing a dispatch's worktree, Herdr workspace, and merged branch, offered
+  when the task is completed. It never removes uncommitted work or a branch it cannot
+  confirm is merged, by Git ancestry or, through `gh`, a pull request merged at exactly the
+  branch tip.
+- **merge (a task's PR)**: `m` on the cleanup card, or `--merge` on `tsk status T12 done`
+  and `tsk clean T12`. Merges the task's open pull request through `gh` with the merge
+  method, then completes and cleans up. tsk finds the pull request by branch name, stores
+  nothing about it, and never deletes remote branches.
+- **merge method**: `[merge] method` in `config.toml`: `merge`, `squash`, or `rebase`.
+
+## Store & backup
+
+- **soft-deleted**: a deleted task still in the store, so undo can bring it back. It moves
+  to trash once undo can no longer restore it, or after seven days.
+- **backup**: a copy of the store and `config.toml` (secrets removed) committed to a git
+  repository set up with `tsk backup setup` or `tsk backup add`. `tsk restore` puts a
+  version back.
+
+## Docs
+
+- **guide**: the agent workflow doc, `skills/tsk-cli/SKILL.md`, printed by `tsk guide` and
+  published at `/docs/agents/`.
+- **twin**: the Markdown version of a docs page, at `/docs/<slug>.md`.
+- **bootstrap prompt**: the short text a person pastes to an agent to start it on tsk
+  (`Use tsk for my task board. Run tsk guide and follow it; …`).
+- **definition sentence**: `tsk is a terminal task board for you and your agents: one
+  shared queue, a TUI for you, a CLI for them.`

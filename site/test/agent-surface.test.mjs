@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import yaml from "js-yaml";
 
 import {
   formatTwin,
@@ -25,14 +26,14 @@ const distDir = join(siteRoot, "dist");
 
 const read = (path) => readFile(path, "utf8");
 
+// `npm test` builds dist before any test file starts. A build from inside one file would
+// rewrite generated docs sources while parallel files read them, and a dist left from an
+// earlier build would be stale.
 function ensureDist() {
-  if (existsSync(join(distDir, "index.html"))) return;
-  const result = spawnSync("npm", ["run", "build"], {
-    cwd: siteRoot,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.ok(
+    existsSync(join(distDir, "index.html")),
+    "dist/ is missing: run `npm test`, or `npm run build` first",
+  );
 }
 
 async function docsFiles() {
@@ -105,10 +106,13 @@ test("dist_has_a_markdown_twin_for_every_docs_entry_with_matching_body", async (
     const title = source.match(/^title:\s*(.+)$/m)?.[1]?.replace(/^"|"$/g, "");
     assert.match(twin, new RegExp(`^# ${title}\\n`));
     assert.match(twin, /- html: https:\/\/gettsk\.sh\/docs\//);
-    const sourceLine =
-      slug === "agents"
-        ? "- source: https://github.com/smarzban/tsk/blob/main/skills/tsk-cli/SKILL.md"
-        : `- source: https://github.com/smarzban/tsk/blob/main/site/src/content/docs/docs/${fileName}`;
+    const skillSources = {
+      agents: "skills/tsk-cli/SKILL.md",
+      coordinator: "skills/tsk-coordinator/SKILL.md",
+    };
+    const sourceLine = skillSources[slug]
+      ? `- source: https://github.com/smarzban/tsk/blob/main/${skillSources[slug]}`
+      : `- source: https://github.com/smarzban/tsk/blob/main/site/src/content/docs/docs/${fileName}`;
     assert.match(twin, new RegExp(sourceLine.replaceAll(".", "\\.")));
     assert.match(twin, /- updated: \d{4}-\d{2}-\d{2}T/);
   }
@@ -222,11 +226,13 @@ const SIDEBAR_TITLES = [
   "Overview",
   "Install",
   "Board",
+  "Dispatch",
   "Keys",
   "Capture",
   "Task page",
   "Steps",
   "tsk for agents",
+  "Coordinator skill",
   "CLI",
   "Storage",
 ];
@@ -355,6 +361,49 @@ test("agents_page_notice_plus_skill_body_matches_source", async () => {
   assert.match(generated, /^title:\s*tsk for agents/m);
   assert.doesNotMatch(body, /^# /m);
   assert.equal(body, `${NOTICE}\n\n${skillBody}`);
+});
+
+// Agents load skills with a real YAML parser: one invalid frontmatter line drops the skill.
+test("every_shipped_skill_has_valid_yaml_frontmatter", async () => {
+  const skillsDir = join(repoRoot, "skills");
+  const names = (await readdir(skillsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  assert.ok(names.includes("tsk-cli") && names.includes("tsk-coordinator"), names.join(", "));
+  for (const name of names) {
+    const source = await read(join(skillsDir, name, "SKILL.md"));
+    const frontmatter = source.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+    assert.ok(frontmatter, `${name} needs frontmatter`);
+    const data = yaml.load(frontmatter, { schema: yaml.FAILSAFE_SCHEMA });
+    assert.equal(data.name, name);
+    assert.equal(typeof data.description, "string", `${name} description`);
+    assert.match(data.version, /^\d+\.\d+\.\d+$/, `${name} version`);
+  }
+});
+
+test("coordinator_page_lead_plus_skill_body_matches_source", async () => {
+  syncAgentsPage();
+  const generated = await read(join(docsDir, "coordinator.md"));
+  const skill = await read(join(repoRoot, "skills/tsk-coordinator/SKILL.md"));
+  const skillBody = stripFrontmatter(skill)
+    .replace(/^# [^\n]+\n+/, "")
+    .replace(/\s+$/, "");
+  const body = stripFrontmatter(generated).replace(/\s+$/, "");
+  assert.match(generated, /^title:\s*Coordinator skill/m);
+  assert.doesNotMatch(body, /^# /m);
+  assert.ok(body.endsWith(`\n\n${skillBody}`));
+});
+
+test("coordinator_markdown_twin_points_source_and_updated_at_the_skill", async () => {
+  ensureDist();
+  assert.equal(existsSync(join(distDir, "docs/coordinator/index.html")), true);
+  const twin = await read(join(distDir, "docs/coordinator.md"));
+  assert.match(
+    twin,
+    /- source: https:\/\/github.com\/smarzban\/tsk\/blob\/main\/skills\/tsk-coordinator\/SKILL.md/,
+  );
+  const expected = newestCommitIso(join(repoRoot, "skills/tsk-coordinator/SKILL.md"));
+  assert.match(twin, new RegExp(`- updated: ${expected.replaceAll(".", "\\.")}`));
 });
 
 test("dist_docs_agents_md_exists", async () => {

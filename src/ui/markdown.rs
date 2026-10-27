@@ -720,6 +720,45 @@ mod tests {
     }
 
     #[test]
+    fn em_keeps_matching_delimiter_across_inner_underscores() {
+        for sample in ["*file_name*", "_file_name_", "*foo*", "_foo_"] {
+            let line = paint_md_line(sample, 40, style_plain());
+            let flat: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            let expected = sample.trim_matches(|c| c == '*' || c == '_');
+            assert_eq!(flat, expected, "{sample}");
+            let body = line
+                .spans
+                .iter()
+                .find(|s| s.content.as_ref() == expected)
+                .unwrap_or_else(|| panic!("em body for {sample}"));
+            assert!(
+                body.style.add_modifier.contains(Modifier::UNDERLINED),
+                "{sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn underscore_without_a_valid_closer_stays_literal() {
+        let line = paint_md_line("_file_name and **bold** `code`", 60, style_plain());
+        let flat: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(flat, "_file_name and bold `code`");
+        assert!(!has_mod(&line, Modifier::UNDERLINED));
+        let bold = line
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "bold")
+            .expect("strong span");
+        assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+        let code = line
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "`code`")
+            .expect("code span");
+        assert!(code.style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
     fn heading_keeps_bold_when_the_body_is_emphasized() {
         let h = paint_md_line("# *Release*", 40, style_plain());
         let body = h

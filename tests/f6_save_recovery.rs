@@ -19,8 +19,8 @@ use tsk_tui::app::{apply_board_intent_with_save_recovery, BoardSaveContext};
 use tsk_tui::domain::{DomainError, DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::save_recovery::SaveRecovery;
 use tsk_tui::ui::board::{
-    apply_intent, board_hit_map, draw_board, resolve_board_command, BoardInputMode, BoardModel,
-    CommandSurface, IntentOutcome,
+    apply_intent, board_hit_map, board_verb_items, draw_board, resolve_board_command,
+    BoardInputMode, BoardModel, CommandSurface, IntentOutcome,
 };
 use tsk_tui::ui::capture::draw_capture;
 use tsk_tui::ui::input::{map_key, BoardIntent};
@@ -1142,6 +1142,11 @@ fn a_failed_delete_save_reports_exactly_what_a_failed_complete_save_reports() {
                 Some("Delete me"),
                 "a durable deletion gets its way back"
             );
+            assert_eq!(
+                board_verb_items(&model).first().map(|entry| entry.label),
+                Some("undo"),
+                "the footer offers the undo the retried save made real"
+            );
         } else {
             let cancelled = apply_board_intent_with_save_recovery(
                 &mut domain,
@@ -1167,6 +1172,11 @@ fn a_failed_delete_save_reports_exactly_what_a_failed_complete_save_reports() {
                 model.delete_notice(),
                 None,
                 "the deletion never happened, so nothing offers to undo it"
+            );
+            assert_ne!(
+                board_verb_items(&model).first().map(|entry| entry.label),
+                Some("undo"),
+                "nor does the footer"
             );
         }
     }
@@ -1201,7 +1211,16 @@ fn task_form_save_failure_retries_the_exact_atomic_title_notes_and_scope_mutatio
     }
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
         .expect("select add target");
-    apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None).expect("focus Scope");
+    for mode in [
+        BoardInputMode::EditAssignee,
+        BoardInputMode::SelectBase,
+        BoardInputMode::SelectAfter,
+        BoardInputMode::EditScope,
+    ] {
+        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusNext, None)
+            .expect("advance footer field");
+        assert_eq!(model.input_mode(), mode);
+    }
     apply_intent(&mut domain, &mut model, BoardIntent::FormCycleScope, None)
         .expect("cycle scope to Global");
     assert_eq!(model.form_scope(), Some(&TaskScope::Global));
@@ -1979,11 +1998,11 @@ fn failed_scope_dropdown_save_holds_the_task_form_for_recovery() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::OpenFormScopeDropdown,
+        BoardIntent::OpenFormDropdown(CaptureField::Scope),
         None,
     )
     .expect("open scope dropdown");
-    assert_eq!(model.input_mode(), BoardInputMode::FormScopeDropdown);
+    assert_eq!(model.input_mode(), BoardInputMode::FormDropdown);
 
     apply_board_intent_with_save_recovery(
         &mut domain,
@@ -2019,9 +2038,76 @@ fn input_surface_help_lines_use_the_shared_lowercase_verb_grammar() {
     );
     assert_eq!(
         HELP_SURFACE_HELP_LINE,
-        "type search · ↑↓ scroll · esc clear/close"
+        "type search · ↑↓ scroll · esc clear / close"
     );
     assert_eq!(LAUNCH_CARD_HELP_LINE, "y unarchive · n keep archived");
     assert_eq!(SAVE_RECOVERY_HELP_LINE, "↑↓ · r retry · c cancel");
     assert_eq!(SEARCH_HELP_LINE, "/ search · type · enter pin · esc clear");
+}
+
+/// T240: an Undo whose save fails drops the footer's undo hint against a working state that
+/// never reaches disk. Cancel restores the baseline, where the delete is still the live top
+/// of the undo stack, so the footer offers its undo again.
+#[test]
+fn a_cancelled_failed_undo_save_gives_the_footer_its_undo_back() {
+    fn footer_offers_undo(model: &BoardModel) -> bool {
+        board_verb_items(model)
+            .first()
+            .is_some_and(|entry| entry.label == "undo")
+    }
+    let (mut domain, mut model, doomed) = board_with_two_tasks();
+    let mut recovery = SaveRecovery::new();
+    for _ in 0..2 {
+        let baseline = snapshot_of(&domain);
+        apply_board_intent_with_save_recovery(
+            &mut domain,
+            &mut model,
+            &mut recovery,
+            BoardSaveContext {
+                baseline,
+                intent: BoardIntent::SoftDelete,
+                snapshot: None,
+            },
+            |_| Ok(()),
+        )
+        .expect("delete");
+    }
+    assert!(domain.get(doomed).expect("task").soft_deleted);
+    assert!(footer_offers_undo(&model));
+
+    let baseline = snapshot_of(&domain);
+    apply_board_intent_with_save_recovery(
+        &mut domain,
+        &mut model,
+        &mut recovery,
+        BoardSaveContext {
+            baseline,
+            intent: BoardIntent::Undo,
+            snapshot: None,
+        },
+        |_| Err(INJECTED.into()),
+    )
+    .expect("undo reducer");
+    assert!(recovery.is_pending());
+
+    apply_board_intent_with_save_recovery(
+        &mut domain,
+        &mut model,
+        &mut recovery,
+        BoardSaveContext {
+            baseline: DomainState::new(),
+            intent: BoardIntent::CancelSave,
+            snapshot: None,
+        },
+        |_| panic!("cancel must not persist"),
+    )
+    .expect("cancel");
+    assert!(
+        domain.get(doomed).expect("task").soft_deleted,
+        "cancel keeps the durable delete"
+    );
+    assert!(
+        footer_offers_undo(&model),
+        "ctrl+u still undoes the delete, so the footer says so"
+    );
 }

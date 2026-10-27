@@ -105,14 +105,21 @@ fn plus_opens_focused_bar_regardless_of_shift_and_legacy_chord_is_unbound() {
     assert_eq!(model.message(), None);
 }
 
+/// In the expanded draft a focused Title has a cursor, so ctrl+a is line start (Cmd+← on
+/// macOS); the cursorless capture page (a selected step or `+ step`) still adds a step.
 #[test]
-fn expanded_capture_ctrl_a_opens_step_add() {
+fn expanded_capture_ctrl_a_is_line_start_in_a_field_and_adds_a_step_from_the_page() {
+    let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
     assert_eq!(
         tsk_tui::ui::input::map_task_form_key(
             tsk_tui::ui::capture::CaptureField::Title,
             false,
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            ctrl_a,
         ),
+        Some(BoardIntent::EditMoveLineStart)
+    );
+    assert_eq!(
+        tsk_tui::ui::input::map_key(BoardInputMode::CapturePage, ctrl_a),
         Some(BoardIntent::BeginAddStep)
     );
     let mut domain = DomainState::new();
@@ -125,6 +132,57 @@ fn expanded_capture_ctrl_a_opens_step_add() {
     assert_eq!(model.input_mode(), BoardInputMode::EditStep);
     apply(&mut domain, &mut model, BoardIntent::CancelEdit, None);
     assert_ne!(model.input_mode(), BoardInputMode::EditStep);
+}
+
+/// `ctrl+x` in the expanded draft's new-step row discards that row, as `Esc` does, typed or
+/// empty. It never reaches the board task hidden behind the draft.
+#[test]
+fn expanded_capture_ctrl_x_in_a_new_step_row_discards_only_that_row() {
+    for draft in ["draft step", ""] {
+        let mut domain = DomainState::new();
+        let behind = domain
+            .create_threaded(
+                "board task",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+                None,
+            )
+            .expect("create");
+        let mut model = BoardModel::from_domain(&domain, None);
+        let snap = snapshot();
+        open(&mut domain, &mut model, &snap);
+        type_title(&mut domain, &mut model, "draft task");
+        apply(&mut domain, &mut model, BoardIntent::ExpandQuickAdd, None);
+        apply(&mut domain, &mut model, BoardIntent::BeginAddStep, None);
+        if !draft.is_empty() {
+            apply(
+                &mut domain,
+                &mut model,
+                BoardIntent::EditInsertText(draft.into()),
+                None,
+            );
+        }
+        assert_eq!(model.input_mode(), BoardInputMode::EditStep);
+
+        // Twice, through the live keymap: a second press must not confirm a delete either.
+        let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        for _ in 0..2 {
+            if let Some(intent) = map_key(model.input_mode(), ctrl_x) {
+                apply(&mut domain, &mut model, intent, None);
+            }
+        }
+        assert_ne!(model.input_mode(), BoardInputMode::EditStep, "{draft:?}");
+        assert_eq!(model.message(), None, "{draft:?}: no delete is armed");
+        assert!(
+            !domain.get(behind).expect("board task").soft_deleted,
+            "{draft:?}"
+        );
+        assert!(
+            model.board_form_open(),
+            "{draft:?}: the expanded draft stays open with its title"
+        );
+    }
 }
 
 #[test]
@@ -741,8 +799,15 @@ fn expanded_page_stashes_notes_and_scope_across_esc_and_saves_like_quick_add() {
         render_text(&model, 80, 24).contains("▸ + step"),
         "Tab from Notes selects the trailing step target"
     );
-    apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditScope);
+    for mode in [
+        BoardInputMode::EditAssignee,
+        BoardInputMode::SelectBase,
+        BoardInputMode::SelectAfter,
+        BoardInputMode::EditScope,
+    ] {
+        apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
+        assert_eq!(model.input_mode(), mode);
+    }
     assert_eq!(model.form_scope(), Some(&TaskScope::Global));
     apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
     assert_eq!(model.input_mode(), BoardInputMode::EditTitle);
@@ -778,10 +843,11 @@ fn p_token_consumes_one_argument_and_leaves_later_words_in_the_title() {
     create_project_fixture(&mut domain, "/repos/one");
     let mut model = BoardModel::from_domain(&domain, None);
 
-    save_quick_add(&mut domain, &mut model, "ship !p one now");
+    save_quick_add(&mut domain, &mut model, "ship !p one !t auth now");
 
     let task = domain.tasks().last().expect("saved task");
-    assert_eq!(task.title, "ship now");
+    assert_eq!(task.title, "ship !t auth now");
+    assert_eq!(task.thread, None);
     assert_eq!(
         task.scope,
         TaskScope::Project {
@@ -945,9 +1011,9 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     let standard = render_text(&model, 80, 24);
     for text in [
         "visible task",
-        "title…   !p = desk · !p name = project",
+        "title…   !p project · !a assignee · !b base",
         "add to desk",
-        "enter save · tab details · esc close",
+        "enter add · tab notes · esc close",
     ] {
         assert!(standard.contains(text), "missing {text:?}: {standard}");
     }
@@ -960,7 +1026,7 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
     assert!(standard_rows[21].contains("title…"), "input row");
     assert!(standard_rows[22].trim().is_empty(), "blank row below input");
     assert!(
-        standard_rows[23].contains("enter save"),
+        standard_rows[23].contains("enter add"),
         "keys live on the verb row: {}",
         standard_rows[23]
     );
@@ -974,7 +1040,7 @@ fn capture_bar_renders_spaced_three_row_block_and_stays_bounded_without_color_sg
 
     let compact_rows = render_rows(&model, 40, 10);
     let compact = compact_rows.concat();
-    for text in ["visible task", "title…", "save"] {
+    for text in ["visible task", "title…", "enter add"] {
         assert!(compact.contains(text), "missing {text:?}: {compact}");
     }
     assert!(compact_rows.iter().all(|row| row.chars().count() == 40));
@@ -1177,12 +1243,27 @@ fn expanded_quick_add_tabs_through_staged_steps_and_the_add_target() {
         render_text(&model, 80, 24).contains("▸ + step"),
         "Tab reaches the trailing add target after staged steps"
     );
-    apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
-    assert_eq!(model.input_mode(), BoardInputMode::EditScope);
+    for mode in [
+        BoardInputMode::EditAssignee,
+        BoardInputMode::SelectBase,
+        BoardInputMode::SelectAfter,
+        BoardInputMode::EditScope,
+    ] {
+        apply(&mut domain, &mut model, BoardIntent::FormFocusNext, None);
+        assert_eq!(model.input_mode(), mode);
+    }
+    for mode in [
+        BoardInputMode::SelectAfter,
+        BoardInputMode::SelectBase,
+        BoardInputMode::EditAssignee,
+    ] {
+        apply(&mut domain, &mut model, BoardIntent::FormFocusPrev, None);
+        assert_eq!(model.input_mode(), mode);
+    }
     apply(&mut domain, &mut model, BoardIntent::FormFocusPrev, None);
     assert!(
         render_text(&model, 80, 24).contains("▸ + step"),
-        "Shift+Tab from Scope returns to the add target"
+        "Shift+Tab from Assignee returns to the add target"
     );
     apply(&mut domain, &mut model, BoardIntent::FormFocusPrev, None);
     assert!(
@@ -1263,4 +1344,32 @@ fn wrapped_draft_refusal_paints_on_the_verb_row_and_a_click_there_keeps_the_draf
         BoardInputMode::QuickAdd,
         "the draft survives"
     );
+}
+
+/// GitHub #204: the quick-add line takes the macOS word keys like every text field.
+#[test]
+fn quick_add_line_deletes_and_moves_by_word() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use tsk_tui::ui::input::map_key;
+
+    let mut domain = DomainState::new();
+    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from("/repos/invocation")));
+    let snap = snapshot();
+    open(&mut domain, &mut model, &snap);
+    type_title(&mut domain, &mut model, "ship the fix");
+
+    let alt = |code| KeyEvent::new(code, KeyModifiers::ALT);
+    for key in [
+        alt(KeyCode::Left),
+        alt(KeyCode::Backspace),
+        alt(KeyCode::Char('d')),
+    ] {
+        let intent = map_key(model.input_mode(), key).expect("mapped");
+        apply(&mut domain, &mut model, intent, None);
+    }
+    assert_eq!(model.quick_add_title_value(), "ship ");
+    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    let intent = map_key(model.input_mode(), ctrl_w).expect("mapped");
+    apply(&mut domain, &mut model, intent, None);
+    assert_eq!(model.quick_add_title_value(), "");
 }

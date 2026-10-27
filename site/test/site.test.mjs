@@ -60,9 +60,9 @@ test("Vercel ignores unchanged files relative to the site root", async () => {
   assert.equal(config.ignoreCommand, "git diff --quiet HEAD^ HEAD -- . ../skills");
 });
 
-test("demo capture keeps an absolute project path verbatim and has no thread token", () => {
-  assert.deepEqual(parseCapture("Ship it !p /workspace/herdr-tsk !t Site-Docs", null), {
-    title: "Ship it !t Site-Docs",
+test("demo capture keeps an absolute project path verbatim", () => {
+  assert.deepEqual(parseCapture("Ship it !p /workspace/herdr-tsk", null), {
+    title: "Ship it",
     project: "/workspace/herdr-tsk",
   });
 });
@@ -202,12 +202,32 @@ test("the saved theme survives a visit to the docs", async () => {
 
 test("docs paint keys as keycaps and leave flags as code", async () => {
   const { isKeyName } = await import("../src/plugins/rehype-kbd.mjs");
-  for (const key of ["ctrl+s", "Shift+Enter", "Enter", "Esc", "→", "h", "j", "l", "P", "+", ":", "?"]) {
+  for (const key of [
+    "ctrl+s", "Shift+Enter", "Enter", "Esc", "→", "h", "j", "l", "P", "+", ":", "?",
+    "alt+Backspace", "Cmd+Backspace", "ctrl+Space", "ctrl+Delete", "shift+Tab", "alt+Esc",
+    "alt+↑", "ctrl+Home", "Home", "End", "Backspace", "Space",
+  ]) {
     assert.ok(isKeyName(key), `${key} is a key`);
   }
-  for (const code of ["--json", "-", "tsk add", "~/.tsk", "T30", "T", "i", "n", "global", "ctrl+"]) {
+  for (const code of ["--json", "-", "tsk add", "~/.tsk", "T30", "T", "i", "n", "global", "ctrl+", "ctrl+b unblock"]) {
     assert.ok(!isKeyName(code), `${code} is not a key`);
   }
+});
+
+test("every chord the docs name paints as a keycap", async () => {
+  const { isKeyName } = await import("../src/plugins/rehype-kbd.mjs");
+  const docsDir = new URL("../src/content/docs/docs/", import.meta.url);
+  const missed = [];
+  for (const name of await readdir(docsDir)) {
+    if (![".md", ".mdx"].includes(extname(name))) continue;
+    const text = await readFile(new URL(name, docsDir), "utf8");
+    for (const [, code] of text.matchAll(/`([^`\s]+)`/g)) {
+      if (/^(ctrl|shift|alt|cmd|meta)\+/i.test(code) && !isKeyName(code)) {
+        missed.push(`${name}: ${code}`);
+      }
+    }
+  }
+  assert.deepEqual(missed, []);
 });
 
 test("docs open on the two-party board and let agents set status", async () => {
@@ -216,7 +236,7 @@ test("docs open on the two-party board and let agents set status", async () => {
   assert.match(overview, /tsk status/);
   assert.doesNotMatch(overview, /Done is a human verb/);
   const cli = await read("../src/content/docs/docs/cli.md");
-  assert.match(cli, /## For agents/);
+  assert.match(cli, /\[tsk for agents\]\(\/docs\/agents\/\)/);
   assert.match(cli, /tsk status <task> done/);
 });
 
@@ -291,8 +311,8 @@ test("hero board pins reveal callout copy", async () => {
   assert.doesNotMatch(page, /<span class="l meta">2 done<\/span>/);
   // The selected Doing task uses the same verbs as the generated TUI fixture.
   const verbBar = await read("../../tests/fixtures/queue_board/board.txt");
-  assert.ok(verbBar.includes("enter open · ctrl+o todo · ctrl+d done · ? help"));
-  assert.match(page, /enter open · ctrl\+o todo · ctrl\+d done · \? help/);
+  assert.ok(verbBar.includes("enter open · ctrl+o todo · ctrl+d done · ctrl+b block · : commands · ? help"));
+  assert.match(page, /enter open · ctrl\+o todo · ctrl\+d done · ctrl\+b block · : commands · \? help/);
   const css = await read("../src/styles/landing.css");
   assert.match(css, /\.hero-side \.screen \{[^}]*white-space: pre-wrap/);
   assert.match(css, /\.hero-side \.s-row \.l \{[^}]*text-overflow: clip/);
@@ -359,4 +379,16 @@ test("quickstarts use the installer, Herdr setup, and task capture", async () =>
     }
     assert.ok(!text.includes("-o install-tsk.sh"), file);
   }
+});
+
+test("every GitHub link carries the star count, refreshed by one script", async () => {
+  const page = await read("../src/pages/index.astro");
+  assert.equal(page.match(/<GitHubStars \/>/g)?.length, 2);
+  assert.match(page, /src="\/github-stars.js"/);
+  assert.match(await read("../src/components/DocsLinks.astro"), /<GitHubStars \/>/);
+  assert.match(await read("../src/components/DocsHead.astro"), /src="\/github-stars.js"/);
+  const { formatStars } = await import("../src/lib/github-stars.mjs");
+  assert.deepEqual([0, 223, 999, 1000, 1290, 9999, 12345].map(formatStars), [
+    "0", "223", "999", "1k", "1.2k", "9.9k", "12k",
+  ]);
 });

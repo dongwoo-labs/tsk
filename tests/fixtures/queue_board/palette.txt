@@ -4,12 +4,12 @@
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸  T1 Smoke-test worktree dispatch                                              │
-│   T2 Edi┌─ command ───────────────────────────────────────────── [x]─┐         │
-│   T5 Wir│                                                            │         │
-│   T6 Doc│   set status: todo                                         │         │
-│         │ ▸ set status: doing                                        │         │
-│ TODO · d│   set status: done                                         │───────1 │
+│▸  T1 Smo┌─ command ───────────────────────────────────────────── [x]─┐         │
+│   T2 Edi│                                                            │         │
+│   T5 Wir│   set status: todo                                         │         │
+│   T6 Doc│ ▸ set status: doing                                        │         │
+│         │   set status: done                                         │         │
+│ TODO · d│   set after (wait for)…                                    │───────1 │
 │         │                                                            │         │
 │   T7 Glo├────────────────────────────────────────────────────────────┤         │
 │         │ ↑↓ move · enter run · esc close                            │         │

@@ -36,8 +36,11 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Enter, BoardIntent::OpenTaskPage, false),
         (KeyCode::Esc, BoardIntent::CloseLayer, false),
         (KeyCode::Char('s'), BoardIntent::PrimaryVerb, true),
+        (KeyCode::Char('@'), BoardIntent::OpenAssigneePicker, false),
         (KeyCode::Char('d'), BoardIntent::Complete, true),
         (KeyCode::Char('o'), BoardIntent::Reopen, true),
+        (KeyCode::Char('b'), BoardIntent::ToggleBlock, true),
+        (KeyCode::Char('r'), BoardIntent::ToggleReview, true),
         (KeyCode::Char('e'), BoardIntent::BeginEditTitle, true),
         (KeyCode::Char('x'), BoardIntent::SoftDelete, true),
         (KeyCode::Delete, BoardIntent::SoftDelete, true),
@@ -46,6 +49,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
         (KeyCode::Char('+'), BoardIntent::OpenCapture, false),
         (KeyCode::Char('d'), BoardIntent::ToggleDoneDrawer, false),
         (KeyCode::Char('g'), BoardIntent::ToggleAllGroups, false),
+        (KeyCode::Char('z'), BoardIntent::ToggleMessages, false),
         (KeyCode::Char('v'), BoardIntent::ToggleStatusLines, false),
         (KeyCode::Char('l'), BoardIntent::RefreshAll, true),
         (KeyCode::Char('/'), BoardIntent::FocusSearch, false),
@@ -75,7 +79,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
             assert_eq!(ctrl(key), Some(intent), "ctrl+{key:?}");
             // A bare mutating letter is dead unless the same letter carries a bare route
             // of its own (`d` opens the done drawer).
-            if key != KeyCode::Char('d') {
+            if ![KeyCode::Char('d'), KeyCode::Char('r')].contains(&key) {
                 assert_eq!(normal(key), None, "bare mutating key {key:?} must be dead");
             }
         } else {
@@ -112,7 +116,7 @@ fn normal_mode_keymap_equals_the_readme_and_queue_board_v1_set() {
     assert_eq!(ctrl(KeyCode::Char('d')), Some(BoardIntent::Complete));
 
     for retired in [
-        'a', 'c', 'i', 'z', 'P', 'h', 'l', 'J', 'K', '1', '2', '3', '[', ']',
+        'a', 'c', 'i', 'P', 'h', 'l', 'J', 'K', '1', '2', '3', '[', ']',
     ] {
         assert_eq!(
             normal(KeyCode::Char(retired)),

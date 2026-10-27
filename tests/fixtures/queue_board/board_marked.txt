@@ -21,6 +21,6 @@
 │                                                                               ▌│
 │ DONE ──────────────────────────────────────────────────────────2 · d to open  ▌│
 │────────────────────────────────────────────────────────────────────────────────│
-│ multi-select · 2 selected · esc clears                                         │
-│ enter open · ctrl+s doing · ctrl+d done · + add · ? help                       │
+│ multi-select · 2 selected · esc clear                                          │
+│ enter open · ctrl+s doing · ctrl+d done · + add · : commands · ? help          │
 └────────────────────────────────────────────────────────────────────────────────┘

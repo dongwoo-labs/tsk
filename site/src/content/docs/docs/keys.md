@@ -1,9 +1,9 @@
 ---
 title: Keys
-description: Keyboard shortcuts by action and surface.
+description: Every keyboard shortcut, by surface.
 ---
 
-Use the mouse, the keyboard, or both. Tabs, selectors, tasks, and footer actions are clickable. Press `Shift+M` to enter multi-select, then click tasks or their numbers to toggle marks. Outside multi-select, double-click a task to open it.
+Every key tsk binds, by surface. Press `?` on the board or the task page for the same list, searchable. Clicks are on [Mouse](/docs/board/#mouse).
 
 Press `?` on the board, task page, or another non-text surface for a searchable list of all shortcuts. Status and delete shortcuts use **Ctrl**; navigation uses bare keys. The exceptions are listed below: bare `e` / `a` on the task page and the answer keys of the questions tab. The website demo uses bare status keys because browsers reserve control chords.
 
@@ -35,10 +35,7 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 | Open this Task's completion report | `r` |
 | Search current board rows | `/` |
 | Command palette | `:` |
-| All shortcuts | `?` |
-| Close a layer; quit at the full-board root | `Esc` |
-| Quit outside text entry | `ctrl+q` |
-| Quit from board view | `ctrl+c` |
+| All keys | `?` |
 
 `ctrl+q` quits from task views, Help, and pickers too. It does not quit while editing text, using board search, typing a quick-add line, or filtering the palette. Save or cancel any unsaved draft first. During save recovery, resolve the pending save instead.
 
@@ -46,11 +43,11 @@ Press `?` on the board, task page, or another non-text surface for a searchable 
 
 `Shift+M` enters or leaves multi-select while the board owns input. While it is active, `Space`, shifted arrows, and a plain task click change marks instead of opening a task. Removing the last mark leaves the mode active. `Shift+M` again from the board, `Esc`, a task action, or a view change leaves it and clears the set. Text entry keeps `Shift+M` as a capital `M`; `Esc` leaves multi-select before cancelling that surface.
 
-When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` changes Todo tasks to Doing and leaves Doing tasks unchanged. Marked Done tasks are skipped, and the status row says so: `doing N · skipped M done (ctrl+o reopens them)`. `ctrl+o` sets Todo, including for Done tasks. The old `ctrl+n`, `ctrl+b`, and `ctrl+r` status shortcuts are removed. One `ctrl+u` reverses an entire marked completion or deletion.
+When tasks are marked, the status, delete, and archive shortcuts act on that set; without marks they act on the cursor. `Enter` and `ctrl+e` remain cursor-only. `ctrl+s` changes Todo tasks to Doing and leaves Doing tasks unchanged. Marked Done tasks are skipped, and the status row says so: `doing N · skipped M done (ctrl+o reopens them)`. `ctrl+o` sets Todo, including for Done tasks. `ctrl+b` and `ctrl+r` open the [block and review cards](#detailed-task-status-and-assignment). `ctrl+n` does nothing. One `ctrl+u` reverses an entire marked completion or deletion.
 
 ## Task page
 
-These keys apply in **view mode**:
+In view mode, before you start an edit:
 
 | Action | Key |
 | --- | --- |
@@ -77,7 +74,7 @@ These keys apply in **view mode**:
 
 Click a step to select it. Click **+ step** to add at the end. Click any row of a parent or child line to open that task. Field clicks become editable only after task editing starts.
 
-`alt+↑` / `alt+↓`, the parent keys `P` / `U`, and `e` / `a` (which start an edit, as `ctrl+e` / `ctrl+a` do) are the task-page shortcuts without `ctrl`. macOS reserves `ctrl+arrows` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
+`alt+↑` / `alt+↓`, the parent keys `P` / `U`, and `e` / `a` (which start an edit, as `ctrl+e` / `ctrl+a` do) are the task-page shortcuts without `ctrl`. macOS reserves `ctrl+↑` / `ctrl+↓` for Mission Control. `alt+↑` / `alt+↓` also works during task editing while a step is selected and no field is open. Your terminal must send `alt+↑` as one modified key (xterm's default); a terminal set to prefix Option or Alt with `Esc` delivers `Esc` and then the arrow, which closes the task page.
 
 `P` and `U` act on the open task only, never on a marked set, and only while no text field is open; in a field they type capital letters. A draft with unsaved changes refuses both until you save or cancel it. `P` opens the parent picker; `U` clears the parent at once. Neither changes either task's status or scope. [Related tasks](/docs/task-page/#related-tasks).
 
@@ -101,13 +98,51 @@ Click a step to select it. Click **+ step** to add at the end. Click any row of 
 | Delete backward / forward | `Backspace` / `Delete` |
 | Move through wrapped notes | `↑` / `↓` |
 
-`ctrl+e` moves to line end in text editors. `ctrl+a` moves to line start in quick-add; on the task page it adds a step instead. Paste preserves line breaks in Notes and converts them to spaces in single-line fields.
+- Keys inside the reply and feedback box: [Blocked](/docs/task-page/#blocked) and [Review](/docs/task-page/#review).
+- Digits pick options on the task page. `1` `2` `3` switch views only on the board.
+- `alt+↑` / `alt+↓` also work while editing, with a step selected and no field open.
+- Your terminal must send `alt+↑` as one modified key, as xterm does by default. A terminal that sends Option or Alt as a leading `Esc` closes the page instead.
 
-Editing keys take precedence over view-mode status shortcuts. In the step editor, `ctrl+d` and `ctrl+o` still address the task; `ctrl+x` removes the step being edited, staged until the task edit is saved; `ctrl+a` adds another step. Notes are reached with `ctrl+e`, then `Tab`. `Alt+Enter` does not save the task edit.
+## Text editing
 
-### If Shift+Enter does not save
+| Action | Key |
+| --- | --- |
+| Save the task edit | `shift+Enter` |
+| Cancel the field | `Esc` or `ctrl+c` |
+| Next / previous field | `Tab` / `shift+Tab` |
+| Title: move to Notes | `Enter` |
+| Notes: new line | `Enter` |
+| Notes: move through wrapped lines | `↑` / `↓` |
+| New step: save it and open the next row | `Enter` |
+| Existing step: keep the rename in this edit | `Enter` |
+| Add a step from a selected step, **+ step**, the Scope row, or a selected Thread | `ctrl+a` |
+| Stage removal of the selected step | `ctrl+x` |
+| Open the Scope, Assignee, Base, or After picker; confirm the choice. In the After picker, `Enter` pins and `shift+Enter` saves | `Enter` |
+| Cycle Scope or Assignee without opening it | `Space` or `←` / `→` |
+| Open / close the Thread editor | `Enter` |
+| Line start / end | `Home` / `End` or `ctrl+a` / `ctrl+e` |
+| Word left / right | `alt+←` / `alt+→`, `ctrl+←` / `ctrl+→`, or `alt+b` / `alt+f` |
+| Delete a character backward / forward | `Backspace` / `Delete` |
+| Delete a word backward | `alt+Backspace` or `ctrl+w` |
+| Delete a word forward | `alt+Delete` or `alt+d` |
+| Delete to line start / end | `ctrl+u` / `ctrl+k` |
 
-Some terminals are set to send a plain line feed for `Shift+Enter` (Ghostty's `keybind = shift+enter=text:\n`, for example). tsk reads that as `ctrl+j`, so the form does not save. In a form editor, `ctrl+j` shows `Shift+Enter sent Ctrl+J: check terminal keys` on the status row and changes nothing. Remove the binding, or map `Shift+Enter` to a sequence that keeps the Shift modifier, then try again.
+In the step editor, `ctrl+d` and `ctrl+o` still act on the task, and `ctrl+x` stages the step's removal until the task edit is saved. In a new step's row, `ctrl+x` discards that row, as `Esc` does.
+
+- Field order: [Edit](/docs/task-page/#edit).
+- The word and line keys work in every text field: Title, Notes, steps, Thread, and quick-add.
+- A word is a run of non-space characters, as with Option+arrow in macOS. In Notes, word moves cross line breaks and a word delete stops at one.
+- In Notes, `ctrl+u` at a line start joins the line above, and `ctrl+k` at a line end joins the next line.
+- Search, the palette, Help, and the pickers you type into have no cursor. There, `alt+Backspace` and `ctrl+w` delete the query's last word, and `ctrl+u` and `ctrl+k` do nothing. The assignee picker's `ctrl+u` is the exception: it puts back a removed name.
+- Outside text fields, `ctrl+u` is undo.
+- Paste keeps line breaks in Notes and turns them into spaces in one-line fields.
+- On macOS, `Cmd+←` and `Cmd+→` arrive as `ctrl+a` and `ctrl+e`, and `Cmd+Backspace` as `ctrl+u`.
+- On macOS, Option reaches tsk only when the terminal sends it as Meta. Turn on Terminal.app's **Use Option as Meta key**, or set iTerm2's Option key to **Esc+**. If Option+B types `∫`, use `ctrl+←`, `ctrl+→`, and `ctrl+w`.
+- On Windows, AltGr letters type as characters.
+
+### If shift+Enter does not save
+
+Some terminals send a plain line feed for `shift+Enter`, such as Ghostty with `keybind = shift+enter=text:\n`. tsk reads it as `ctrl+j` and changes nothing. In a form or the After picker it shows `Shift+Enter sent Ctrl+J: check terminal keys`. Remove the binding, or map `shift+Enter` to a sequence that keeps the Shift modifier.
 
 ## Questions tab
 
@@ -157,15 +192,15 @@ A new report revision is unread even if an earlier revision was opened. Selectin
 | Action | Key |
 | --- | --- |
 | Save and close | `Enter` |
-| Save and keep adding | `Shift+Enter` |
-| Expand details | `Tab` |
-| Cancel line / return from details | `Esc` |
+| Save and keep adding | `shift+Enter` |
+| Open notes and details | `Tab` |
+| Cancel the line, or return from details | `Esc` |
 
-In Herdr quick capture, `Shift+Enter` saves and closes the popup. `Esc` closes an active step editor or scope picker first; otherwise it discards the popup. During save recovery, it cancels the pending save. [Capture guide](/docs/capture/).
+In the Herdr popup, `shift+Enter` saves and closes it. `Esc` or `ctrl+c` discards the popup, after first closing an open step editor or picker. [Capture](/docs/capture/).
 
-## Pickers
+## Pickers, search, palette, help
 
-| Surface | Controls |
+| Surface | Keys |
 | --- | --- |
 | Parent picker (`P`) | Type or paste to filter by number or title; arrows or `Tab` select, and on a long wrapped title `↑` / `↓` first show its other rows; the wheel scrolls rows; `Enter` saves the parent (or **no parent**); a click on any row of an option saves it; `Esc` closes without saving |
 | Board search | Type or paste; `Backspace` edits; `Enter` pins; `Esc` clears and closes |
@@ -187,6 +222,16 @@ At 110 usable columns or wider, the list and the selected task's detail always s
 
 On the detail or a task page, `J` / `K` opens the next or previous task in list order. `Tab` navigates task fields or steps; it does not switch focus.
 
-`h` and `l` are navigation aliases only while a board or task view owns input. Text editors, quick-add, search, filters, the palette, and Help continue to insert them as ordinary characters.
+## Esc and quit
 
 [Board views and mouse behavior](/docs/board/#wide-layout).
+
+## Detailed task status and assignment
+
+| Action | Key |
+| --- | --- |
+| Block or unblock | `ctrl+b` |
+| Send to review or back to ready | `ctrl+r` |
+| Assign a task | `@` |
+
+These actions use upstream's [block and review cards](/docs/board/#block-review-reply). They do not answer or approve an Agent question.

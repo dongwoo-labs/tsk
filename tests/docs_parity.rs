@@ -3,9 +3,10 @@
 //! the board does not offer (the palette listed a `Set done` that never existed).
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tsk_tui::domain::{DomainState, ProvenanceOrigin, TaskScope};
+use tsk_tui::domain::{BlockDraft, Dispatch, DomainState, ProvenanceOrigin, TaskScope};
 use tsk_tui::ui::board::{apply_intent, BoardInputMode, BoardModel};
 use tsk_tui::ui::input::{map_key, BoardIntent};
 
@@ -56,7 +57,12 @@ fn promised_labels(cell: &str) -> Vec<String> {
     let mut labels = Vec::new();
     for part in cell.split(',') {
         let part = part.trim().to_lowercase();
-        if let Some(rest) = part.strip_prefix("set ") {
+        if matches!(
+            part.as_str(),
+            "set assignee" | "set waiting on…" | "set base" | "set after (wait for)…"
+        ) {
+            labels.push(part);
+        } else if let Some(rest) = part.strip_prefix("set ") {
             // "Set open/ready/started/blocked/review" is five status commands.
             for status in rest.split('/') {
                 labels.push(format!("set status: {}", status.trim()));
@@ -68,18 +74,79 @@ fn promised_labels(cell: &str) -> Vec<String> {
     labels
 }
 
-fn selected_model() -> BoardModel {
+fn selected_model(dispatched: bool) -> BoardModel {
     let mut domain = DomainState::new();
-    domain
-        .create(
+    let id = domain
+        .create_assigned(
             "palette witness",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+            Some("name".into()),
+        )
+        .expect("seed task");
+    if dispatched {
+        domain
+            .record_dispatch(
+                id,
+                Dispatch {
+                    argv: vec!["agent".into()],
+                    worktree: "/tmp/worktree".into(),
+                    branch: "tsk/t1-palette-witness".into(),
+                    base: None,
+                    base_commit: None,
+                    base_remote: None,
+                    base_ref: None,
+                    herdr_workspace_id: "w1".into(),
+                    at: SystemTime::now(),
+                    cleaned: false,
+                },
+            )
+            .expect("dispatch");
+    }
+    let model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
+    assert!(model.selected_id().is_some(), "a task must be selected");
+    model
+}
+
+/// One blocked task, selected.
+fn blocked_model() -> BoardModel {
+    let mut domain = DomainState::new();
+    let id = domain
+        .create(
+            "blocked witness",
             None,
             TaskScope::Global,
             ProvenanceOrigin::Manual,
         )
         .expect("seed task");
+    domain
+        .block(id, BlockDraft::default(), "you")
+        .expect("block");
     let model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
     assert!(model.selected_id().is_some(), "a task must be selected");
+    model
+}
+
+/// Two tasks, both marked in multi-select.
+fn marked_model() -> BoardModel {
+    let mut domain = DomainState::new();
+    for title in ["first marked", "second marked"] {
+        domain
+            .create(title, None, TaskScope::Global, ProvenanceOrigin::Manual)
+            .expect("seed task");
+    }
+    let mut model = BoardModel::from_tasks(domain.tasks().to_vec(), None);
+    for intent in [
+        BoardIntent::ToggleMarkMode,
+        BoardIntent::MarkToggle,
+        BoardIntent::SelectNext,
+        BoardIntent::MarkToggle,
+    ] {
+        apply_intent(&mut domain, &mut model, intent, None).expect("mark");
+    }
+    assert_eq!(model.marked_count(), 2, "two tasks must be marked");
     model
 }
 
@@ -121,8 +188,11 @@ fn board_md_palette_table_matches_the_palette_catalog() {
     assert!(empty.selected_id().is_none());
     let always = labels(&empty);
 
-    let mut model = selected_model();
+    let mut model = selected_model(false);
     let with_selection = labels(&model);
+    let with_dispatch = labels(&selected_model(true));
+    let with_block = labels(&blocked_model());
+    let with_marks = labels(&marked_model());
 
     model.begin_save_recovery("disk full");
     let recovery = labels(&model);
@@ -150,8 +220,14 @@ fn board_md_palette_table_matches_the_palette_catalog() {
     for row in &rows {
         let (actions, when) = (&row[0], &row[1]);
         let available = match when.as_str() {
-            "Always" => &always,
-            "A task is selected" => &with_selection,
+            // The empty board is a task list with focus, so it offers the layout commands.
+            "Always" | "A task list has focus" => &always,
+            "A task is selected" | "An assigned task without a dispatch record is selected" => {
+                &with_selection
+            }
+            "A task with a dispatch record is selected" => &with_dispatch,
+            "A task with an open block or review is selected or marked" => &with_block,
+            "Two or more tasks are marked" => &with_marks,
             "A save has failed" => &recovery,
             "A task-page step is selected" => &with_step,
             "Inside Herdr" => &in_herdr,
@@ -171,14 +247,37 @@ fn board_md_palette_table_matches_the_palette_catalog() {
     // selected, and a selection-only command really is absent from the empty board.
     for (label, when) in &documented {
         match *when {
-            "A task is selected" => assert!(
+            "A task is selected"
+            | "An assigned task without a dispatch record is selected"
+            | "A task with a dispatch record is selected"
+            | "Two or more tasks are marked" => assert!(
                 !always.contains(label),
                 "{label:?} is documented as selection-only but the empty board offers it"
             ),
-            "Always" => assert!(
-                with_selection.contains(label),
-                "{label:?} is documented as always available but vanishes with a selection"
+            "A task with an open block or review is selected or marked" => assert!(
+                !with_selection.contains(label),
+                "{label:?} is documented for an open block or review but a plain selection offers it"
             ),
+            "Always" => {
+                assert!(
+                    with_selection.contains(label),
+                    "{label:?} is documented as always available but vanishes with a selection"
+                );
+                assert!(
+                    with_step.contains(label),
+                    "{label:?} is documented as always available but vanishes over a task page"
+                );
+            }
+            "A task list has focus" => {
+                assert!(
+                    with_selection.contains(label),
+                    "{label:?} is documented for a focused task list but vanishes with a selection"
+                );
+                assert!(
+                    !with_step.contains(label),
+                    "{label:?} is documented for a focused task list but an open task page offers it"
+                );
+            }
             "A task-page step is selected" => assert!(
                 !with_selection.contains(label),
                 "{label:?} is documented as step-only but the board selection offers it"
@@ -204,14 +303,64 @@ fn board_md_palette_table_matches_the_palette_catalog() {
     };
     for label in &always {
         assert!(
-            covers(label, &["Always"]),
+            covers(label, &["Always", "A task list has focus"]),
             "the empty board offers {label:?} but board.md does not list it as Always"
         );
     }
     for label in &with_selection {
         assert!(
-            covers(label, &["Always", "A task is selected"]),
+            covers(
+                label,
+                &[
+                    "Always",
+                    "A task list has focus",
+                    "A task is selected",
+                    "An assigned task without a dispatch record is selected"
+                ]
+            ),
             "a selected board offers {label:?} but board.md's table does not list it"
+        );
+    }
+    for label in &with_dispatch {
+        assert!(
+            covers(
+                label,
+                &[
+                    "Always",
+                    "A task list has focus",
+                    "A task is selected",
+                    "A task with a dispatch record is selected"
+                ]
+            ),
+            "a dispatched board offers {label:?} but board.md's table does not list it"
+        );
+    }
+    for label in &with_block {
+        assert!(
+            covers(
+                label,
+                &[
+                    "Always",
+                    "A task list has focus",
+                    "A task is selected",
+                    "A task with an open block or review is selected or marked"
+                ]
+            ),
+            "a blocked board offers {label:?} but board.md's table does not list it"
+        );
+    }
+    for label in &with_marks {
+        assert!(
+            covers(
+                label,
+                &[
+                    "Always",
+                    "A task list has focus",
+                    "A task is selected",
+                    "Two or more tasks are marked"
+                ]
+            ),
+            "a marked board offers {label:?} but board.md's table does not list it"
         );
     }
     for label in &with_step {
@@ -234,6 +383,7 @@ fn board_md_palette_table_matches_the_palette_catalog() {
                 &[
                     "Always",
                     "A task is selected",
+                    "A task list has focus",
                     "Inside Herdr",
                     "Inside Herdr, the task has a Thread line"
                 ]
@@ -261,6 +411,12 @@ fn expected_intent(action: &str) -> Option<BoardIntent> {
         BoardIntent::Reopen
     } else if action.starts_with("mark done") {
         BoardIntent::Complete
+    } else if action.starts_with("toggle blocked") {
+        BoardIntent::ToggleBlock
+    } else if action.starts_with("toggle review")
+        || action.starts_with("review with the review card")
+    {
+        BoardIntent::ToggleReview
     } else if action.starts_with("delete") {
         BoardIntent::SoftDelete
     } else if action.starts_with("undo") {
@@ -317,13 +473,13 @@ fn keys_md_board_table_matches_the_normal_mode_keymap() {
 }
 
 /// keys.md's editing prose: in the step editor `ctrl+d` and `ctrl+o` address the task,
-/// `ctrl+x` stages the step's removal (no confirm press inside the editor) and `ctrl+a`
-/// adds a step.
+/// `ctrl+x` stages the step's removal (no confirm press inside the editor), and `ctrl+a` is
+/// line start like every text field (macOS terminals send Cmd+← as ctrl+a).
 #[test]
 fn keys_md_step_editor_chords_match_the_edit_step_keymap() {
     let doc = read_doc("keys.md");
     assert!(
-        doc.contains("In the step editor, `ctrl+d` and `ctrl+o` still address the task; `ctrl+x` removes the step being edited, staged until the task edit is saved; `ctrl+a` adds another step."),
+        doc.contains("In the step editor, `ctrl+d` and `ctrl+o` still act on the task, and `ctrl+x` stages the step's removal until the task edit is saved."),
         "keys.md step-editor sentence changed; update this test with the code it now claims"
     );
     let chord = |letter: char| {
@@ -335,6 +491,6 @@ fn keys_md_step_editor_chords_match_the_edit_step_keymap() {
     assert_eq!(chord('d'), Some(BoardIntent::Complete));
     assert_eq!(chord('o'), Some(BoardIntent::Reopen));
     assert_eq!(chord('x'), Some(BoardIntent::SoftDelete));
-    assert_eq!(chord('a'), Some(BoardIntent::BeginAddStep));
+    assert_eq!(chord('a'), Some(BoardIntent::EditMoveLineStart));
     assert_eq!(chord('n'), None, "ctrl+n is not a step-editor chord");
 }

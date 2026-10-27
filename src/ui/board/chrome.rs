@@ -17,56 +17,117 @@ impl BoardModel {
         if let Some(notice) = bulk_notice.as_deref() {
             parts.push(ChromeRowPart::Message(notice));
         } else if let Some(title) = self.visible_delete_notice() {
-            parts.push(ChromeRowPart::Notice { title, undo: false });
+            parts.push(ChromeRowPart::Notice {
+                label: self.delete_notice_label(),
+                title,
+                undo: false,
+            });
         }
         if let Some(message) = self.message.as_deref().filter(|msg| !msg.is_empty()) {
             parts.push(ChromeRowPart::Message(message));
         }
-        edit_chrome_line(self.input_mode, &parts, width)
+        let review = match self.input_mode {
+            BoardInputMode::EditReply => self.reply_is_feedback(),
+            BoardInputMode::BlockCard => self
+                .block_card()
+                .is_some_and(|card| card.kind() == crate::domain::BlockKind::Review),
+            _ => false,
+        };
+        edit_chrome_line(self.input_mode, review, &parts, width)
     }
 }
 
-fn edit_chrome_legends(mode: BoardInputMode) -> [&'static str; 3] {
+/// The reply (feedback) box's own keys, its widest legend, for the task page's action line.
+pub(super) fn reply_box_keys(review: bool) -> &'static str {
+    edit_chrome_legends(BoardInputMode::EditReply, review)[0]
+}
+
+/// The legends an edit owns, widest first. `review` picks the feedback box and review card.
+fn edit_chrome_legends(mode: BoardInputMode, review: bool) -> [&'static str; 3] {
     match mode {
+        BoardInputMode::EditReply if review => [
+            "shift+enter save · ctrl+s send back · ctrl+d approve · esc cancel",
+            "shift+enter save · ctrl+s send back · ctrl+d approve · esc",
+            "shift+enter · ctrl+s · ctrl+d · esc",
+        ],
+        BoardInputMode::BlockCard if review => [
+            "enter review · shift+enter new check · tab next field · esc cancel",
+            "enter review · tab next · esc",
+            "enter · tab · esc",
+        ],
         BoardInputMode::EditNotes => [
-            "Shift+Enter save · Enter newline · Esc cancel",
-            "Shift+Enter save · Esc cancel",
-            "Shift+Enter save · Esc",
+            "shift+enter save · enter newline · esc cancel",
+            "shift+enter save · esc cancel",
+            "shift+enter save · esc",
         ],
         BoardInputMode::EditScope => [
-            "Space cycle · Enter scopes · Esc cancel",
-            "Space · Enter scopes · Esc",
-            "Enter scopes · Esc",
+            "space cycle · enter projects · esc cancel",
+            "space · enter projects · esc",
+            "enter projects · esc",
+        ],
+        BoardInputMode::EditAssignee => [
+            "space / arrows cycle · enter choose · esc cancel",
+            "space cycle · enter choose · esc",
+            "enter choose · esc",
+        ],
+        BoardInputMode::SelectBase => [
+            "enter choose base · tab next · esc cancel",
+            "enter choose · tab next · esc",
+            "enter choose · esc",
+        ],
+        BoardInputMode::SelectAfter => [
+            "enter choose tasks · tab next · esc cancel",
+            "enter choose · tab next · esc",
+            "enter choose · esc",
         ],
         BoardInputMode::EditTitle => [
-            "Shift+Enter save · Esc cancel",
-            "Shift+Enter save · Esc cancel",
-            "Shift+Enter save · Esc",
+            "shift+enter save · esc cancel",
+            "shift+enter save · esc cancel",
+            "shift+enter save · esc",
+        ],
+        BoardInputMode::EditReply => [
+            "shift+enter save · ctrl+s save and unblock · esc cancel",
+            "shift+enter save · ctrl+s unblock · esc",
+            "shift+enter · ctrl+s · esc",
+        ],
+        BoardInputMode::BlockCard => [
+            "enter block · tab next field · esc cancel",
+            "enter block · tab next · esc",
+            "enter · tab · esc",
         ],
         BoardInputMode::EditStep => [
-            "Enter next · Shift+Enter save · Esc cancel",
-            "Enter next · Shift+Enter save · Esc",
-            "Enter · Shift+Enter · Esc",
+            "enter next · shift+enter save · esc cancel",
+            "enter next · shift+enter save · esc",
+            "enter · shift+enter · esc",
         ],
         BoardInputMode::QuickAdd
-        | BoardInputMode::FormScopeDropdown
+        | BoardInputMode::FormDropdown
         | BoardInputMode::Normal
         | BoardInputMode::ParentPicker
+        | BoardInputMode::ListPicker
         | BoardInputMode::Search
         | BoardInputMode::SaveRecovery
         | BoardInputMode::LaunchCard
+        | BoardInputMode::CleanupConfirm
+        | BoardInputMode::CleanupDirtyConfirm
+        | BoardInputMode::DispatchConfirm
         | BoardInputMode::Palette
         | BoardInputMode::Help
         | BoardInputMode::TaskPage
         | BoardInputMode::CapturePage => [
-            "Enter save · Esc cancel",
-            "Enter save · Esc cancel",
-            "Enter save · Esc",
+            "enter save · esc cancel",
+            "enter save · esc cancel",
+            "enter save · esc",
         ],
     }
 }
 
-fn edit_chrome_line(mode: BoardInputMode, lead: &[ChromeRowPart<'_>], width: usize) -> String {
+fn edit_chrome_line(
+    mode: BoardInputMode,
+    review: bool,
+    lead: &[ChromeRowPart<'_>],
+    width: usize,
+) -> String {
     use ratatui::text::Line;
 
     /// Narrowest lead worth painting; below this only the legend is left.
@@ -77,7 +138,7 @@ fn edit_chrome_line(mode: BoardInputMode, lead: &[ChromeRowPart<'_>], width: usi
     let idle = [ChromeRowPart::Message("editing…")];
     let lead = if lead.is_empty() { &idle[..] } else { lead };
     let full = fit_chrome_row(lead, usize::MAX);
-    let legends = edit_chrome_legends(mode);
+    let legends = edit_chrome_legends(mode, review);
     let lead_width = Line::from(full.as_str()).width();
     for legend in legends {
         if FRAME + lead_width + Line::from(legend).width() <= width {
@@ -97,10 +158,8 @@ fn edit_chrome_line(mode: BoardInputMode, lead: &[ChromeRowPart<'_>], width: usi
     format!("  {}  ·  {}", fit_chrome_row(lead, room), shortest)
 }
 
-/// The Undo control on the delete recovery notice: the key and its label.
+/// The Undo control on the delete recovery notice, single or bulk: the key and its label.
 pub const DELETE_NOTICE_UNDO: &str = "ctrl+u undo";
-/// Undo control text for a bulk delete notice.
-pub const BULK_DELETE_NOTICE_UNDO: &str = "ctrl+u restores";
 
 const CHROME_ROW_SEPARATOR: &str = "  ·  ";
 const CHROME_ROW_OMITTED: &str = "…";
@@ -112,33 +171,42 @@ pub(super) fn row_width(text: &str) -> usize {
     ratatui::text::Line::from(text).width()
 }
 
-/// The delete recovery notice around a title: `Deleted "title" · ctrl+u undo`.
-pub(super) fn notice_framed(title: &str, undo: bool) -> String {
+/// The delete recovery notice around a title: `Deleted T12 "title" · ctrl+u undo`. A task
+/// without a `T` number (a notice task) passes no label and keeps the title alone.
+pub(super) fn notice_framed(label: Option<&str>, title: &str, undo: bool) -> String {
+    let subject = match label {
+        Some(label) => format!("{label} \"{title}\""),
+        None => format!("\"{title}\""),
+    };
     if undo {
-        format!("Deleted \"{title}\" · {DELETE_NOTICE_UNDO}")
+        format!("Deleted {subject} · {DELETE_NOTICE_UNDO}")
     } else {
-        format!("Deleted \"{title}\"")
+        format!("Deleted {subject}")
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 enum ChromeRowPart<'a> {
-    Notice { title: &'a str, undo: bool },
+    Notice {
+        label: Option<&'a str>,
+        title: &'a str,
+        undo: bool,
+    },
     Message(&'a str),
 }
 
 impl ChromeRowPart<'_> {
     fn want(&self) -> usize {
         match self {
-            Self::Notice { title, undo } => row_width(&notice_framed(title, *undo)),
+            Self::Notice { label, title, undo } => row_width(&notice_framed(*label, title, *undo)),
             Self::Message(message) => row_width(message),
         }
     }
 
     fn floor(&self) -> usize {
         match self {
-            Self::Notice { undo, .. } => {
-                (row_width(&notice_framed("", *undo)) + NOTICE_TITLE_FLOOR).min(self.want())
+            Self::Notice { label, undo, .. } => {
+                (row_width(&notice_framed(*label, "", *undo)) + NOTICE_TITLE_FLOOR).min(self.want())
             }
             Self::Message(message) => MESSAGE_FLOOR.min(row_width(message)),
         }
@@ -146,9 +214,13 @@ impl ChromeRowPart<'_> {
 
     fn render(&self, budget: usize) -> String {
         match self {
-            Self::Notice { title, undo } => {
-                let frame = row_width(&notice_framed("", *undo));
-                notice_framed(&present_line(title, budget.saturating_sub(frame)), *undo)
+            Self::Notice { label, title, undo } => {
+                let frame = row_width(&notice_framed(*label, "", *undo));
+                notice_framed(
+                    *label,
+                    &present_line(title, budget.saturating_sub(frame)),
+                    *undo,
+                )
             }
             Self::Message(message) => present_line(message, budget),
         }
@@ -214,5 +286,36 @@ fn fit_chrome_row(parts: &[ChromeRowPart<'_>], width: usize) -> String {
         present_line(&text, width)
     } else {
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T235: field-edit legends name keys in lowercase, like every footer and verb bar.
+    #[test]
+    fn edit_chrome_legends_name_keys_in_lowercase() {
+        for mode in [
+            BoardInputMode::Normal,
+            BoardInputMode::EditTitle,
+            BoardInputMode::EditNotes,
+            BoardInputMode::SelectBase,
+            BoardInputMode::SelectAfter,
+            BoardInputMode::EditScope,
+            BoardInputMode::EditAssignee,
+            BoardInputMode::EditReply,
+            BoardInputMode::BlockCard,
+            BoardInputMode::EditStep,
+        ] {
+            for review in [false, true] {
+                for legend in edit_chrome_legends(mode, review) {
+                    assert!(
+                        !legend.chars().any(|c| c.is_ascii_uppercase()),
+                        "{mode:?} legend {legend:?} must be lowercase"
+                    );
+                }
+            }
+        }
     }
 }

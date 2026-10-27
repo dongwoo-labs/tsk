@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,6 +59,164 @@ fn edit(dir: &Path, args: &[&str]) -> CliOutput {
     ];
     command.extend(args.iter().map(|argument| (*argument).to_string()));
     cli(command)
+}
+
+fn init_git_project(path: &Path) {
+    tsk_tui::git_base::stretch_default_deadlines_for_tests();
+    fs::create_dir_all(path).expect("create project");
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.email", "test@example.com"][..],
+        &["config", "user.name", "Test"][..],
+    ] {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .status()
+            .expect("run git")
+            .success());
+    }
+    fs::write(path.join("README"), "seed\n").expect("seed file");
+    assert!(Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .status()
+        .expect("git add")
+        .success());
+    assert!(Command::new("git")
+        .args(["commit", "-qm", "seed"])
+        .current_dir(path)
+        .status()
+        .expect("git commit")
+        .success());
+    assert!(Command::new("git")
+        .args(["branch", "release"])
+        .current_dir(path)
+        .status()
+        .expect("git branch")
+        .success());
+}
+
+#[test]
+fn edit_sets_and_clears_base_validated_only_against_the_task_project() {
+    let dir = temp_state_dir("base");
+    let _guard = TempDirGuard(dir.clone());
+    let project = dir.join("project");
+    init_git_project(&project);
+    let mut state = DomainState::new();
+    state
+        .create_threaded(
+            "based",
+            None,
+            TaskScope::Project {
+                path: project.to_string_lossy().into_owned(),
+            },
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("seed task");
+    TaskStore::new(&dir).save(&state).expect("save task");
+
+    let set = edit(&dir, &["T1", "--base", "release"]);
+    assert_eq!(set.code, 0, "{set:?}");
+    assert_eq!(
+        TaskStore::new(&dir).load().expect("load").tasks()[0]
+            .base
+            .as_deref(),
+        Some("release")
+    );
+
+    let unknown = edit(&dir, &["T1", "--base", "missing"]);
+    assert_eq!(unknown.code, 1, "{unknown:?}");
+    assert!(unknown.stderr.contains("unknown-base"), "{unknown:?}");
+    assert_eq!(
+        TaskStore::new(&dir).load().expect("reload").tasks()[0]
+            .base
+            .as_deref(),
+        Some("release")
+    );
+
+    let clear = edit(&dir, &["T1", "--clear-base"]);
+    assert_eq!(clear.code, 0, "{clear:?}");
+    assert_eq!(
+        TaskStore::new(&dir).load().expect("reload clear").tasks()[0].base,
+        None
+    );
+}
+
+#[test]
+fn edit_assigns_by_the_name_rule_and_unassigns() {
+    let dir = temp_state_dir("assignee");
+    let _guard = TempDirGuard(dir.clone());
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.reviewer]\ncommand = [\"true\"]\n",
+    )
+    .expect("write profiles");
+    assert_eq!(add_task(&dir, "assign me").code, 0);
+
+    let assigned = edit(&dir, &["T1", "--assignee", "Reviewer"]);
+    assert_eq!(assigned.code, 0, "{}", assigned.stderr);
+    assert_eq!(
+        TaskStore::new(&dir).load().expect("load").tasks()[0]
+            .assignee
+            .as_deref(),
+        Some("reviewer")
+    );
+
+    assert_eq!(
+        assigned.stdout, "edited T1 assign me\n",
+        "an agent needs no note"
+    );
+
+    // A name that is not a profile is a person, said out loud so a typo shows.
+    let person = edit(&dir, &["T1", "--assignee", "dana"]);
+    assert_eq!(person.code, 0, "{}", person.stderr);
+    assert_eq!(
+        person.stdout,
+        "edited T1 assign me\nassigned T1 to @dana (not an agent profile)\n"
+    );
+    let task = TaskStore::new(&dir).load().expect("load person").tasks()[0].clone();
+    assert_eq!(task.assignee.as_deref(), Some("dana"));
+    assert_eq!(task.assignee_kind, tsk_tui::domain::AssigneeKind::Person);
+
+    // `you` and `me` are you, stored as `you`.
+    for alias in ["me", "You"] {
+        let mine = edit(&dir, &["T1", "--assignee", alias]);
+        assert_eq!(mine.code, 0, "{}", mine.stderr);
+        assert_eq!(mine.stdout, "edited T1 assign me\n");
+        let task = TaskStore::new(&dir).load().expect("load you").tasks()[0].clone();
+        assert_eq!(task.assignee.as_deref(), Some("you"));
+        assert_eq!(task.assignee_kind, tsk_tui::domain::AssigneeKind::Person);
+    }
+
+    let unassigned = edit(&dir, &["T1", "--unassign"]);
+    assert_eq!(unassigned.code, 0, "{}", unassigned.stderr);
+    assert_eq!(
+        TaskStore::new(&dir).load().expect("reload").tasks()[0].assignee,
+        None
+    );
+}
+
+#[test]
+fn edit_loads_malformed_agent_profiles_only_for_assignment() {
+    let dir = temp_state_dir("malformed-agents");
+    let _guard = TempDirGuard(dir.clone());
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.Reviewer]\ncommand = [\"true\"]\n",
+    )
+    .expect("write malformed profiles");
+    assert_eq!(add_task(&dir, "edit me").code, 0);
+
+    let ordinary = edit(&dir, &["T1", "--title", "edited without profiles"]);
+    assert_eq!(ordinary.code, 0, "{ordinary:?}");
+    let assigned = edit(&dir, &["T1", "--assignee", "reviewer"]);
+    assert_eq!(assigned.code, 2, "{assigned:?}");
+    assert!(assigned.stderr.contains("config.toml"), "{assigned:?}");
+    let state = TaskStore::new(&dir).load().expect("load state");
+    assert_eq!(state.tasks()[0].title, "edited without profiles");
+    assert_eq!(state.tasks()[0].assignee, None);
 }
 
 #[test]
@@ -154,6 +313,79 @@ fn edit_notes_keeps_newlines_and_tabs_like_add() {
 }
 
 #[test]
+fn edit_append_notes_adds_below_the_notes_after_one_blank_line() {
+    let dir = temp_state_dir("append");
+    let _guard = TempDirGuard(dir.clone());
+    assert_eq!(add_task(&dir, "keep me").code, 0);
+    assert_eq!(edit(&dir, &["T1", "--notes", "user text\n\n \n"]).code, 0);
+    let before = TaskStore::new(&dir).load().expect("load").tasks()[0].clone();
+
+    let output = edit(&dir, &["T1", "--append-notes", "## Brief\nagent text"]);
+    assert_eq!(output.code, 0, "{:?}", output.stderr);
+    assert_eq!(output.stdout, "edited T1 keep me\n");
+    let mut state = TaskStore::new(&dir).load().expect("load");
+    let task = state.tasks()[0].clone();
+    assert_eq!(
+        task.notes.as_deref(),
+        Some("user text\n\n## Brief\nagent text"),
+        "one blank line, the old trailing whitespace not doubled"
+    );
+    let edited = task
+        .history
+        .iter()
+        .filter(|event| event.kind == TaskEventKind::Edited)
+        .collect::<Vec<_>>();
+    let before_edited = before
+        .history
+        .iter()
+        .filter(|event| event.kind == TaskEventKind::Edited)
+        .count();
+    assert_eq!(edited.len(), before_edited + 1, "one paper trail entry");
+    let detail = edited.last().and_then(|event| event.detail.as_ref());
+    assert_eq!(
+        detail.map(|detail| detail.fields.clone()),
+        Some(vec![tsk_tui::domain::EditedField::Notes])
+    );
+
+    // Like --notes, an edit is not an undo step: undo leaves the appended notes.
+    state.undo().expect("undo");
+    assert_eq!(
+        state.tasks()[0].notes.as_deref(),
+        Some("user text\n\n## Brief\nagent text")
+    );
+}
+
+#[test]
+fn edit_append_notes_to_empty_notes_becomes_the_notes_with_other_fields() {
+    let dir = temp_state_dir("append-empty");
+    let _guard = TempDirGuard(dir.clone());
+    assert_eq!(add_task(&dir, "old").code, 0);
+    assert_eq!(edit(&dir, &["T1", "--notes="]).code, 0);
+
+    let output = edit(&dir, &["T1", "--append-notes=-5 degrees", "--title", "new"]);
+    assert_eq!(output.code, 0, "{:?}", output.stderr);
+    let task = TaskStore::new(&dir).load().expect("load").tasks()[0].clone();
+    assert_eq!(task.notes.as_deref(), Some("-5 degrees"));
+    assert_eq!(task.title, "new");
+}
+
+#[test]
+fn edit_append_notes_refuses_with_notes_and_blank_text() {
+    let dir = temp_state_dir("append-usage");
+    let _guard = TempDirGuard(dir.clone());
+    assert_eq!(add_task(&dir, "keep me").code, 0);
+    for args in [
+        &["T1", "--notes", "a", "--append-notes", "b"][..],
+        &["T1", "--append-notes", " "][..],
+    ] {
+        let output = edit(&dir, args);
+        assert_eq!(output.code, 2, "{args:?}");
+    }
+    let task = TaskStore::new(&dir).load().expect("load").tasks()[0].clone();
+    assert_eq!(task.notes.as_deref(), Some("original notes"));
+}
+
+#[test]
 fn edit_refuses_empty_title_and_control_chars_without_mutation() {
     let dir = temp_state_dir("refusals");
     let _guard = TempDirGuard(dir.clone());
@@ -210,7 +442,9 @@ fn edit_without_fields_is_usage() {
     assert_eq!(output.code, 2);
     assert!(output
         .stderr
-        .contains("title, notes, parent, after, or project is required"));
+        .contains(
+        "title, notes, append-notes, assignee, base, after, on, --unassign, --clear-base, or --clear-after is required"
+    ));
 }
 
 #[test]
@@ -224,7 +458,10 @@ fn edit_help_names_title_notes_and_equals_forms() {
         "--notes",
         "--title=<value>",
         "--notes=<value>",
-        "Values",
+        "--append-notes <text>",
+        "--append-notes=<value>",
+        "Arguments",
+        "Options",
         "Refusals (exit 1):",
         "empty-title",
         "invalid-title",
@@ -328,4 +565,203 @@ fn edit_project_refuses_unknown_archived_and_combined_destinations() {
         .find(|task| task.title == "stay put")
         .expect("task");
     assert_eq!(task.scope, TaskScope::Global);
+}
+
+#[test]
+fn edit_fetches_a_new_remote_base_before_validation() {
+    let dir = temp_state_dir("fresh-remote-base");
+    let _guard = TempDirGuard(dir.clone());
+    let remote = dir.join("remote");
+    let local = dir.join("local");
+    init_git_project(&remote);
+    assert!(Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&remote)
+        .arg(&local)
+        .status()
+        .unwrap()
+        .success());
+    let mut domain = DomainState::new();
+    domain
+        .create_threaded(
+            "fresh edit",
+            None,
+            TaskScope::Project {
+                path: local.to_string_lossy().into_owned(),
+            },
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .unwrap();
+    TaskStore::new(&dir).save(&domain).unwrap();
+    assert!(Command::new("git")
+        .current_dir(&remote)
+        .args(["branch", "new-edit"])
+        .status()
+        .unwrap()
+        .success());
+    let output = edit(&dir, &["T1", "--base", "origin/new-edit"]);
+    assert_eq!(output.code, 0, "{output:?}");
+    assert_eq!(
+        TaskStore::new(&dir).load().unwrap().tasks()[0]
+            .base
+            .as_deref(),
+        Some("origin/new-edit")
+    );
+}
+
+/// `tsk edit --on` changes who the open block or review waits on, in place: same record, one
+/// `on_set` event, and the name rule (a profile is an agent, a task number on a block is a
+/// task, anything else is text).
+#[test]
+fn edit_on_changes_the_open_record_in_place_by_the_name_rule() {
+    let dir = temp_state_dir("on");
+    let _guard = TempDirGuard(dir.clone());
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.pi]\ncommand = [\"true\"]\n",
+    )
+    .expect("write profiles");
+    assert_eq!(add_task(&dir, "blocked one").code, 0);
+    assert_eq!(add_task(&dir, "reviewed one").code, 0);
+    let status = |args: &[&str]| {
+        let mut command = vec![
+            "tsk".to_string(),
+            "status".into(),
+            "--state-dir".into(),
+            dir.to_string_lossy().into_owned(),
+        ];
+        command.extend(args.iter().map(|argument| (*argument).to_string()));
+        cli(command)
+    };
+    assert_eq!(status(&["T1", "blocked", "--why", "need creds"]).code, 0);
+    assert_eq!(
+        status(&["T2", "review", "--done", "built", "--check", "works"]).code,
+        0
+    );
+    let block_at = TaskStore::new(&dir).load().expect("load").tasks()[0]
+        .block
+        .clone()
+        .expect("block");
+
+    let agent = edit(&dir, &["T1", "--on", "@pi"]);
+    assert_eq!(agent.code, 0, "{agent:?}");
+    let state = TaskStore::new(&dir).load().expect("reload");
+    let block = state.tasks()[0].block.clone().expect("still blocked");
+    assert_eq!(block.on, tsk_tui::domain::BlockOn::Agent("pi".into()));
+    assert_eq!(
+        block.why.as_deref(),
+        Some("need creds"),
+        "the record keeps its text"
+    );
+    assert_eq!(block.at, block_at.at, "the same record");
+    let event = state.tasks()[0].history.last().cloned().expect("event");
+    assert_eq!(event.kind, TaskEventKind::OnSet);
+
+    let task = edit(&dir, &["T1", "--on", "T2"]);
+    assert_eq!(task.code, 0, "{task:?}");
+    let own = edit(&dir, &["T1", "--on", "T1"]);
+    assert_eq!(own.code, 1, "{own:?}");
+    assert!(own.stderr.contains("invalid-blocker"), "{own:?}");
+
+    let review = edit(&dir, &["T2", "--on", "coordinator"]);
+    assert_eq!(review.code, 0, "{review:?}");
+    let round = TaskStore::new(&dir).load().expect("reload review").tasks()[1]
+        .block
+        .clone()
+        .expect("still in review");
+    assert_eq!(
+        round.on,
+        tsk_tui::domain::BlockOn::Other("coordinator".into())
+    );
+    assert_eq!(round.round, 1, "the same round");
+    assert_eq!(round.checks.len(), 1, "checks kept");
+
+    let mine = edit(&dir, &["T2", "--on", "me"]);
+    assert_eq!(mine.code, 0, "{mine:?}");
+    assert!(TaskStore::new(&dir).load().expect("reload you").tasks()[1]
+        .block
+        .as_ref()
+        .is_some_and(|round| round.on.is_you()));
+
+    assert_eq!(add_task(&dir, "open one").code, 0);
+    let nothing = edit(&dir, &["T3", "--on", "pi"]);
+    assert_eq!(nothing.code, 1, "{nothing:?}");
+    assert!(
+        nothing.stderr.starts_with("tsk edit: not-blocked:"),
+        "{nothing:?}"
+    );
+}
+
+/// `[board] me` is you on input and your handle in text, but never reaches the store or JSON:
+/// a typed `saeed` stores `you`, and a JSON group label stays `@you`.
+#[test]
+fn a_configured_me_name_reads_as_you_and_json_keeps_you() {
+    let dir = temp_state_dir("me");
+    let _guard = TempDirGuard(dir.clone());
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.pi]\ncommand = [\"true\"]\n\n[board]\nme = \"saeed\"\n",
+    )
+    .expect("write config");
+    assert_eq!(add_task(&dir, "mine").code, 0);
+    assert_eq!(add_task(&dir, "asked").code, 0);
+
+    let assigned = edit(&dir, &["T1", "--assignee", "saeed"]);
+    assert_eq!(assigned.code, 0, "{assigned:?}");
+    assert_eq!(
+        assigned.stdout, "edited T1 mine\n",
+        "you are no person to warn about"
+    );
+    let state = TaskStore::new(&dir).load().expect("load");
+    assert_eq!(state.tasks()[0].assignee.as_deref(), Some("you"));
+    assert!(state.tasks()[0]
+        .assigned()
+        .is_some_and(|assignee| assignee.is_person()));
+
+    let blocked = cli(vec![
+        "tsk".into(),
+        "status".into(),
+        "T2".into(),
+        "blocked".into(),
+        "--why".into(),
+        "which db".into(),
+        "--on".into(),
+        "pi".into(),
+        "--state-dir".into(),
+        dir.to_string_lossy().into_owned(),
+    ]);
+    assert_eq!(blocked.code, 0, "{blocked:?}");
+    let handed = edit(&dir, &["T2", "--on", "saeed"]);
+    assert_eq!(handed.code, 0, "{handed:?}");
+    assert!(TaskStore::new(&dir).load().expect("reload").tasks()[1]
+        .block
+        .as_ref()
+        .is_some_and(|block| block.on.is_you()));
+
+    let list = |extra: &[&str]| {
+        let mut command = vec!["tsk".to_string(), "list".into(), "--desk".into()];
+        command.extend(extra.iter().map(|argument| (*argument).to_string()));
+        command.extend(["--state-dir".into(), dir.to_string_lossy().into_owned()]);
+        cli(command)
+    };
+    let json = list(&["--group", "assignee", "--json"]);
+    assert_eq!(json.code, 0, "{json:?}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).expect("rows");
+    let mine = rows
+        .iter()
+        .find(|row| row["number"] == 1)
+        .expect("T1 listed");
+    assert_eq!(mine["group"], "@you", "{}", json.stdout);
+    assert_eq!(mine["assignee"], "you");
+    assert_eq!(mine["assignee_kind"], "person");
+    let asked = rows
+        .iter()
+        .find(|row| row["number"] == 2)
+        .expect("T2 listed");
+    assert_eq!(asked["block"]["on"], "you");
+
+    let text = list(&["--group", "assignee"]);
+    assert_eq!(text.code, 0, "{text:?}");
+    assert!(text.stdout.contains("@saeed"), "{}", text.stdout);
 }

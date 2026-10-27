@@ -34,6 +34,7 @@ pub const CATALOG: [Guide; 4] = [
                 - `j` and `k` or the arrows move the selection. `Enter` opens a task, `Esc` comes back.\n\
                 - `/` searches whatever the board shows. `Enter` pins the filter, `Esc` clears it.\n\
                 - Status keys use Ctrl, so a stray letter never changes anything. `ctrl+s` sets Doing from Todo, `ctrl+o` sets Todo (including reopening Done), and `ctrl+d` finishes.\n\
+                - `ctrl+b` opens a card to block a task, `ctrl+r` one to send it to review. On a task in review, `ctrl+r` takes it back.\n\
                 - `ctrl+u` undoes the last change.",
         status: HumanStatus::Doing,
         steps: &[
@@ -90,7 +91,17 @@ pub const CATALOG: [Guide; 4] = [
                 `tsk --help` lists every command and status. `tsk help list` explains one command: its flags, examples, and exit codes.\n\
                 \n\
                 **Let an agent work the board**\n\
-                Run `tsk setup` once: it finds the coding agents on your machine (Claude, Pi, Cursor, Codex, and others) and offers to install the tsk skill for each. `tsk setup claude` targets one. Then ask the agent in plain words. \"Add a task for each failing test.\" \"Set T7 to Doing.\" `tsk guide` prints the same instructions if you want to read them yourself.",
+                Run `tsk setup` once: it finds the coding agents on your machine (Claude Code, Codex, Pi, Grok, and others) and offers to install the tsk skill for each. `tsk setup claude` targets one. Then ask the agent in plain words. \"Add a task for each failing test.\" \"Set T7 to Doing.\" `tsk guide` prints the same instructions if you want to read them yourself.\n\
+                \n\
+                **Hand a task to an agent**\n\
+                - Agent profiles in `config.toml`, beside your tasks (`~/.tsk` on macOS and Linux), say how to launch each agent. Remove the `#` from a starter example to use it.\n\
+                - Press `@` on a task to assign it to a profile.\n\
+                - In Herdr, `ctrl+s` on an assigned project task starts it and launches the agent in its own Git worktree.\n\
+                - When the agent blocks, press `r` on the task to answer, then `ctrl+s` to send the answer and unblock.\n\
+                - When it sends work to review, mark each check with `Enter`. `ctrl+d` approves; `r` then `ctrl+s` sends it back with feedback.\n\
+                \n\
+                **Back up your board**\n\
+                Your tasks live on this machine only. Run `tsk backup setup`: with the GitHub CLI (`gh`) logged in, it makes a private `tsk-backup` repository and pushes a copy after every save. For another git host, `tsk backup add <git-url>`. `tsk restore` brings a copy back.",
         status: HumanStatus::Todo,
         steps: &[
             ("Run tsk add -t \"Try the CLI\" in another terminal", false),
@@ -106,7 +117,7 @@ pub const CATALOG: [Guide; 4] = [
                 **Clear these starter tasks**\n\
                 Any of these works. A cleared starter task never comes back.\n\
                 - `ctrl+d` marks it done. Done tasks wait in the drawer. `d` opens and closes it.\n\
-                - To clear several at once: `Shift+M`, then `space` or `shift+↑`/`shift+↓` to select them, then one `ctrl+d`.\n\
+                - To clear several at once: `shift+M`, then `Space` or `shift+↑`/`shift+↓` to select them, then one `ctrl+d`.\n\
                 - `ctrl+f` archives it. Archived tasks fold into a group at the end of the drawer.\n\
                 - `ctrl+x` twice deletes it. `ctrl+u` brings it back if you change your mind.\n\
                 \n\
@@ -347,6 +358,14 @@ mod tests {
         );
         assert_eq!(delivery::load(store.path()).guides, catalog_ids());
         let _ = fs::remove_dir_all(store.path());
+    }
+
+    #[test]
+    fn the_cli_guide_points_at_backups() {
+        assert!(CATALOG
+            .iter()
+            .any(|guide| guide.notes.contains("tsk backup setup")
+                && guide.notes.contains("tsk restore")));
     }
 
     #[test]

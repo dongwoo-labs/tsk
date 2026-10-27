@@ -35,6 +35,12 @@ pub enum CaptureField {
     Title,
     Notes,
     Scope,
+    Assignee,
+    /// Task-page-only dispatch base chooser. Standalone capture never focuses this field.
+    Base,
+    /// The tasks this one runs after, chosen in the task picker. Standalone capture never
+    /// focuses this field.
+    After,
 }
 
 /// Visible capture surface title.
@@ -282,7 +288,10 @@ impl CaptureModel {
         match self.focused {
             CaptureField::Title => Some(&mut self.title),
             CaptureField::Notes => Some(&mut self.notes),
-            CaptureField::Scope => None,
+            CaptureField::Scope
+            | CaptureField::Assignee
+            | CaptureField::Base
+            | CaptureField::After => None,
         }
     }
 
@@ -292,6 +301,9 @@ impl CaptureModel {
             CaptureField::Title => CaptureField::Notes,
             CaptureField::Notes => CaptureField::Scope,
             CaptureField::Scope => CaptureField::Title,
+            CaptureField::Assignee | CaptureField::Base | CaptureField::After => {
+                CaptureField::Title
+            }
         };
     }
 
@@ -301,6 +313,9 @@ impl CaptureModel {
             CaptureField::Title => CaptureField::Scope,
             CaptureField::Notes => CaptureField::Title,
             CaptureField::Scope => CaptureField::Notes,
+            CaptureField::Assignee | CaptureField::Base | CaptureField::After => {
+                CaptureField::Scope
+            }
         };
     }
 
@@ -472,6 +487,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
+                CaptureField::Assignee | CaptureField::Base | CaptureField::After => {}
                 CaptureField::Title | CaptureField::Notes => {
                     edit_draft(model, |draft| draft.insert_char(c));
                 }
@@ -486,6 +502,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
+                CaptureField::Assignee | CaptureField::Base | CaptureField::After => {}
                 CaptureField::Title | CaptureField::Notes => {
                     edit_draft(model, EditBuffer::backspace);
                 }
@@ -504,6 +521,7 @@ pub fn apply_capture_intent(
                         model.message = None;
                     }
                 }
+                CaptureField::Assignee | CaptureField::Base | CaptureField::After => {}
                 CaptureField::Title => {
                     edit_draft(model, |draft| {
                         draft.insert_text(&flatten_line_breaks(&text))

@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -18,6 +19,15 @@ use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::ui::scheduler::{next_wait, DEFAULT_BASE_TICK};
 use tsk_tui::ui::{apply_intent, draw_board, BoardIntent, BoardModel, IntentOutcome};
 use tsk_tui::update::suppress_background_fetch;
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("lock environment")
+}
 
 /// A directory this test owns alone, removed on drop even if the test panics.
 struct TempDirGuard(PathBuf);
@@ -202,6 +212,7 @@ fn autoscroll_shortens_the_board_frame_wait() {
 /// leaves this as the one open-path exercise: load, then draw).
 #[test]
 fn load_board_and_draw_path_smoke_at_80x24() {
+    let _env = env_lock();
     suppress_background_fetch();
     let dir = temp_state_dir("smoke");
     let _dir_guard = TempDirGuard(dir.clone());
@@ -216,6 +227,115 @@ fn load_board_and_draw_path_smoke_at_80x24() {
             let _ = draw_board(frame, &model);
         })
         .expect("draw the loaded board without panicking");
+}
+
+#[test]
+fn malformed_agent_profiles_degrade_to_a_painted_board_status() {
+    let _env = env_lock();
+    suppress_background_fetch();
+    let dir = temp_state_dir("malformed-agents");
+    let _dir_guard = TempDirGuard(dir.clone());
+    let _env_guard = EnvVarGuard::set("TSK_STATE_DIR", &dir);
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.Reviewer]\ncommand = [\"true\"]\n",
+    )
+    .expect("write malformed profiles");
+
+    let model = load_board_model().expect("malformed optional profiles must not block open");
+    let message = model.message().expect("profile load error on status row");
+    assert!(message.contains("config.toml"), "{message}");
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let _ = draw_board(frame, &model);
+        })
+        .expect("draw degraded board");
+    let painted = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(
+        painted.contains("config.toml"),
+        "the load error must be visible in the painted frame: {painted}"
+    );
+}
+
+#[test]
+fn a_broken_backup_config_is_painted_on_the_board_status_row() {
+    let _env = env_lock();
+    suppress_background_fetch();
+    let dir = temp_state_dir("broken-backup");
+    let _dir_guard = TempDirGuard(dir.clone());
+    let _env_guard = EnvVarGuard::set("TSK_STATE_DIR", &dir);
+    fs::write(
+        dir.join("config.toml"),
+        "[[backup]]\nurl = \"/tmp/b.git\"\nevery = \"Daily\"\n",
+    )
+    .expect("write broken backup");
+
+    let model = load_board_model().expect("a broken backup must not block open");
+    let message = model.message().expect("backup config error on status row");
+    assert!(message.starts_with("backup off: config.toml"), "{message}");
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let _ = draw_board(frame, &model);
+        })
+        .expect("draw board");
+    let painted = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(painted.contains("backup off"), "{painted}");
+}
+
+#[test]
+fn a_profile_error_wins_the_status_row_over_a_broken_backup() {
+    let _env = env_lock();
+    suppress_background_fetch();
+    let dir = temp_state_dir("profile-over-backup");
+    let _dir_guard = TempDirGuard(dir.clone());
+    let _env_guard = EnvVarGuard::set("TSK_STATE_DIR", &dir);
+    fs::write(
+        dir.join("config.toml"),
+        "[agent.Reviewer]\ncommand = [\"true\"]\n\n[[backup]]\nurl = \"/tmp/b.git\"\nevery = \"Daily\"\n",
+    )
+    .expect("write broken profile and backup");
+
+    let model = load_board_model().expect("open");
+    let message = model.message().expect("status row");
+    assert!(message.contains("Reviewer"), "{message}");
+    assert!(!message.contains("backup off"), "{message}");
+}
+
+#[test]
+fn a_board_error_wins_the_status_row_over_a_broken_backup() {
+    let _env = env_lock();
+    suppress_background_fetch();
+    let dir = temp_state_dir("board-over-backup");
+    let _dir_guard = TempDirGuard(dir.clone());
+    let _env_guard = EnvVarGuard::set("TSK_STATE_DIR", &dir);
+    fs::write(
+        dir.join("config.toml"),
+        "[board]\nsort = \"sideways\"\n\n[[backup]]\nurl = \"/tmp/b.git\"\nevery = \"Daily\"\n",
+    )
+    .expect("write broken board and backup");
+
+    let model = load_board_model().expect("open");
+    let message = model.message().expect("status row");
+    assert!(message.contains("sideways"), "{message}");
+    assert!(!message.contains("backup off"), "{message}");
 }
 
 #[test]

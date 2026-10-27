@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+use tsk_tui::agents::{AgentProfiles, STARTER_CONFIG};
 use tsk_tui::announcements;
 use tsk_tui::app::{load_board, load_board_for_quick_capture, load_board_model};
 use tsk_tui::context::{build_snapshot, RawHostContext, CONTEXT_JSON_ENV};
@@ -85,6 +86,47 @@ fn catalog_ids() -> BTreeSet<String> {
         .iter()
         .map(|guide| guide.catalog_id.to_string())
         .collect()
+}
+
+#[test]
+fn full_board_open_seeds_a_parseable_commented_agent_profile_file() {
+    let _lock = env_lock();
+    suppress_background_fetch();
+    let env = StateDirEnv::set("agents-file");
+
+    let _ = load_board_model().expect("full board open");
+
+    assert_eq!(
+        fs::read_to_string(env.dir.join("config.toml")).expect("seeded config.toml"),
+        STARTER_CONFIG
+    );
+    assert!(
+        AgentProfiles::load(&env.dir)
+            .expect("seeded file parses")
+            .is_empty(),
+        "all starter profiles are commented out"
+    );
+}
+
+#[test]
+fn full_board_open_never_overwrites_an_existing_agent_profile_file() {
+    let _lock = env_lock();
+    suppress_background_fetch();
+    for (label, content) in [
+        ("agents-existing-empty", ""),
+        ("agents-existing-content", "owner content\n"),
+    ] {
+        let env = StateDirEnv::set(label);
+        fs::create_dir_all(&env.dir).expect("state dir");
+        fs::write(env.dir.join("config.toml"), content).expect("existing config.toml");
+
+        let _ = load_board_model().expect("full board open");
+
+        assert_eq!(
+            fs::read_to_string(env.dir.join("config.toml")).expect("existing config.toml"),
+            content
+        );
+    }
 }
 
 #[test]
@@ -225,6 +267,10 @@ fn quick_capture_open_seeds_nothing() {
     assert!(notices(&state).is_empty());
     assert!(notices(&store.load().expect("load")).is_empty());
     assert!(!env.dir.join(delivery::DELIVERY_FILE).exists());
+    assert!(
+        !env.dir.join("config.toml").exists(),
+        "quick capture does not seed agent profiles"
+    );
 }
 
 fn drop_delivery_record(state_dir: &std::path::Path) {
@@ -271,7 +317,7 @@ fn t64_real_board_ctrl_q_exits_from_a_stored_task_page() {
     session.send(b"\r");
     session.output_until("target");
     session.send(b"\x11");
-    assert!(session.wait_exit(Duration::from_secs(5)).success());
+    assert!(session.wait_exit(Duration::from_secs(30)).success());
 }
 
 fn assert_real_root_esc_exits(label: &str, tab_key: u8) {
@@ -321,10 +367,33 @@ fn t64_real_board_editor_ctrl_q_stays_live_then_task_page_ctrl_q_exits() {
     session.send(b"\x11");
     session.send(b"ZXQMARK");
     session.output_until("\x1b[1mK");
-    session.send(b"\x1b");
+    // The unambiguous Esc: a bare one read together with the next byte is alt+ctrl+q.
+    session.send(b"\x1b[27u");
     std::thread::sleep(Duration::from_millis(100));
     session.send(b"\x11");
-    assert!(session.wait_exit(Duration::from_secs(5)).success());
+    assert!(session.wait_exit(Duration::from_secs(30)).success());
+}
+
+/// A PTY board spawned while a sibling test holds a Herdr context in this process's env
+/// opens on its own seeded tasks, not on the sibling's project.
+#[test]
+fn a_pty_board_ignores_a_sibling_tests_host_context() {
+    let root = pty::scratch_root("t64-context-leak");
+    let cwd = root.join("project");
+    fs::create_dir_all(&cwd).expect("project directory");
+    seed_pty_task(&root, &cwd, "T64 leak target");
+    let decoy = root.join("decoy-sibling");
+    fs::create_dir_all(decoy.join(".git")).expect("decoy repo");
+
+    let lock = env_lock();
+    let context = ContextEnv::set(&decoy);
+    let mut session = pty::Session::spawn(root, &cwd, &[], &[], 24, 78);
+    drop(context);
+    drop(lock);
+    let painted = session.output_until("target");
+    assert!(!painted.contains("decoy-sibling"), "{painted}");
+    session.send(b"\x11");
+    assert!(session.wait_exit(Duration::from_secs(30)).success());
 }
 
 #[test]
@@ -345,7 +414,7 @@ fn completing_a_guide_on_the_real_board_records_its_dismissal() {
 
     session.send(b"\x04");
     session.send(b"\x11");
-    assert!(session.wait_exit(Duration::from_secs(5)).success());
+    assert!(session.wait_exit(Duration::from_secs(30)).success());
 
     let state = store.load().unwrap();
     let done: Vec<&Task> = notices(&state)

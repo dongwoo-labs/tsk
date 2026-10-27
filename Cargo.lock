@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "tsk-tui"
-version = "0.11.6"
+version = "0.13.0"
 dependencies = [
  "base64 0.22.1",
  "crossterm",

@@ -98,6 +98,7 @@ export default defineConfig({
           label: 'Use tsk',
           items: [
             { label: 'Board', slug: 'docs/board' },
+            { label: 'Dispatch', slug: 'docs/dispatch' },
             { label: 'Keys', slug: 'docs/keys' },
             { label: 'Capture', slug: 'docs/capture' },
             { label: 'Threads', slug: 'docs/threads' },
@@ -109,6 +110,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'tsk for agents', slug: 'docs/agents' },
+            { label: 'Coordinator skill', slug: 'docs/coordinator' },
             { label: 'CLI', slug: 'docs/cli' },
             { label: 'Storage', slug: 'docs/storage' },
           ],
