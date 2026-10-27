@@ -194,7 +194,7 @@ fn task_numbers(document: &serde_json::Value) -> std::collections::BTreeMap<Stri
         .flatten()
         .filter_map(|task| {
             Some((
-                task.get("id")?.as_str()?.to_string(),
+                Uuid::parse_str(task.get("id")?.as_str()?).ok()?.to_string(),
                 task.get("number")?.as_u64()?,
             ))
         })
@@ -204,23 +204,34 @@ fn task_numbers(document: &serde_json::Value) -> std::collections::BTreeMap<Stri
 fn normalize_after(
     task: &mut serde_json::Value,
     numbers: &std::collections::BTreeMap<String, u64>,
-) -> Result<(), StoreError> {
+) -> Result<Vec<serde_json::Value>, StoreError> {
+    let owner = task.get("number").and_then(serde_json::Value::as_u64);
+    let mut removed = Vec::new();
     if let Some(after) = task
         .get_mut("after")
         .and_then(serde_json::Value::as_array_mut)
     {
-        for link in after {
+        let mut kept = Vec::new();
+        for mut link in std::mem::take(after) {
             if let Some(id) = link.as_str() {
-                let number = numbers.get(id).ok_or_else(|| {
-                    StoreError::Io(io::Error::other(
-                        "legacy after reference has no task number; original store was not changed",
-                    ))
-                })?;
-                *link = serde_json::json!(number);
+                // Invalid strings remain a format error, not a deleted prerequisite.
+                let parsed = Uuid::parse_str(id)
+                    .map_err(|_| StoreError::Io(io::Error::other("invalid legacy after UUID")))?;
+                if let Some(number) = numbers.get(&parsed.to_string()) {
+                    link = serde_json::json!(number);
+                } else {
+                    let task_number = owner.ok_or_else(|| {
+                        StoreError::Io(io::Error::other("legacy after owner has no task number"))
+                    })?;
+                    removed.push(serde_json::json!({"task_number": task_number, "uuid": id}));
+                    continue;
+                }
             }
+            kept.push(link);
         }
+        *after = kept;
     }
-    Ok(())
+    Ok(removed)
 }
 
 fn migrate_v15_to_v16(mut document: serde_json::Value) -> Result<serde_json::Value, StoreError> {
@@ -612,9 +623,143 @@ impl TaskStore {
         self.save_unlocked(&mut durable)
     }
 
-    /// Archive lines have no document version. Resolve old UUID links against the
-    /// live and archived task numbers only when such a link is actually present.
-    /// Refuse an unresolvable link rather than let the tolerant parser discard its task.
+    /// One number map for live migration and both archive readers. Numbers belong to
+    /// the whole store, including soft-deleted and completed tasks.
+    fn retained_task_numbers(
+        &self,
+        document: Option<&serde_json::Value>,
+    ) -> Result<std::collections::BTreeMap<String, u64>, StoreError> {
+        let mut numbers = std::collections::BTreeMap::new();
+        if let Some(document) = document {
+            numbers.extend(task_numbers(document));
+        } else {
+            match fs::read(self.state_file()) {
+                Ok(bytes) => {
+                    let document = serde_json::from_slice(&bytes)?;
+                    numbers.extend(task_numbers(&document));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let mut files = vec![self.path.join(TRASH_FILE)];
+        match fs::read_dir(self.path.join(DONE_DIR)) {
+            Ok(entries) => {
+                for entry in entries {
+                    let path = entry?.path();
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension == "jsonl")
+                    {
+                        files.push(path);
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        for file in files {
+            match fs::read(file) {
+                Ok(bytes) => {
+                    for line in bytes.split(|byte| *byte == b'\n') {
+                        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) {
+                            if let (Some(id), Some(number)) = (
+                                value["task"]["id"]
+                                    .as_str()
+                                    .and_then(|id| Uuid::parse_str(id).ok()),
+                                value["task"]["number"].as_u64(),
+                            ) {
+                                numbers.entry(id.to_string()).or_insert(number);
+                            }
+                        }
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(numbers)
+    }
+
+    /// Record planned removals beside the immutable original before replacing a file.
+    /// A failed replacement can leave this evidence behind; retry never overwrites it.
+    fn retain_after_audit(
+        &self,
+        source: &Path,
+        backup: &Path,
+        archive: bool,
+    ) -> Result<(), StoreError> {
+        let audit = PathBuf::from(format!("{}.after-migration.json", backup.display()));
+        if audit.exists() {
+            if !fs::symlink_metadata(&audit)?.file_type().is_file() {
+                return Err(StoreError::Io(io::Error::other(
+                    "migration audit must be a regular file",
+                )));
+            }
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&audit)?
+                .sync_all()?;
+            StdFilesystem.sync_directory(backup.parent().expect("backup directory"))?;
+            return Ok(());
+        }
+        let bytes = fs::read(source)?;
+        let numbers = self.retained_task_numbers(None)?;
+        let mut removed = Vec::new();
+        if archive {
+            for line in bytes.split(|byte| *byte == b'\n') {
+                if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(line) {
+                    if let Some(task) = value.get_mut("task") {
+                        removed.extend(normalize_after(task, &numbers)?);
+                    }
+                }
+            }
+        } else {
+            let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
+            for task in document
+                .get_mut("tasks")
+                .and_then(serde_json::Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                removed.extend(normalize_after(task, &numbers)?);
+            }
+        }
+        self.write_private_atomic(
+            &audit,
+            &serde_json::to_vec_pretty(&serde_json::json!({"removed_after": removed}))?,
+        )?;
+        // write_private_atomic syncs the state directory. Done audits live one level below it.
+        StdFilesystem.sync_directory(backup.parent().expect("backup directory"))?;
+        Ok(())
+    }
+
+    fn retain_archive_backup<F: AtomicFilesystem>(
+        &self,
+        file: &Path,
+        filesystem: &F,
+    ) -> Result<(), StoreError> {
+        let backup = PathBuf::from(format!("{}.pre-v16", file.display()));
+        // Hard links keep the old inode across replacement. Preserve the first copy.
+        match fs::hard_link(file, &backup) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        if !fs::symlink_metadata(&backup)?.file_type().is_file() {
+            return Err(StoreError::Io(io::Error::other(
+                "archive backup must be a regular file",
+            )));
+        }
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&backup)?
+            .sync_all()?;
+        filesystem.sync_directory(file.parent().expect("archive directory"))?;
+        self.retain_after_audit(file, &backup, true)
+    }
+
+    /// Archive lines have no document version. Normalize in memory, never on read.
     fn compatible_archive(&self, content: &[u8]) -> Result<Vec<u8>, StoreError> {
         let mut lines: Vec<serde_json::Value> = content
             .split(|byte| *byte == b'\n')
@@ -628,37 +773,7 @@ impl TaskStore {
         if !legacy {
             return Ok(content.to_vec());
         }
-        let mut numbers = std::collections::BTreeMap::new();
-        if let Ok(bytes) = fs::read(self.state_file()) {
-            if let Ok(document) = serde_json::from_slice(&bytes) {
-                numbers.extend(task_numbers(&document));
-            }
-        }
-        let mut files = vec![self.path.join(TRASH_FILE)];
-        if let Ok(entries) = fs::read_dir(self.path.join(DONE_DIR)) {
-            files.extend(entries.flatten().map(|entry| entry.path()).filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "jsonl")
-            }));
-        }
-        for file in files {
-            match fs::read(file) {
-                Ok(bytes) => {
-                    for line in bytes.split(|byte| *byte == b'\n') {
-                        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) {
-                            if let (Some(id), Some(number)) = (
-                                value["task"]["id"].as_str(),
-                                value["task"]["number"].as_u64(),
-                            ) {
-                                numbers.entry(id.to_string()).or_insert(number);
-                            }
-                        }
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
+        let numbers = self.retained_task_numbers(None)?;
         let mut normalized = Vec::new();
         for line in &mut lines {
             if let Some(task) = line.get_mut("task") {
@@ -951,7 +1066,18 @@ impl TaskStore {
             return Err(StoreError::UnsupportedFormat { found, supported });
         }
         if opens_as < supported {
-            let document: serde_json::Value = serde_json::from_str(&data)?;
+            let mut document: serde_json::Value = serde_json::from_str(&data)?;
+            if found < 16 && supported >= 16 {
+                let numbers = self.retained_task_numbers(Some(&document))?;
+                for task in document
+                    .get_mut("tasks")
+                    .and_then(serde_json::Value::as_array_mut)
+                    .into_iter()
+                    .flatten()
+                {
+                    normalize_after(task, &numbers)?;
+                }
+            }
             let migrated = migrations(document, found)?;
             return Ok(serde_json::from_value(migrated)?);
         }
@@ -1020,6 +1146,13 @@ impl TaskStore {
                 Ok(version) => {
                     if version != supported {
                         retain_version_backup(&file, version)?;
+                        if version < 16 && supported >= 16 {
+                            self.retain_after_audit(
+                                &file,
+                                &PathBuf::from(format!("{}.v{version}", file.display())),
+                                false,
+                            )?;
+                        }
                     }
                     retain_last_good(&file)?;
                 }
@@ -1106,8 +1239,38 @@ impl TaskStore {
         let _guard = self.lock_exclusive().map_err(RestoreError::Store)?;
         self.sweep_orphan_temps();
         let file = self.state_file();
+        let replaced = match fs::read(&file) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(RestoreError::Store(error.into())),
+        };
+        let references = |bytes: &[u8]| -> Result<Vec<crate::domain::QuestionRef>, RestoreError> {
+            let document: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| {
+                RestoreError::Invalid("question references cannot be verified".into())
+            })?;
+            serde_json::from_value(
+                document
+                    .get("questions")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )
+            .map_err(|_| RestoreError::Invalid("question references cannot be verified".into()))
+        };
+        let snapshot_questions = references(document)?;
+        let current_questions = replaced
+            .as_deref()
+            .map(references)
+            .transpose()?
+            .unwrap_or_default();
+        // A task-only snapshot never authorizes rolling private answers back, or
+        // dropping questions registered since that snapshot. Check under the save lock.
+        if snapshot_questions != current_questions {
+            return Err(RestoreError::Invalid("question references differ from the current store; task restore cannot roll questions back; use a complete state-directory copy".into()));
+        }
+        for reference in &snapshot_questions {
+            questions::read_private(&self.path, reference).map_err(|_| RestoreError::Invalid("private question record is missing or invalid; use a complete state-directory copy".into()))?;
+        }
         let trash = self.load_trash_unlocked().unwrap_or_default();
-        let replaced = fs::read(&file).ok();
         let floor = numbering_floor(replaced.as_deref(), &trash);
         let raised = raise_next_task_number(document, floor);
         let document = raised.as_deref().unwrap_or(document);
@@ -1276,7 +1439,11 @@ impl TaskStore {
         for (date, added) in by_date {
             let file = dir.join(format!("{date}.jsonl"));
             let mut lines = match fs::read(&file) {
-                Ok(content) => parse_done_lines(&self.compatible_archive(&content)?),
+                Ok(content) => {
+                    let lines = parse_done_lines(&self.compatible_archive(&content)?);
+                    self.retain_archive_backup(&file, filesystem)?;
+                    lines
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
                 Err(error) => return Err(error.into()),
             };
@@ -1375,26 +1542,7 @@ impl TaskStore {
     ) -> Result<(), StoreError> {
         let trash = self.path.join(TRASH_FILE);
         if trash.exists() {
-            // Keep the pre-v16 trash before numeric after links can be written.
-            // Previous migration backups stay untouched.
-            let backup = self.path.join("trash.jsonl.pre-v16");
-            // A hard link keeps the original bytes across atomic replacements.
-            // Refuse the rewrite if preservation or its durability cannot be confirmed.
-            match fs::hard_link(&trash, &backup) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error.into()),
-            }
-            if !fs::symlink_metadata(&backup)?.file_type().is_file() {
-                return Err(StoreError::Io(io::Error::other(
-                    "trash backup must be a regular file",
-                )));
-            }
-            fs::OpenOptions::new()
-                .write(true)
-                .open(&backup)?
-                .sync_all()?;
-            filesystem.sync_directory(&self.path)?;
+            self.retain_archive_backup(&trash, filesystem)?;
         }
         let tmp = self.trash_tmp_path();
         let write_result = (|| -> Result<(), StoreError> {
@@ -3224,6 +3372,7 @@ mod tests {
         let closed = ask(answered);
         ask(waiting);
         let lost = ask(unreadable);
+        let before_answer = fs::read(dir.join(STATE_FILE)).expect("R1 snapshot");
         questions
             .answer(
                 closed.reference.id,
@@ -3244,11 +3393,63 @@ mod tests {
                 },
             )
             .expect("answer");
+        let after_answer = fs::read(dir.join(STATE_FILE)).expect("R2 snapshot");
+        let answered_record = questions.read(closed.reference.id).expect("R2");
+        let private_file = dir
+            .join("questions-private")
+            .join(format!("{}.json", answered_record.reference.revision));
+        let private_bytes = fs::read(&private_file).expect("private R2");
+        let refused = store
+            .restore_document(&before_answer, SystemTime::now())
+            .expect_err("restore cannot reopen answered questions");
+        assert!(
+            refused.to_string().contains("question references differ"),
+            "{refused}"
+        );
+        assert_eq!(fs::read(dir.join(STATE_FILE)).expect("live"), after_answer);
+        assert_eq!(fs::read(&private_file).expect("private"), private_bytes);
+        assert!(
+            !dir.join(RESTORE_TOKEN_FILE).exists(),
+            "refusal precedes the restore token"
+        );
+        store
+            .restore_document(&after_answer, SystemTime::now())
+            .expect("identical references restore");
+        assert_eq!(
+            questions
+                .read(closed.reference.id)
+                .expect("answer survives"),
+            answered_record
+        );
+        let lost_file = dir
+            .join("questions-private")
+            .join(format!("{}.json", lost.reference.revision));
+        let lost_bytes = fs::read(&lost_file).expect("original private record");
+        fs::write(&lost_file, b"broken synthetic record").expect("corrupt fixture");
+        let error = store
+            .restore_document(&after_answer, SystemTime::now())
+            .expect_err("corrupt private record refuses restore");
+        assert!(
+            error.to_string().contains("private question record"),
+            "{error}"
+        );
+        fs::write(&lost_file, &lost_bytes).expect("restore fixture");
         fs::remove_file(
             dir.join("questions-private")
                 .join(format!("{}.json", lost.reference.revision)),
         )
         .expect("lose the record");
+        let error = store
+            .restore_document(&after_answer, SystemTime::now())
+            .expect_err("missing private record refuses restore");
+        assert!(
+            error.to_string().contains("private question record"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read(dir.join(STATE_FILE)).expect("unchanged"),
+            after_answer
+        );
         let mut state = store.load().expect("load");
         for id in [answered, waiting, unreadable] {
             state.set_status(id, HumanStatus::Done).expect("done");
@@ -4573,18 +4774,225 @@ mod tests {
     }
 
     #[test]
-    fn unknown_legacy_after_refuses_migration_without_rewriting_the_store() {
-        let dir = temp_dir("fork-v10-missing-after");
-        let _guard = TempDirGuard(dir.clone());
-        fs::create_dir_all(&dir).expect("create fixture directory");
-        let mut value =
-            serde_json::to_value(round_tripped_current_state("waiting")).expect("state");
-        value["format_version"] = serde_json::json!(10);
-        value["tasks"][0]["after"] = serde_json::json!([Uuid::new_v4()]);
-        let original = serde_json::to_vec(&value).expect("encode");
-        fs::write(dir.join(STATE_FILE), &original).expect("seed");
-        assert!(TaskStore::new(&dir).load().is_err());
-        assert_eq!(fs::read(dir.join(STATE_FILE)).expect("read"), original);
+    fn legacy_after_uses_all_retained_numbers_and_audits_only_missing_links() {
+        // A CLI journey cannot distinguish these deterministic cross-file mappings.
+        // Exercise every owner/target boundary through the real store readers/writers.
+        for owner in ["live", "trash", "done"] {
+            for target in ["live", "trash", "done", "missing"] {
+                let dir = temp_dir("fork-v10-after-boundaries");
+                let _guard = TempDirGuard(dir.clone());
+                fs::create_dir_all(dir.join(DONE_DIR)).expect("fixture directory");
+                let mut value =
+                    serde_json::to_value(round_tripped_current_state("waiting")).expect("state");
+                value["format_version"] = serde_json::json!(10);
+                value["undo_stack"] = serde_json::json!([]);
+                let mut predecessor = value["tasks"][0].clone();
+                predecessor["id"] = serde_json::json!(Uuid::parse_str(
+                    "aaaaaaaa-1111-4000-8000-000000000042"
+                )
+                .expect("uuid"));
+                predecessor["number"] = serde_json::json!(42);
+                let id = predecessor["id"].as_str().expect("uuid").to_string();
+                predecessor["id"] = serde_json::json!(id.to_uppercase());
+                let mut child = value["tasks"][0].clone();
+                child["after"] = serde_json::json!([id, 999]);
+                child["number"] = serde_json::json!(12);
+                let child_id = serde_json::from_value(child["id"].clone()).expect("id");
+                value["tasks"] = serde_json::json!([]);
+                let now = SystemTime::now();
+                let elapsed = now.duration_since(UNIX_EPOCH).expect("clock");
+                let timestamp = serde_json::json!([elapsed.as_secs(), elapsed.subsec_nanos()]);
+                let done_file = dir.join(DONE_DIR).join(format!("{}.jsonl", utc_date(now)));
+                for (location, task) in [(owner, &child), (target, &predecessor)] {
+                    match location {
+                        "live" => value["tasks"]
+                            .as_array_mut()
+                            .expect("tasks")
+                            .push(task.clone()),
+                        "trash" | "done" => {
+                            let path = if location == "trash" {
+                                dir.join(TRASH_FILE)
+                            } else {
+                                done_file.clone()
+                            };
+                            let mut file = fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                                .expect("archive");
+                            let line = if location == "trash" {
+                                serde_json::json!({"deleted_at": timestamp, "task": task})
+                            } else {
+                                serde_json::json!({"done_at": timestamp, "task": task})
+                            };
+                            writeln!(file, "{line}").expect("line");
+                        }
+                        _ => {}
+                    }
+                }
+                value["next_task_number"] = serde_json::json!(43);
+                let original = serde_json::to_vec(&value).expect("encode");
+                fs::write(dir.join(STATE_FILE), &original).expect("seed");
+                let source = match owner {
+                    "live" => dir.join(STATE_FILE),
+                    "trash" => dir.join(TRASH_FILE),
+                    _ => done_file.clone(),
+                };
+                let source_bytes = fs::read(&source).expect("source");
+                let store = TaskStore::new(&dir);
+                let mut loaded = store.load().expect("legacy live loads");
+                let migrated = match owner {
+                    "live" => loaded.get(child_id).expect("live child").clone(),
+                    "trash" => {
+                        store
+                            .load_trash()
+                            .expect("trash")
+                            .into_iter()
+                            .find(|line| line.task.id == child_id)
+                            .expect("child")
+                            .task
+                    }
+                    _ => {
+                        store
+                            .load_done_history()
+                            .expect("done")
+                            .into_iter()
+                            .find(|line| line.task.id == child_id)
+                            .expect("child")
+                            .task
+                    }
+                };
+                let mut expected = child;
+                expected["after"] = if target == "missing" {
+                    serde_json::json!([999])
+                } else {
+                    serde_json::json!([42, 999])
+                };
+                assert_eq!(
+                    serde_json::to_value(migrated).expect("task"),
+                    expected,
+                    "{owner}/{target}"
+                );
+                assert_eq!(
+                    fs::read(&source).expect("read"),
+                    source_bytes,
+                    "read is byte-preserving"
+                );
+                let backup = if owner == "live" {
+                    dir.join("tsk.json.v10")
+                } else {
+                    PathBuf::from(format!("{}.pre-v16", source.display()))
+                };
+                let audit = PathBuf::from(format!("{}.after-migration.json", backup.display()));
+                assert!(
+                    !backup.exists() && !audit.exists(),
+                    "read writes neither backup nor audit"
+                );
+                let mut done_retry = None;
+                match owner {
+                    "live" => {
+                        assert!(store
+                            .save_unlocked_with(
+                                &mut loaded.clone(),
+                                &RealFilesystemWithFailure {
+                                    fail_at: Some(SaveStage::FileSync)
+                                }
+                            )
+                            .is_err());
+                        assert_eq!(
+                            fs::read(&source).expect("failed save leaves original"),
+                            source_bytes
+                        );
+                        store.reload_merge_save(&mut loaded).expect("save");
+                    }
+                    "trash" => {
+                        assert!(store
+                            .rewrite_trash_filtered(
+                                &RealFilesystemWithFailure {
+                                    fail_at: Some(SaveStage::TrashFileSync)
+                                },
+                                |_| true
+                            )
+                            .is_err());
+                        assert_eq!(
+                            fs::read(&source).expect("failed rewrite leaves original"),
+                            source_bytes
+                        );
+                        assert_eq!(
+                            fs::read(&backup).expect("backup precedes replacement"),
+                            source_bytes
+                        );
+                        assert!(audit.exists(), "audit precedes replacement");
+                        store
+                            .rewrite_trash_filtered(&StdFilesystem, |_| true)
+                            .expect("rewrite");
+                    }
+                    _ => {
+                        let mut added = round_tripped_current_state("another done");
+                        let added_id = added.tasks()[0].id;
+                        added.set_status(added_id, HumanStatus::Done).expect("done");
+                        let mut json = serde_json::to_value(added).expect("encode");
+                        json["undo_stack"] = serde_json::json!([]);
+                        json["tasks"][0]["number"] = serde_json::json!(43);
+                        let mut added: DomainState = serde_json::from_value(json).expect("state");
+                        done_retry = Some(added.clone());
+                        assert!(store
+                            .move_done_to_dated_files(
+                                &mut added.clone(),
+                                &RealFilesystemWithFailure {
+                                    fail_at: Some(SaveStage::FileSync)
+                                },
+                                Duration::ZERO
+                            )
+                            .is_err());
+                        assert_eq!(
+                            fs::read(&source).expect("failed rewrite leaves original"),
+                            source_bytes
+                        );
+                        assert_eq!(
+                            fs::read(&backup).expect("backup precedes replacement"),
+                            source_bytes
+                        );
+                        assert!(audit.exists(), "audit precedes replacement");
+                        store
+                            .move_done_to_dated_files(&mut added, &StdFilesystem, Duration::ZERO)
+                            .expect("rewrite");
+                    }
+                }
+                assert_eq!(fs::read(&backup).expect("original backup"), source_bytes);
+                if target == "missing" {
+                    let audit_value: serde_json::Value =
+                        serde_json::from_slice(&fs::read(&audit).expect("audit")).expect("json");
+                    assert_eq!(
+                        audit_value["removed_after"],
+                        serde_json::json!([{"task_number": 12, "uuid": id}])
+                    );
+                } else {
+                    let audit_value: serde_json::Value =
+                        serde_json::from_slice(&fs::read(&audit).expect("audit")).expect("json");
+                    assert_eq!(
+                        audit_value["removed_after"],
+                        serde_json::json!([]),
+                        "resolved links are not removals"
+                    );
+                }
+                // A retry must not overwrite the original backup or its audit.
+                let before_audit = fs::read(&audit).ok();
+                if let Some(mut added) = done_retry {
+                    store
+                        .move_done_to_dated_files(&mut added, &StdFilesystem, Duration::ZERO)
+                        .expect("retry");
+                } else if owner == "trash" {
+                    store
+                        .rewrite_trash_filtered(&StdFilesystem, |_| true)
+                        .expect("retry");
+                } else {
+                    store.save(&store.load().expect("reload")).expect("retry");
+                }
+                assert_eq!(fs::read(&backup).expect("backup"), source_bytes);
+                assert_eq!(fs::read(&audit).ok(), before_audit);
+            }
+        }
     }
 
     #[test]

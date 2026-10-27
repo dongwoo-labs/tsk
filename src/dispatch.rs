@@ -4122,11 +4122,26 @@ fn run_launch(
     pane_id: &str,
     rendered: &crate::agents::RenderedLaunch,
 ) -> Result<(), DispatchError> {
+    let launcher = host
+        .launcher_path(workspace_id)
+        .map_err(DispatchError::Herdr)?;
+    let directory = match platform {
+        HostPlatform::Unix => launcher.clone(),
+        HostPlatform::Windows => PathBuf::from(launcher.to_string_lossy().replace('\\', "/")),
+    };
+    let directory = directory.parent().and_then(Path::parent).ok_or_else(|| {
+        DispatchError::Herdr(format!(
+            "launcher path {} has no state directory",
+            launcher.display()
+        ))
+    })?;
+    let mut rendered = rendered.clone();
+    rendered.env.insert(
+        "TSK_STATE_DIR".into(),
+        directory.to_string_lossy().into_owned(),
+    );
     let line = match platform {
         HostPlatform::Unix => {
-            let launcher = host
-                .launcher_path(workspace_id)
-                .map_err(DispatchError::Herdr)?;
             let line = sh_launch_line(&launcher)?;
             host.write_launcher(
                 workspace_id,
@@ -5302,6 +5317,8 @@ mod tests {
         let mut expected = vec![
             crate::domain::AGENT_ENV.to_string(),
             result.assignee.clone(),
+            "TSK_STATE_DIR".into(),
+            "C:/Users/Some One/tsk".into(),
         ];
         expected.extend(result.record.argv.iter().cloned());
         assert_eq!(

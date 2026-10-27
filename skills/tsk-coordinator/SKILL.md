@@ -43,8 +43,10 @@ With tsk, run `tsk guide` first: the tsk skill owns every command. This skill ne
    - The prompt only points at the brief: "T12: read `tsk list T12 --json`."
    - After prompting, confirm the agent is working. A dialog can swallow a prompt.
 5. **Wait on a completion signal.** Every prompt needs one; never assume you will notice.
-   - With tsk, the task status is the signal: the builder sets `review` (with `--on` naming you)
-     or `blocked`. Poll `tsk list T12 --json`, not the agent's internals.
+   - With tsk, the builder opens `review` (with `--on` naming you) or `blocked`.
+     Poll `tsk list T12 --json`, not the agent's internals. A non-null `review` is the review
+     signal; a non-null `block` is the pause signal. JSON `status` stays `doing` for both,
+     so it cannot distinguish them from active work.
      `review_on` under the project's `[project."<path>"]` in `config.toml` puts your name in the
      default prompt's `--on` ([project settings](https://gettsk.sh/docs/storage.md#project-settings)).
    - Without tsk, have the agent message you when done, or watch its status in a background loop.

@@ -3237,6 +3237,7 @@ fn route_board_start(
                 &corrections,
                 any_status,
                 false,
+                false,
                 in_herdr,
                 host,
             ) {
@@ -3269,6 +3270,7 @@ fn route_board_start(
                 &[target],
                 &[],
                 any_status,
+                false,
                 false,
                 in_herdr,
                 host,
@@ -3672,6 +3674,7 @@ fn start_plain_and_save(
     corrections: &[uuid::Uuid],
     any_status: bool,
     bulk_card: bool,
+    force: bool,
     in_herdr: bool,
     host: &mut impl DispatchHost,
 ) -> Option<PlainStart> {
@@ -3713,7 +3716,7 @@ fn start_plain_and_save(
     }
     let closing = closing_candidates(domain, moving.iter().copied());
     let started = if bulk_card {
-        domain.start_batch(&moving)
+        domain.start_batch(&moving, force)
     } else {
         domain.change_status(&moving, HumanStatus::Started, moving.len() > 1)
     };
@@ -3915,6 +3918,7 @@ pub fn open_bulk_dispatch_card(
         corrections,
         no_launch,
         any_status,
+        force: model.start_anyway,
         relaunch: None,
         start_anyway: None,
         git_checks,
@@ -3981,6 +3985,7 @@ fn start_bulk_dispatch(
             &prompt.corrections,
             prompt.any_status,
             true,
+            prompt.force,
             in_herdr,
             host,
         ) else {
@@ -4680,6 +4685,7 @@ fn handle_board_intent_with_host(
                 &[],
                 relaunch.any_status,
                 false,
+                false,
                 in_herdr,
                 host,
             );
@@ -4899,6 +4905,7 @@ fn handle_board_intent_with_host(
                         &[target],
                         &[],
                         true,
+                        false,
                         false,
                         in_herdr,
                         host,
@@ -16047,105 +16054,138 @@ mod quick_assign_tests {
         /// Nothing changes and the marks stay while it is up; `y` starts and launches.
         #[test]
         fn ctrl_s_on_a_mixed_marked_set_opens_one_card_listing_launches_and_starts() {
-            let temp = Temp::new("bulk-card", &["builder"]);
-            let (mut domain, mut model, ids) =
-                board(&temp, &["ready to go", "nobody yet", "launched before"]);
-            assign(&mut domain, ids[0]);
-            assign(&mut domain, ids[2]);
-            temp.store.reload_merge_save(&mut domain).expect("save");
-            domain
-                .record_dispatch(ids[2], earlier_dispatch())
-                .expect("earlier dispatch");
-            temp.store.reload_merge_save(&mut domain).expect("save");
-            domain
-                .set_status(ids[2], HumanStatus::Ready)
-                .expect("back to ready");
-            let desk = domain
-                .create_threaded(
-                    "desk errand",
-                    None,
-                    TaskScope::Global,
-                    ProvenanceOrigin::Manual,
-                    None,
-                )
-                .expect("desk task");
-            assign(&mut domain, desk);
-            marked(&mut domain, &mut model, &temp, &ids);
-            // The desk task is not painted in this project's lens, so it cannot be marked here;
-            // the card's check skips it with the single-task refusal wherever it is marked.
-            let (launch, skipped) =
-                super::super::check_marked_dispatches(&domain, [desk], &temp.profiles(), true);
-            assert!(launch.is_empty());
-            assert_eq!(
-                skipped,
-                [(
-                    number(&domain, desk),
-                    "not a project in a git repo".to_string()
-                )]
-            );
-            let mut host = fake_host(&temp);
+            for waiting in [false, true] {
+                let temp = Temp::new("bulk-card", &["builder"]);
+                let (mut domain, mut model, ids) =
+                    board(&temp, &["ready to go", "nobody yet", "launched before"]);
+                assign(&mut domain, ids[0]);
+                assign(&mut domain, ids[2]);
+                temp.store.reload_merge_save(&mut domain).expect("save");
+                domain
+                    .record_dispatch(ids[2], earlier_dispatch())
+                    .expect("earlier dispatch");
+                temp.store.reload_merge_save(&mut domain).expect("save");
+                domain
+                    .set_status(ids[2], HumanStatus::Ready)
+                    .expect("back to ready");
+                let desk = domain
+                    .create_threaded(
+                        "desk errand",
+                        None,
+                        TaskScope::Global,
+                        ProvenanceOrigin::Manual,
+                        None,
+                    )
+                    .expect("desk task");
+                assign(&mut domain, desk);
+                if waiting {
+                    let predecessor = domain
+                        .create(
+                            "unfinished prerequisite",
+                            None,
+                            TaskScope::Global,
+                            ProvenanceOrigin::Manual,
+                        )
+                        .expect("predecessor");
+                    temp.store
+                        .reload_merge_save(&mut domain)
+                        .expect("number predecessor");
+                    let predecessor = domain
+                        .get(predecessor)
+                        .and_then(|task| task.number)
+                        .expect("number");
+                    domain.set_after(ids[1], &[predecessor]).expect("after");
+                }
+                marked(&mut domain, &mut model, &temp, &ids);
+                // The desk task is not painted in this project's lens, so it cannot be marked here;
+                // the card's check skips it with the single-task refusal wherever it is marked.
+                let (launch, skipped) =
+                    super::super::check_marked_dispatches(&domain, [desk], &temp.profiles(), true);
+                assert!(launch.is_empty());
+                assert_eq!(
+                    skipped,
+                    [(
+                        number(&domain, desk),
+                        "not a project in a git repo".to_string()
+                    )]
+                );
+                let mut host = fake_host(&temp);
 
-            let ctrl_s = key(&model, KeyCode::Char('s'), KeyModifiers::CONTROL);
-            handle(&temp, &mut domain, &mut model, ctrl_s, &mut host);
+                let ctrl_s = key(&model, KeyCode::Char('s'), KeyModifiers::CONTROL);
+                handle(&temp, &mut domain, &mut model, ctrl_s, &mut host);
+                if waiting {
+                    assert!(model
+                        .dispatch_prompt()
+                        .and_then(|prompt| prompt.start_anyway.as_ref())
+                        .is_some());
+                    handle(
+                        &temp,
+                        &mut domain,
+                        &mut model,
+                        BoardIntent::ConfirmDispatch,
+                        &mut host,
+                    );
+                }
 
-            assert_eq!(host.launched, 0, "nothing launches before y");
-            assert_eq!(model.input_mode(), BoardInputMode::DispatchConfirm);
-            assert_eq!(model.marked_count(), 3, "the card keeps the marks");
-            let prompt = model.dispatch_prompt().expect("bulk card");
-            assert_eq!(
-                prompt
-                    .launch
-                    .iter()
-                    .map(|eligible| eligible.id)
-                    .collect::<Vec<_>>(),
-                [ids[0]]
-            );
-            assert!(prompt.skipped.is_empty(), "{:?}", prompt.skipped);
-            // Unassigned and already-dispatched tasks only start: relaunch stays cursor-only.
-            assert_eq!(
-                prompt.start_only,
-                [
-                    (number(&domain, ids[1]), ids[1]),
-                    (number(&domain, ids[2]), ids[2]),
-                ]
-            );
+                assert_eq!(host.launched, 0, "nothing launches before y");
+                assert_eq!(model.input_mode(), BoardInputMode::DispatchConfirm);
+                assert_eq!(model.marked_count(), 3, "the card keeps the marks");
+                let prompt = model.dispatch_prompt().expect("bulk card");
+                assert_eq!(
+                    prompt
+                        .launch
+                        .iter()
+                        .map(|eligible| eligible.id)
+                        .collect::<Vec<_>>(),
+                    [ids[0]]
+                );
+                assert!(prompt.skipped.is_empty(), "{:?}", prompt.skipped);
+                // Unassigned and already-dispatched tasks only start: relaunch stays cursor-only.
+                assert_eq!(
+                    prompt.start_only,
+                    [
+                        (number(&domain, ids[1]), ids[1]),
+                        (number(&domain, ids[2]), ids[2]),
+                    ]
+                );
 
-            let first = number(&domain, ids[0]);
-            let painted = frame_text(&model, Rect::new(0, 0, 80, 30));
-            for text in [
-                "Dispatch 1 task?".to_string(),
-                format!("{first}  @builder  from default"),
-                "start only".to_string(),
-                "started, no launch".to_string(),
-                format!("▸ y  dispatch {first} · start"),
-                "esc cancel".to_string(),
-            ] {
-                assert!(painted.contains(&text), "missing {text:?}:\n{painted}");
+                let first = number(&domain, ids[0]);
+                let painted = frame_text(&model, Rect::new(0, 0, 80, 30));
+                for text in [
+                    "Dispatch 1 task?".to_string(),
+                    format!("{first}  @builder  from default"),
+                    "start only".to_string(),
+                    "started, no launch".to_string(),
+                    format!("▸ y  dispatch {first} · start"),
+                    "esc cancel".to_string(),
+                ] {
+                    assert!(painted.contains(&text), "missing {text:?}:\n{painted}");
+                }
+                assert!(!painted.contains("checking…"), "{painted}");
+                let narrow = frame_text(&model, Rect::new(0, 0, 40, 30));
+                for text in ["@builder", "from default", "start only", "y  dispatch"] {
+                    assert!(narrow.contains(text), "40 columns lost {text:?}:\n{narrow}");
+                }
+
+                // `y` starts the start-only rows in one save and launches the rest.
+                handle(
+                    &temp,
+                    &mut domain,
+                    &mut model,
+                    BoardIntent::ConfirmDispatch,
+                    &mut host,
+                );
+                assert_eq!((host.launched, host.ran), (1, 1), "only the first launches");
+                for id in &ids {
+                    assert_eq!(saved(&temp, *id).status, HumanStatus::Started);
+                }
+                assert!(saved(&temp, ids[0]).dispatch.is_some());
+                assert!(saved(&temp, ids[1]).dispatch.is_none());
+                assert_eq!(
+                    saved(&temp, ids[2]).dispatch,
+                    domain.get(ids[2]).and_then(|task| task.dispatch.clone())
+                );
             }
-            assert!(!painted.contains("checking…"), "{painted}");
-            let narrow = frame_text(&model, Rect::new(0, 0, 40, 30));
-            for text in ["@builder", "from default", "start only", "y  dispatch"] {
-                assert!(narrow.contains(text), "40 columns lost {text:?}:\n{narrow}");
-            }
-
-            // `y` starts the start-only rows in one save and launches the rest.
-            handle(
-                &temp,
-                &mut domain,
-                &mut model,
-                BoardIntent::ConfirmDispatch,
-                &mut host,
-            );
-            assert_eq!((host.launched, host.ran), (1, 1), "only the first launches");
-            for id in &ids {
-                assert_eq!(saved(&temp, *id).status, HumanStatus::Started);
-            }
-            assert!(saved(&temp, ids[0]).dispatch.is_some());
-            assert!(saved(&temp, ids[1]).dispatch.is_none());
-            assert_eq!(
-                saved(&temp, ids[2]).dispatch,
-                domain.get(ids[2]).and_then(|task| task.dispatch.clone())
-            );
         }
 
         /// F-2/F-10/F-11: `y` rechecks the start-only rows against the refreshed board. A row

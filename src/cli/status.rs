@@ -68,7 +68,7 @@ pub fn run(
     block: BlockFlags,
     state_dir: Option<PathBuf>,
 ) -> Result<StatusResult, StatusError> {
-    run_as(target, status, block, state_dir, &actor_from_env())
+    run_as(target, status, block, state_dir, &actor_from_env(), false)
 }
 
 /// [`run`] by `actor`.
@@ -78,6 +78,7 @@ fn run_as(
     block: BlockFlags,
     state_dir: Option<PathBuf>,
     actor: &str,
+    force: bool,
 ) -> Result<StatusResult, StatusError> {
     let state_dir = state_dir.unwrap_or_else(default_state_dir);
     // `--on` by the name rule: a block or review handed to an agent names its profile. A
@@ -102,7 +103,15 @@ fn run_as(
                     soft_deleted: task.soft_deleted,
                     open: task.block.as_ref().map(|block| block.kind),
                 });
-            Ok(apply(state, found, status, &block, on.clone(), actor))
+            Ok(apply(
+                state,
+                found,
+                status,
+                &block,
+                on.clone(),
+                actor,
+                force,
+            ))
         })
         .map_err(StatusError::Store)?
 }
@@ -175,6 +184,7 @@ pub fn run_done_with_host(
                 &BlockFlags::default(),
                 None,
                 actor,
+                false,
             );
             let released = if changed {
                 dispatch::plan_released_with_host(state, actor, in_herdr, None, host)
@@ -322,6 +332,7 @@ pub fn run_started_with_host(
             BlockFlags::default(),
             state_dir,
             actor,
+            flags.force,
         )
         .map(StartOutcome::Status)
     };
@@ -419,6 +430,7 @@ pub fn run_ready_with_host(
         BlockFlags::default(),
         state_dir,
         actor,
+        false,
     )?;
     let line = closing.and_then(|closing| closing.deliver(&store, target, in_herdr, host));
     Ok((result, line))
@@ -491,6 +503,7 @@ fn apply(
     flags: &BlockFlags,
     on: Option<BlockOn>,
     actor: &str,
+    force: bool,
 ) -> (Result<StatusResult, StatusError>, bool) {
     let Some(found) = found else {
         return (Err(StatusError::UnknownTask), false);
@@ -500,6 +513,14 @@ fn apply(
     };
     if found.soft_deleted {
         return (Err(StatusError::SoftDeletedTask), false);
+    }
+    if status == HumanStatus::Started && found.current != status && !force {
+        if let Some(waiting) = state
+            .get(found.id)
+            .and_then(|task| state.waiting_text(task))
+        {
+            return (Err(StatusError::AfterNotDone(waiting)), false);
+        }
     }
     let result = StatusResult {
         number,
@@ -717,6 +738,7 @@ mod start_tests {
         break_store_on_launch: Option<PathBuf>,
         /// A whole-store restore of this document lands in this store as a launch runs.
         restore_on_launch: Option<(PathBuf, Vec<u8>)>,
+        add_after_on_agent_check: Option<(PathBuf, u64, u64)>,
         /// Every workspace whose worktree was removed.
         removed: Vec<String>,
     }
@@ -788,6 +810,22 @@ mod start_tests {
         }
 
         fn pane_has_agent(&mut self, _: &str) -> Result<bool, String> {
+            if let Some((directory, target, predecessor)) = self.add_after_on_agent_check.take() {
+                let store = TaskStore::new(directory);
+                let mut state = store.load().expect("other writer load");
+                let id = state
+                    .tasks()
+                    .iter()
+                    .find(|task| task.number == Some(target))
+                    .expect("target")
+                    .id;
+                state
+                    .set_after(id, &[predecessor])
+                    .expect("other writer after");
+                store
+                    .reload_merge_save(&mut state)
+                    .expect("other writer save");
+            }
             self.agent.ok_or_else(|| "herdr did not answer".to_string())
         }
     }
@@ -958,14 +996,46 @@ mod start_tests {
 
     #[test]
     fn a_running_agent_makes_a_plain_start() {
-        for agent in [Some(true), None] {
+        for (agent, add_after, force) in [
+            (Some(true), false, false),
+            (None, false, false),
+            (Some(true), true, false),
+            (Some(true), true, true),
+        ] {
             let temp = Temp::new("running");
             let number = temp.task(true, true, HumanStatus::Review);
+            let mut state = temp.store().load().expect("load");
+            let predecessor = state
+                .create(
+                    "prerequisite",
+                    None,
+                    crate::domain::TaskScope::Global,
+                    crate::domain::ProvenanceOrigin::Manual,
+                )
+                .expect("prerequisite");
+            temp.store()
+                .reload_merge_save(&mut state)
+                .expect("save prerequisite");
+            let predecessor = state
+                .get(predecessor)
+                .and_then(|task| task.number)
+                .expect("number");
             let mut host = Host {
                 agent,
+                add_after_on_agent_check: add_after.then(|| (temp.0.clone(), number, predecessor)),
                 ..Host::default()
             };
-            let outcome = temp.start(number, PLAIN, "you", &mut host).expect("start");
+            let outcome = temp.start(number, StartFlags { force, ..PLAIN }, "you", &mut host);
+            if add_after && !force {
+                assert!(
+                    matches!(outcome, Err(StatusError::AfterNotDone(_))),
+                    "{outcome:?}"
+                );
+                assert_eq!(temp.status(number), HumanStatus::Review);
+                assert_eq!(host.ran, 0);
+                continue;
+            }
+            let outcome = outcome.expect("start");
             // From review, the plain start sends the round back and says how delivery went.
             let StartOutcome::Delivered(_, line) = outcome else {
                 panic!("{agent:?}: {outcome:?}");

@@ -28,6 +28,9 @@ Where tsk keeps your tasks and settings, how to configure it, and how to back it
 | `tsk.json.pre-restore-<time>` | The store a [restore](#restore) replaced; the newest five are kept |
 | `config.toml` | Your [settings](#configuration) |
 | `trash.jsonl` | [Deleted tasks](#deleted-tasks) |
+| `done/` | [Older done tasks](#older-done-tasks) |
+| `trash.jsonl.pre-v16`, `done/*.jsonl.pre-v16` | Original archive bytes before the first rewrite |
+| `*.after-migration.json` | Planned removed UUID links beside each original migration backup ([store version](#store-version)) |
 | `delivery.json` | Which [starter tasks](#starter-tasks) and release notes this directory has received |
 | `backup-status.json` | Each backup target's last success, last attempt, and last error |
 | `machine-id` | This directory's id, which names its folder in a backup repository. Set once, from the host name |
@@ -145,28 +148,24 @@ method = "squash"   # "merge" (the default), "squash", or "rebase"
 
 ### Board defaults
 
-The `[board]` table sets the [group and sort](/docs/board/#group-and-sort) a fresh board starts with, whether it shows the [live lines](/docs/board/#rows) under rows, and the name the board calls you:
+The `[board]` table controls [live lines](/docs/board/#rows) under task rows and the name the board calls you.
 
 ```toml
 [board]
-group = "assignee"        # desk: none, project, thread, or assignee
-sort = "recent"           # desk: recent, project, thread, title, or assignee
-project_group = "thread"  # project boards: none, thread, or assignee
-project_sort = "title"    # project boards: recent, thread, title, or assignee
-messages = "hidden"       # live lines under rows: shown or hidden
+messages = "hidden"       # shown (the default) or hidden
 me = "sam"                # your name on the board; the default is you
 ```
 
-- A missing key keeps its default: `none`, `recent`, and `shown`.
-- The project keys also set the wide Projects preview.
-- `g`, `s`, and `z` change the layout for the session only. Nothing is written back.
-
-`me` replaces `@you` wherever the board names you. That covers assignee labels, pickers, filter, group, and sort, who a block or review waits on, your replies, and the paper trail.
+| Key | Effect |
+| --- | --- |
+| `messages` | Sets live-line visibility when a board opens; `z` toggles it for the session |
+| `me` | Replaces `@you` in assignee labels, pickers, waiting-on labels, replies, and the paper trail |
+| `group`, `sort`, `project_group`, `project_sort` | Accepted for configuration compatibility, but do not change this board's layout |
 
 - Sentences addressed to you keep "you". `tsk list --json` still says `you`.
 - The CLI takes `you`, `me`, or your name for yourself, in `--assignee` and `--on`.
 - The name follows the [thread name](/docs/capture/#thread-names) rules.
-- A name that is also an agent profile is an error: the board says so on its status row and calls you `you`.
+- A name that is also an agent profile is an error: the board reports it and calls you `you`.
 
 ### Errors
 
@@ -178,7 +177,7 @@ An unknown key or a bad value in one table never blocks the others. A file that 
 | Unknown key inside `[agent.<name>]`, `[project."<path>"]`, `[merge]`, `[board]`, or `[[backup]]` | That table is an error |
 | Broken profile or `[project."<path>"]` | The board opens without profiles and shows the error on its status row. `tsk add` and `tsk edit` with an assignee exit 2 without saving |
 | Broken `[merge]` | Only merging refuses: the cleanup card says why, and the CLI refuses with `merge-config` |
-| Broken `[board]` | The board opens at the default layout and shows the error on its status row. A bad `me` leaves the layout alone and names you `you` |
+| Broken `[board]` | The board shows live lines by default and reports the error. A bad `me` leaves visibility unchanged and names you `you` |
 | Broken `[[backup]]` | No backup runs. Every full board open shows `backup off:` and the error on its status row. `tsk backup`, `tsk backup list`, and `tsk restore` exit 1 with the error |
 
 ## Git backups
@@ -250,7 +249,8 @@ The folder holds:
 Each backup is one commit on the repository's default branch, so its history holds every version. Several machines can share one repository.
 
 - Backups are not encrypted and contain your task notes: keep the repository private.
-- Trash is not backed up.
+- Trash, dated done history, `questions-private/`, `reports.json`, and migration audit files are not backed up.
+- A full Agent board recovery needs a separate, complete state-directory copy, including private question records and reports.
 - A store or `config.toml` that does not parse is not pushed. A store unchanged since the last backup is not pushed again.
 - tsk never deletes a machine folder that stopped receiving backups, or a clone under `backup-repos/`. Delete them by hand when you no longer need them.
 
@@ -289,19 +289,30 @@ tsk restore 3f9a1c2e    # restore one version without asking
 - The store it replaces is kept as `tsk.json.pre-restore-<time>`, in UTC. The newest five copies are kept.
 - A version from an older tsk migrates on the next open. One from a newer tsk is refused until you update.
 - Task numbers never go backwards: new tasks continue after the highest number the replaced store or trash held.
+- Restore refuses with exit 1 if the snapshot's question references differ from the current store, or a referenced private record is unavailable. It changes nothing.
+- Task restore does not roll questions back or restore private answers. Use a separately preserved full state-directory copy for complete Agent board recovery.
 - Restore never changes `config.toml`. It prints the `git show` command for the `config.toml` saved with that version, so you can copy settings over by hand.
 - A task number such as `T12` is not a version. To bring back a deleted task, use `tsk trash restore T12`.
 
-On a new machine, add the same repository, then restore:
+For a task-only board, add the same repository on a new machine, then restore:
 
 ```sh
 tsk backup setup        # or: tsk backup add <git-url>
 tsk restore
 ```
 
+## Store version
+
 The board, CLI, and Herdr plugin share one store. The integrated fork writes format v16. Fork v10 and upstream v6 (including upstream dev formats v7–v15) share version numbers but not schemas, so v16 accepts both histories. Existing `todo` and `doing` task values keep those wire spellings; upstream `open` and `started` read as aliases. `ready`, `blocked`, and `review` remain distinct. The legacy CLI JSON view keeps `todo`/`doing`/`done` for Agent consumers.
 
-Fork UUID `after` references migrate to the referenced task's store-global number; numeric upstream links stay numeric. A missing referenced number refuses migration instead of dropping a link. Questions, private snapshots, reports, task UUIDs, revisions, history, steps, archive flags, and `parent_task_id` links are retained. The original live document is retained as `tsk.json.v<N>` before the first v16 save. Stop every writer before upgrading a shared board. To roll back, stop every writer again, restore the full pre-upgrade state-directory backup, and use the previous binary; the previous fork cannot read v16. Do not publish a migrated shared store until every reader uses a compatible binary.
+Fork UUID `after` references use the referenced task's store-global number from live tasks, trash, or dated done history. Numeric links stay numeric. A UUID absent from all three is treated as a deleted prerequisite and removed. Reads migrate in memory only and leave original bytes unchanged.
+
+- The first live save keeps `tsk.json.v<N>` before writing the new format.
+- The first archive rewrite keeps `trash.jsonl.pre-v16` or `done/YYYY-MM-DD.jsonl.pre-v16`. Retries keep the first copy unchanged.
+- `<original-backup>.after-migration.json` records planned removals before replacement: each owning task's number and original UUID, or an empty list. It does not prove replacement succeeded.
+- Questions, private snapshots, reports, task UUIDs, revisions, history, steps, archive flags, and parent links are retained by migration.
+
+Stop every writer before upgrading a shared board. To roll back, stop writers again and restore the complete pre-upgrade state-directory copy with the previous binary. The previous fork cannot read v16. Do not publish a migrated shared store until every reader uses a compatible binary.
 
 Each task can store one optional `parent_task_id` UUID. Missing fields in older tasks and trash entries mean no parent. Relationships use the same locked, revision-checked atomic save path as other task fields; child counts are calculated and are not stored.
 
@@ -338,7 +349,7 @@ When the board opens, tsk asks GitHub for the latest release if its last check i
 
 `reports.json` is a separate versioned document (`format_version: 1`) beside `tsk.json`. It stores Task identifiers and display metadata, every Markdown revision, and the last revision opened on the board. It uses the same store lock as Tasks and atomic replacement with file and directory synchronization. A corrupt or unsupported report file refuses the operation instead of being replaced with an empty list. Question storage remains unchanged by the v16 task migration.
 
-Keep `reports.json` in the shared board's Git publication and backups. Unlike `questions-private/`, report documents are shareable and are not Git-excluded; never copy authentication secrets or private question originals into them. A report keeps its Task number and title so it remains readable after the Task moves into dated done history. Existing report history survives changes and read acknowledgements. Older binaries ignore the separate report document and cannot display or register reports.
+Preserve `reports.json` in separate full state-directory copies; automatic `tsk backup` does not include it. Report documents are shareable and are not Git-excluded, unlike `questions-private/`. Never copy authentication secrets or private question originals into reports. A report keeps its Task number and title so it remains readable after the Task moves into dated done history. Existing report history survives changes and read acknowledgements. Older binaries ignore the separate report document and cannot display or register reports.
 
 `unread` means the latest revision differs from `read_revision`. CLI reads leave it alone. A document opened on the board acknowledges the exact displayed revision under the store lock; a concurrent newer revision remains unread. A document too long for the board page (past 65,535 wrapped rows) is kept in full and stays unread. A failed acknowledgement remains unconfirmed and is reported on the document page.
 
@@ -360,7 +371,7 @@ A secret question's snapshot holds only its fnox target (key, profile, config pa
 
 ## Older done tasks
 
-A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while an undo entry or an open question still names it, or while a task that stays live names it as parent. Answered and closed questions do not hold it: their records stay readable and still name the moved task (a record that cannot be read counts as open). Its number is never reused.
+A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while dispatch cleanup is pending, an undo entry or open question names it, or a live task names it as parent. Answered and closed questions do not hold it: their records stay readable and still name the moved task (a record that cannot be read counts as open). Its number is never reused.
 
 ```sh
 tsk list --done --history --all

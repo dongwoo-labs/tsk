@@ -394,7 +394,7 @@ migration or design work they imply. What the behaviour *is* lives in the docs
   thread normalizer and exact-match a defined profile at the boundary; a task keeps a name
   whose profile was removed and renders it as-is.
 - Profiles are argv templates plus an optional prompt. tsk substitutes
-  `{number} {title} {notes} {steps} {worktree} {branch} {base}` and nothing else; the
+  `{number} {title} {notes} {steps} {worktree} {branch} {base} {on}` and nothing else; the
   prompt is appended as the last argument; the launch is a per-workspace launcher script in
   the state dir (`launchers/`, owner-only on Unix): POSIX `sh` on Unix, PowerShell on
   Windows. The pane types only the fixed line that runs it (`sh_launch_line`,

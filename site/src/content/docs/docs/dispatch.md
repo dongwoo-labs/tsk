@@ -7,19 +7,21 @@ Dispatch hands a task to a coding agent. The agent gets its own Git branch, work
 
 Dispatch needs [Herdr](/docs/install/#add-to-herdr), a task in a project that is a Git repository, and an agent assignee. Assigning works everywhere. On Windows, dispatch is a [preview](#windows-preview).
 
+Launched agents use the selected board through `TSK_STATE_DIR`. A profile or login shell cannot redirect their default tsk commands to another board.
+
 ## Assign
 
 An assignee says who does the task: an agent profile from [`config.toml`](/docs/storage/#configuration), you, or another person. Assigning only labels the task: it decides what a later start does.
 
 | Where | How |
 | --- | --- |
-| Board, peek, or task page | `@` opens the assignee picker: every profile, `@you`, the people already assigned, **type a name…**, then **none** |
+| Board or task page | `@` opens the assignee picker: every profile, `@you`, the people already assigned, **type a name…**, then **none** |
 | Palette | **set assignee** |
 | Quick-add | `!a name` ([capture](/docs/capture/)) |
 | Task page | The **Assignee** field, or the footer's `@name` |
 | CLI | `tsk add --assignee`, `tsk edit --assignee` ([CLI](/docs/cli/#edit)) |
 
-With tasks marked, one choice assigns the whole set, and one `ctrl+u` undoes it. Rows never show the assignee. The peek and task page footers show it as `@claude`.
+With tasks marked, one choice assigns the whole set, and one `ctrl+u` undoes it. Rows never show the assignee. The task page footer shows it as `@claude`.
 
 ### Assignee names
 

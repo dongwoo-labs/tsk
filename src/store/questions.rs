@@ -577,7 +577,7 @@ fn private_directory(state_dir: &Path) -> Result<PathBuf, QuestionError> {
     Ok(directory)
 }
 
-fn read_private(
+pub(super) fn read_private(
     state_dir: &Path,
     reference: &QuestionRef,
 ) -> Result<QuestionRecord, QuestionError> {

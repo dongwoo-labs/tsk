@@ -171,7 +171,7 @@ tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread
 | `--sort <by>` | Live tasks ordered by `recent` (the default), `project`, `thread`, `title`, or `assignee` |
 | `--json` | JSON instead of text |
 
-`--group` and `--sort` work like the board's [group and sort](/docs/board/#group-and-sort). They never arrange by something every row shares: `project` needs `--all`, and `thread` and `assignee` do not combine with a thread or assignee filter.
+`--group` and `--sort` arrange CLI output only. `project` needs `--all`. `thread` and `assignee` do not combine with a matching thread or assignee filter.
 
 These are usage errors (exit 2): `--group` or `--sort` with `--done`, `--archived`, or `--deleted`; two scope flags or two status filters; `--thread` with `--no-thread`; a value flag given twice; and an unknown task address.
 

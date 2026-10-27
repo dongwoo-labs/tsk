@@ -1499,6 +1499,8 @@ pub struct DispatchPrompt {
     /// Opened by the palette's absolute **set status: started** (any status but started
     /// moves) rather than `ctrl+s` (open and ready only); `y` rechecks the rows by it.
     pub any_status: bool,
+    /// 선행 작업 대기를 무시하는 시작을 사용자가 승인했다.
+    pub force: bool,
     /// The relaunch card: one cursor task whose agent is gone. `y` relaunches it, `n` only
     /// starts it. `launch`, `skipped` and `start_only` are empty.
     pub relaunch: Option<RelaunchPrompt>,
@@ -1530,6 +1532,7 @@ impl DispatchPrompt {
             corrections: Vec::new(),
             no_launch: Vec::new(),
             any_status: prompt.any_status,
+            force: false,
             relaunch: Some(prompt),
             start_anyway: None,
             git_checks: None,
@@ -1548,6 +1551,7 @@ impl DispatchPrompt {
             corrections: Vec::new(),
             no_launch: Vec::new(),
             any_status: prompt.intent != crate::ui::input::BoardIntent::PrimaryVerb,
+            force: false,
             relaunch: None,
             start_anyway: Some(prompt),
             git_checks: None,

@@ -264,7 +264,7 @@ fn help_names_where_archived_tasks_live_and_g_folds_a_group() {
     };
     let archive = row("ctrl+f");
     assert!(
-        archive.contains("restore") && archive.contains("archived: d drawer"),
+        archive.contains("restore") && archive.contains("d drawer"),
         "ctrl+f help must say where archived tasks live: {archive}"
     );
     assert!(
@@ -1949,7 +1949,7 @@ fn help_names_archive_restore_and_keeps_removed_group_sort_controls_out() {
     };
     let archive = row("ctrl+f");
     assert!(
-        archive.contains("archive / restore task"),
+        archive.contains("archive / restore"),
         "ctrl+f help must name the whole action: {archive}"
     );
     for label in ["group by", "sort by", "fold / unfold all groups"] {

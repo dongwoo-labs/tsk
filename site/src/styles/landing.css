@@ -2902,7 +2902,7 @@ html[data-theme="light"] .pane {
 .tsk-q-row { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
 .tsk-q-row > span { display: block; white-space: pre; }
 .tsk-q-page { padding-top: 1lh; }
-.tsk-q-line { white-space: pre; min-height: 1lh; }
+.tsk-q-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1lh; }
 .tsk-q-line[data-q-option], .tsk-q-line[data-q-check], .tsk-q-line[data-q-key], .tsk-q-group[data-q-key] { cursor: pointer; }
 .tsk-q-line.is-chosen { color: var(--bg); background: var(--ink); width: max-content; max-width: 100%; }
 .tsk-q-line.is-chosen:has(input) { color: inherit; background: none; display: flex; width: auto; }

@@ -2076,7 +2076,7 @@ impl DomainState {
 
     /// Start `ids` (plain, no launch) as one undo step: one [`UndoEntry::Start`] per task in an
     /// [`UndoEntry::Batch`]. Tasks already started are skipped. Returns whether any changed.
-    pub fn start_batch(&mut self, ids: &[Uuid]) -> Result<bool, DomainError> {
+    pub fn start_batch(&mut self, ids: &[Uuid], force: bool) -> Result<bool, DomainError> {
         let ids: Vec<_> = self
             .prevalidate_batch_ids(ids)?
             .into_iter()
@@ -2088,10 +2088,15 @@ impl DomainState {
         if ids.is_empty() {
             return Ok(false);
         }
+        if !force {
+            for id in &ids {
+                self.ensure_after_done(*id)?;
+            }
+        }
         let mut entries = Vec::with_capacity(ids.len());
         for id in ids {
             let previous = self.task_mut(id)?.status;
-            self.set_status(id, HumanStatus::Started)?;
+            self.apply_status(id, HumanStatus::Started, TaskEventKind::StatusSet)?;
             entries.push(UndoEntry::Start {
                 id,
                 previous,
@@ -3047,6 +3052,10 @@ impl DomainState {
                     && !task.soft_deleted
                     && !task.is_notice()
                     && task.number.is_some()
+                    && task
+                        .dispatch
+                        .as_ref()
+                        .is_none_or(|dispatch| dispatch.cleaned)
                     && !targeted.contains(&task.id)
                     && now
                         .duration_since(done_at(task))
@@ -3214,6 +3223,86 @@ mod tests {
                 ProvenanceOrigin::Manual,
             )
             .expect("valid title creates a task")
+    }
+
+    #[test]
+    fn start_batch_refusal_preserves_every_task_and_undo() {
+        let mut state = DomainState::new();
+        let ids = [
+            create_sample(&mut state),
+            create_sample(&mut state),
+            create_sample(&mut state),
+        ];
+        for (index, task) in state.tasks.iter_mut().enumerate() {
+            task.number = Some(index as u64 + 1);
+        }
+        state.set_after(ids[2], &[1]).expect("prerequisite");
+        let before = serde_json::to_value(&state).expect("before");
+        assert!(matches!(
+            state.start_batch(&ids[1..], false),
+            Err(DomainError::WaitingForAfter(_))
+        ));
+        assert_eq!(serde_json::to_value(&state).expect("after"), before);
+    }
+
+    #[test]
+    fn done_archive_keeps_dispatch_until_cleanup() {
+        for cleaned in [None, Some(false), Some(true)] {
+            let mut state = DomainState::new();
+            let id = state
+                .create(
+                    "cleanup",
+                    None,
+                    TaskScope::Project {
+                        path: "/repos/app".into(),
+                    },
+                    ProvenanceOrigin::Manual,
+                )
+                .expect("task");
+            state.task_mut(id).expect("task").number = Some(1);
+            if cleaned.is_some() {
+                state
+                    .record_dispatch(
+                        id,
+                        Dispatch {
+                            argv: vec!["true".into()],
+                            worktree: "/tmp/tsk-test-cleanup".into(),
+                            branch: "tsk/test-cleanup".into(),
+                            base: Some("main".into()),
+                            base_ref: None,
+                            base_commit: None,
+                            base_remote: None,
+                            herdr_workspace_id: "w-test".into(),
+                            at: SystemTime::UNIX_EPOCH,
+                            cleaned: false,
+                        },
+                    )
+                    .expect("dispatch");
+            }
+            state.complete(id).expect("done");
+            if cleaned == Some(true) {
+                state
+                    .record_dispatch_cleaned(id, CleanupOutcome::Removed)
+                    .expect("cleaned");
+            }
+            state.undo_stack.clear();
+            let task = state.task_mut(id).expect("task");
+            task.created_at = SystemTime::UNIX_EPOCH;
+            task.updated_at = SystemTime::UNIX_EPOCH;
+            for event in &mut task.history {
+                event.at = SystemTime::UNIX_EPOCH;
+            }
+            let eligible = state.done_archive_eligible(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(86_400),
+                Duration::ZERO,
+                |_| false,
+            );
+            assert_eq!(
+                eligible.len(),
+                usize::from(cleaned != Some(false)),
+                "{cleaned:?}"
+            );
+        }
     }
 
     #[test]

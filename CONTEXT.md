@@ -98,33 +98,24 @@ this file names things.
 
 ## Board surfaces
 
-- **NEEDS YOU**: the section of blocked and review tasks that wait on you, including a block
-  on a task that is now done or deleted. The desk shows every scope's; a project board
-  shows its own. Omitted when empty; sits above IN MOTION.
-- **IN MOTION**: started tasks, plus blocked and review tasks that wait on an agent, an
+- **NEEDS YOU**: blocked and review tasks that wait on you, including a block on a task
+  that is now done or deleted. Omitted when empty; sits above DOING.
+- **DOING**: started tasks, plus blocked and review tasks that wait on an agent, an
   unfinished task, or something else.
-- **ON DECK**: ready and open tasks. On the desk it holds desk tasks only.
-- **row label**: the dim `#thread · project` after a row's title (`desk` for a desk task).
-  It leaves out what the view already says, and leads with `waiting on …`, `after …`, or
-  `before …` when they apply.
-- **live line**: the dim `└─` line under a row for what is addressed to you: the asker's
-  words on a block or review on you, or a blocking task now done or deleted.
-- **peek**: the dim preview under a row, opened below 110 columns by a click or `→`. It
-  shows the notes, or a block's or review's summary, then a metadata footer, and replaces
-  the live line while open.
+- **TODO**: ready and open tasks in the selected scope.
+- **row tail**: question and report marks, step completion, and child completion counts
+  after the one-line task title.
+- **live line**: the optional second line under a row, shown with `v`: a block or review
+  summary, or the task's status note.
 - **notice**: a seeded desk task with an `N` id: a starter task or a `What's new in tsk`
   release note. Human-only: the CLI never lists or addresses it.
-- **wide stage**: the slider position of a board 110 columns or wider: `0` full board, `A`
-  split, `G` rail, `F` full task. Focus and layout follow it. Session-only; it survives
-  resizes.
-- **rail**: stage `G`'s 32-column dim board column: tabs, section rules, and wrapped task
-  rows, without the meta column. It keeps the board's done drawer and archived fold state.
-- **single-pane view**: a presentation that shows only the focused board or task surface.
-- **focused surface**: the board or task view that owns interaction. At 110 columns or
-  wider it follows the wide stage (`0`/`A` board, `G`/`F` task); below, the single-pane
-  view.
-- **session**: one board process from launch to quit. Session-only state (folds, wide
-  stage, the launch card having been shown) resets on relaunch.
+- **wide split**: the fixed list-and-task layout at 110 columns or wider. Changing focus
+  does not change its column widths.
+- **single-pane view**: the layout below 110 columns, showing the focused board or task.
+- **focused surface**: the board or task view that owns interaction, whether beside the
+  other surface in the wide split or alone in the single-pane view.
+- **session**: one board process from launch to quit. Session-only state (folds, focus,
+  the launch card having been shown) resets on relaunch.
 
 ## Archive & hiding
 
@@ -141,9 +132,8 @@ this file names things.
   Folded by default; the fold is session-only.
 - **hidden**: archived, or in an archived project. The one test every working lens filters
   on; distinct from soft-deleted.
-- **working lens**: any view meant for current work: the desk, a project board, the
-  Projects view, a thread or assignee view, NEEDS YOU, IN MOTION, ON DECK, the rail, and
-  default `tsk list`. Hidden tasks and projects never show in one.
+- **working lens**: a current-work view, such as the desk, a project board, the Projects
+  view, board search, or default `tsk list`. Hidden tasks and projects never show in one.
 - **file**: the `ctrl+f` verb. On a task it toggles the archived flag, with an undo entry.
   In the project picker it archives the selected project, or unarchives it on the archived
   tab, with no undo entry. `ctrl+u` on an archived selection also unarchives.

@@ -180,18 +180,19 @@ impl Session {
     /// loaded suite can take many seconds to start and paint a debug board.
     pub fn output_until(&mut self, needle: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(60);
-        let mut out = String::new();
+        let mut out = Vec::new();
         while Instant::now() < deadline {
             let mut bytes = [0; 8192];
             if let Ok(n) = self.tty.read(&mut bytes) {
-                out.push_str(&String::from_utf8_lossy(&bytes[..n]));
+                out.extend_from_slice(&bytes[..n]);
             }
-            if out.contains(needle) {
-                return out;
+            let text = String::from_utf8_lossy(&out);
+            if text.contains(needle) {
+                return text.into_owned();
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        panic!("missing {needle}: {out}");
+        panic!("missing {needle}: {}", String::from_utf8_lossy(&out));
     }
 
     pub fn send(&mut self, bytes: &[u8]) {

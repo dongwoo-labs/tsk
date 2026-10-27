@@ -118,12 +118,13 @@ status they are already in the board's order; keep it.
 | assigned work | `tsk list --assignee <name> --json` |
 | done, archived, deleted | `tsk list --done --json`, `--archived`, `--deleted`, with any scope flag |
 
-**What needs the user.** For each `blocked` or `review` row, check its `block.on` or `review.on`:
+**What needs the user.** For each row with a non-null `block` or `review`, check its `on`:
 
-- `you`: needs the user.
-- No `block` or `review` field: needs the user.
+- `you`, or no `on`: needs the user.
 - `task:<n>`: needs the user once T<n> is done or gone; until then it is in motion.
 - `agent:<name>` or `other:<text>`: in motion, not the user's.
+
+When both records are null, JSON `status: doing` does not identify a block or review. Do not infer a request from it.
 
 ## Dispatch and cleanup
 

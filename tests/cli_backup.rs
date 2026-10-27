@@ -226,6 +226,43 @@ fn a_target_restores_into_a_fresh_state_dir() {
     let tasks = stdout(&tsk(&fresh, &["list", "--desk", "--json"]));
     assert!(tasks.contains("written on the old laptop"), "{tasks}");
 
+    // Task-only restore must not silently drop a question created after the backup.
+    let state: serde_json::Value =
+        serde_json::from_slice(&fs::read(fresh.join("tsk.json")).expect("state")).expect("json");
+    let draft = serde_json::json!({
+        "task_id": state["tasks"][0]["id"], "kind": "question", "summary": "choose a path",
+        "origin_thread": "thr-a", "recipient": "lead-a", "text": "Which path?",
+        "options": [], "recommendation": null, "impact": null, "blocking_scope": null,
+        "approval": null, "finding": null, "source": null, "audience": "user"
+    });
+    let input = root.0.join("synthetic-question.json");
+    fs::write(&input, serde_json::to_vec(&draft).expect("draft")).expect("input");
+    let asked = tsk(&fresh, &["ask", "--file", input.to_str().expect("path")]);
+    assert_eq!(asked.status.code(), Some(0), "{}", stderr(&asked));
+    let current = fs::read(fresh.join("tsk.json")).expect("current");
+    let refs: serde_json::Value = serde_json::from_slice(&current).expect("json");
+    let private_file = fresh.join("questions-private").join(format!(
+        "{}.json",
+        refs["questions"][0]["revision"].as_str().expect("revision")
+    ));
+    let private = fs::read(&private_file).expect("private record");
+    let refused = tsk(&fresh, &["restore", id]);
+    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+    assert!(
+        stdout(&refused).is_empty(),
+        "refusal must not report success"
+    );
+    assert!(
+        stderr(&refused).contains("question references differ"),
+        "{}",
+        stderr(&refused)
+    );
+    assert_eq!(
+        fs::read(fresh.join("tsk.json")).expect("unchanged"),
+        current
+    );
+    assert_eq!(fs::read(&private_file).expect("private unchanged"), private);
+
     let unknown = tsk(&fresh, &["restore", "deadbeef"]);
     assert_eq!(unknown.status.code(), Some(1));
     assert!(stderr(&unknown).contains("unknown version"));
