@@ -31,6 +31,11 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, updated_se
         id: Uuid::from_u128(id),
         number: None,
         parent_task_id: None,
+        thread: None,
+        assignee: None,
+        assignee_kind: tsk_tui::domain::AssigneeKind::Agent,
+        base: None,
+        dispatch: None,
         after: Vec::new(),
         notice: None,
         revision: Uuid::from_u128(id),
@@ -38,12 +43,11 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, updated_se
         title: title.into(),
         notes: None,
         status,
+        block: None,
+        past_blocks: Vec::new(),
         scope,
         provenance: ProvenanceOrigin::Manual,
-        history: vec![TaskEvent {
-            kind: TaskEventKind::Created,
-            at,
-        }],
+        history: vec![TaskEvent::new(TaskEventKind::Created, at)],
         steps: Vec::new(),
         soft_deleted: false,
         archived: false,
@@ -440,10 +444,9 @@ fn ready_task_leaving_view_reanchors_to_neighbor_not_inbox_header() {
 fn selection_stays_on_task_id_across_motion_reorder() {
     // Beta is numbered and alpha is not yet, so beta leads the number order.
     let mut alpha_task = task(1, "alpha", HumanStatus::Doing, project(THIS_REPO), 10);
-    alpha_task.history.push(TaskEvent {
-        kind: TaskEventKind::StatusSet,
-        at: epoch_plus(100),
-    });
+    alpha_task
+        .history
+        .push(TaskEvent::new(TaskEventKind::StatusSet, epoch_plus(100)));
     let alpha = alpha_task.id;
     let mut beta_task = task(2, "beta", HumanStatus::Doing, project(THIS_REPO), 20);
     beta_task.number = Some(5);

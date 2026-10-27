@@ -9,7 +9,7 @@
 │   T5 Wire dispatch cleanup receipts        │   steps 0/0                                                     │
 │   T6 Docs refresh pass after F9 ships      │    + step                                                       │
 │   tsk                                      │                                                                 │
-│   T1 Smoke-test worktree dispatch          │                                                                 │
+│   T1 Smoke-test worktree dispatch          │   PAPER TRAIL · 1 ▸                                             │
 │                                            │                                                                 │
 │ TODO ────────────────────────────────────3 │                                                                 │
 │                                            │                                                                 │
@@ -25,8 +25,8 @@
 │                                            │                                                                 │
 │                                            │                                                                 │
 │                                            │                                                                 │
-│                                            │   created 12m ago · updated 12m ago                             │
+│                                            │   ⎇ default                                                     │
 │──────────────────────────────────────────────────────────────────────────────────────────────────────────────│
 │ all                                                                                                 → detail │
-│ enter open · ctrl+o todo · ctrl+d done · ? help                                                              │
+│ enter open · ctrl+o todo · ctrl+d done · ctrl+b block · : commands · ? help                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

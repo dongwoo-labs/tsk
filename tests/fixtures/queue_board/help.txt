@@ -10,12 +10,12 @@
 │   T6 Doc│  / search keys or actions…                                 │         │
 │         │ ────────────────────────────────────────────────────────── │         │
 │ TODO · d│  NAVIGATION                                                │───────1 │
-│         │  ↑↓ / jk            move                                   │         │
-│   T7 Glo│  shift+M            multi-select                           │         │
+│         │  ↑↓ / jk            move up / down                         │         │
+│   T7 Glo│  shift+M            start / stop multi-select              │         │
 │         │  shift+↑↓           mark and move (multi-select)           │         │
 │ DONE ───│                                                            │ to open │
 │         ├────────────────────────────────────────────────────────────┤         │
-│         │ type search · ↑↓ scroll · esc clear/close                  │         │
+│         │ type search · ↑↓ scroll · esc clear / close                │         │
 │         └────────────────────────────────────────────────────────────┘         │
 │                                                                                │
 │                                                                                │

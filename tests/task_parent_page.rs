@@ -960,8 +960,11 @@ fn palette_keeps_an_off_list_page_target_after_a_sync_empties_the_list() {
 
     apply(&mut board, BoardIntent::OpenCommandPalette);
     let commands = board.model.visible_commands();
-    let labels: Vec<&str> = commands.iter().map(|command| command.label).collect();
-    assert!(labels.contains(&"delete"), "{labels:?}");
+    let labels: Vec<&str> = commands
+        .iter()
+        .map(|command| command.label.as_str())
+        .collect();
+    assert!(labels.contains(&"delete task"), "{labels:?}");
     let index = labels
         .iter()
         .position(|label| *label == "set status: doing")

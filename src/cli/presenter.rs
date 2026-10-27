@@ -12,13 +12,23 @@ use crate::cli::parser::TaskAddress;
 use crate::cli::status::{StatusError, StatusResult};
 use crate::cli::steps::{StepLine, StepsError, StepsResult};
 use crate::cli::trash::{TrashCliError, TrashRestoreResult};
+use crate::dispatch::{
+    BranchCleanup, CleanupError, CleanupResult, DispatchError, DispatchResult, PromptPreview,
+    WorkspaceCleanup, WorktreeCleanup,
+};
 use crate::domain::HumanStatus;
+use crate::ui::queue::{GroupBy, SortBy};
 use crate::ui::terminal_text;
 
 fn human_reason(reason: &str) -> String {
     terminal_text(reason)
 }
 
+/// One command's `--help`. Every command uses one set of group headings, in this order:
+/// `Arguments` (positional values), `Actions` (subcommands), flag groups named for what they
+/// select or the status they go with (`Scope`, `Filters`, `Arrange`, `Place`, `Started`,
+/// `Done`, `Blocked`, `Review`), `Options` (every other flag), then `Output`. Examples fit on
+/// one 80-column line, so none wraps mid-command.
 struct HelpDoc {
     usage: Vec<String>,
     purpose: String,
@@ -37,9 +47,10 @@ impl HelpDoc {
     fn render(self) -> String {
         const WIDTH: usize = 80;
         let mut output = String::new();
+        // A wrapped form hangs deeper than the next form starts, so each form reads as one.
         for (index, usage) in self.usage.iter().enumerate() {
             let prefix = if index == 0 { "usage: " } else { "       " };
-            append_usage_wrapped(&mut output, prefix, "       ", usage, WIDTH);
+            append_usage_wrapped(&mut output, prefix, "           ", usage, WIDTH);
         }
         output.push('\n');
         append_help_wrapped(&mut output, "", "", &self.purpose, WIDTH);
@@ -71,7 +82,7 @@ impl HelpDoc {
         if !self.refusals.is_empty() {
             output.push_str("\nRefusals (exit 1):\n");
             for refusal in &self.refusals {
-                append_help_wrapped(&mut output, "  ", "  ", refusal, WIDTH);
+                append_help_wrapped(&mut output, "  ", "    ", refusal, WIDTH);
             }
         }
         if !self.exit.is_empty() {
@@ -97,6 +108,81 @@ fn group(heading: &str, options: &[(&str, &str)]) -> HelpGroup {
             .iter()
             .map(|(flag, text)| ((*flag).into(), (*text).into()))
             .collect(),
+    }
+}
+
+/// Usage lines shared by a command's `--help` and its usage errors, so the two never disagree.
+const ADD_USAGE: &[&str] = &[
+    "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--after <task>]... [--thread <name>] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--json] [--state-dir <dir>]",
+    "tsk add [--file <path|->] [--state-dir <dir>]",
+];
+const LIST_USAGE: &[&str] = &[
+    "tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread] [--assignee <name>] [--todo | --doing | --open | --ready | --done [--history] | --deleted | --archived] [--group <by>] [--sort <by>] [--field <name> | --note <prefix>] [--json] [--state-dir <dir>]",
+];
+const STATUS_USAGE: &[&str] = &[
+    "tsk status <task> <status> [--state-dir <dir>]",
+    "tsk status <task> started [--no-dispatch | --again] [--force]",
+    "tsk status <task> done [--clean | --merge]",
+    "tsk status <task> blocked [--why <text>] [--needs <text>] [--option <text>]... [--on <who>]",
+    "tsk status <task> review [--done <text>] [--check <text>]... [--next <text>] [--on <who>]",
+];
+const EDIT_USAGE: &[&str] = &[
+    "tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--parent <task> | --no-parent] [-p <project> | --desk] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--after <task>]... [--clear-after | --no-after] [--on <who>] [--state-dir <dir>]",
+];
+const STEPS_USAGE: &[&str] = &[
+    "tsk steps <task> add <text> [<place>] [--state-dir <dir>]",
+    "tsk steps <task> toggle <step-short-id> [--state-dir <dir>]",
+    "tsk steps <task> rename <step-short-id> <text> [--state-dir <dir>]",
+    "tsk steps <task> move <step-short-id> <place> [--state-dir <dir>]",
+    "tsk steps <task> remove <step-short-id> [--state-dir <dir>]",
+];
+const REPLY_USAGE: &[&str] = &["tsk reply <task> <text> [--send] [--state-dir <dir>]"];
+const DISPATCH_USAGE: &[&str] = &[
+    "tsk dispatch <task> [--again] [--base <branch>] [--state-dir <dir>]",
+    "tsk dispatch <task> --show-prompt [--base <branch>] [--state-dir <dir>]",
+];
+const CLEAN_USAGE: &[&str] = &["tsk clean <task> [--merge] [--json] [--state-dir <dir>]"];
+const PROJECT_USAGE: &[&str] = &[
+    "tsk project archive <name> [--state-dir <dir>]",
+    "tsk project unarchive <name> [--state-dir <dir>]",
+];
+const TRASH_USAGE: &[&str] = &["tsk trash restore <task> [--state-dir <dir>]"];
+const BACKUP_USAGE: &[&str] = &[
+    "tsk backup setup [--repo <name>] [--state-dir <dir>]",
+    "tsk backup [now] [--state-dir <dir>]",
+    "tsk backup add <git-url> [--every <when>] [--state-dir <dir>]",
+    "tsk backup list [--state-dir <dir>]",
+    "tsk backup remove <target> [--state-dir <dir>]",
+];
+const RESTORE_USAGE: &[&str] = &["tsk restore [<version>] [--all] [--state-dir <dir>]"];
+const CAPTURE_USAGE: &[&str] = &["tsk capture [--state-dir <dir>]"];
+
+fn lines(usage: &[&str]) -> Vec<String> {
+    usage.iter().map(|line| (*line).to_string()).collect()
+}
+
+/// `usage: <first>` then each further form indented under it.
+fn usage_block(usage: &[impl AsRef<str>]) -> String {
+    usage
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let prefix = if index == 0 { "usage: " } else { "       " };
+            format!("{prefix}{}\n", line.as_ref())
+        })
+        .collect()
+}
+
+/// A usage error: the reason, then every usage form of the command (exit 2).
+fn usage_error(verb: &str, reason: &str, usage: &[&str]) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!(
+            "tsk {verb}: {}\n{}",
+            human_reason(reason),
+            usage_block(usage)
+        ),
+        code: 2,
     }
 }
 
@@ -227,7 +313,10 @@ pub fn top_level_help() -> String {
         "  steps    add, toggle, rename, move, or remove one step on a task\n",
         "  import   import Linear issues as tasks (one way)\n",
         "  report   register or read a Task completion report\n",
-        "  reports  list completion reports and unread revisions\n\n",
+        "  reports  list completion reports and unread revisions\n",
+        "  reply    answer a block, or give feedback on a review\n",
+        "  dispatch launch a task's assigned agent in its own worktree\n",
+        "  clean    remove a dispatched task's worktree and merged branch\n\n",
         "Agent questions (explicit non-personal state directory)\n",
         "  ask        save a full-text question from JSON\n",
         "  answer     append an answer or correction with expected revision\n",
@@ -236,18 +325,21 @@ pub fn top_level_help() -> String {
         "  ui-answer  record the user's answer from another interface (not for agents)\n",
         "  secret-result  record set after a name-only fnox check (no value input)\n\n",
         "Board\n",
-        "  archive    keep a task off the working views\n",
+        "  archive    hide a task from the working views\n",
         "  unarchive  put an archived task back\n",
         "  project    archive or unarchive a project\n",
-        "  trash      restore a trashed task\n\n",
+        "  trash      restore a deleted task\n",
+        "  backup     back the store up to one or more git repositories\n",
+        "  restore    put a backed-up version of the store back\n\n",
         "Setup\n",
-        "  setup    register herdr, or install the agent skill\n",
+        "  setup    register Herdr, or install the agent skill\n",
         "  update   install the latest stable release\n",
-        "  guide    print the agent workflow skill\n\n",
+        "  guide    print the agent workflow\n\n",
         "Statuses\n",
         "  todo     intended work\n",
         "  doing    work in progress\n",
-        "  done     closed\n\n",
+        "  done     closed\n",
+        "  open, ready, started (or start), blocked, review, done: detailed states\n\n",
         "Run `tsk help <command>` or `tsk <command> --help` for one command.\n",
         "Agents: run `tsk guide`, or read https://gettsk.sh/docs/agents.md\n"
     )
@@ -267,41 +359,155 @@ pub fn help_usage(reason: &str) -> CliOutput {
 
 pub fn add_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec![
-            "tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--after <task>]... [--json] [--state-dir <dir>]".into(),
-            "tsk add [--file <path|->] [--state-dir <dir>]".into(),
-        ],
-        purpose: "Create one task or apply a JSON plan.".into(),
+        usage: lines(ADD_USAGE),
+        purpose: "Create one task, or every task in a JSON plan.".into(),
         groups: vec![
-            group("Scope", &[("-p, --project <project>", "create in a project"), ("--desk", "create on your desk")]),
-            group("Output", &[("--json", "print one result object for a flag add")]),
-            group("Values", &[("-t, --title <title>", "required task title"), ("-n, --notes <notes>", "optional notes"), ("--parent <task>", "optional direct parent task number or UUID"), ("--after <task>", "wait for this task to be done before starting; repeat for several"), ("--file <path|->", "read a JSON plan from a file or stdin"), ("--state-dir <dir>", "use another board store"), ("--flag=<value>", "use equals syntax for dash-leading title, notes, project, state-dir, or file values")]),
+            group(
+                "Scope",
+                &[
+                    (
+                        "-p, --project <project>",
+                        "a project on the board, or an absolute path",
+                    ),
+                    ("--desk", "the desk"),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    ("-t, --title <title>", "the title (required without a plan)"),
+                    ("-n, --notes <notes>", "notes"),
+                    ("--parent <task>", "direct parent task number or UUID"),
+                    ("--after <task>", "run after this task; repeat for more"),
+                    ("--thread <name>", "a thread label"),
+                    (
+                        "--assignee <name>",
+                        "an agent profile from config.toml, me, or a person's name",
+                    ),
+                    ("--unassign", "create without an assignee"),
+                    (
+                        "--base <branch>",
+                        "dispatch from this existing branch of the project",
+                    ),
+                    ("--clear-base", "dispatch from the project's default branch"),
+                    (
+                        "--file <path|->",
+                        "read a JSON plan from a file, or - for stdin",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                    ("--flag=<value>", "use = for a value that starts with -"),
+                ],
+            ),
+            group(
+                "Output",
+                &[("--json", "print the result as JSON (a plan always does)")],
+            ),
         ],
-        examples: vec!["tsk add -t \"Draft release notes\"".into(), "tsk add -t \"Buy milk\" --desk".into(), "tsk add -t \"Fix widget\" --project widget".into(), "tsk add --file plan.json".into(), "cat plan.json | tsk add".into()],
+        examples: vec![
+            "tsk add -t \"Draft release notes\"".into(),
+            "tsk add -t \"Buy milk\" --desk".into(),
+            "tsk add -t \"Fix login timeout\" -p atlas --thread auth".into(),
+            "tsk add --file plan.json".into(),
+            "cat plan.json | tsk add".into(),
+        ],
         refusals: vec![
-            "empty-title".into(),
-            "invalid-title".into(),
-            "invalid-parent".into(),
-            "invalid-after".into(),
-            "invalid-item (JSON plan)".into(),
-            "unknown-project".into(),
-            "project-archived".into(),
+            "empty-title, invalid-title, unknown-project, project-archived, unknown-base".into(),
+            "in a plan item: invalid-item, invalid-thread, invalid-assignee, invalid-after".into(),
         ],
-        exit: exit_line("every item was created or already existed", Some("one or more items refused, retry failed only"), true),
+        exit: exit_line(
+            "every item created or already there",
+            Some("an item refused; retry only the failed items"),
+            true,
+        ),
     })
 }
 
 pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done [--history] | --deleted | --archived] [--json] [--state-dir <dir>]".into()],
-        purpose: "Inspect tasks in the selected scope, or one task anywhere in the live store.".into(),
+        usage: lines(LIST_USAGE),
+        purpose: "Read the tasks in a scope, or one task in full.".into(),
         groups: vec![
-            group("Scope", &[("-p, --project <project>", "select a project"), ("--desk", "select your desk"), ("--all", "select every scope")]),
-            group("Filters", &[("<task>", "a task number or UUID, not combined with filters"), ("--todo, --doing", "show todo or doing tasks"), ("--done, --archived", "show done or archived tasks"), ("--history", "with --done, also older done tasks from the dated done files"), ("--deleted", "show soft-deleted and trashed tasks")]),
-            group("Output", &[("--json", "print machine-readable task rows, or one projected JSON value"), ("--field <name>", "one Task field: id, number, project, status, title, notes, steps, parent_task_id, parent, children_done, children_total, children, waiting_for"), ("--note <prefix>", "first prefixed notes value (for example Now:); mutually exclusive with --field; both require one Task address; plain strings are raw, missing values print an empty line, arrays/objects print JSON; --json returns null for missing values")]),
-            group("Values", &[("--state-dir <dir>", "use another board store"), ("--project=<scope>", "use equals syntax for a dash-leading project or state-dir value")]),
+            group(
+                "Arguments",
+                &[(
+                    "<task>",
+                    "a task number or UUID: that task in full, wherever it is; takes no scope, filter, or arrange flag",
+                )],
+            ),
+            group(
+                "Scope",
+                &[
+                    ("-p, --project <project>", "a project"),
+                    ("--desk", "the desk"),
+                    ("--all", "every project and the desk"),
+                ],
+            ),
+            group(
+                "Filters",
+                &[
+                    ("--thread <name>", "only tasks on this thread"),
+                    ("--no-thread", "only tasks without a thread"),
+                    (
+                        "--assignee <name>",
+                        "only tasks assigned to this agent profile or person; me for yours",
+                    ),
+                    ("--todo", "open and ready tasks"),
+                    ("--doing", "started, blocked, and review tasks"),
+                    ("--open, --ready", "only open, or only ready, tasks"),
+                    (
+                        "--history",
+                        "with --done, include older tasks from dated done files",
+                    ),
+                    ("--done, --archived", "done or archived tasks instead"),
+                    ("--deleted", "deleted tasks instead"),
+                ],
+            ),
+            group(
+                "Arrange",
+                &[
+                    (
+                        "--group <by>",
+                        "group live tasks under each status: none, project (with --all), thread, or assignee",
+                    ),
+                    (
+                        "--sort <by>",
+                        "order live tasks: recent, project (with --all), thread, title, or assignee",
+                    ),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    ("--state-dir <dir>", "use another board store"),
+                    ("--flag=<value>", "use = for a value that starts with -"),
+                ],
+            ),
+            group(
+                "Output",
+                &[
+                    (
+                        "--json",
+                        "print one JSON array; status stays todo, doing, or done",
+                    ),
+                    (
+                        "--field <name>",
+                        "one field shown by the task's --json detail; requires one task",
+                    ),
+                    (
+                        "--note <prefix>",
+                        "one prefixed notes value; requires one task and excludes --field",
+                    ),
+                ],
+            ),
         ],
-        examples: vec!["tsk list".into(), "tsk list T12".into(), "tsk list --all --json".into(), "tsk list --archived --all".into()],
+        examples: vec![
+            "tsk list".into(),
+            "tsk list T12".into(),
+            "tsk list --all --json".into(),
+            "tsk list --all --thread release --json".into(),
+            "tsk list --all --group project --sort title".into(),
+            "tsk list --archived --all".into(),
+        ],
         refusals: Vec::new(),
         exit: exit_line("tasks listed", None, true),
     })
@@ -334,7 +540,10 @@ pub fn notes_help() -> CliOutput {
 pub fn notes_usage(reason: &str) -> CliOutput {
     CliOutput {
         stdout: String::new(),
-        stderr: format!("tsk notes: {}\nusage: tsk notes <task> set <prefix> <text> | remove <prefix> | append <text> [--state-dir <dir>]\n", human_reason(reason)),
+        stderr: format!(
+            "tsk notes: {}\nusage: tsk notes <task> set <prefix> <text> | remove <prefix> | append <text> [--state-dir <dir>]\n",
+            human_reason(reason)
+        ),
         code: 2,
     }
 }
@@ -346,6 +555,7 @@ pub fn added(result: FlagAddResult, json: bool) -> CliOutput {
             number,
             title,
             project,
+            assignee,
         } if json => format!(
             "{}\n",
             serde_json::json!({
@@ -354,6 +564,8 @@ pub fn added(result: FlagAddResult, json: bool) -> CliOutput {
                 "number": number,
                 "title": title,
                 "project": project,
+                "assignee": assignee.as_ref().map(|assignee| &assignee.name),
+                "assignee_kind": assignee.as_ref().map(|assignee| assignee.kind.name()),
             })
         ),
         FlagAddResult::Existing {
@@ -361,6 +573,7 @@ pub fn added(result: FlagAddResult, json: bool) -> CliOutput {
             number,
             title,
             project,
+            assignee,
         } if json => format!(
             "{}\n",
             serde_json::json!({
@@ -369,9 +582,20 @@ pub fn added(result: FlagAddResult, json: bool) -> CliOutput {
                 "number": number,
                 "title": title,
                 "project": project,
+                "assignee": assignee.as_ref().map(|assignee| &assignee.name),
+                "assignee_kind": assignee.as_ref().map(|assignee| assignee.kind.name()),
             })
         ),
-        FlagAddResult::Created { title, .. } => format!("added {}\n", terminal_text(&title)),
+        FlagAddResult::Created {
+            number,
+            title,
+            assignee,
+            ..
+        } => format!(
+            "added {}\n{}",
+            terminal_text(&title),
+            person_line(number, assignee.as_ref())
+        ),
         FlagAddResult::Existing { .. } => "task already exists\n".into(),
     };
     CliOutput {
@@ -394,14 +618,7 @@ pub fn plan(result: crate::cli::add::PlanResult) -> CliOutput {
 }
 
 pub fn usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk add: {}\nusage: tsk add -t <title> [-n <notes>] [-p <project> | --desk] [--parent <task>] [--after <task>]... [--json] [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    usage_error("add", reason, ADD_USAGE)
 }
 
 pub fn list_projected(
@@ -439,6 +656,7 @@ fn list_json(
             id: uuid::Uuid,
             number: u64,
             project: &'a Option<String>,
+            #[serde(serialize_with = "crate::cli::list::serialize_legacy_status")]
             status: HumanStatus,
             title: &'a str,
             notes: &'a Option<String>,
@@ -450,7 +668,26 @@ fn list_json(
             children_done: usize,
             children_total: usize,
             children: &'a [ListRow],
+            assignee: &'a Option<String>,
+            assignee_kind: Option<&'static str>,
+            base: &'a Option<String>,
+            thread: &'a Option<String>,
+            after: &'a [crate::cli::list::AfterLink],
+            before: &'a [u64],
+            #[serde(skip_serializing_if = "Option::is_none")]
+            dispatch: Option<&'a crate::domain::Dispatch>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            block: Option<BlockJson<'a>>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            past_blocks: Vec<BlockJson<'a>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            review: Option<ReviewJson<'a>>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            past_reviews: Vec<ReviewJson<'a>>,
+            activity: Vec<ActivityJson<'a>>,
         }
+        let blocks = |record: &&crate::domain::Block| !record.is_review();
+        let reviews = |record: &&crate::domain::Block| record.is_review();
         let direct_row = DirectRow {
             id: row.id,
             number: row.number,
@@ -465,6 +702,33 @@ fn list_json(
             children_done: row.children_done,
             children_total: row.children_total,
             children: &direct.children,
+            assignee: &row.assignee,
+            assignee_kind: row.assignee_kind,
+            base: &row.base,
+            thread: &row.thread,
+            after: &row.after,
+            before: &row.before,
+            dispatch: direct.dispatch.as_ref(),
+            block: direct.block.as_ref().filter(blocks).map(BlockJson::from),
+            past_blocks: direct
+                .past_blocks
+                .iter()
+                .filter(blocks)
+                .map(BlockJson::from)
+                .collect(),
+            review: direct.block.as_ref().filter(reviews).map(ReviewJson::from),
+            past_reviews: direct
+                .past_blocks
+                .iter()
+                .filter(reviews)
+                .map(ReviewJson::from)
+                .collect(),
+            activity: direct
+                .history
+                .iter()
+                .rev()
+                .map(ActivityJson::from)
+                .collect(),
         };
         if let Some(projection) = projection {
             use crate::cli::list::Projection;
@@ -495,16 +759,203 @@ fn list_json(
         );
     }
 
-    let value = serde_json::to_value(&result.rows).expect("list rows are serializable");
+    /// A filtered row, with its open block or review round shaped as in the task in full.
+    #[derive(serde::Serialize)]
+    struct FilteredRow<'a> {
+        #[serde(flatten)]
+        row: &'a crate::cli::list::ListRow,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        block: Option<BlockJson<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        review: Option<ReviewJson<'a>>,
+    }
+    let rows: Vec<FilteredRow<'_>> = result
+        .rows
+        .iter()
+        .map(|row| {
+            let record = row.record.as_ref();
+            FilteredRow {
+                row,
+                block: record
+                    .filter(|record| !record.is_review())
+                    .map(BlockJson::from),
+                review: record
+                    .filter(|record| record.is_review())
+                    .map(ReviewJson::from),
+            }
+        })
+        .collect();
+    let value = serde_json::to_value(&rows).expect("list rows are serializable");
     format!("{value}\n")
+}
+
+/// One history event, newest first: when, who (`null` on an event an older store recorded),
+/// what kind, and the kind's detail (`null` when it carries none).
+#[derive(serde::Serialize)]
+struct ActivityJson<'a> {
+    #[serde(with = "crate::domain::time_serde")]
+    at: std::time::SystemTime,
+    by: Option<&'a str>,
+    kind: crate::domain::TaskEventKind,
+    detail: Option<&'a crate::domain::EventDetail>,
+}
+
+impl<'a> From<&'a crate::domain::TaskEvent> for ActivityJson<'a> {
+    fn from(event: &'a crate::domain::TaskEvent) -> Self {
+        Self {
+            at: event.at,
+            by: event.by.as_deref(),
+            kind: event.kind,
+            detail: event.detail.as_ref(),
+        }
+    }
+}
+
+/// The agent-facing block shape: deleted replies are left out, and `answered` says whether
+/// the owner has the last word.
+#[derive(serde::Serialize)]
+struct BlockJson<'a> {
+    why: Option<&'a str>,
+    needs: Option<&'a str>,
+    options: &'a [String],
+    on: String,
+    by: &'a str,
+    #[serde(with = "crate::domain::time_serde")]
+    at: std::time::SystemTime,
+    edited: bool,
+    replies: Vec<ReplyJson<'a>>,
+    answered: bool,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_closed_at"
+    )]
+    closed_at: Option<std::time::SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    closed_by: Option<&'a str>,
+}
+
+/// The agent-facing review round: `feedback` is the reply thread (deleted entries left out),
+/// `answered` says whether the owner has the last word, and a closed round says how it closed.
+#[derive(serde::Serialize)]
+struct ReviewJson<'a> {
+    round: u32,
+    done: Option<&'a str>,
+    checks: Vec<CheckJson<'a>>,
+    next: Option<&'a str>,
+    on: String,
+    by: &'a str,
+    #[serde(with = "crate::domain::time_serde")]
+    at: std::time::SystemTime,
+    edited: bool,
+    feedback: Vec<ReplyJson<'a>>,
+    answered: bool,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_closed_at"
+    )]
+    closed_at: Option<std::time::SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    closed_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<crate::domain::Resolution>,
+}
+
+impl<'a> From<&'a crate::domain::Block> for ReviewJson<'a> {
+    fn from(block: &'a crate::domain::Block) -> Self {
+        Self {
+            round: block.round.max(1),
+            done: block.done.as_deref(),
+            checks: block
+                .checks
+                .iter()
+                .map(|check| CheckJson {
+                    text: &check.text,
+                    state: check.state.name(),
+                })
+                .collect(),
+            next: block.next.as_deref(),
+            on: block.on.wire(),
+            by: &block.by,
+            at: block.at,
+            edited: block.edited_at.is_some(),
+            feedback: reply_json(block),
+            answered: block.answered(),
+            closed_at: block.closed_at,
+            closed_by: block.closed_by.as_deref(),
+            resolution: block.resolution,
+        }
+    }
+}
+
+/// A check with its state always spelled out: `open`, `passed` or `failed`.
+#[derive(serde::Serialize)]
+struct CheckJson<'a> {
+    text: &'a str,
+    state: &'static str,
+}
+
+fn reply_json(block: &crate::domain::Block) -> Vec<ReplyJson<'_>> {
+    block
+        .replies
+        .iter()
+        .filter(|reply| !reply.deleted)
+        .map(|reply| ReplyJson {
+            at: reply.at,
+            by: &reply.by,
+            text: &reply.text,
+            edited: reply.edited,
+            sent: reply.sent,
+        })
+        .collect()
+}
+
+#[derive(serde::Serialize)]
+struct ReplyJson<'a> {
+    #[serde(with = "crate::domain::time_serde")]
+    at: std::time::SystemTime,
+    by: &'a str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    edited: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    sent: bool,
+}
+
+fn serialize_closed_at<S: serde::Serializer>(
+    time: &Option<std::time::SystemTime>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let time = time.expect("skipped when absent");
+    crate::domain::time_serde::serialize(&time, serializer)
+}
+
+impl<'a> From<&'a crate::domain::Block> for BlockJson<'a> {
+    fn from(block: &'a crate::domain::Block) -> Self {
+        Self {
+            why: block.why.as_deref(),
+            needs: block.needs.as_deref(),
+            options: &block.options,
+            on: block.on.wire(),
+            by: &block.by,
+            at: block.at,
+            edited: block.edited_at.is_some(),
+            replies: reply_json(block),
+            answered: block.answered(),
+            closed_at: block.closed_at,
+            closed_by: block.closed_by.as_deref(),
+        }
+    }
 }
 
 fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
     let output_width = terminal_width.unwrap_or(usize::MAX);
     let groups: &[(Option<HumanStatus>, &str)] = match result.view {
         ListView::Open => &[
-            (Some(HumanStatus::Doing), "DOING"),
-            (Some(HumanStatus::Todo), "TODO"),
+            (Some(HumanStatus::Started), "STARTED"),
+            (Some(HumanStatus::Ready), "READY"),
+            (Some(HumanStatus::Open), "OPEN"),
+            (Some(HumanStatus::Blocked), "BLOCKED"),
+            (Some(HumanStatus::Review), "REVIEW"),
         ],
         ListView::Done => &[(None, "DONE")],
         ListView::Deleted => &[(None, "DELETED")],
@@ -525,7 +976,32 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
             output.push('\n');
         }
         append_wrapped(&mut output, "", "", heading, output_width);
-        if result.include_scope {
+        if result.group != GroupBy::None {
+            append_arranged_groups(
+                &mut output,
+                rows,
+                result.group,
+                labels.as_ref(),
+                output_width,
+            );
+        } else if result.include_scope && result.sort != SortBy::Recent {
+            // Sorted like the board's ungrouped section: one run per status, each row
+            // naming its scope, so scope groups cannot undo the order.
+            let labels = labels.as_ref().expect("scope labels");
+            for row in rows {
+                let scope =
+                    terminal_text(labels.get(&row.project).expect("label for displayed scope"));
+                append_row(
+                    &mut output,
+                    row,
+                    " ",
+                    output_width,
+                    true,
+                    true,
+                    Some(&scope),
+                );
+            }
+        } else if result.include_scope {
             append_scope_groups(
                 &mut output,
                 rows,
@@ -533,12 +1009,19 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
                 output_width,
             );
         } else {
-            append_rows(&mut output, &rows, " ", output_width);
+            append_rows(
+                &mut output,
+                &rows,
+                " ",
+                output_width,
+                result.direct.is_none(),
+            );
             if let Some(direct) = result.direct.as_ref() {
                 append_direct_details(
                     &mut output,
                     direct.notes.as_deref(),
                     &direct.steps,
+                    rows[0],
                     " ",
                     output_width,
                 );
@@ -582,10 +1065,48 @@ fn list_human(result: &ListResult, terminal_width: Option<usize>) -> String {
                         );
                     }
                 }
+                append_activity(&mut output, &direct.trail, " ", output_width);
             }
         }
     }
     output
+}
+
+/// `--group` sub-headings under one status: consecutive rows sharing a group label.
+/// Rows drop the grouped dimension; across scopes a thread or assignee group names each
+/// row's scope.
+fn append_arranged_groups(
+    output: &mut String,
+    rows: Vec<&ListRow>,
+    group: GroupBy,
+    labels: Option<&BTreeMap<Option<String>, String>>,
+    output_width: usize,
+) {
+    let mut start = 0;
+    while start < rows.len() {
+        let label = rows[start].group.as_deref().unwrap_or_default();
+        let end = rows[start..]
+            .iter()
+            .position(|row| row.group.as_deref().unwrap_or_default() != label)
+            .map_or(rows.len(), |offset| start + offset);
+        append_wrapped(output, "  ", "  ", &terminal_text(label), output_width);
+        let scope_labels = labels.filter(|_| group != GroupBy::Project);
+        for row in &rows[start..end] {
+            let suffix = scope_labels.map(|labels| {
+                terminal_text(labels.get(&row.project).expect("label for displayed scope"))
+            });
+            append_row(
+                output,
+                row,
+                "    ",
+                output_width,
+                group != GroupBy::Thread,
+                group != GroupBy::Assignee,
+                suffix.as_deref(),
+            );
+        }
+        start = end;
+    }
 }
 
 fn append_scope_groups(
@@ -612,43 +1133,104 @@ fn append_scope_groups(
                 .expect("label for displayed scope"),
         );
         append_wrapped(output, "  ", "  ", &label, output_width);
-        append_rows(output, &rows, "    ", output_width);
+        append_rows(output, &rows, "    ", output_width, true);
     }
 }
 
-fn append_rows(output: &mut String, rows: &[&ListRow], indent: &str, output_width: usize) {
+fn append_rows(
+    output: &mut String,
+    rows: &[&ListRow],
+    indent: &str,
+    output_width: usize,
+    include_thread: bool,
+) {
     for row in rows {
-        let mut content = terminal_text(&row.title);
-        if let Some(mark) = row.archived {
-            content.push_str(" · ");
-            content.push_str(mark);
+        append_row(
+            output,
+            row,
+            indent,
+            output_width,
+            include_thread,
+            include_thread,
+            None,
+        );
+    }
+}
+
+/// One task row. `include_assignee` paints `@assignee` and `⎇ base`; both flags drop out
+/// for a direct listing (detail blocks carry them) and for the dimension a group names.
+fn append_row(
+    output: &mut String,
+    row: &ListRow,
+    indent: &str,
+    output_width: usize,
+    include_thread: bool,
+    include_assignee: bool,
+    scope: Option<&str>,
+) {
+    let mut content = terminal_text(&row.title);
+    if include_assignee {
+        if let Some(assignee) = row.assignee.as_deref() {
+            content.push(' ');
+            content.push_str(&crate::ui::render::assignee_handle(assignee));
         }
-        if !row.waiting_for.is_empty() {
-            let list: Vec<String> = row.waiting_for.iter().map(|n| format!("T{n}")).collect();
-            content.push_str(" · after ");
-            content.push_str(&list.join(", "));
+        if let Some(base) = row.base.as_deref() {
+            content.push_str(" ⎇ ");
+            content.push_str(&terminal_text(base));
         }
-        let first_prefix = format!("{indent}- {} ", row.number);
-        let continuation_prefix = " ".repeat(first_prefix.len());
+    }
+    if include_thread {
+        if let Some(thread) = row.thread.as_deref() {
+            content.push_str(" #");
+            content.push_str(&terminal_text(thread));
+        }
+    }
+    if let Some(scope) = scope {
+        content.push_str(" · ");
+        content.push_str(scope);
+    }
+    if let Some(mark) = row.archived {
+        content.push_str(" · ");
+        content.push_str(mark);
+    }
+    if !row.waiting_for.is_empty() {
+        let list: Vec<String> = row.waiting_for.iter().map(|n| format!("T{n}")).collect();
+        content.push_str(" · after ");
+        content.push_str(&list.join(", "));
+    }
+    let first_prefix = format!("{indent}- {} ", row.number);
+    let continuation_prefix = " ".repeat(first_prefix.len());
+    append_wrapped(
+        output,
+        &first_prefix,
+        &continuation_prefix,
+        &content,
+        output_width,
+    );
+    if let Some(why) = row.blocked_why.as_deref() {
         append_wrapped(
             output,
-            &first_prefix,
             &continuation_prefix,
-            &content,
+            &continuation_prefix,
+            &terminal_text(&format!("blocked: {why}")),
             output_width,
         );
     }
 }
 
 /// Direct detail is an ordered set of present blocks. Blank rows separate only
-/// adjacent blocks that exist: notes, then steps.
+/// adjacent blocks that exist: notes, steps, assignee, base, then thread.
 fn append_direct_details(
     output: &mut String,
     notes: Option<&str>,
     steps: &[StepLine],
+    row: &ListRow,
     indent: &str,
     output_width: usize,
 ) {
+    let assignee = row.assignee.as_deref();
+    let base = row.base.as_deref();
+    let thread = row.thread.as_deref();
     let mut has_prior = false;
     let detail_prefix = format!("{indent}  ");
     if let Some(notes) = notes {
@@ -672,6 +1254,108 @@ fn append_direct_details(
             output_width,
         );
         append_step_lines(output, steps, indent, output_width);
+        has_prior = true;
+    }
+    if let Some(assignee) = assignee {
+        if has_prior {
+            output.push('\n');
+        }
+        let assignee = crate::ui::render::assignee_handle(assignee);
+        append_wrapped(
+            output,
+            &detail_prefix,
+            &detail_prefix,
+            &assignee,
+            output_width,
+        );
+        has_prior = true;
+    }
+    if let Some(base) = base {
+        if has_prior {
+            output.push('\n');
+        }
+        let base = terminal_text(&format!("⎇ {base}"));
+        append_wrapped(output, &detail_prefix, &detail_prefix, &base, output_width);
+        has_prior = true;
+    }
+    for (word, numbers) in [
+        (
+            "after",
+            row.after
+                .iter()
+                .map(|link| {
+                    if link.done {
+                        format!("T{} (done)", link.task)
+                    } else {
+                        format!("T{}", link.task)
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "before",
+            row.before
+                .iter()
+                .map(|number| format!("T{number}"))
+                .collect(),
+        ),
+    ] {
+        if numbers.is_empty() {
+            continue;
+        }
+        if has_prior {
+            output.push('\n');
+        }
+        let line = format!("{word} {}", numbers.join(", "));
+        append_wrapped(output, &detail_prefix, &detail_prefix, &line, output_width);
+        has_prior = true;
+    }
+    if let Some(thread) = thread {
+        if has_prior {
+            output.push('\n');
+        }
+        let thread = terminal_text(&format!("#{thread}"));
+        append_wrapped(
+            output,
+            &detail_prefix,
+            &detail_prefix,
+            &thread,
+            output_width,
+        );
+    }
+}
+
+/// The latest paper-trail entries under an `activity` heading, newest first.
+fn append_activity(
+    output: &mut String,
+    trail: &[crate::activity::TrailEntry],
+    indent: &str,
+    output_width: usize,
+) {
+    if trail.is_empty() {
+        return;
+    }
+    let now = std::time::SystemTime::now();
+    let prefix = format!("{indent}  ");
+    output.push('\n');
+    append_wrapped(output, &prefix, &prefix, "activity", output_width);
+    for entry in trail.iter().take(crate::activity::LATEST) {
+        append_wrapped(
+            output,
+            &format!("{prefix}  "),
+            &format!("{prefix}  "),
+            &terminal_text(&entry.line(now)),
+            output_width,
+        );
+    }
+    if trail.len() > crate::activity::LATEST {
+        append_wrapped(
+            output,
+            &format!("{prefix}  "),
+            &format!("{prefix}  "),
+            &format!("+ {} earlier", trail.len() - crate::activity::LATEST),
+            output_width,
+        );
     }
 }
 
@@ -713,7 +1397,7 @@ fn wrap_list_document(text: &str, terminal_width: Option<usize>) -> String {
     output
 }
 
-/// Append usage within one terminal width, keeping syntax groups intact.
+/// Append usage within one terminal width, keeping syntax groups intact when they fit.
 fn append_usage_wrapped(
     output: &mut String,
     first_prefix: &str,
@@ -721,7 +1405,13 @@ fn append_usage_wrapped(
     usage: &str,
     output_width: usize,
 ) {
-    let tokens = usage_tokens(usage);
+    let tokens = usage_tokens(usage).into_iter().flat_map(|token| {
+        if continuation_prefix.len() + token.len() > output_width {
+            token.split_whitespace().map(str::to_owned).collect()
+        } else {
+            vec![token]
+        }
+    });
     let mut prefix = first_prefix;
     let mut line = String::new();
     for token in tokens {
@@ -981,34 +1671,45 @@ fn path_segments(path: &str) -> Vec<String> {
 
 pub fn steps_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec![
-            "tsk steps <task> add <text> [<place>] [--state-dir <dir>]".into(),
-            "tsk steps <task> toggle <step-short-id> [--state-dir <dir>]".into(),
-            "tsk steps <task> rename <step-short-id> <text> [--state-dir <dir>]".into(),
-            "tsk steps <task> move <step-short-id> <place> [--state-dir <dir>]".into(),
-            "tsk steps <task> remove <step-short-id> [--state-dir <dir>]".into(),
-        ],
+        usage: lines(STEPS_USAGE),
         purpose: "Add, toggle, rename, move, or remove one step on a task.".into(),
         groups: vec![
+            group(
+                "Arguments",
+                &[
+                    ("<task>", "a task number or UUID"),
+                    (
+                        "<step-short-id>",
+                        "the step's short_id from tsk list <task> --json, or any prefix of its id that only it has",
+                    ),
+                    (
+                        "<text>",
+                        "the step's text; put -- before text that starts with -, after any flags",
+                    ),
+                ],
+            ),
+            group(
+                "Actions",
+                &[
+                    ("add", "add a step, at the bottom unless placed"),
+                    ("toggle", "check or uncheck a step"),
+                    ("rename", "replace a step's text"),
+                    ("move", "move a step to a place"),
+                    ("remove", "delete a step"),
+                ],
+            ),
             group(
                 "Place",
                 &[
                     ("--before <step-short-id>", "directly above that step"),
                     ("--after <step-short-id>", "directly below that step"),
                     ("--first", "at the top"),
-                    ("--last", "at the bottom (add's default)"),
+                    ("--last", "at the bottom"),
                 ],
             ),
             group(
-                "Values",
-                &[
-                    ("<task>", "a task number or UUID"),
-                    (
-                        "<step-short-id>",
-                        "an unambiguous prefix from tsk list <task> --json",
-                    ),
-                    ("--state-dir <dir>", "use another board store"),
-                ],
+                "Options",
+                &[("--state-dir <dir>", "use another board store")],
             ),
         ],
         examples: vec![
@@ -1019,13 +1720,8 @@ pub fn steps_help() -> CliOutput {
             "tsk steps T12 move a3 --first".into(),
         ],
         refusals: vec![
-            "empty-step-text".into(),
-            "invalid-step-text".into(),
-            "unknown-task".into(),
-            "soft-deleted-task".into(),
-            "unknown-step".into(),
-            "ambiguous-step".into(),
-            "same-step".into(),
+            "unknown-task, soft-deleted-task, empty-step-text, invalid-step-text".into(),
+            "unknown-step, ambiguous-step, same-step".into(),
         ],
         exit: exit_line(
             "step created, toggled, renamed, moved, or removed",
@@ -1073,14 +1769,11 @@ pub fn steps(result: StepsResult) -> CliOutput {
 }
 
 pub fn steps_usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk steps: {}\nusage: tsk steps <task> add <text> [<place>] | toggle <step-short-id> | rename <step-short-id> <text> | move <step-short-id> <place> | remove <step-short-id> [--state-dir <dir>]\nplace: --before <step-short-id> | --after <step-short-id> | --first | --last\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    let mut output = usage_error("steps", reason, STEPS_USAGE);
+    output
+        .stderr
+        .push_str("place: --before <step-short-id> | --after <step-short-id> | --first | --last\n");
+    output
 }
 
 /// Human tail for a task-verb refusal, painted after its stable code as
@@ -1100,6 +1793,13 @@ fn task_refusal_message(code: &str, task: TaskAddress) -> String {
         "invalid-step-text" => "the step text contains control characters".to_string(),
         "unknown-step" => format!("no step on {display} matches that id"),
         "ambiguous-step" => format!("more than one step on {display} matches that id"),
+        "text-too-long" => format!(
+            "block and reply text is at most {} bytes",
+            crate::domain::BLOCK_TEXT_MAX
+        ),
+        "invalid-blocker" => "--on must name another task on the board".to_string(),
+        "not-blocked" => format!("{display} is not blocked or in review; nothing to reply to"),
+        "empty-reply" => "the reply is empty".to_string(),
         "same-step" => "a step cannot be placed relative to itself".to_string(),
         _ => return code.to_string(),
     };
@@ -1118,34 +1818,496 @@ pub fn steps_rejected(error: StepsError, task: TaskAddress) -> CliOutput {
     }
 }
 
-fn status_name(status: HumanStatus) -> &'static str {
+pub(crate) fn status_name(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Todo => "todo",
-        HumanStatus::Doing => "doing",
+        HumanStatus::Open => "open",
+        HumanStatus::Ready => "ready",
+        HumanStatus::Started => "started",
+        HumanStatus::Blocked => "blocked",
+        HumanStatus::Review => "review",
         HumanStatus::Done => "done",
     }
 }
 
+pub fn dispatch_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(DISPATCH_USAGE),
+        purpose: "Launch the task's assigned agent in its own worktree and Herdr workspace, then set the task started.".into(),
+        groups: vec![
+            group("Arguments", &[("<task>", "a task number or UUID")]),
+            group(
+                "Options",
+                &[
+                    (
+                        "--again",
+                        "relaunch a dispatched task, recreating its worktree if it was cleaned",
+                    ),
+                    (
+                        "--base <branch>",
+                        "start from this existing branch, for this launch only",
+                    ),
+                    (
+                        "--show-prompt",
+                        "print the command and prompt a dispatch would send; launch nothing",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk dispatch T12".into(),
+            "tsk dispatch T12 --base main".into(),
+            "tsk dispatch T12 --again".into(),
+            "tsk dispatch T12 --show-prompt".into(),
+        ],
+        refusals: vec![
+            "unknown-task, soft-deleted-task, done-task, archived-task".into(),
+            "no-assignee, unknown-agent, agent-config, already-dispatched".into(),
+            "not-in-herdr, needs-git-project, unknown-base, no-default-base, herdr-failed".into(),
+            "unsafe-state-dir; Windows: unsupported-platform".into(),
+        ],
+        exit: format!(
+            "{} (code store-error)",
+            exit_line(
+                "task dispatched",
+                Some("dispatch refused, nothing persisted"),
+                true,
+            )
+        ),
+    })
+}
+
+pub fn clean_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(CLEAN_USAGE),
+        purpose: "Remove a dispatched task's worktree, and inside Herdr its workspace, without changing its status. The branch is deleted only when it is merged into the recorded base; with gh, a pull request merged at the branch tip counts.".into(),
+        groups: vec![
+            group("Arguments", &[("<task>", "a task number or UUID")]),
+            group(
+                "Options",
+                &[
+                    (
+                        "--merge",
+                        "first merge the task's pull request with gh, then set it done and clean",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+            group("Output", &[("--json", "print the result as one JSON object")]),
+        ],
+        examples: vec![
+            "tsk clean T12".into(),
+            "tsk clean T12 --json".into(),
+            "tsk clean T12 --merge".into(),
+        ],
+        refusals: vec![
+            "unknown-task, not-dispatched, already-cleaned, dirty-worktree".into(),
+            "worktree-mismatch, herdr-failed".into(),
+            "Windows: files-in-use, path-too-long, removal-timed-out, partly-removed".into(),
+            "--merge: gh-unavailable, no-pr, pr-not-open, pr-base-mismatch, merge-failed, merge-config".into(),
+        ],
+        exit: format!(
+            "{} (code store-error)",
+            exit_line(
+                "dispatch cleaned, or its worktree was already missing",
+                Some("cleanup refused, task and dispatch record unchanged"),
+                true,
+            )
+        ),
+    })
+}
+
+/// `--merge`'s first line: which PR merged and how, and a remote branch the merge left.
+pub fn merged(merged: &crate::cli::clean::Merged) -> String {
+    let outcome = &merged.outcome;
+    let mut line = format!(
+        "merged T{} pull request #{} ({})",
+        merged.number,
+        outcome.pr.number,
+        outcome.method.name()
+    );
+    if let Some(note) = outcome.remote_note(&merged.record) {
+        line.push_str(&format!(" · {note}"));
+    }
+    format!("{}\n", terminal_text(&line))
+}
+
+/// `--merge --json` after the merge, when the done save or the cleanup then failed: what
+/// merged, whether the task is done, and the error (`stage` is `done` or `cleanup`).
+pub fn merge_partial_json(
+    merged: &crate::cli::clean::Merged,
+    done: bool,
+    stage: &str,
+    code: &str,
+    stderr: &str,
+) -> String {
+    let message = stderr
+        .trim_end()
+        .split_once(&format!("{code}: "))
+        .map_or(stderr.trim_end(), |(_, message)| message);
+    let value = serde_json::json!({
+        "number": merged.number,
+        "status": if done { Some("done") } else { None },
+        "merge": merge_json(merged),
+        "error": {"stage": stage, "code": code, "message": message},
+    });
+    format!("{value}\n")
+}
+
+fn merge_json(merged: &crate::cli::clean::Merged) -> serde_json::Value {
+    let outcome = &merged.outcome;
+    serde_json::json!({
+        "pr": outcome.pr.number,
+        "url": outcome.pr.url,
+        "method": outcome.method.name(),
+        "remote_branch": match outcome.remote_branch_left {
+            Some(true) => Some("kept"),
+            Some(false) => Some("deleted"),
+            None => None,
+        },
+    })
+}
+
+/// A `--merge` that merged nothing: exit 3 when the store failed, 1 otherwise.
+pub fn merge_rejected(verb: &str, refused: &crate::cli::clean::MergeRefused) -> CliOutput {
+    verb_rejected(verb, refused.code(), refused.is_store(), &refused.message())
+}
+
+pub fn cleaned(result: CleanupResult, json: bool) -> CliOutput {
+    cleaned_merged(result, None, json)
+}
+
+/// The cleanup result; after `--merge`, the JSON form also carries what merged.
+pub fn cleaned_merged(
+    result: CleanupResult,
+    merged: Option<&crate::cli::clean::Merged>,
+    json: bool,
+) -> CliOutput {
+    let (worktree, worktree_detail) = match result.worktree {
+        WorktreeCleanup::Removed => ("removed", "removed"),
+        WorktreeCleanup::Missing => ("missing", "already gone"),
+    };
+    let branch = match result.branch {
+        BranchCleanup::Removed => "removed",
+        BranchCleanup::Kept => "kept",
+    };
+    let (workspace, workspace_detail) = match result.workspace {
+        WorkspaceCleanup::Removed => ("removed", "removed"),
+        WorkspaceCleanup::Kept => ("kept", "kept"),
+        WorkspaceCleanup::Missing => ("missing", "already closed"),
+    };
+    let branch_reason = result
+        .branch_reason
+        .map(|reason| reason.message(result.base.as_deref(), result.remote.as_deref()));
+    let warning = crate::dispatch::join_warnings(result.warning, result.workspace_warning);
+    let stdout = if json {
+        format!("{}\n", {
+            let mut value = serde_json::json!({
+                "number": result.number,
+                "title": result.title,
+                "worktree": {"path": result.worktree_path, "outcome": worktree},
+                "branch": {"name": result.branch_name, "outcome": branch, "reason": branch_reason},
+                "workspace": {"id": result.workspace_id, "outcome": workspace},
+                "warning": warning,
+            });
+            if let Some(merged) = merged {
+                value["merge"] = merge_json(merged);
+                value["status"] = serde_json::json!("done");
+            }
+            value
+        })
+    } else {
+        let branch_detail = match branch_reason {
+            Some(reason) => format!("{branch}, {}", terminal_text(&reason)),
+            None => branch.to_string(),
+        };
+        let warning = warning
+            .as_deref()
+            .map(|warning| format!("warning: {}\n", terminal_text(warning)))
+            .unwrap_or_default();
+        format!(
+            "{warning}cleaned T{}: worktree {} ({}), branch {} ({}), workspace {} ({})\n",
+            result.number,
+            terminal_text(&result.worktree_path),
+            worktree_detail,
+            terminal_text(&result.branch_name),
+            branch_detail,
+            terminal_text(&result.workspace_id),
+            workspace_detail,
+        )
+    };
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn clean_usage(reason: &str) -> CliOutput {
+    usage_error("clean", reason, CLEAN_USAGE)
+}
+
+pub fn clean_rejected(error: CleanupError, task: TaskAddress) -> CliOutput {
+    let store = matches!(error, CleanupError::Store(_));
+    let detail = match &error {
+        CleanupError::UnknownTask => format!("{} is not on the board", task.display()),
+        other => other.to_string(),
+    };
+    verb_rejected("clean", error.code(), store, &detail)
+}
+
+/// A dispatch or cleanup refusal: exit 3 when the store failed, 1 otherwise.
+fn verb_rejected(verb: &str, refusal: &str, store: bool, detail: &str) -> CliOutput {
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk {verb}: {refusal}: {}\n", human_reason(detail)),
+        code: if store { 3 } else { 1 },
+    }
+}
+
+pub fn dispatched(result: DispatchResult) -> CliOutput {
+    CliOutput {
+        stdout: format!(
+            "dispatched T{} to @{} in {}\n",
+            result.number,
+            terminal_text(&result.assignee),
+            terminal_text(&result.record.worktree)
+        ),
+        stderr: result
+            .warning
+            .map(|warning| format!("tsk dispatch: warning: {}\n", terminal_text(&warning)))
+            .unwrap_or_default(),
+        code: 0,
+    }
+}
+
+/// `tsk dispatch --show-prompt`: the command line, the `env` names, then the prompt verbatim.
+pub fn prompt_preview(preview: PromptPreview) -> CliOutput {
+    let (prompt, command) = preview
+        .argv
+        .split_last()
+        .expect("a rendered launch ends with its prompt");
+    let command = command
+        .iter()
+        .map(|argument| {
+            let argument = terminal_text(argument);
+            if argument.is_empty() || argument.contains(char::is_whitespace) {
+                format!("'{}'", argument.replace('\'', "'\\''"))
+            } else {
+                argument
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut stdout = format!(
+        "T{} for @{}, nothing launched\ncommand: {command}\nenv: {} (values not shown)\n",
+        preview.number,
+        terminal_text(&preview.assignee),
+        terminal_text(&preview.env_names.join(", ")),
+    );
+    if preview.predicted {
+        stdout.push_str("not dispatched yet: worktree and branch are what a dispatch would pick\n");
+    }
+    if preview.desk {
+        stdout.push_str("desk task: a start only sets the status, so worktree, branch, and base stay unfilled\n");
+    }
+    stdout.push_str("prompt:\n");
+    for line in prompt.split('\n') {
+        stdout.push_str(&terminal_text(line));
+        stdout.push('\n');
+    }
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn dispatch_usage(reason: &str) -> CliOutput {
+    usage_error("dispatch", reason, DISPATCH_USAGE)
+}
+
+pub fn dispatch_rejected(error: DispatchError, task: TaskAddress) -> CliOutput {
+    let store = matches!(error, DispatchError::Store(_));
+    let detail = match &error {
+        DispatchError::UnknownTask => format!("{} is not on the board", task.display()),
+        other => other.to_string(),
+    };
+    verb_rejected("dispatch", error.code(), store, &detail)
+}
+
 pub fn status_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk status <task> <status> [--state-dir <dir>]".into()],
-        purpose: "Set a task's human status.".into(),
-        groups: vec![group(
-            "Values",
-            &[
-                ("<task>", "a task number or UUID"),
-                ("<status>", "todo, doing, or done"),
-                ("--state-dir <dir>", "use another board store"),
-            ],
-        )],
-        examples: vec!["tsk status T12 todo".into(), "tsk status T12 doing".into()],
-        refusals: vec!["unknown-task".into(), "soft-deleted-task".into()],
+        usage: lines(STATUS_USAGE),
+        purpose: "Set a task's status. Starting an assigned task launches its agent, and done starts the ready tasks that wait on it. A block can carry a question, and a review what was done and what to check.".into(),
+        groups: vec![
+            group(
+                "Arguments",
+                &[
+                    ("<task>", "a task number or UUID"),
+                    (
+                        "<status>",
+                        "todo (open), doing (started), done, open, ready, started (or start), blocked, or review",
+                    ),
+                ],
+            ),
+            group(
+                "Started",
+                &[
+                    ("--no-dispatch", "only set the status: never launch or send"),
+                    ("--again", "relaunch a dispatched task whose agent is gone"),
+                    (
+                        "--force",
+                        "start even though tasks it runs after are not done",
+                    ),
+                ],
+            ),
+            group(
+                "Done",
+                &[
+                    ("--clean", "then clean its dispatch, if it has a live one"),
+                    (
+                        "--merge",
+                        "first merge its pull request with gh, then set done and clean",
+                    ),
+                ],
+            ),
+            group(
+                "Blocked",
+                &[
+                    ("--why <text>", "what stops the work"),
+                    ("--needs <text>", "what would unblock it"),
+                    ("--option <text>", "one suggested answer; repeat for more"),
+                    (
+                        "--on <who>",
+                        "you (the default), another task such as T202, an agent profile, or any other text",
+                    ),
+                ],
+            ),
+            group(
+                "Review",
+                &[
+                    ("--done <text>", "what was done"),
+                    (
+                        "--check <text>",
+                        "one thing the reviewer should check; repeat for more",
+                    ),
+                    ("--next <text>", "what comes after"),
+                    (
+                        "--on <who>",
+                        "you (the default), an agent profile, or any other text",
+                    ),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    ("--state-dir <dir>", "use another board store"),
+                    ("--flag=<value>", "use = for a value that starts with -"),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk status T12 ready".into(),
+            "tsk status T12 started --no-dispatch".into(),
+            "tsk status T12 done --merge".into(),
+            "tsk status T12 blocked --why \"Which database?\" --option postgres".into(),
+            "tsk status T12 blocked --why \"Needs the API\" --on T202".into(),
+            "tsk status T12 review --done \"Opened PR #42\" --check \"tests pass\"".into(),
+        ],
+        refusals: vec![
+            "unknown-task, soft-deleted-task, text-too-long, invalid-blocker".into(),
+            "started: after-not-done, agent-gone, needs-git-project, unknown-agent, agent-config, unknown-base, no-default-base, herdr-failed, unsafe-state-dir, and on Windows unsupported-platform".into(),
+            "done --clean: dirty-worktree, worktree-mismatch, herdr-failed, and on Windows files-in-use, path-too-long, removal-timed-out, partly-removed".into(),
+            "done --merge: the --clean codes, not-dispatched, already-cleaned, gh-unavailable, no-pr, pr-not-open, pr-base-mismatch, merge-failed, merge-config".into(),
+        ],
         exit: exit_line(
             "status set, or it already had the value",
             Some("status refusal, verify with list before retrying"),
             true,
         ),
     })
+}
+
+pub fn reply_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(REPLY_USAGE),
+        purpose: "Add a reply to a task's open block, or feedback to its open review round. Each run adds one, so read the task before retrying."
+            .into(),
+        groups: vec![
+            group(
+                "Arguments",
+                &[
+                    ("<task>", "a task number or UUID"),
+                    ("<text>", "the reply; put -- before text that starts with -"),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    (
+                        "--send",
+                        "also send this reply, and only it, to the task's running agent; the status stays",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk reply T12 \"Use postgres\"".into(),
+            "tsk reply T12 \"Use postgres\" --send".into(),
+            "tsk reply T12 -- \"-5 degrees is fine\"".into(),
+        ],
+        refusals: vec![
+            "unknown-task, soft-deleted-task, not-blocked, empty-reply, text-too-long".into(),
+        ],
+        exit: exit_line(
+            "reply stored",
+            Some("reply refusal, verify with list before retrying"),
+            true,
+        ),
+    })
+}
+
+/// A stored reply, then whether `--send` reached the agent. Exit 0 either way: the reply is
+/// on the task.
+pub fn replied_and_sent(
+    result: crate::cli::reply::ReplyResult,
+    outcome: &crate::cli::reply::SendOutcome,
+) -> CliOutput {
+    let mut output = replied(result);
+    output.stdout.push_str(&terminal_text(&outcome.line()));
+    output.stdout.push('\n');
+    output
+}
+
+pub fn replied(result: crate::cli::reply::ReplyResult) -> CliOutput {
+    CliOutput {
+        stdout: format!(
+            "replied T{} as {} {}\n",
+            result.number,
+            terminal_text(&crate::domain::display_name(&result.by)),
+            terminal_text(&result.title)
+        ),
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+pub fn reply_usage(reason: &str) -> CliOutput {
+    usage_error("reply", reason, REPLY_USAGE)
+}
+
+pub fn reply_rejected(error: crate::cli::reply::ReplyError, task: TaskAddress) -> CliOutput {
+    let (detail, code) = match error {
+        crate::cli::reply::ReplyError::Store(detail) => (detail, 3),
+        other => (task_refusal_message(other.code(), task), 1),
+    };
+    CliOutput {
+        stdout: String::new(),
+        stderr: format!("tsk reply: {detail}\n"),
+        code,
+    }
 }
 
 pub fn status(result: StatusResult) -> CliOutput {
@@ -1161,30 +2323,61 @@ pub fn status(result: StatusResult) -> CliOutput {
     }
 }
 
-pub fn status_usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk status: {}\nusage: tsk status <task> <status> [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
+/// A start that dispatched: the status line, then where the agent runs.
+pub fn status_dispatched(result: StatusResult, dispatched: DispatchResult) -> CliOutput {
+    let mut output = status(result);
+    output.stdout.push_str(&format!(
+        "dispatched T{} to @{} in {}\n",
+        dispatched.number,
+        terminal_text(&dispatched.assignee),
+        terminal_text(&dispatched.record.worktree)
+    ));
+    if let Some(warning) = dispatched.warning {
+        output.stderr = format!("tsk status: warning: {}\n", terminal_text(&warning));
     }
+    output
+}
+
+pub fn status_usage(reason: &str) -> CliOutput {
+    usage_error("status", reason, STATUS_USAGE)
 }
 
 pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
     let (detail, code) = match error {
         StatusError::Store(detail) => (detail, 3),
-        StatusError::WaitingForAfter(numbers) => {
-            let list = numbers
-                .iter()
-                .map(|number| format!("T{number}"))
-                .collect::<Vec<_>>()
-                .join(", ");
+        StatusError::WaitingForAfter(numbers) => (
+            format!(
+                "waiting-for-after: {} waits for {} to be done",
+                task.display(),
+                numbers
+                    .iter()
+                    .map(|number| format!("T{number}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            1,
+        ),
+        StatusError::AfterNotDone(waiting) => (
+            format!("after-not-done: {waiting}; --force starts it anyway"),
+            1,
+        ),
+        StatusError::AgentGone(assignee) => (
+            format!(
+                "agent-gone: @{} is no longer running for {}; --again relaunches it, --no-dispatch only sets the status",
+                terminal_text(&assignee),
+                task.display()
+            ),
+            1,
+        ),
+        StatusError::Dispatch(error) => {
+            let detail = match &error {
+                DispatchError::UnknownTask => format!("{} is not on the board", task.display()),
+                other => human_reason(&other.to_string()),
+            };
             (
                 format!(
-                    "waiting-for-after: {} waits for {list} to be done",
-                    task.display()
+                    "{}: {detail}; --no-dispatch only sets the status",
+                    error.code()
                 ),
                 1,
             )
@@ -1200,45 +2393,65 @@ pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
 
 pub fn edit_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec![
-            "tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--after <task>]... [--no-after] [-p <project> | --desk] [--state-dir <dir>]".into(),
+        usage: lines(EDIT_USAGE),
+        purpose: "Change a task's title, notes, assignee, dispatch base, the tasks it runs after, or who its open block or review waits on. Use --project or --desk to move its scope. Thread stays as it is.".into(),
+        groups: vec![
+            group("Arguments", &[("<task>", "a task number or UUID")]),
+            group(
+                "Options",
+                &[
+                    ("--parent <task>", "replace the direct parent by task number or UUID"),
+                    ("--no-parent", "clear the direct parent"),
+                    ("-p, --project <project>", "move to a project, resolved like add"),
+                    ("--desk", "move to the desk"),
+                    ("--no-after", "alias for --clear-after"),
+                    ("-t, --title <title>", "replace the title"),
+                    ("-n, --notes <notes>", "replace the notes; blank clears them"),
+                    (
+                        "--append-notes <text>",
+                        "add text below the notes after a blank line",
+                    ),
+                    (
+                        "--assignee <name>",
+                        "assign an agent profile from config.toml, me, or a person's name",
+                    ),
+                    ("--unassign", "clear the assignee"),
+                    (
+                        "--base <branch>",
+                        "dispatch from this existing branch of the project",
+                    ),
+                    (
+                        "--clear-base",
+                        "dispatch from the project's default branch",
+                    ),
+                    (
+                        "--after <task>",
+                        "run after this task; repeat for more, replaces the list",
+                    ),
+                    ("--clear-after", "run after nothing"),
+                    (
+                        "--on <who>",
+                        "who the open block or review waits on, as for tsk status",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                    (
+                        "--flag=<value>",
+                        "use = for a value that starts with -: --title=<value>, --notes=<value>, --append-notes=<value>, --on=<value>",
+                    ),
+                ],
+            ),
         ],
-        purpose: "Update a task's title, notes, direct parent, or project.".into(),
-        groups: vec![group(
-            "Values",
-            &[
-                ("<task>", "a task number or UUID"),
-                ("--title <title>", "replace the title"),
-                ("--notes <notes>", "replace notes, or clear them when blank"),
-                ("--parent <task>", "replace the direct parent by task number or UUID"),
-                ("--no-parent", "clear the direct parent"),
-                ("--after <task>", "replace the wait list; repeat for several. The task cannot start until all are done"),
-                ("--no-after", "clear the wait list"),
-                ("-p, --project <project>", "move to a project, resolved like add"),
-                ("--desk", "move to the desk"),
-                ("--state-dir <dir>", "use another board store"),
-                (
-                    "--flag=<value>",
-                    "use --title=<value>, --notes=<value>, --project=<value>, or --state-dir=<dir> for dash-leading values",
-                ),
-            ],
-        )],
         examples: vec![
             "tsk edit T12 --title \"Fix timeout on slow connections\"".into(),
-            "tsk edit T12 --notes \"Reproduced with a delayed response\"".into(),
-            "tsk edit T12 -p ~/src/atlas".into(),
+            "tsk edit T12 --assignee claude --base main".into(),
+            "tsk edit T205 --after T202 --after T12".into(),
+            "tsk edit T12 --on coordinator".into(),
         ],
         refusals: vec![
-            "unknown-task".into(),
-            "soft-deleted-task".into(),
-            "empty-title".into(),
-            "invalid-title".into(),
-            "invalid-parent".into(),
-            "parent-cycle".into(),
-            "invalid-after".into(),
-            "after-cycle".into(),
-            "unknown-project".into(),
-            "project-archived".into(),
+            "unknown-task, soft-deleted-task, empty-title, invalid-title, unknown-base".into(),
+            "--on: not-blocked (nothing open to change), invalid-blocker, text-too-long".into(),
+            "invalid-after: the task itself, one not on the board, or one already done".into(),
+            "after-loop: the link would close a loop".into(),
         ],
         exit: exit_line(
             "fields written, or already had the values",
@@ -1248,12 +2461,27 @@ pub fn edit_help() -> CliOutput {
     })
 }
 
+/// The line that makes a typed person visible, so a mistyped profile is caught:
+/// `assigned T12 to @dana (not an agent profile)`. Empty for an agent, you, or no assignee.
+fn person_line(number: u64, assignee: Option<&crate::domain::Assignee>) -> String {
+    match assignee {
+        Some(assignee) if assignee.is_person() && assignee.name != crate::domain::OWNER => {
+            format!(
+                "assigned T{number} to @{} (not an agent profile)\n",
+                terminal_text(&assignee.name)
+            )
+        }
+        _ => String::new(),
+    }
+}
+
 pub fn edited(result: EditResult) -> CliOutput {
     CliOutput {
         stdout: format!(
-            "edited T{} {}\n",
+            "edited T{} {}\n{}",
             result.number,
-            terminal_text(&result.title)
+            terminal_text(&result.title),
+            person_line(result.number, result.assignee.as_ref())
         ),
         stderr: result
             .notes_bytes
@@ -1280,18 +2508,22 @@ pub fn notes_size_warning(command: &str, number: u64, bytes: usize) -> String {
 }
 
 pub fn edit_usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk edit: {}\nusage: tsk edit <task> [--title <title>] [--notes <notes>] [--parent <task> | --no-parent] [--after <task>]... [--no-after] [-p <project> | --desk] [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    usage_error("edit", reason, EDIT_USAGE)
 }
 
 pub fn edit_rejected(error: EditError, task: TaskAddress) -> CliOutput {
     let (detail, code) = match error {
+        EditError::UnknownBase(detail) => (format!("unknown-base: {}", terminal_text(&detail)), 1),
+        EditError::InvalidAfter(detail) => (format!("invalid-after: {detail}"), 1),
+        EditError::AfterLoop(detail) => (format!("after-loop: {detail}"), 1),
+        EditError::NotBlocked => (
+            format!(
+                "not-blocked: {} has no open block or review; nothing to change",
+                task.display()
+            ),
+            1,
+        ),
+        EditError::AgentConfig(detail) => (detail, 2),
         EditError::Store(detail) => (detail, 3),
         EditError::UnknownProject(detail) => {
             (format!("unknown-project: {}", terminal_text(&detail)), 1)
@@ -1316,49 +2548,162 @@ pub fn edit_rejected(error: EditError, task: TaskAddress) -> CliOutput {
 
 pub fn trash_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk trash restore <task> [--state-dir <dir>]".into()],
-        purpose: "Restore one trashed task to the board.".into(),
-        groups: vec![group(
-            "Values",
-            &[
-                ("<task>", "a task number or UUID from tsk list --deleted"),
-                ("--state-dir <dir>", "use another board store"),
-            ],
-        )],
+        usage: lines(TRASH_USAGE),
+        purpose: "Restore a deleted task to the board.".into(),
+        groups: vec![
+            group(
+                "Arguments",
+                &[(
+                    "<task>",
+                    "a task number or UUID of a task in trash; tsk list --deleted shows it",
+                )],
+            ),
+            group(
+                "Actions",
+                &[("restore", "put the task back, with its number")],
+            ),
+            group(
+                "Options",
+                &[("--state-dir <dir>", "use another board store")],
+            ),
+        ],
         examples: vec![
             "tsk list --deleted --all".into(),
             "tsk trash restore T12".into(),
         ],
+        refusals: vec!["<task> is not in trash".into()],
+        exit: exit_line("task restored", Some("the task is not in trash"), true),
+    })
+}
+
+pub fn backup_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(BACKUP_USAGE),
+        purpose: "Back the task store and config.toml up to git repositories.".into(),
+        groups: vec![
+            group(
+                "Arguments",
+                &[
+                    ("<git-url>", "a git URL, or a local repository path"),
+                    ("<target>", "a target's number in list, its URL, or its path"),
+                ],
+            ),
+            group(
+                "Actions",
+                &[
+                    (
+                        "setup",
+                        "create or reuse a private GitHub repository with gh, then add it",
+                    ),
+                    ("now", "back up to every target now (the default)"),
+                    (
+                        "add",
+                        "add a target to config.toml and test it with a first backup",
+                    ),
+                    ("list", "show each target, its last backup, and its last error"),
+                    ("remove", "remove a target; backups already pushed stay"),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    (
+                        "--repo <name>",
+                        "with setup: name, owner/name, or host/owner/name (default tsk-backup)",
+                    ),
+                    (
+                        "--every <when>",
+                        "with add: save (the default) or daily",
+                    ),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk backup setup".into(),
+            "tsk backup add git@github.com:me/tsk-backup.git".into(),
+            "tsk backup add /srv/tsk.git --every daily".into(),
+            "tsk backup list".into(),
+            "tsk backup".into(),
+        ],
         refusals: vec![
-            "no matching trash line".into(),
-            "task is already live".into(),
+            "no backup targets, or no target matches <target>".into(),
+            "setup: gh missing or not logged in, or the repository is public or holds other content".into(),
+            "a target failed to back up (a new target stays added)".into(),
         ],
         exit: exit_line(
-            "task restored",
-            Some("no matching trash line, or task already live"),
+            "backed up, added, listed, or removed",
+            Some("refused, or a target failed"),
+            false,
+        ),
+    })
+}
+
+pub fn backup_usage(reason: &str) -> CliOutput {
+    usage_error("backup", reason, BACKUP_USAGE)
+}
+
+pub fn restore_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(RESTORE_USAGE),
+        purpose: "List the backed-up versions of the task store, or replace the store with one."
+            .into(),
+        groups: vec![
+            group(
+                "Arguments",
+                &[(
+                    "<version>",
+                    "a version id, even one only --all lists; without one, a terminal asks",
+                )],
+            ),
+            group(
+                "Options",
+                &[
+                    ("--all", "list every version, not the newest 20 per machine"),
+                    ("--state-dir <dir>", "use another board store"),
+                ],
+            ),
+        ],
+        examples: vec!["tsk restore".into(), "tsk restore 3f9a1c2e".into()],
+        refusals: vec![
+            "no backup targets, or an unknown version".into(),
+            "a board or quick capture is open on the store".into(),
+            "the version is newer than this tsk, or is not a store".into(),
+        ],
+        exit: exit_line(
+            "listed, or restored",
+            Some("refused, nothing replaced"),
             true,
         ),
     })
 }
 
+pub fn capture_usage(reason: &str) -> CliOutput {
+    usage_error("capture", reason, CAPTURE_USAGE)
+}
+
+pub fn restore_usage(reason: &str) -> CliOutput {
+    usage_error("restore", reason, RESTORE_USAGE)
+}
+
 pub fn trash_usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk trash: {}\nusage: tsk trash restore <task> [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    usage_error("trash", reason, TRASH_USAGE)
 }
 
 pub fn trash_restored(result: TrashRestoreResult) -> CliOutput {
     CliOutput {
-        stdout: format!(
-            "restored {} {}\n",
-            result.identifier,
-            terminal_text(&result.title)
-        ),
+        stdout: match result.renumbered_from {
+            None => format!(
+                "restored {} {}\n",
+                result.identifier,
+                terminal_text(&result.title)
+            ),
+            Some(was) => format!(
+                "restored {} {} (was T{was}: another task holds that number)\n",
+                result.identifier,
+                terminal_text(&result.title)
+            ),
+        },
         stderr: String::new(),
         code: 0,
     }
@@ -1382,57 +2727,59 @@ pub fn archive_help(verb: &str) -> CliOutput {
     } else {
         "archive"
     };
-    let verb_title = if verb == "archive" {
-        "Archive"
+    let (purpose, success) = if verb == "archive" {
+        (
+            "Hide a task from the working views. It keeps its status and number.",
+            "task archived, or already was",
+        )
     } else {
-        "Unarchive"
-    };
-    let success = if verb == "archive" {
-        "task archived, or already was"
-    } else {
-        "task unarchived, or already was"
+        (
+            "Put an archived task back in the working views, in its status.",
+            "task unarchived, or already was",
+        )
     };
     help(HelpDoc {
         usage: vec![format!("tsk {verb} <task> [--state-dir <dir>]")],
-        purpose: format!("{verb_title} one task while keeping its human status."),
-        groups: vec![group(
-            "Values",
-            &[
-                ("<task>", "a task number or UUID"),
-                ("--state-dir <dir>", "use another board store"),
-            ],
-        )],
+        purpose: purpose.into(),
+        groups: vec![
+            group("Arguments", &[("<task>", "a task number or UUID")]),
+            group(
+                "Options",
+                &[("--state-dir <dir>", "use another board store")],
+            ),
+        ],
         examples: vec![format!("tsk {verb} T12"), format!("tsk {antiverb} T12")],
-        refusals: vec!["unknown-task".into(), "soft-deleted-task".into()],
+        refusals: vec!["unknown-task, soft-deleted-task".into()],
         exit: exit_line(success, Some("unknown or deleted task"), true),
     })
 }
 
 pub fn archive_usage(verb: &str, reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk {verb}: {}\nusage: tsk {verb} <task> [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    let usage = format!("tsk {verb} <task> [--state-dir <dir>]");
+    usage_error(verb, reason, &[usage.as_str()])
 }
 
 pub fn project_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec![
-            "tsk project archive <name> [--state-dir <dir>]".into(),
-            "tsk project unarchive <name> [--state-dir <dir>]".into(),
-        ],
-        purpose: "Archive or unarchive a whole project while preserving task statuses.".into(),
+        usage: lines(PROJECT_USAGE),
+        purpose: "Archive or unarchive a whole project. Its tasks keep their statuses.".into(),
         groups: vec![
             group(
-                "Scope",
-                &[("<name>", "a project basename or verbatim path")],
+                "Arguments",
+                &[("<name>", "a project basename, or its path")],
             ),
             group(
-                "Values",
+                "Actions",
+                &[
+                    ("archive", "hide the project from the working views"),
+                    (
+                        "unarchive",
+                        "put it back; tasks archived on their own stay archived",
+                    ),
+                ],
+            ),
+            group(
+                "Options",
                 &[("--state-dir <dir>", "use another board store")],
             ),
         ],
@@ -1440,24 +2787,17 @@ pub fn project_help() -> CliOutput {
             "tsk project archive atlas".into(),
             "tsk project unarchive atlas".into(),
         ],
-        refusals: vec!["no project with that name has tasks".into()],
+        refusals: vec!["no project named <name> has tasks".into()],
         exit: exit_line(
-            "record written, or already had the value",
-            Some("no project with that name has tasks"),
+            "project archived or unarchived, or already was",
+            Some("no project of that name has tasks"),
             true,
         ),
     })
 }
 
 pub fn project_usage(reason: &str) -> CliOutput {
-    CliOutput {
-        stdout: String::new(),
-        stderr: format!(
-            "tsk project: {}\nusage: tsk project archive <name> | tsk project unarchive <name> [--state-dir <dir>]\n",
-            human_reason(reason)
-        ),
-        code: 2,
-    }
+    usage_error("project", reason, PROJECT_USAGE)
 }
 
 pub fn project_archived(result: ProjectResult, verb: &str) -> CliOutput {
@@ -1512,14 +2852,10 @@ pub fn archive_rejected(error: ArchiveCliError, verb: &str) -> CliOutput {
 }
 
 pub fn list_usage(reason: &str, terminal_width: Option<usize>) -> CliOutput {
-    let stderr = format!(
-        "tsk list: {}\nusage: tsk list [<task>] [-p <project> | --desk | --all] [--todo | --doing | --done [--history] | --deleted | --archived] [--json] [--state-dir <dir>]\n",
-        human_reason(reason)
-    );
+    let usage = usage_error("list", reason, LIST_USAGE);
     CliOutput {
-        stdout: String::new(),
-        stderr: wrap_list_document(&stderr, terminal_width),
-        code: 2,
+        stderr: wrap_list_document(&usage.stderr, terminal_width),
+        ..usage
     }
 }
 
@@ -1552,6 +2888,8 @@ pub fn rejected(error: AddError) -> CliOutput {
                 1,
             )
         }
+        AddError::UnknownBase(detail) => (format!("unknown-base: {}", terminal_text(detail)), 1),
+        AddError::AgentConfig(detail) => (detail.clone(), 2),
         AddError::Store(detail) => (detail.clone(), 3),
         other => (other.code().into(), 1),
     };
@@ -1711,19 +3049,74 @@ pub fn import_rejected(error: ImportError) -> CliOutput {
 
 pub fn setup_help() -> CliOutput {
     help(HelpDoc {
-        usage: vec!["tsk setup [herdr | agents | claude | pi | omp | cursor | grok | codex | opencode | --skill-dir <path>] [--yes] [--force] [--json]".into(), "tsk setup --detected-ids | --skill-states".into(), "tsk setup herdr --check".into()],
-        purpose: "Register Herdr, or install the bundled agent workflow skill.".into(),
-        groups: vec![group("Output", &[("--json", "print machine-readable agent detection or install output"), ("--detected-ids", "print space-separated detected agent ids"), ("--skill-states", "print one tab-separated line per detected agent: id, state, installed version, path (for installers)"), ("herdr --check", "print bound when both plugin commands are already in the Herdr config, otherwise unbound")]), group("Values", &[("herdr", "register plugin assets and keyboard shortcuts"), ("agents --yes", "install or update every detected agent skill; add --force to rewrite matching versions"), ("<agent>, --skill-dir <path>", "install one named agent skill"), ("--force", "overwrite a matching skill version")])],
-        examples: vec!["tsk setup herdr".into(), "tsk setup agents --yes".into(), "tsk setup pi".into()],
-        refusals: vec!["skill-exists".into(), "setup failure".into(), "blocked skill root".into()],
-        exit: exit_line("setup completed or help listed", Some("setup refusal or failure"), false),
+        usage: crate::setup_agent::USAGE
+            .lines()
+            .map(|line| line.trim_start_matches("usage:").trim().to_string())
+            .collect(),
+        purpose: "Register tsk with Herdr, or install the agent skill. On a terminal, bare tsk setup offers the skill to every detected agent.".into(),
+        groups: vec![
+            group(
+                "Actions",
+                &[
+                    ("herdr", "register the plugin and its shortcuts with Herdr"),
+                    (
+                        "agents",
+                        "install or update the skill for every detected agent",
+                    ),
+                    (
+                        "<agent>",
+                        "install the skill for claude, pi, omp, cursor, grok, codex, or opencode",
+                    ),
+                    (
+                        "--skill-dir <path>",
+                        "install the skill as <path>/tsk-cli/SKILL.md",
+                    ),
+                ],
+            ),
+            group(
+                "Options",
+                &[
+                    (
+                        "--check",
+                        "with herdr: print bound if both plugin commands are in the Herdr config, else unbound",
+                    ),
+                    ("--yes", "with agents: install without asking"),
+                    ("--force", "rewrite a skill whose version already matches"),
+                ],
+            ),
+            group(
+                "Output",
+                &[
+                    ("--json", "print a machine-readable report"),
+                    (
+                        "--detected-ids",
+                        "print the detected agent ids, space-separated",
+                    ),
+                    (
+                        "--skill-states",
+                        "print embedded <version>, then one line per detected agent: id, state, version, path",
+                    ),
+                ],
+            ),
+        ],
+        examples: vec![
+            "tsk setup herdr".into(),
+            "tsk setup agents --yes".into(),
+            "tsk setup claude".into(),
+        ],
+        refusals: vec![
+            "skill-exists: the installed skill already has this version".into(),
+            "a symlinked skills root, skill folder, or skill file".into(),
+            "Herdr setup failed".into(),
+        ],
+        exit: exit_line("setup done, or guidance printed", Some("refused or failed"), false),
     })
 }
 
 pub fn update_help() -> CliOutput {
     help(HelpDoc {
         usage: vec!["tsk update".into()],
-        purpose: "Install the latest stable release for an installer-managed copy.".into(),
+        purpose: "Install the latest stable release over an installer-managed copy. A Homebrew copy prints the brew command instead.".into(),
         groups: Vec::new(),
         examples: vec!["tsk update".into()],
         refusals: vec!["the update could not be installed".into()],
@@ -1735,10 +3128,28 @@ pub fn update_help() -> CliOutput {
     })
 }
 
+pub fn capture_help() -> CliOutput {
+    help(HelpDoc {
+        usage: lines(CAPTURE_USAGE),
+        purpose: "Open quick capture in this terminal. A save or a discard exits.".into(),
+        groups: vec![group(
+            "Options",
+            &[("--state-dir <dir>", "use another board store")],
+        )],
+        examples: vec!["tsk capture".into()],
+        refusals: Vec::new(),
+        exit: exit_line(
+            "saved or discarded",
+            Some("the terminal could not open it"),
+            false,
+        ),
+    })
+}
+
 pub fn guide_help() -> CliOutput {
     help(HelpDoc {
         usage: vec!["tsk guide".into()],
-        purpose: "Print the bundled agent workflow skill.".into(),
+        purpose: "Print the agent workflow: the skill tsk setup installs.".into(),
         groups: Vec::new(),
         examples: vec!["tsk guide".into()],
         refusals: Vec::new(),
@@ -1855,7 +3266,12 @@ pub fn setup_agent_batch(result: crate::setup_agent::BatchResult, json: bool) ->
     // One summary row per agent on stdout, for the interactive and scripted paths alike.
     let mut stdout = String::new();
     for (id, outcome) in &result.applied {
-        stdout.push_str(&format!("    {id:<8} {}\n", outcome.path().display()));
+        // Skill roots follow HOME and agent-directory overrides, so a control
+        // character in the path must not reach the terminal.
+        stdout.push_str(&format!(
+            "    {id:<8} {}\n",
+            terminal_text(&outcome.path().display().to_string())
+        ));
     }
     for id in &result.skipped_current {
         stdout.push_str(&format!("    {id:<8} current\n"));
@@ -1984,6 +3400,36 @@ mod tests {
         assert_eq!(path_segments(r"/work/tsk\name"), ["work", r"tsk\name"]);
     }
 
+    /// A reply or feedback entry that went out on its own carries `sent: true`, like
+    /// `edited: true`; one that did not leaves both off. Deleted entries stay out.
+    #[test]
+    fn reply_json_marks_sent_entries_and_omits_the_rest() {
+        use crate::domain::{Block, BlockDraft, Reply, OWNER};
+        let at = std::time::SystemTime::UNIX_EPOCH;
+        let entry = |text: &str, edited, deleted, sent| Reply {
+            by: OWNER.into(),
+            at,
+            text: text.into(),
+            edited,
+            deleted,
+            sent,
+        };
+        let mut block = Block::open(BlockDraft::default(), "claude", at);
+        block.replies = vec![
+            entry("use postgres", false, false, true),
+            entry("add an index", true, false, false),
+            entry("scratch that", false, true, true),
+        ];
+        let json = serde_json::to_value(reply_json(&block)).expect("encode");
+        assert_eq!(
+            json,
+            serde_json::json!([
+                {"at": [0, 0], "by": OWNER, "text": "use postgres", "sent": true},
+                {"at": [0, 0], "by": OWNER, "text": "add an index", "edited": true},
+            ])
+        );
+    }
+
     #[test]
     fn help_doc_wraps_hangs_aligns_per_group_and_omits_empty_sections() {
         let output = HelpDoc {
@@ -2027,7 +3473,7 @@ mod tests {
         );
         assert_eq!(
             usage,
-            "usage: tsk setup\n       [herdr | agents | claude | pi | omp | cursor | grok | codex | opencode | --skill-dir <path>]\n       [--yes]\n"
+            "usage: tsk setup [herdr | agents | claude | pi | omp | cursor | grok | codex |\n       opencode | --skill-dir <path>] [--yes]\n"
         );
         assert!(usage.lines().all(|line| line == line.trim_end()));
 
@@ -2043,6 +3489,69 @@ mod tests {
             alternatives,
             "usage: tsk pick\n       alpha | beta | gamma\n       [--long argument]\n"
         );
+    }
+
+    #[test]
+    fn clean_output_names_every_resource_in_human_and_json_forms() {
+        let result = CleanupResult {
+            remote: None,
+            warning: None,
+            workspace_warning: None,
+            branch_reason: Some(crate::dispatch::BranchRetentionReason::NotMerged),
+            number: 12,
+            title: "finished".into(),
+            worktree_path: "/tmp/task-12".into(),
+            branch_name: "tsk/t12-finished".into(),
+            workspace_id: "w12".into(),
+            worktree: WorktreeCleanup::Removed,
+            branch: BranchCleanup::Kept,
+            workspace: WorkspaceCleanup::Removed,
+            base: Some("origin/main".into()),
+        };
+        let human = cleaned(result.clone(), false);
+        assert_eq!(
+            human.stdout,
+            "cleaned T12: worktree /tmp/task-12 (removed), branch tsk/t12-finished (kept, not merged into origin/main; squash-merged? delete by hand), workspace w12 (removed)\n"
+        );
+        let json = cleaned(result, true);
+        let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).unwrap();
+        assert_eq!(value["number"], 12);
+        assert_eq!(value["worktree"]["outcome"], "removed");
+        assert_eq!(value["branch"]["outcome"], "kept");
+        assert_eq!(
+            value["branch"]["reason"],
+            "not merged into origin/main; squash-merged? delete by hand"
+        );
+        assert_eq!(value["workspace"]["outcome"], "removed");
+    }
+
+    /// A workspace an earlier refused cleanup closed reads as already closed, never kept.
+    #[test]
+    fn clean_output_says_an_already_closed_workspace_is_gone() {
+        let result = CleanupResult {
+            remote: None,
+            warning: None,
+            workspace_warning: None,
+            branch_reason: None,
+            number: 12,
+            title: "finished".into(),
+            worktree_path: "/tmp/task-12".into(),
+            branch_name: "tsk/t12-finished".into(),
+            workspace_id: "w12".into(),
+            worktree: WorktreeCleanup::Removed,
+            branch: BranchCleanup::Removed,
+            workspace: WorkspaceCleanup::Missing,
+            base: Some("origin/main".into()),
+        };
+        let human = cleaned(result.clone(), false);
+        assert!(
+            human.stdout.ends_with("workspace w12 (already closed)\n"),
+            "{}",
+            human.stdout
+        );
+        let json = cleaned(result, true);
+        let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).unwrap();
+        assert_eq!(value["workspace"]["outcome"], "missing");
     }
 
     #[test]
@@ -2178,5 +3687,26 @@ mod tests {
             output.stdout,
             "    pi       /home/box/.pi/agent/skills/tsk-cli/SKILL.md\n    cursor   current\n    grok     blocked (symlink)\n"
         );
+    }
+
+    #[test]
+    fn setup_agent_batch_escapes_control_characters_in_skill_paths() {
+        let result = crate::setup_agent::BatchResult {
+            applied: vec![(
+                "cursor".into(),
+                crate::setup_agent::InstallOutcome::Written(PathBuf::from(
+                    "/home/box/.cursor/skills/tsk-cli\u{1b}]0;x\u{7}/SKILL.md",
+                )),
+            )],
+            skipped_current: Vec::new(),
+            blocked: Vec::new(),
+            declined: false,
+            none_detected: false,
+        };
+        let output = setup_agent_batch(result, false);
+        assert!(!output.stdout.contains('\u{1b}'), "{:?}", output.stdout);
+        assert!(!output.stdout.contains('\u{7}'), "{:?}", output.stdout);
+        assert!(output.stdout.contains("\\u{001b}]0;x\\u{0007}"));
+        assert!(output.stdout.contains("cursor"));
     }
 }

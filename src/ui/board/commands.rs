@@ -5,6 +5,7 @@ use crate::ui::input::BoardIntent;
 use crate::ui::mouse::BoardPopup;
 
 use super::model::BoardModel;
+use uuid::Uuid;
 
 /// Transient command surface open over the board, never durable state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -18,12 +19,15 @@ pub enum CommandSurface {
 /// One discoverable board command: a label plus the existing intent it dispatches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardCommand {
-    pub label: &'static str,
+    pub label: String,
     pub intent: BoardIntent,
 }
 
-const fn command(label: &'static str, intent: BoardIntent) -> BoardCommand {
-    BoardCommand { label, intent }
+fn command(label: impl Into<String>, intent: BoardIntent) -> BoardCommand {
+    BoardCommand {
+        label: label.into(),
+        intent,
+    }
 }
 
 impl BoardModel {
@@ -57,17 +61,17 @@ impl BoardModel {
         // Unresolved save failure: only the recovery routes the boundary accepts.
         if self.popup == BoardPopup::SaveRecovery {
             return vec![
-                command("Retry save", BoardIntent::RetrySave),
-                command("Cancel save", BoardIntent::CancelSave),
+                command("retry save", BoardIntent::RetrySave),
+                command("cancel save", BoardIntent::CancelSave),
             ];
         }
         let mut commands = Vec::new();
         if self.action_target_id().is_some() {
             // The focused page's own task counts even when a relation open reached it outside
             // the list (the list cursor may then be empty).
-            // the tail: set status x4, edit notes, change scope, then shared tail.
-            // No park / resume / link / dispatch entries.
-            commands.extend_from_slice(&[
+            // the tail: set status x3, edit notes, change scope, assignment and optional
+            // relaunch, then shared tail. No park / resume / link entries.
+            commands.extend([
                 command(
                     "set status: todo",
                     BoardIntent::SetStatus(HumanStatus::Todo),
@@ -78,8 +82,45 @@ impl BoardModel {
                 ),
                 command("set status: done", BoardIntent::Complete),
                 command("edit notes", BoardIntent::BeginEditNotes),
-                command("change scope", BoardIntent::BeginEditScope),
+                command("move to project / desk", BoardIntent::BeginEditScope),
+                command("set assignee", BoardIntent::OpenAssigneePicker),
+                command("set base", BoardIntent::OpenBasePicker),
+                command("set after (wait for)…", BoardIntent::OpenAfterPicker),
             ]);
+            // Who an open block or review waits on: offered while a target has one. A marked
+            // set with a task that has none still refuses as a whole.
+            let targets: Vec<Uuid> = if self.marks_under_palette() > 0 {
+                self.marked_ids.iter().copied().collect()
+            } else {
+                self.selected_id().into_iter().collect()
+            };
+            if self
+                .tasks
+                .iter()
+                .any(|task| task.block.is_some() && targets.contains(&task.id))
+            {
+                commands.push(command("set waiting on…", BoardIntent::OpenOnPicker));
+            }
+            // Two or more marked tasks chain in the order they were marked. The palette owns
+            // input while it lists this, so ask about the task list underneath it.
+            if self.marks_under_palette() >= 2 {
+                commands.push(command(
+                    "chain marked tasks in order",
+                    BoardIntent::ChainAfter,
+                ));
+            }
+            // Starting dispatches an assigned task (`set status: started`, `ctrl+s`); dispatch
+            // again is the explicit, cursor-only relaunch. A person is never dispatched.
+            if self
+                .selected_id()
+                .and_then(|id| self.tasks.iter().find(|task| task.id == id))
+                .is_some_and(|task| {
+                    task.dispatch.is_some()
+                        && !task.assigned().is_some_and(|assignee| assignee.is_person())
+                })
+            {
+                commands.push(command("dispatch again", BoardIntent::DispatchAgain));
+            }
         }
         // A step selected on the open task page: the alt+↑/↓ moves, findable by name.
         if self.page_step_selected() {
@@ -91,13 +132,13 @@ impl BoardModel {
         // Always-available board commands, then selection-gated delete when present.
         // The status commands above are absolute, so `set status: open` replaces the old
         // done-only `reopen` entry and stays useful from every status.
-        commands.push(command("new task", BoardIntent::OpenCapture));
+        commands.push(command("add task", BoardIntent::OpenCapture));
         if self.action_target_id().is_some() {
-            commands.push(command("delete", BoardIntent::SoftDelete));
+            commands.push(command("delete task", BoardIntent::SoftDelete));
         }
         commands.extend_from_slice(&[
             command("undo", BoardIntent::Undo),
-            command("done drawer", BoardIntent::ToggleDoneDrawer),
+            command("show / hide done drawer", BoardIntent::ToggleDoneDrawer),
         ]);
         // Stall checks only exist inside Herdr: the task's own thread, then check-all.
         if self.stall.enabled {
@@ -107,17 +148,28 @@ impl BoardModel {
                     .any(|t| t.id == *id && crate::stall::thread_of(t).is_some())
             }) {
                 commands.push(BoardCommand {
-                    label: "check task's thread",
+                    label: "check task's thread".to_string(),
                     intent: BoardIntent::RefreshTask(id),
                 });
             }
             commands.push(command("check stalled tasks", BoardIntent::RefreshAll));
         }
+        // Message lines under blocked and review rows: list-only, never over a task page.
+        if self.input_mode == super::BoardInputMode::Normal {
+            commands.push(command(
+                if self.messages_hidden {
+                    "show agent messages"
+                } else {
+                    "hide agent messages"
+                },
+                BoardIntent::ToggleMessages,
+            ));
+        }
         commands.extend_from_slice(&[
-            command("help", BoardIntent::OpenHelp),
+            command("show all keys", BoardIntent::OpenHelp),
             command("quit", BoardIntent::Quit),
         ]);
-        // Park / resume / link / dispatch stay out of the palette.
+        // Park / resume / link stay out of the palette.
         commands
     }
 
@@ -143,11 +195,20 @@ impl BoardModel {
         }
         commands
             .into_iter()
-            .filter(|command| subsequence_match(command.label, query))
+            .filter(|command| subsequence_match(&command.label, query))
             .collect()
     }
 
     /// The command a confirmation would invoke.
+    /// The command a palette `ConfirmCommand` or `SelectCommand` would run, without running it.
+    pub fn selected_command_for(&self, intent: &BoardIntent) -> Option<BoardCommand> {
+        match intent {
+            BoardIntent::ConfirmCommand => self.selected_command(),
+            BoardIntent::SelectCommand(index) => self.visible_commands().get(*index).cloned(),
+            _ => None,
+        }
+    }
+
     pub fn selected_command(&self) -> Option<BoardCommand> {
         let index = self.command_selected()?;
         self.visible_commands().get(index).cloned()

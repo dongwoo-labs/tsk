@@ -1,5 +1,7 @@
 //! Positional command router.
 
+use std::path::PathBuf;
+
 /// The process surface selected from the binary argv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
@@ -9,9 +11,14 @@ pub enum Surface {
     Steps,
     List,
     Status,
+    Reply,
+    Dispatch,
+    Clean,
     Edit,
     Notes,
     Trash,
+    Backup,
+    Restore,
     Archive,
     Unarchive,
     Project,
@@ -24,10 +31,45 @@ pub enum Surface {
     Threads,
     FindBoardPane,
     FindBoardTab,
+    /// Internal: `tsk --name-agent <pane> <name>`, the detached helper `tsk dispatch` starts to
+    /// name its agent once Herdr detects it.
+    NameAgent,
     GlobalHelp,
     Help,
     Version,
     Usage,
+}
+
+/// The internal flag of the detached agent-naming helper.
+pub const NAME_AGENT_FLAG: &str = "--name-agent";
+
+/// The store `tsk capture` opens, from the arguments after `capture`: `--state-dir <dir>`
+/// or `--state-dir=<dir>`, else `None` for the default. Any other argument is refused with
+/// the reason.
+pub fn capture_state_dir<S: AsRef<str>>(
+    tail: impl IntoIterator<Item = S>,
+) -> Result<Option<PathBuf>, String> {
+    let mut tail = tail.into_iter();
+    let mut state_dir = None;
+    while let Some(arg) = tail.next() {
+        let arg = arg.as_ref();
+        let dir = match arg.strip_prefix("--state-dir=") {
+            Some(dir) => dir.to_owned(),
+            None if arg == "--state-dir" => tail
+                .next()
+                .ok_or("--state-dir needs a directory")?
+                .as_ref()
+                .to_owned(),
+            None => return Err(format!("unknown argument {arg}")),
+        };
+        if dir.is_empty() {
+            return Err("--state-dir needs a directory".into());
+        }
+        if state_dir.replace(PathBuf::from(dir)).is_some() {
+            return Err("--state-dir given twice".into());
+        }
+    }
+    Ok(state_dir)
 }
 
 /// Select a process surface from argv-style arguments, including argv0.
@@ -39,6 +81,14 @@ pub fn route<S: AsRef<str>>(
     args: impl IntoIterator<Item = S>,
     capture_env: Option<&str>,
 ) -> Surface {
+    let args: Vec<S> = args.into_iter().collect();
+    if args.get(1).map(AsRef::as_ref) == Some(NAME_AGENT_FLAG) {
+        return if args.len() == 4 {
+            Surface::NameAgent
+        } else {
+            Surface::Usage
+        };
+    }
     let mut args = args.into_iter();
     let _argv0 = args.next();
     let mut global = None;
@@ -63,14 +113,20 @@ pub fn route<S: AsRef<str>>(
             return Surface::Usage;
         }
         return match arg {
+            // The binary entry checks capture's own arguments, so a refusal can say why.
             "capture" => Surface::Capture,
             "add" => Surface::Add,
             "steps" => Surface::Steps,
             "list" => Surface::List,
             "status" => Surface::Status,
+            "reply" => Surface::Reply,
+            "dispatch" => Surface::Dispatch,
+            "clean" => Surface::Clean,
             "edit" => Surface::Edit,
             "notes" => Surface::Notes,
             "trash" => Surface::Trash,
+            "backup" => Surface::Backup,
+            "restore" => Surface::Restore,
             "archive" => Surface::Archive,
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
@@ -99,7 +155,8 @@ pub fn route<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
-    use super::{route, Surface};
+    use super::{capture_state_dir, route, Surface};
+    use std::path::PathBuf;
 
     #[test]
     fn add_dash_t_capture_stays_add() {
@@ -142,6 +199,23 @@ mod tests {
     }
 
     #[test]
+    fn name_agent_is_a_hidden_surface_taking_exactly_a_pane_and_a_name() {
+        assert_eq!(
+            route(["tsk", "--name-agent", "p1", "t12-claude"], None),
+            Surface::NameAgent
+        );
+        assert_eq!(route(["tsk", "--name-agent", "p1"], None), Surface::Usage);
+        assert_eq!(
+            route(["tsk", "--name-agent", "p1", "t12-claude", "x"], None),
+            Surface::Usage
+        );
+        assert_eq!(
+            route(["tsk", "add", "--name-agent", "p1", "t12-claude"], None),
+            Surface::Add
+        );
+    }
+
+    #[test]
     fn find_board_tab_is_a_hidden_global_surface() {
         assert_eq!(
             route(["tsk", "--find-board-tab"], Some("capture")),
@@ -151,6 +225,33 @@ mod tests {
             route(["tsk", "--find-board-tab", "extra"], None),
             Surface::Usage
         );
+    }
+
+    #[test]
+    fn capture_takes_a_state_dir_and_nothing_else() {
+        assert_eq!(capture_state_dir([] as [&str; 0]), Ok(None));
+        for tail in [&["--state-dir", "/tmp/x"][..], &["--state-dir=/tmp/x"]] {
+            assert_eq!(
+                capture_state_dir(tail.iter()),
+                Ok(Some(PathBuf::from("/tmp/x")))
+            );
+        }
+        for (tail, reason) in [
+            (&["--state-dir"][..], "--state-dir needs a directory"),
+            (&["--state-dir="], "--state-dir needs a directory"),
+            (&["--help", "--state-dir=/tmp/x"], "unknown argument --help"),
+            (
+                &["--state-dir", "/a", "--state-dir", "/b"],
+                "--state-dir given twice",
+            ),
+            (&["extra"], "unknown argument extra"),
+        ] {
+            assert_eq!(
+                capture_state_dir(tail.iter()),
+                Err(reason.into()),
+                "{tail:?}"
+            );
+        }
     }
 
     #[test]
@@ -180,6 +281,16 @@ mod tests {
             route(["tsk", "status", "T3", "started"], None),
             Surface::Status
         );
+    }
+
+    #[test]
+    fn reply_positional_selects_reply_surface() {
+        assert_eq!(route(["tsk", "reply", "T3", "yes"], None), Surface::Reply);
+    }
+
+    #[test]
+    fn clean_positional_selects_clean_surface() {
+        assert_eq!(route(["tsk", "clean", "T3"], None), Surface::Clean);
     }
 
     #[test]

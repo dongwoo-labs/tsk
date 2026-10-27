@@ -161,6 +161,53 @@ fn click(region: &QueueHit, model: &BoardModel, hits: &QueueHitMap) -> Option<Bo
 }
 
 #[test]
+fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header_toggles_it() {
+    let mut domain = DomainState::new();
+    let archived = domain
+        .create(
+            "archived click me",
+            None,
+            project(THIS_REPO),
+            ProvenanceOrigin::Manual,
+        )
+        .expect("create archived");
+    domain.archive_task(archived).expect("archive it");
+    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
+    apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None).expect("drawer");
+
+    let hits = board_hit_map(STANDARD, &model);
+    let header = hits
+        .regions
+        .iter()
+        .find(|hit| matches!(hit.target, QueueHitTarget::ArchivedHeader))
+        .expect("the archived header paints a hit region");
+    let intent = map_board_mouse(&model, &hits, left_click(header.area.x, header.area.y))
+        .expect("a header click maps to an intent");
+    assert_eq!(intent, BoardIntent::ToggleArchivedGroup);
+    apply_intent(&mut domain, &mut model, intent, None).expect("toggle");
+
+    assert!(
+        model.visible_ids().contains(&archived),
+        "the click expanded the group: archived row visible"
+    );
+
+    // Click again: collapses.
+    let hits = board_hit_map(STANDARD, &model);
+    let header = hits
+        .regions
+        .iter()
+        .find(|hit| matches!(hit.target, QueueHitTarget::ArchivedHeader))
+        .expect("header hit after expand");
+    let intent = map_board_mouse(&model, &hits, left_click(header.area.x, header.area.y))
+        .expect("header click maps after expand");
+    apply_intent(&mut domain, &mut model, intent, None).expect("toggle closed");
+    assert!(
+        !model.visible_ids().contains(&archived),
+        "the second click collapsed the group"
+    );
+}
+
+#[test]
 fn hit_map_covers_selection_rows_verbs_drawer_palette_rows_help() {
     // Base list: selection row, verbs, navigation tabs.
     let (_domain, mut model, id) = board_with_task("Fix flake", HumanStatus::Todo);
@@ -293,7 +340,7 @@ fn task_form_scope_dropdown_paints_in_list_order_so_down_moves_down() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::OpenFormScopeDropdown,
+        BoardIntent::OpenFormDropdown(CaptureField::Scope),
         None,
     )
     .expect("open dropdown");
@@ -305,7 +352,7 @@ fn task_form_scope_dropdown_paints_in_list_order_so_down_moves_down() {
             .map(|index| {
                 hits.regions
                     .iter()
-                    .find(|hit| hit.target == QueueHitTarget::FormScopeOption(index))
+                    .find(|hit| hit.target == QueueHitTarget::FormDropdownOption(index))
                     .unwrap_or_else(|| panic!("option {index} painted"))
                     .area
                     .y
@@ -434,6 +481,37 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
         "task-form Cancel verb must match Esc"
     );
 
+    // The Notes bar ends `enter new line` (#204): a click opens a line like the key does and
+    // never saves.
+    {
+        let mut notes_domain = domain.clone();
+        let mut notes_model = model.clone();
+        apply_intent(
+            &mut notes_domain,
+            &mut notes_model,
+            BoardIntent::FormFocusNext,
+            None,
+        )
+        .expect("focus notes");
+        assert_eq!(notes_model.form_focus(), Some(CaptureField::Notes));
+        let notes_hits = board_hit_map(STANDARD, &notes_model);
+        let hit = notes_hits
+            .regions
+            .iter()
+            .find(|hit| hit.target == QueueHitTarget::Verb(3))
+            .expect("notes `enter new line` verb");
+        let intent = click(hit, &notes_model, &notes_hits);
+        assert_eq!(intent, Some(BoardIntent::EditInsertLineBreak));
+        assert_eq!(
+            intent,
+            map_board_form_key(
+                CaptureField::Notes,
+                false,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            ),
+        );
+    }
+
     // This form was opened with `BeginEditTitle`, so edit mode is ALREADY open: a field click
     // must move focus. The
     // separate view-state rule -- that a click must not ENTER edit mode -- is exercised in
@@ -463,9 +541,9 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
         .find(|hit| hit.target == QueueHitTarget::FormScope)
         .expect("task-form scope hit");
     let open = click(scope_hit, &model, &hits).expect("scope click intent");
-    assert_eq!(open, BoardIntent::OpenFormScopeDropdown);
+    assert_eq!(open, BoardIntent::OpenFormDropdown(CaptureField::Scope));
     apply_intent(&mut domain, &mut model, open, None).expect("open form dropdown");
-    assert_eq!(model.input_mode(), BoardInputMode::FormScopeDropdown);
+    assert_eq!(model.input_mode(), BoardInputMode::FormDropdown);
     assert_eq!(
         map_board_mouse(&model, &board_hit_map(STANDARD, &model), left_click(0, 0)),
         None,
@@ -502,10 +580,10 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
     let option = hits
         .regions
         .iter()
-        .find(|hit| hit.target == QueueHitTarget::FormScopeOption(global_index))
+        .find(|hit| hit.target == QueueHitTarget::FormDropdownOption(global_index))
         .expect("Global dropdown option is painted above the scrolled task list");
     let choose = click(option, &model, &hits).expect("dropdown option click");
-    assert_eq!(choose, BoardIntent::SelectFormScopeOption(global_index));
+    assert_eq!(choose, BoardIntent::SelectFormDropdownOption(global_index));
     apply_intent(&mut domain, &mut model, choose, None).expect("choose form scope");
     assert_eq!(model.form_scope(), keyboard_model.form_scope());
     assert_eq!(model.input_mode(), BoardInputMode::EditScope);
@@ -518,7 +596,7 @@ fn task_form_mouse_fields_dropdown_and_verbs_match_keyboard_while_scrolled() {
     apply_intent(
         &mut domain,
         &mut model,
-        BoardIntent::OpenFormScopeDropdown,
+        BoardIntent::OpenFormDropdown(CaptureField::Scope),
         None,
     )
     .expect("reopen dropdown");
@@ -571,7 +649,8 @@ fn assert_verb_parity(title: &str, status: HumanStatus, chord: &str, key: KeyCod
     )
     .expect("keyboard apply");
 
-    let hits = board_hit_map(STANDARD, &model_mouse);
+    // The started bar's seven seats outgrow 80 columns; read it where every seat fits.
+    let hits = board_hit_map(Rect::new(0, 0, 100, 24), &model_mouse);
     let region = verb_hit_for_chord(&model_mouse, &hits, chord);
     let mouse_intent =
         click(region, &model_mouse, &hits).unwrap_or_else(|| panic!("no mouse intent for {chord}"));
@@ -601,6 +680,34 @@ fn assert_verb_parity(title: &str, status: HumanStatus, chord: &str, key: KeyCod
         model_mouse.input_mode(),
         "chord {chord:?}: input mode diverged between the two routes"
     );
+}
+
+#[test]
+fn an_assigned_task_shows_no_dispatch_chip_only_start() {
+    let (mut domain, mut model, id) = board_with_task("send it", HumanStatus::Ready);
+    domain
+        .assign(id, Some("implementer".into()))
+        .expect("assign task");
+    model.sync_from_domain(&domain);
+
+    for mode in [BoardInputMode::Normal, BoardInputMode::TaskPage] {
+        if mode == BoardInputMode::TaskPage {
+            apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
+                .expect("open task page");
+        }
+        assert_eq!(model.input_mode(), mode);
+        let hits = board_hit_map(STANDARD, &model);
+        let start = verb_hit_for_chord(&model, &hits, "s");
+        assert_eq!(
+            click(start, &model, &hits),
+            Some(BoardIntent::PrimaryVerb),
+            "the start chip dispatches an assigned task in {mode:?}"
+        );
+        assert!(
+            !board_verb_items(&model).iter().any(|verb| verb.key == "g"),
+            "no dispatch chip in {mode:?}"
+        );
+    }
 }
 
 #[test]
@@ -1037,7 +1144,7 @@ fn the_modal_cards_close_control_and_chrome_behave_the_same_on_palette_and_help(
 }
 
 /// R-2: the standard-tier command surface windows to 6
-/// rows at 80x24 while 13 commands exist, and the painted `▲▼` marker is inert
+/// rows at 80x24 while 15 commands exist, and the painted `▲▼` marker is inert
 /// `CommandChrome`, so a mouse-only user could not reach the 7 commands outside the
 /// initial window (`quit`, the last one, among them). The wheel now moves the command
 /// selection the same `CommandNext`/`CommandPrev` the keyboard's `j`/`k` dispatch, which
@@ -1059,7 +1166,7 @@ fn wheel_scrolls_the_open_command_surface_so_every_command_becomes_reachable() {
     let commands = model.visible_commands();
     assert_eq!(
         commands.len(),
-        11,
+        15,
         "this ready fixture must expose every palette command a ready selection has: {commands:?}"
     );
     let last = commands.len() - 1;
@@ -1521,7 +1628,7 @@ fn page_field_clicks_activate_after_task_editing_starts() {
         .expect("the active page footer paints a scope hit");
     assert_eq!(
         click(active_scope_hit, &model, &hits),
-        Some(BoardIntent::OpenFormScopeDropdown),
+        Some(BoardIntent::OpenFormDropdown(CaptureField::Scope)),
         "an active task session lets Scope clicks edit"
     );
 }
@@ -1608,6 +1715,27 @@ fn the_wheel_keeps_scrolling_while_a_step_add_is_open() {
 }
 
 #[test]
+fn the_board_bar_ends_commands_then_help_and_a_click_on_commands_opens_the_palette() {
+    let (mut domain, mut model, _) = board_with_task("Fix flake", HumanStatus::Started);
+    let keys: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
+    assert_eq!(keys[keys.len() - 2..], [":", "?"], "bar: {keys:?}");
+    let hits = board_hit_map(STANDARD, &model);
+    let intent = click(verb_hit_for_chord(&model, &hits, ":"), &model, &hits);
+    assert_eq!(intent, Some(BoardIntent::OpenCommandPalette));
+    apply_intent(
+        &mut domain,
+        &mut model,
+        BoardIntent::OpenCommandPalette,
+        None,
+    )
+    .expect("open the palette");
+    assert_eq!(
+        model.command_surface(),
+        tsk_tui::ui::board::CommandSurface::Palette
+    );
+}
+
+#[test]
 fn page_verb_clicks_resolve_through_the_page_legend() {
     let (mut domain, mut model) = deck_of(1);
     apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None).expect("open the page");
@@ -1637,14 +1765,17 @@ fn page_verb_clicks_resolve_through_the_page_legend() {
     assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
 
     // Every seat of the fixed page bar dispatches what its label says: the painted legend
-    // is `ctrl+e edit · <status verbs> · esc close`, indexed exactly as painted.
+    // is `ctrl+e edit · <status verbs> · esc close · : commands`, indexed exactly as painted.
+    // The started page's seven seats outgrow 80 columns, so the bar is read where every seat
+    // fits.
+    let roomy = Rect::new(0, 0, 100, 24);
     let click_verb = |model: &BoardModel, key: &str| -> BoardIntent {
         let verbs = board_verb_items(model);
         let index = verbs
             .iter()
             .position(|entry| entry.key == key)
             .unwrap_or_else(|| panic!("no {key:?} seat in {verbs:?}"));
-        let hits = board_hit_map(STANDARD, model);
+        let hits = board_hit_map(roomy, model);
         let area = hits
             .regions
             .iter()
@@ -1656,18 +1787,23 @@ fn page_verb_clicks_resolve_through_the_page_legend() {
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
     assert_eq!(
         verbs,
-        vec!["e", "o", "u", "esc"],
-        "done page bar: edit · todo · undo · close"
+        vec!["e", "o", "u", "esc", ":"],
+        "done page bar: edit · todo · undo · close · commands"
     );
+    assert_eq!(click_verb(&model, ":"), BoardIntent::OpenCommandPalette);
     assert_eq!(click_verb(&model, "o"), BoardIntent::Reopen);
     apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("todo");
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
-    assert_eq!(verbs, vec!["e", "s", "d", "esc"], "todo page bar");
+    assert_eq!(verbs, vec!["e", "s", "d", "esc", ":"], "todo page bar");
     assert_eq!(click_verb(&model, "e"), BoardIntent::BeginEditTitle);
     assert_eq!(click_verb(&model, "s"), BoardIntent::PrimaryVerb);
     apply_intent(&mut domain, &mut model, BoardIntent::PrimaryVerb, None).expect("doing");
     let verbs: Vec<&str> = board_verb_items(&model).iter().map(|v| v.key).collect();
-    assert_eq!(verbs, vec!["e", "o", "d", "esc"], "doing page bar");
+    assert_eq!(
+        verbs,
+        vec!["e", "o", "d", "b", "esc", ":"],
+        "doing page bar"
+    );
     assert_eq!(click_verb(&model, "o"), BoardIntent::Reopen);
     apply_intent(&mut domain, &mut model, BoardIntent::Reopen, None).expect("back to todo");
     assert_eq!(domain.get(id).expect("task").status, HumanStatus::Todo);
@@ -2609,53 +2745,6 @@ fn task_page_autoscroll_tick_moves_notes() {
         before,
         "task-page autoscroll tick must move notes:\n{}",
         after.join("\n")
-    );
-}
-
-#[test]
-fn archived_group_is_collapsed_on_a_fresh_model_and_enter_or_click_on_the_header_toggles_it() {
-    let mut domain = DomainState::new();
-    let archived = domain
-        .create(
-            "archived click me",
-            None,
-            project(THIS_REPO),
-            ProvenanceOrigin::Manual,
-        )
-        .expect("create archived");
-    domain.archive_task(archived).expect("archive it");
-    let mut model = BoardModel::from_domain(&domain, Some(PathBuf::from(THIS_REPO)));
-    apply_intent(&mut domain, &mut model, BoardIntent::ToggleDoneDrawer, None).expect("drawer");
-
-    let hits = board_hit_map(STANDARD, &model);
-    let header = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ArchivedHeader))
-        .expect("the archived header paints a hit region");
-    let intent = map_board_mouse(&model, &hits, left_click(header.area.x, header.area.y))
-        .expect("a header click maps to an intent");
-    assert_eq!(intent, BoardIntent::ToggleArchivedGroup);
-    apply_intent(&mut domain, &mut model, intent, None).expect("toggle");
-
-    assert!(
-        model.visible_ids().contains(&archived),
-        "the click expanded the group: archived row visible"
-    );
-
-    // Click again: collapses.
-    let hits = board_hit_map(STANDARD, &model);
-    let header = hits
-        .regions
-        .iter()
-        .find(|hit| matches!(hit.target, QueueHitTarget::ArchivedHeader))
-        .expect("header hit after expand");
-    let intent = map_board_mouse(&model, &hits, left_click(header.area.x, header.area.y))
-        .expect("header click maps after expand");
-    apply_intent(&mut domain, &mut model, intent, None).expect("toggle closed");
-    assert!(
-        !model.visible_ids().contains(&archived),
-        "the second click collapsed the group"
     );
 }
 

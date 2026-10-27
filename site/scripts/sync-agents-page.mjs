@@ -1,34 +1,38 @@
 #!/usr/bin/env node
-// Generate the gitignored /docs/agents/ source from skills/tsk-cli/SKILL.md.
+// Generate the gitignored /docs/agents/ and /docs/coordinator/ sources from the skills.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEFINITION_SENTENCE, stripFrontmatter } from "../src/lib/agent-docs.mjs";
+import { DEFINITION_SENTENCE, SKILL_PAGES, stripFrontmatter } from "../src/lib/agent-docs.mjs";
 
 const siteRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const repoRoot = dirname(siteRoot);
 const destDir = join(siteRoot, "src/content/docs/docs");
-const dest = join(destDir, "agents.md");
-const skill = readFileSync(join(repoRoot, "skills/tsk-cli/SKILL.md"), "utf8");
-const body = stripFrontmatter(skill)
-  .replace(/^\uFEFF/, "")
-  .replace(/^# [^\n]+\n+/, "")
-  .replace(/\s+$/, "");
 
 mkdirSync(destDir, { recursive: true });
-writeFileSync(
-  dest,
-  [
+for (const [slug, page] of Object.entries(SKILL_PAGES)) {
+  const skill = readFileSync(join(repoRoot, page.skillPath), "utf8");
+  const body = stripFrontmatter(skill)
+    .replace(/^﻿/, "")
+    .replace(/^# [^\n]+\n+/, "")
+    .replace(/\s+$/, "");
+  const dest = join(destDir, `${slug}.md`);
+  const text = [
     "---",
-    "title: tsk for agents",
-    "description: The agent workflow printed by tsk guide, including what to do if tsk is not installed.",
+    `title: ${page.title}`,
+    `description: ${page.description}`,
     "---",
     "",
-    DEFINITION_SENTENCE,
+    page.lead,
     "",
     body,
     "",
-  ].join("\n"),
-);
+  ].join("\n");
+  // Tests run this beside parallel readers of the docs: skip an unchanged page, and replace
+  // a changed one whole so no reader sees it half written.
+  if (existsSync(dest) && readFileSync(dest, "utf8") === text) continue;
+  writeFileSync(`${dest}.tmp`, text);
+  renameSync(`${dest}.tmp`, dest);
+}

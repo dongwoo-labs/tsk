@@ -14,20 +14,21 @@ fn executable(args: &[&str]) -> std::process::Output {
         .expect("run tsk")
 }
 
+/// Each heading is a whole line (`usage:` starts one), found in this order.
 fn assert_sections_in_order(output: &str, headings: &[&str]) {
+    let lines: Vec<&str> = output.lines().collect();
     let mut previous = 0;
     for heading in headings {
-        let position = output
-            .find(heading)
-            .unwrap_or_else(|| panic!("help should contain {heading:?}"));
-        assert!(
-            position >= previous,
-            "{heading:?} should follow the prior section"
-        );
-        previous = position;
+        let position = lines[previous..]
+            .iter()
+            .position(|line| {
+                line == heading || (*heading == "usage:" && line.starts_with("usage: "))
+            })
+            .unwrap_or_else(|| panic!("help should contain {heading:?} after the prior section"));
+        previous += position;
     }
     assert!(
-        output.contains("Exit:"),
+        lines.contains(&"Exit:"),
         "help should contain an exit section"
     );
 }
@@ -50,8 +51,8 @@ verb_help_test!(
     [
         "usage:",
         "Scope",
+        "Options",
         "Output",
-        "Values",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -62,10 +63,12 @@ verb_help_test!(
     ["list", "--help"],
     [
         "usage:",
+        "Arguments",
         "Scope",
         "Filters",
+        "Arrange",
+        "Options",
         "Output",
-        "Values",
         "Examples:",
         "Exit:"
     ]
@@ -75,7 +78,12 @@ verb_help_test!(
     ["status", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Started",
+        "Done",
+        "Blocked",
+        "Review",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -86,7 +94,8 @@ verb_help_test!(
     ["edit", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -97,7 +106,47 @@ verb_help_test!(
     ["steps", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Actions",
+        "Place",
+        "Options",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
+    reply_help_has_reference_sections,
+    ["reply", "--help"],
+    [
+        "usage:",
+        "Arguments",
+        "Options",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
+    dispatch_help_has_reference_sections,
+    ["dispatch", "--help"],
+    [
+        "usage:",
+        "Arguments",
+        "Options",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
+    clean_help_has_reference_sections,
+    ["clean", "--help"],
+    [
+        "usage:",
+        "Arguments",
+        "Options",
+        "Output",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -108,7 +157,34 @@ verb_help_test!(
     ["trash", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Actions",
+        "Options",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
+    backup_help_has_reference_sections,
+    ["backup", "--help"],
+    [
+        "usage:",
+        "Arguments",
+        "Actions",
+        "Options",
+        "Examples:",
+        "Refusals (exit 1):",
+        "Exit:"
+    ]
+);
+verb_help_test!(
+    restore_help_has_reference_sections,
+    ["restore", "--help"],
+    [
+        "usage:",
+        "Arguments",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -119,7 +195,8 @@ verb_help_test!(
     ["archive", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -130,7 +207,8 @@ verb_help_test!(
     ["unarchive", "--help"],
     [
         "usage:",
-        "Values",
+        "Arguments",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -141,8 +219,9 @@ verb_help_test!(
     ["project", "--help"],
     [
         "usage:",
-        "Scope",
-        "Values",
+        "Arguments",
+        "Actions",
+        "Options",
         "Examples:",
         "Refusals (exit 1):",
         "Exit:"
@@ -167,6 +246,8 @@ verb_help_test!(
     ["setup", "--help"],
     [
         "usage:",
+        "Actions",
+        "Options",
         "Output",
         "Examples:",
         "Refusals (exit 1):",
@@ -219,14 +300,20 @@ fn command_help_lines_have_no_trailing_whitespace() {
         &["status", "--help"],
         &["edit", "--help"],
         &["steps", "--help"],
+        &["reply", "--help"],
+        &["dispatch", "--help"],
+        &["clean", "--help"],
         &["archive", "--help"],
         &["unarchive", "--help"],
         &["project", "--help"],
         &["trash", "--help"],
         &["import", "--help"],
+        &["backup", "--help"],
+        &["restore", "--help"],
         &["setup", "--help"],
         &["update", "--help"],
         &["guide", "--help"],
+        &["capture", "--help"],
     ] {
         let output = executable(args);
         assert_eq!(output.status.code(), Some(0), "{args:?}");
@@ -238,6 +325,58 @@ fn command_help_lines_have_no_trailing_whitespace() {
     }
 }
 
+/// Help is reference text at 80 columns, and an example copies as one command: a wrapped
+/// example would paste as two broken lines.
+#[test]
+fn help_fits_80_columns_and_examples_never_wrap() {
+    for command in [
+        "",
+        "add",
+        "list",
+        "status",
+        "edit",
+        "steps",
+        "reply",
+        "dispatch",
+        "clean",
+        "archive",
+        "unarchive",
+        "project",
+        "trash",
+        "backup",
+        "restore",
+        "setup",
+        "update",
+        "guide",
+        "capture",
+    ] {
+        let args: Vec<&str> = ["tsk", "help", command]
+            .into_iter()
+            .filter(|arg| !arg.is_empty())
+            .collect();
+        let output = help(&args);
+        assert_eq!(output.code, 0, "{args:?}");
+        for line in output.stdout.lines() {
+            assert!(
+                line.chars().count() <= 80,
+                "{args:?} help is wider than 80 columns: {line:?}"
+            );
+        }
+        let examples = output
+            .stdout
+            .lines()
+            .skip_while(|line| *line != "Examples:")
+            .skip(1)
+            .take_while(|line| !line.is_empty());
+        for line in examples {
+            assert!(
+                line.starts_with("  tsk ") || line.starts_with("  cat "),
+                "{args:?} example wraps mid-command: {line:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn every_command_help_purpose_is_a_capitalized_sentence() {
     for args in [
@@ -246,14 +385,20 @@ fn every_command_help_purpose_is_a_capitalized_sentence() {
         &["status", "--help"],
         &["edit", "--help"],
         &["steps", "--help"],
+        &["reply", "--help"],
+        &["dispatch", "--help"],
+        &["clean", "--help"],
         &["archive", "--help"],
         &["unarchive", "--help"],
         &["project", "--help"],
         &["trash", "--help"],
         &["import", "--help"],
+        &["backup", "--help"],
+        &["restore", "--help"],
         &["setup", "--help"],
         &["update", "--help"],
         &["guide", "--help"],
+        &["capture", "--help"],
     ] {
         let output = help(&["tsk", args[0], "--help"]);
         let purpose = output
@@ -275,6 +420,28 @@ fn help_operand_matches_verb_help_byte_for_byte() {
     assert_eq!(via_help.status.code(), Some(0));
     assert!(via_help.stderr.is_empty());
     assert_eq!(via_help.stdout, direct.stdout);
+}
+
+#[test]
+fn capture_help_prints_without_opening_the_popup() {
+    let via_help = executable(&["help", "capture"]);
+    let direct = executable(&["capture", "--help"]);
+    assert_eq!(via_help.status.code(), Some(0));
+    assert!(via_help.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&via_help.stdout)
+        .starts_with("usage: tsk capture [--state-dir <dir>]"));
+    assert_eq!(via_help.stdout, direct.stdout);
+    assert_eq!(direct.status.code(), Some(0));
+}
+
+#[test]
+fn capture_refuses_another_argument_and_says_why() {
+    let output = executable(&["capture", "--bogus"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "tsk capture: unknown argument --bogus\nusage: tsk capture [--state-dir <dir>]\n"
+    );
 }
 
 #[test]

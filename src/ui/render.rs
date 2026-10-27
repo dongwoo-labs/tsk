@@ -296,6 +296,276 @@ pub fn row_status_line(task: &crate::domain::Task) -> Option<(String, bool)> {
     None
 }
 
+/// The dim line under a board row that says in plain words what is going on: who a block or
+/// review waits on and for how long, or what an on-deck task still runs after. `None` for a
+/// row with nothing to say, and for notices. A block or review peek opens with the same text.
+pub fn live_line(task: &Task, tasks: &[Task], now: SystemTime) -> Option<String> {
+    if task.archived {
+        return None;
+    }
+    status_line(task, tasks, now)
+}
+
+/// The dim line a board row paints under itself, only for what is addressed to you: the
+/// asker's own words on a block or review on you, `@claude: <message> · 25s`, or a finished or
+/// deleted blocker to unblock. A block or review on you with nothing to say paints no line (the
+/// NEEDS YOU header says it), and a row waiting elsewhere says so in its label instead. The
+/// peek and the task page keep the status words of [`live_line`].
+pub fn row_live_line(task: &Task, tasks: &[Task], now: SystemTime) -> Option<String> {
+    use crate::ui::queue::{block_wait, BlockWait};
+    if task.archived || task.status == HumanStatus::Done || task.is_notice() {
+        return None;
+    }
+    match block_wait(task, tasks)? {
+        BlockWait::BlockerDone(_) | BlockWait::BlockerGone(_) => status_line(task, tasks, now),
+        BlockWait::Elsewhere => None,
+        BlockWait::You => {
+            let block = open_block(task)?;
+            let (message, at) = block_message(block)?;
+            let asker = if block.by == crate::domain::OWNER {
+                String::new()
+            } else {
+                format!("@{}: ", block.by)
+            };
+            Some(format!("{asker}{message} · {}", format_age(now, at)))
+        }
+    }
+}
+
+/// An assignee as its handle: `@claude`, `@dana`, or `@you` (your configured name).
+pub fn assignee_handle(name: &str) -> String {
+    format!(
+        "@{}",
+        super::terminal_text(&crate::domain::display_name(name))
+    )
+}
+
+/// The row label's lead, in the peek's words: what a block or review waiting elsewhere waits
+/// on (`waiting on @pi`, `waiting on T1`, `@pi reviewing`), then `after T202, T205` for an
+/// on-deck task with unfinished prerequisites, then `before T3, T4` for the unfinished tasks
+/// that run after this one. `None` when there is nothing to say. The peek's footer never
+/// carries it: the peek says it in its own lines.
+pub fn row_wait_label(task: &Task, tasks: &[Task]) -> Option<String> {
+    use crate::ui::queue::{block_wait, BlockWait};
+    if task.archived || task.status == HumanStatus::Done || task.is_notice() {
+        return None;
+    }
+    let elsewhere = (block_wait(task, tasks) == Some(BlockWait::Elsewhere))
+        .then(|| open_block(task))
+        .flatten()
+        .map(|block| {
+            let on = super::terminal_text(&one_line(&block.on.label()));
+            if block.is_review() {
+                format!("{on} reviewing")
+            } else {
+                format!("waiting on {on}")
+            }
+        });
+    let waiting = waiting_after(task, tasks);
+    let after = (!waiting.is_empty()
+        && matches!(task.status, HumanStatus::Ready | HumanStatus::Open))
+    .then(|| format!("after {}", task_list(waiting)));
+    let waiting_before: Vec<u64> = before_numbers(task, tasks)
+        .into_iter()
+        .filter(|number| {
+            live_task(tasks, *number).is_some_and(|other| other.status != HumanStatus::Done)
+        })
+        .collect();
+    let before =
+        (!waiting_before.is_empty()).then(|| format!("before {}", task_list(waiting_before)));
+    let lead = [elsewhere, after, before]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    (!lead.is_empty()).then_some(lead)
+}
+
+/// The task's open block or review record, when it matches the status.
+fn open_block(task: &Task) -> Option<&crate::domain::Block> {
+    let review = task.status == HumanStatus::Review;
+    task.block
+        .as_ref()
+        .filter(|block| block.is_review() == review)
+}
+
+/// What a block or review says to the board row, and since when: the asker's newest reply
+/// when it came after yours, else the needs (then the why) of a block or the done of a review.
+/// A deleted reply never counts, and nobody else's reply hides the asker's.
+fn block_message(block: &crate::domain::Block) -> Option<(String, SystemTime)> {
+    let newest = |by: &str| {
+        block
+            .replies
+            .iter()
+            .enumerate()
+            .rfind(|(_, reply)| !reply.deleted && reply.by == by)
+    };
+    let yours = newest(crate::domain::OWNER).map(|(index, _)| index);
+    let reply = newest(&block.by)
+        .filter(|(index, reply)| !reply.is_owner() && yours.is_none_or(|yours| *index > yours))
+        .map(|(_, reply)| (reply.text.as_str(), reply.at));
+    let own = if block.is_review() {
+        block.done.as_deref()
+    } else {
+        block.needs.as_deref().or(block.why.as_deref())
+    };
+    reply
+        .or_else(|| own.map(|text| (text, block.at)))
+        .map(|(text, at)| (one_line(text).trim().to_string(), at))
+        .filter(|(text, _)| !text.is_empty())
+}
+
+/// A multi-line field flattened onto one line, as the peek shows it.
+fn one_line(text: &str) -> String {
+    text.replace(['\n', '\r'], " ")
+}
+
+/// [`live_line`] whether or not the task is archived: the task page's BLOCKED or REVIEW section
+/// leads with it, and an archived task's page still shows its open block.
+pub fn status_line(task: &Task, tasks: &[Task], now: SystemTime) -> Option<String> {
+    use crate::ui::queue::{block_wait, BlockWait};
+    if task.status == HumanStatus::Done || task.is_notice() {
+        return None;
+    }
+    let age = |at: Option<SystemTime>| {
+        at.map(|at| format!(" · {}", format_age(now, at)))
+            .unwrap_or_default()
+    };
+    let review = task.status == HumanStatus::Review;
+    let block = task
+        .block
+        .as_ref()
+        .filter(|block| block.is_review() == review);
+    let Some(wait) = block_wait(task, tasks) else {
+        let waiting = waiting_after(task, tasks);
+        if waiting.is_empty() || !matches!(task.status, HumanStatus::Ready | HumanStatus::Open) {
+            return None;
+        }
+        let list = waiting
+            .into_iter()
+            .map(|number| {
+                let status = live_task(tasks, number)
+                    .map_or(HumanStatus::Open, |prerequisite| prerequisite.status);
+                format!("T{number} ({})", crate::domain::status_word(status))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Some(format!("after {list}"));
+    };
+    let blocker = |number: u64| {
+        tasks
+            .iter()
+            .find(|other| other.number == Some(number) && !other.is_notice())
+    };
+    // Who raised the block or review, and since when: kept whoever it waits on.
+    let asker = block
+        .map(|block| block.by.as_str())
+        .filter(|by| *by != crate::domain::OWNER)
+        .map(|by| format!("@{by} "))
+        .unwrap_or_default();
+    let since = block
+        .map(|block| block.at)
+        .unwrap_or_else(|| task.status_changed_at());
+    Some(match wait {
+        BlockWait::You => {
+            let what = if review {
+                "needs your review"
+            } else {
+                "blocked on you"
+            };
+            format!("{asker}{what}{}", age(Some(since)))
+        }
+        BlockWait::BlockerDone(number) => format!(
+            "T{number} is done · unblock it{}",
+            age(blocker(number).map(Task::status_changed_at))
+        ),
+        BlockWait::BlockerGone(number) => format!(
+            "T{number} was deleted · unblock it{}",
+            age(blocker(number).and_then(Task::soft_deleted_at))
+        ),
+        BlockWait::Elsewhere => {
+            let on = block.map(|block| block.on.label()).unwrap_or_default();
+            let what = if review {
+                format!("needs a review from {on}")
+            } else {
+                format!("blocked on {on}")
+            };
+            format!("{asker}{what}{}", age(Some(since)))
+        }
+    })
+}
+
+/// The live task carrying `number`, from the board's task slice.
+fn live_task(tasks: &[Task], number: u64) -> Option<&Task> {
+    tasks
+        .iter()
+        .find(|task| task.number == Some(number) && !task.soft_deleted && !task.is_notice())
+}
+
+/// The prerequisites `task` still waits on: live tasks not yet done.
+pub fn waiting_after(task: &Task, tasks: &[Task]) -> Vec<u64> {
+    task.after
+        .iter()
+        .copied()
+        .filter(|number| {
+            live_task(tasks, *number).is_some_and(|task| task.status != HumanStatus::Done)
+        })
+        .collect()
+}
+
+/// `T202, T205`.
+fn task_list(numbers: impl IntoIterator<Item = u64>) -> String {
+    numbers
+        .into_iter()
+        .map(|number| format!("T{number}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The peek's links: `after T202 · started, T205 · done` and the read-only `before T203`.
+pub fn after_peek_lines(task: &Task, tasks: &[Task]) -> Vec<String> {
+    let mut lines = Vec::new();
+    let after = task
+        .after
+        .iter()
+        .filter_map(|number| {
+            live_task(tasks, *number).map(|prerequisite| {
+                format!(
+                    "T{number} · {}",
+                    crate::domain::status_word(prerequisite.status)
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if !after.is_empty() {
+        lines.push(format!("after {}", after.join(", ")));
+    }
+    let before = before_numbers(task, tasks);
+    if !before.is_empty() {
+        lines.push(format!("before {}", task_list(before)));
+    }
+    lines
+}
+
+/// The live, unarchived tasks that run after `task`, by number.
+pub fn before_numbers(task: &Task, tasks: &[Task]) -> Vec<u64> {
+    let Some(number) = task.number else {
+        return Vec::new();
+    };
+    let mut before: Vec<u64> = tasks
+        .iter()
+        .filter(|other| {
+            !other.soft_deleted
+                && !other.is_notice()
+                && !other.archived
+                && other.after.contains(&number)
+        })
+        .filter_map(|other| other.number)
+        .collect();
+    before.sort_unstable();
+    before
+}
+
 // Unit-test adapter: inspect the same title line the board paints.
 #[cfg(test)]
 fn paint_task_row(row: &TaskRowPaint<'_>, geo: &TierGeometry) -> Line<'static> {
@@ -475,12 +745,25 @@ pub fn assert_buffer_mono(buffer: &Buffer) {
 pub struct VerbEntry<'a> {
     pub key: &'a str,
     pub label: &'a str,
+    /// How readily the entry leaves a footer too narrow for it ([`fit_verbs`]). `0` is
+    /// essential (the primary action, save, the way out, `? help`) and stays (all but
+    /// [`COMMANDS_VERB`], which goes when the essentials overflow); otherwise the
+    /// highest number goes first, the rightmost among equals.
+    pub shed: u8,
 }
 
+/// `: commands`, the palette's footer seat beside `? help`. It is essential like `? help`, but a
+/// footer too narrow for its essentials drops it first ([`fit_verbs`]).
+pub const COMMANDS_VERB: VerbEntry<'static> = VerbEntry {
+    key: ":",
+    label: "commands",
+    shed: 0,
+};
+
 /// One palette command row for overlay paint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PaletteCommandRow<'a> {
-    pub label: &'a str,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteCommandRow {
+    pub label: String,
     pub selected: bool,
 }
 
@@ -553,6 +836,25 @@ impl PickerRowState {
     }
 }
 
+/// One painted row of a task-page section (BLOCKED, REVIEW, PAPER TRAIL), and what a click on
+/// it does. Rows come pre-wrapped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockPageRow {
+    pub text: String,
+    pub kind: BlockRowKind,
+    /// The first row of the selected ring stop carries the `▸` gutter.
+    pub selected: bool,
+    pub target: Option<QueueHitTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockRowKind {
+    Plain,
+    Dim,
+    Bold,
+    /// The full-width rule closing the section above the notes.
+    Rule,
+}
 /// The task page's in-place step editor. Its rows replace the selected stored step's text, or
 /// follow the stored rows while an add is pending, so the editor never takes over the footer.
 #[derive(Debug, Clone)]
@@ -611,7 +913,7 @@ pub enum QueueOverlay<'a> {
     /// Searchable command palette (`:`).
     Palette {
         query: &'a str,
-        commands: &'a [PaletteCommandRow<'a>],
+        commands: &'a [PaletteCommandRow],
     },
     /// Help card (`?`).
     Help {
@@ -621,8 +923,19 @@ pub enum QueueOverlay<'a> {
         scroll: usize,
     },
     /// Launch card: the two-choice archived-project modal.
-    LaunchCard { name: &'a str },
-    /// Searchable list card (the parent chooser).
+    /// The block card: why, on and needs for the cursor task or a marked set.
+    BlockCard(BlockCardPaint),
+    /// A decision card: dispatched worktree cleanup (the cursor task or a marked set), and the
+    /// relaunch, start-anyway and bulk start cards, which share its layout and option selector.
+    CleanupConfirm {
+        title: CleanupTitle,
+        lines: Vec<CleanupCardLine>,
+        /// First visible body row; clamped to what fits.
+        scroll: usize,
+        /// Scroll the `▸` option into view over `scroll`.
+        follow: bool,
+    },
+    /// Searchable list card (the parent chooser and the quick pickers).
     ScopeDropdown {
         options: &'a [String],
         selected: usize,
@@ -633,7 +946,11 @@ pub enum QueueOverlay<'a> {
         /// Wrap long options onto continuation rows and window by painted rows. Only the
         /// parent chooser sets it; every other picker keeps one row per option.
         wrap: Option<&'a PickerRowState>,
+        /// The assignee picker's cursor is on a person: the legend offers `ctrl+x remove`.
+        removable: bool,
     },
+    /// The task picker: a search box with the chosen tasks pinned above the matches.
+    AfterPicker(AfterPickerPaint<'a>),
     /// Inline title edit surface (accordion row on standard; full takeover on compact).
     EditTitle { draft: String, cursor_col: u16 },
     /// Full-width notes editor (standard or compact takeover).
@@ -698,27 +1015,83 @@ pub enum QueueOverlay<'a> {
         step_marked: Option<usize>,
         /// The page's in-place add/rename step draft, if one is active.
         inline_step_editor: Option<InlineStepEditor<'a>>,
+        /// The BLOCKED section ahead of the notes, its rule last. Empty unless blocked.
+        block_rows: Vec<BlockPageRow>,
+        /// Reply box caret: (block row, column) while the reply box is open.
+        block_cursor: Option<(usize, u16)>,
+        /// The PAPER TRAIL section after the steps. Empty outside view mode.
+        trail_rows: Vec<BlockPageRow>,
         /// The shared bottom input slot, when a footer field owns one.
         bottom_input: Option<BottomInputSlot<'a>>,
-        /// Footer: scope · created · updated (the task number remains in the header).
+        /// Footer: assignee · base · after · scope (the task number remains in the header).
         meta: String,
-        /// Display width before the scope inside `meta`. The number is chrome, not a scope hit.
+        /// Display offset of the assignee inside `meta`.
+        meta_assignee_x: Option<u16>,
+        /// Display width of the assignee inside `meta`.
+        meta_assignee_width: u16,
+        /// Display offset and width of the dispatch base inside `meta`.
+        meta_base_x: Option<u16>,
+        meta_base_width: u16,
+        /// Display offset of the scope inside `meta`. The number is chrome, not a scope hit.
         meta_scope_x: u16,
         /// Display width of scope inside `meta`, carried separately so mouse geometry never
         /// parses user-controlled project names from rendered text.
         meta_scope_width: u16,
         /// Which field owns the cursor, if any (view mode: none).
         focus: Option<CaptureField>,
-        scope_dropdown: Option<FormScopeDropdown<'a>>,
+        scope_dropdown: Option<FormDropdown<'a>>,
     },
 }
 
-/// Form-scope chooser state embedded in its parent form overlay. Its options intentionally
-/// carry `TaskScope` labels only, never the board selector's session-only all-projects value.
+/// Paint input for the block or review card. Field text arrives raw; the painter wraps it.
+#[derive(Debug, Clone)]
+pub struct BlockCardPaint {
+    pub title: String,
+    /// The review card: done, check, next and on instead of why, on and needs.
+    pub review: bool,
+    pub why: String,
+    pub needs: String,
+    pub done: String,
+    /// One check per line.
+    pub checks: String,
+    pub next: String,
+    /// `you`, `task`, `agent` or `other`.
+    pub on_kind: &'static str,
+    /// The typed task number, agent or text, for `task`, `agent` and `other`.
+    pub on_text: String,
+    /// Focused field and its caret, counted in characters: 0 why, 1 on, 2 needs on a block
+    /// card; 0 done, 1 check, 2 next, 3 on on a review card.
+    pub focus: usize,
+    pub cursor: usize,
+    pub refusal: Option<String>,
+    /// Editing an open block: Enter saves rather than blocks.
+    pub edit: bool,
+}
+
+/// Footer chooser state embedded in its parent form overlay.
 #[derive(Debug, Clone, Copy)]
-pub struct FormScopeDropdown<'a> {
+pub struct FormDropdown<'a> {
     pub options: &'a [String],
     pub selected: usize,
+    pub field: CaptureField,
+    pub anchor_x: u16,
+}
+
+/// The reply box open inline under a blocked or review board row: two labelled context lines
+/// (why and needs, or done and next), then the draft, then any refusal. Text arrives raw; the
+/// painter wraps it.
+#[derive(Debug, Clone, Copy)]
+pub struct RowReplyPaint<'a> {
+    pub task: Uuid,
+    pub context: [Option<(&'static str, &'a str)>; 2],
+    /// The empty draft's hint: `reply…`, or `feedback to @claude…`.
+    pub placeholder: &'a str,
+    pub(crate) draft: &'a crate::ui::edit::EditBuffer,
+    /// The draft's wrap width, recorded for vertical caret movement.
+    pub width: &'a std::cell::Cell<usize>,
+    pub refusal: Option<&'a str>,
+    /// Place the terminal cursor in the draft (the box owns input).
+    pub caret: bool,
 }
 
 /// Pure paint input for one queue frame. No app-loop state machines.
@@ -739,6 +1112,11 @@ pub struct QueueFrameModel<'a> {
     /// Paint a dim project heading wherever the project changes inside a section (project
     /// order on a multi-scope surface).
     pub project_groups: bool,
+    /// Name the assignee on the peek's closing line.
+    pub assignee_labels: bool,
+    /// `z`: rows paint without their `└─` message lines; a row that had one ends its label
+    /// with [`HIDDEN_MESSAGE_MARKER`] instead.
+    pub messages_hidden: bool,
     /// The active lens's search query used by the shared footer input and empty state.
     pub search_query: &'a str,
     /// Whether the query is pinned while normal board keys own input.
@@ -748,8 +1126,6 @@ pub struct QueueFrameModel<'a> {
     /// Current board lens painted on the idle status row (for example `desk` or
     /// `tsk · #release`).
     pub context: String,
-    /// Whether `context` is a release-update notice rather than a board lens.
-    pub has_update_notice: bool,
     /// Optional status-line notice; replaces the default counts when set.
     pub status_message: Option<&'a str>,
     /// Column offset of the delete-notice `ctrl+u undo` control inside `status_message`, when
@@ -766,6 +1142,8 @@ pub struct QueueFrameModel<'a> {
     pub now: SystemTime,
     /// Optional transient overlay (palette / help / scope dropdown).
     pub overlay: QueueOverlay<'a>,
+    /// The reply box open under a blocked row (`r`), woven in like the peek.
+    pub row_reply: Option<RowReplyPaint<'a>>,
     /// List viewport offset. Scrollbar and the last paint persist this; row click leaves it.
     pub list_scroll: usize,
     /// Nudge `list_scroll` so the selection stays on screen.
@@ -845,9 +1223,11 @@ pub enum QueueHitTarget {
     ///
     /// [`BoardIntent::ToggleDoneDrawer`]: crate::ui::input::BoardIntent::ToggleDoneDrawer
     Drawer,
-    /// The done drawer's archived group header: selects the row and toggles the group.
+    /// The done drawer's archived group header: a click selects it, a double-click folds or
+    /// unfolds the group.
     ArchivedHeader,
-    /// The ON DECK inbox group header: selects the row and toggles the group.
+    /// The ON DECK inbox group header: a click selects it, a double-click folds or unfolds
+    /// the group.
     InboxHeader,
     /// One painted row of the open palette, indexed exactly as
     /// `BoardModel::visible_commands()` orders them, so a click resolves straight to that
@@ -857,8 +1237,10 @@ pub enum QueueHitTarget {
     /// One painted row of an open searchable list picker (the parent chooser),
     /// indexed in the visible (filtered) order.
     ListPickerOption(usize),
-    /// One choice row of the launch card (0 = unarchive, 1 = keep archived).
-    LaunchOption(usize),
+    /// One painted tab of a tabbed list picker's tab row.
+    ListPickerTab(crate::ui::board::FilterTab),
+    /// One option line of a decision card, by its place in the card's option list.
+    CleanupOption(usize),
     /// The open help card's full-frame dismiss hit. The card's own chrome and searchable
     /// body shadow it, so only a click on the visible board behind the card closes Help.
     HelpDismiss,
@@ -869,6 +1251,14 @@ pub enum QueueHitTarget {
     FormNotes(usize),
     /// Shared-form scope row. A click opens the pending scope dropdown, never cycles scope.
     FormScope,
+    /// Shared-form assignee portion of the task-page footer.
+    FormAssignee,
+    /// Shared-form dispatch base portion of the task-page footer.
+    FormBase,
+    /// Shared-form `after` portion of the task-page footer.
+    FormAfter,
+    /// One number of the task-page footer's read-only `before T6, T7`: a click opens it.
+    FooterBefore(u64),
     /// One painted steps step row on the open task page, indexed by the step's
     /// absolute position in the task's steps (storage order), whatever window
     /// scroll painted it — the same absolute-index discipline [`Command`] follows.
@@ -879,9 +1269,18 @@ pub enum QueueHitTarget {
     /// One painted row of a task-page relation entry (every wrapped row of it), indexed
     /// like [`RelationRow::target`]: 0 is the parent line, `1 + k` the k-th child.
     Relation(usize),
-    /// One painted option in a shared form's scope dropdown, indexed into that form's own
-    /// `TaskScope` choices. It cannot name the board selector's all-projects choice.
-    FormScopeOption(usize),
+    /// A closed block or review round on the PAPER TRAIL, by its index in `past_blocks`: a
+    /// click selects it and expands or folds it.
+    TrailRecord(usize),
+    /// The PAPER TRAIL heading: a click expands or collapses the trail.
+    TrailHeading,
+    /// A review check on the task page's REVIEW section, by its index in the round: a click
+    /// selects it and cycles it.
+    PageCheck(usize),
+    /// The REVIEW section's `N passed` line: a click shows or folds the passed checks.
+    PassedFold,
+    /// One painted option in a shared form footer dropdown, indexed into that field's choices.
+    FormDropdownOption(usize),
     /// One cell of the board list's overflow scrollbar (track or thumb). The usize is the
     /// content offset that cell jumps the viewport to. Does not change selection or peek.
     ListScroll(usize),
@@ -932,6 +1331,10 @@ pub struct QueueHitMap {
     /// Furthest help-card scroll the painted frame could show, when the card was up.
     /// The reducer clamps with it so the offset never runs past the last page.
     pub help_max_scroll: Option<usize>,
+    /// Furthest cleanup-card scroll the painted frame could show, when the card was up.
+    pub cleanup_max_scroll: Option<usize>,
+    /// Where the cleanup card's option lines sit among its scrollable rows, when it was up.
+    pub cleanup_layout: Option<CleanupLayout>,
     /// Footer rectangle recorded by the painter, including any rows reserved for a bottom
     /// input. Mouse routing uses this instead of reconstructing a footer height.
     pub footer: Option<Rect>,
@@ -997,12 +1400,53 @@ fn local_rect(area: Rect, local: Rect) -> Rect {
     )
 }
 
+/// The glyph a review check paints with: open `○`, passed `✓`, failed `✗`.
+pub fn check_glyph(state: crate::domain::CheckState) -> &'static str {
+    match state {
+        crate::domain::CheckState::Open => "○",
+        crate::domain::CheckState::Passed => "✓",
+        crate::domain::CheckState::Failed => "✗",
+    }
+}
+
 /// Status glyph for a human status (the: static; no agent spin).
 pub fn status_glyph(status: HumanStatus) -> &'static str {
     match status {
-        HumanStatus::Todo => "○",
-        HumanStatus::Doing => "●",
+        HumanStatus::Open | HumanStatus::Ready => "○",
+        HumanStatus::Started => "●",
+        HumanStatus::Blocked => "■",
+        HumanStatus::Review => "▲",
         HumanStatus::Done => "✓",
+    }
+}
+
+/// Glyph for a task blocked on another task or on something other than you.
+pub const BLOCKED_ELSEWHERE_GLYPH: &str = "□";
+
+/// Glyph for a task in review on an agent or on something other than you.
+pub const REVIEW_ELSEWHERE_GLYPH: &str = "△";
+
+/// Status glyph derived only from durable task state. `tasks` is the board's task slice: a
+/// block on a task that is done or gone waits on you again, so it paints like one on you.
+pub fn task_status_glyph(task: &Task, tasks: &[Task]) -> &'static str {
+    use crate::ui::queue::{block_wait, BlockWait};
+    let elsewhere = block_wait(task, tasks) == Some(BlockWait::Elsewhere);
+    if task.status == HumanStatus::Blocked && elsewhere {
+        BLOCKED_ELSEWHERE_GLYPH
+    } else if task.status == HumanStatus::Review
+        && elsewhere
+        && task.block.as_ref().is_some_and(|block| block.is_review())
+    {
+        REVIEW_ELSEWHERE_GLYPH
+    } else if task.status == HumanStatus::Started
+        && task
+            .dispatch
+            .as_ref()
+            .is_some_and(|dispatch| !dispatch.cleaned)
+    {
+        "◉"
+    } else {
+        status_glyph(task.status)
     }
 }
 
@@ -1266,15 +1710,22 @@ pub fn draw_task_column(
         step_scroll,
         step_marked,
         ref inline_step_editor,
+        ref block_rows,
+        block_cursor,
+        ref trail_rows,
         bottom_input: _,
         ref meta,
+        meta_assignee_x,
+        meta_assignee_width,
+        meta_base_x,
+        meta_base_width,
         meta_scope_x,
         meta_scope_width,
         focus,
         scope_dropdown,
     } = model.overlay
     {
-        paint_task_page(
+        let page_layout = paint_task_page(
             frame,
             geo,
             surface,
@@ -1295,7 +1746,14 @@ pub fn draw_task_column(
             step_scroll,
             step_marked,
             inline_step_editor.as_ref(),
+            block_rows,
+            block_cursor,
+            trail_rows,
             meta,
+            meta_assignee_x,
+            meta_assignee_width,
+            meta_base_x,
+            meta_base_width,
             meta_scope_x,
             meta_scope_width,
             focus,
@@ -1303,8 +1761,8 @@ pub fn draw_task_column(
             true,
             &mut hits,
         );
-        if let Some(dropdown) = scope_dropdown {
-            paint_page_scope_dropdown(frame, geo, surface, dropdown, &mut hits);
+        if let (Some(dropdown), Some(lay)) = (scope_dropdown, page_layout) {
+            paint_page_form_dropdown(frame, geo, surface, dropdown, &lay, meta, &mut hits);
         }
     }
     if let Some(modal) = modal {
@@ -1369,7 +1827,7 @@ fn draw_queue_frame_impl(
         // First pass measures overflow at the full row width; when a scrollbar is
         // needed, rebuild at the narrowed content width so wrapped titles and the
         // thumb share one consistent row count.
-        let (mut list_rows, mut selected_idx) = build_list_rows(model, geo);
+        let (mut list_rows, mut selected_idx, mut reply_caret) = build_list_rows(model, geo);
         let top = geo.viewport_top;
         let viewport_h = geo.viewport_height as usize;
         let (_, provisional_track) =
@@ -1380,6 +1838,7 @@ fn draw_queue_frame_impl(
             let rebuilt = build_list_rows(model, &narrowed);
             list_rows = rebuilt.0;
             selected_idx = rebuilt.1;
+            reply_caret = rebuilt.2;
             narrowed
         } else {
             *geo
@@ -1398,8 +1857,15 @@ fn draw_queue_frame_impl(
         };
         let max_scroll = list_rows.len().saturating_sub(min_content);
         let mut scroll = model.list_scroll.min(max_scroll);
-        if model.follow_list {
-            if let Some(idx) = selected_idx {
+        // While the inline reply box owns input its caret is the pin, whatever the follow
+        // flag says: typing never edits text scrolled out of view.
+        if model.follow_list || reply_caret.is_some() {
+            let pin = if let Some((row, _)) = reply_caret {
+                Some(row)
+            } else {
+                selected_idx
+            };
+            if let Some(idx) = pin {
                 let visible_h = viewport_h
                     .saturating_sub(header_chrome_rows(&list_rows, scroll))
                     .max(1);
@@ -1411,6 +1877,11 @@ fn draw_queue_frame_impl(
                         .saturating_sub(min_content)
                         .min(max_scroll);
                 }
+            }
+            // The pin keeps the selected task's tail (live line, peek) in view when it fits;
+            // when the whole row cannot fit, its head (the `▸` title line) wins.
+            if let (None, Some(head)) = (reply_caret, pinned_head(&list_rows, pin)) {
+                scroll = scroll.min(head);
             }
         }
         let sticky = sticky_header_at(&list_rows, scroll);
@@ -1444,6 +1915,21 @@ fn draw_queue_frame_impl(
                 base_list_interactive,
             );
         }
+        if let Some((row, column)) = reply_caret {
+            if row >= scroll && row < scroll + content_h {
+                let screen_y = y.saturating_add((row - scroll) as u16);
+                crate::ui::edit::place_edit_cursor(
+                    frame,
+                    Rect::new(
+                        surface.x,
+                        surface.y.saturating_add(screen_y),
+                        content_width,
+                        1,
+                    ),
+                    column,
+                );
+            }
+        }
         if let Some(track) = track {
             let total = list_rows.len();
             scrollbar::paint(frame, local_rect(surface, track), scroll, total);
@@ -1471,6 +1957,7 @@ fn draw_queue_frame_impl(
 
 /// Rule, status and verb rows. `shared` marks the wide footer, which also owns the palette
 /// query row its column can no longer paint.
+#[allow(clippy::too_many_arguments)]
 fn paint_footer(
     frame: &mut Frame<'_>,
     model: &QueueFrameModel<'_>,
@@ -1569,8 +2056,10 @@ fn paint_footer(
             // the board's verb bar stays blank underneath it.
             QueueOverlay::Palette { .. }
             | QueueOverlay::Help { .. }
-            | QueueOverlay::LaunchCard { .. }
-            | QueueOverlay::ScopeDropdown { .. } => &[],
+            | QueueOverlay::BlockCard(_)
+            | QueueOverlay::CleanupConfirm { .. }
+            | QueueOverlay::ScopeDropdown { .. }
+            | QueueOverlay::AfterPicker(_) => &[],
             QueueOverlay::QuickAdd { recovery, .. } if *recovery => &[],
             QueueOverlay::QuickAdd { .. } => QUICK_ADD_VERBS,
             QueueOverlay::Search { .. } => model.verb_items,
@@ -1661,15 +2150,18 @@ fn bottom_input_slot<'a>(overlay: &'a QueueOverlay<'a>) -> Option<&'a BottomInpu
 pub(crate) const QUICK_ADD_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "enter",
-        label: "save",
+        label: "add",
+        shed: 0,
     },
     VerbEntry {
         key: "tab",
-        label: "details",
+        label: "notes",
+        shed: 1,
     },
     VerbEntry {
         key: "esc",
         label: "close",
+        shed: 0,
     },
 ];
 
@@ -1679,56 +2171,104 @@ const FORM_TITLE_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "enter",
         label: "next",
+        shed: 1,
     },
     VerbEntry {
         key: "shift+enter",
         label: "save",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "cancel",
+        shed: 0,
     },
 ];
+/// Notes names its plain Enter too: it opens a line rather than saving (#204). It goes last so
+/// a narrow pane clips the hint before the save and cancel routes.
 const FORM_NOTES_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "shift+enter",
         label: "save",
+        shed: 0,
     },
     VerbEntry {
         key: "tab",
         label: "next",
+        shed: 2,
     },
     VerbEntry {
         key: "esc",
         label: "cancel",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "enter",
+        label: "new line",
+        shed: 1,
     },
 ];
 const FORM_SCOPE_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "enter",
         label: "choose",
+        shed: 0,
     },
     VerbEntry {
         key: "space",
         label: "cycle",
+        shed: 1,
     },
     VerbEntry {
         key: "esc",
         label: "cancel",
+        shed: 0,
+    },
+];
+const FORM_ASSIGNEE_VERBS: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "space/←→",
+        label: "cycle",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "enter",
+        label: "choose",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
+    },
+];
+const FORM_BASE_VERBS: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "choose",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
     },
 ];
 const FORM_SCOPE_DROPDOWN_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "↑↓",
         label: "move",
+        shed: 1,
     },
     VerbEntry {
         key: "enter",
         label: "choose",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "close",
+        shed: 0,
     },
 ];
 
@@ -1743,6 +2283,8 @@ pub(crate) fn form_verb_items(
         CaptureField::Title => FORM_TITLE_VERBS,
         CaptureField::Notes => FORM_NOTES_VERBS,
         CaptureField::Scope => FORM_SCOPE_VERBS,
+        CaptureField::Assignee => FORM_ASSIGNEE_VERBS,
+        CaptureField::Base | CaptureField::After => FORM_BASE_VERBS,
     }
 }
 
@@ -1752,10 +2294,12 @@ const EDIT_TITLE_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "shift+enter",
         label: "save",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "cancel",
+        shed: 0,
     },
 ];
 
@@ -1765,10 +2309,17 @@ const EDIT_NOTES_VERBS: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "shift+enter",
         label: "save",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "cancel",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "enter",
+        label: "new line",
+        shed: 1,
     },
 ];
 
@@ -1794,8 +2345,27 @@ fn paint_overlay(
         } => {
             paint_help_overlay(frame, geo, surface, query, lines, *scroll, hits);
         }
-        QueueOverlay::LaunchCard { name } => {
-            paint_launch_card(frame, geo, surface, name, hits);
+        QueueOverlay::BlockCard(card) => {
+            paint_block_card(frame, geo, surface, card, hits);
+        }
+        QueueOverlay::CleanupConfirm {
+            title,
+            lines,
+            scroll,
+            follow,
+        } => {
+            paint_cleanup_card(
+                frame,
+                geo,
+                surface,
+                CleanupCard {
+                    title,
+                    lines,
+                    scroll: *scroll,
+                    follow: *follow,
+                },
+                hits,
+            );
         }
         QueueOverlay::ScopeDropdown {
             options,
@@ -1803,16 +2373,21 @@ fn paint_overlay(
             title,
             query,
             wrap,
+            removable,
         } => {
+            let legend = removable.then_some(ASSIGNEE_PERSON_FOOTER);
             if let Some(state) = wrap {
                 paint_wrapping_picker(
-                    frame, geo, surface, options, *selected, *title, *query, state, hits,
+                    frame, geo, surface, options, *selected, *title, *query, state, legend, hits,
                 );
             } else {
                 paint_scope_dropdown(
-                    frame, geo, surface, options, *selected, *title, *query, hits,
+                    frame, geo, surface, options, *selected, *title, *query, legend, hits,
                 );
             }
+        }
+        QueueOverlay::AfterPicker(picker) => {
+            paint_after_picker(frame, geo, surface, picker, hits);
         }
         QueueOverlay::EditTitle {
             ref draft,
@@ -1846,14 +2421,21 @@ fn paint_overlay(
             step_scroll,
             step_marked,
             ref inline_step_editor,
+            ref block_rows,
+            block_cursor,
+            ref trail_rows,
             bottom_input: _,
             ref meta,
+            meta_assignee_x,
+            meta_assignee_width,
+            meta_base_x,
+            meta_base_width,
             meta_scope_x,
             meta_scope_width,
             focus,
             scope_dropdown,
         } => {
-            paint_task_page(
+            let page_layout = paint_task_page(
                 frame,
                 geo,
                 surface,
@@ -1874,7 +2456,14 @@ fn paint_overlay(
                 *step_scroll,
                 *step_marked,
                 inline_step_editor.as_ref(),
+                block_rows,
+                *block_cursor,
+                trail_rows,
                 meta,
+                *meta_assignee_x,
+                *meta_assignee_width,
+                *meta_base_x,
+                *meta_base_width,
                 *meta_scope_x,
                 *meta_scope_width,
                 *focus,
@@ -1882,8 +2471,8 @@ fn paint_overlay(
                 false,
                 hits,
             );
-            if let Some(dropdown) = scope_dropdown {
-                paint_page_scope_dropdown(frame, geo, surface, *dropdown, hits);
+            if let (Some(dropdown), Some(lay)) = (scope_dropdown, page_layout) {
+                paint_page_form_dropdown(frame, geo, surface, *dropdown, &lay, meta, hits);
             }
         }
     }
@@ -2133,33 +2722,15 @@ fn paint_modal_card(
             rule_offset,
             modal_plain_border_row('├', '─', '┤', card_w),
         );
-        paint_row_in(
-            frame,
-            surface,
-            area,
-            legend_offset,
-            modal_legend_line(legend, card_w as usize),
-        );
+        let (legend_line, entry_hits) = modal_legend_line(legend, card_w as usize);
+        paint_row_in(frame, surface, area, legend_offset, legend_line);
         if let Some(target_for) = legend_hits {
-            // Mirror `modal_legend_line`'s layout: two leading pad cells, then
-            // `key label` per entry with ` · ` between them.
-            let mut cursor = x0.saturating_add(2);
             let legend_y = y0.saturating_add(legend_offset);
-            for (index, entry) in legend.iter().enumerate() {
-                if index > 0 {
-                    cursor = cursor.saturating_add(3);
-                }
-                let entry_w = display_width(&format!("{} {}", entry.key, entry.label)) as u16;
-                let right = x0.saturating_add(card_w).saturating_sub(1);
-                if cursor >= right {
-                    break;
-                }
-                let width = entry_w.min(right.saturating_sub(cursor));
+            for (index, x, width) in entry_hits {
                 hits.push(
                     target_for(index),
-                    Rect::new(cursor, legend_y, width.max(1), 1),
+                    Rect::new(x0.saturating_add(x), legend_y, width.max(1), 1),
                 );
-                cursor = cursor.saturating_add(entry_w);
             }
         }
     }
@@ -2262,18 +2833,24 @@ fn modal_title_border_row(title: &str, card_w: u16) -> (Line<'static>, u16) {
     (bound_line(Line::from(spans), width), close_x)
 }
 
-/// A modal card's footer legend line: dim separators and labels, bold keys, e.g.
-/// `  esc close · enter run`.
-fn modal_legend_line(entries: &[VerbEntry<'_>], width: usize) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = vec![Span::styled("  ".to_string(), style_plain())];
-    for (i, entry) in entries.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" · ".to_string(), style_dim()));
-        }
-        spans.push(Span::styled(entry.key.to_string(), style_bold()));
-        spans.push(Span::styled(format!(" {}", entry.label), style_dim()));
-    }
-    bound_line(Line::from(spans), width)
+/// A modal card's footer legend line across the card's `card_w` cells: dim separators and
+/// labels, bold keys, e.g. `  esc close · enter run`. The first and last cells belong to the
+/// side borders, and one blank cell keeps the last entry off the right border. Hits are
+/// (entry index, x from the card's left edge, width).
+fn modal_legend_line(
+    entries: &[VerbEntry<'_>],
+    card_w: usize,
+) -> (Line<'static>, Vec<(usize, u16, u16)>) {
+    let keys: Vec<String> = entries.iter().map(|entry| entry.key.to_string()).collect();
+    let fit = fit_verbs(entries, &keys, usize::MAX, card_w.saturating_sub(3), 1);
+    let (line, hits) = paint_fitted_verbs(entries, &keys, &fit, 1, style_dim());
+    let mut spans = vec![Span::styled(" ".to_string(), style_plain())];
+    spans.extend(line.spans);
+    let hits = hits
+        .into_iter()
+        .map(|(index, x, w)| (index, x.saturating_add(1), w))
+        .collect();
+    (Line::from(spans), hits)
 }
 
 /// The vertical band a modal card ( [`paint_modal_card`] ) may center within: the whole
@@ -2289,14 +2866,17 @@ const HELP_FOOTER: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "type",
         label: "search",
+        shed: 1,
     },
     VerbEntry {
         key: "↑↓",
         label: "scroll",
+        shed: 1,
     },
     VerbEntry {
         key: "esc",
-        label: "clear/close",
+        label: "clear / close",
+        shed: 0,
     },
 ];
 
@@ -2305,14 +2885,17 @@ const PALETTE_FOOTER: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "↑↓",
         label: "move",
+        shed: 1,
     },
     VerbEntry {
         key: "enter",
         label: "run",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "close",
+        shed: 0,
     },
 ];
 
@@ -2320,14 +2903,42 @@ const SCOPE_FOOTER: &[VerbEntry<'static>] = &[
     VerbEntry {
         key: "↑↓",
         label: "move",
+        shed: 1,
     },
     VerbEntry {
         key: "enter",
         label: "choose",
+        shed: 0,
     },
     VerbEntry {
         key: "esc",
         label: "close",
+        shed: 0,
+    },
+];
+
+/// The assignee picker on a person row: `ctrl+x remove` joins the legend. A narrow card sheds
+/// `↑↓ move`, then `enter choose`, before the removal key nobody would guess.
+const ASSIGNEE_PERSON_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "↑↓",
+        label: "move",
+        shed: 2,
+    },
+    VerbEntry {
+        key: "enter",
+        label: "choose",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "ctrl+x",
+        label: "remove",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "close",
+        shed: 0,
     },
 ];
 
@@ -2351,7 +2962,7 @@ fn paint_palette_overlay(
     geo: &TierGeometry,
     surface: Rect,
     query: &str,
-    commands: &[PaletteCommandRow<'_>],
+    commands: &[PaletteCommandRow],
     hits: &mut QueueHitMap,
 ) {
     let width = geo.row_width;
@@ -2633,19 +3244,6 @@ pub struct TaskPageLayout {
     pub meta_y: Option<u16>,
 }
 
-/// What the page's steps section asks of the layout (AC-24).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepsSection {
-    /// No stored or draft steps: no section paints, so notes keep the full content region.
-    /// An inline add draft contributes a transient step view and therefore uses `Steps`.
-    None,
-    /// At least one step: the section follows the notes after two blank rows, and
-    /// the shared content viewport scrolls when the resulting page overflows.
-    Steps,
-}
-
-/// Classify the page's steps section from its payload facts: steps alone
-/// decide it.
 /// The task page's step header: `steps 1/3 · 33%`, the percent rounded down so 100% means
 /// every stored step is done. Counted on read, never saved; no steps keeps `steps 0/0`.
 fn steps_header(done: usize, total: usize) -> String {
@@ -2654,15 +3252,6 @@ fn steps_header(done: usize, total: usize) -> String {
     }
     format!("  steps {done}/{total} \u{b7} {}%", done * 100 / total)
 }
-
-pub fn steps_section(steps: usize) -> StepsSection {
-    if steps > 0 {
-        StepsSection::Steps
-    } else {
-        StepsSection::None
-    }
-}
-
 /// The window of steps steps the section's step rows show.
 ///
 /// `avail` is the row count the section has for steps (its block minus the label). When
@@ -2693,6 +3282,8 @@ pub struct PageContentLayout {
     /// First children-block row, after the `+ step` row and one blank row. Equals
     /// `total_rows` when the block is empty.
     pub children_start: usize,
+    /// First row of the PAPER TRAIL, one blank row after `+ step` and the children.
+    pub trail_start: usize,
     pub total_rows: usize,
     pub max_scroll: usize,
 }
@@ -2702,6 +3293,7 @@ pub fn page_content_layout(
     relation_rows: usize,
     child_rows: usize,
     steps: usize,
+    trail_rows: usize,
     viewport_rows: u16,
 ) -> PageContentLayout {
     let note_rows = note_rows.max(1);
@@ -2724,16 +3316,24 @@ pub fn page_content_layout(
         steps_start
     };
     let steps_end = steps_start + usize::from(steps > 0) + steps;
-    let (children_start, total_rows) = if child_rows > 0 {
-        let start = steps_end + 1;
-        (start, start + child_rows + 1)
+    // Direct children follow the `+ step` row after one blank row; the PAPER TRAIL follows
+    // the last of them (or the `+ step` row) after one more.
+    let children_start = steps_end + 1;
+    let trail_start = if child_rows > 0 {
+        children_start + child_rows + 1
     } else {
-        (steps_end + 1, steps_end + 1)
+        children_start
+    };
+    let total_rows = if trail_rows == 0 {
+        trail_start
+    } else {
+        trail_start + trail_rows + 1
     };
     PageContentLayout {
         relation_start,
         steps_start,
         children_start,
+        trail_start,
         total_rows,
         max_scroll: total_rows.saturating_sub(viewport),
     }
@@ -2763,29 +3363,44 @@ pub fn steps_window(total: usize, scroll: usize, avail: u16) -> StepsWindow {
     }
 }
 
-/// Build the fixed frame around the task page's shared content viewport. `section`
-/// remains an input for callers that classify a task, but the content itself owns
-/// the notes/steps allocation and scrolls as one region.
-pub fn task_page_layout(
+/// The fixed frame around the task page's shared content viewport, which owns the
+/// notes/steps allocation and scrolls as one region. The footer uses the same wrap engine
+/// and width as its painter.
+pub fn task_page_layout_with_meta(
     geo: &TierGeometry,
-    _section: StepsSection,
-    _notes_floor: u16,
     title_rows: u16,
+    meta: &str,
 ) -> TaskPageLayout {
-    let height = geo.height;
+    task_page_layout_rows(geo, title_rows, footer_rows(meta, geo.row_width).len())
+}
+
+fn footer_rows(meta: &str, width: u16) -> Vec<super::edit::WrappedRow> {
+    super::edit::wrap_text(meta, usize::from(width.saturating_sub(2)))
+}
+
+fn task_page_layout_rows(
+    geo: &TierGeometry,
+    title_rows: u16,
+    footer_rows: usize,
+) -> TaskPageLayout {
     let bottom = [geo.rule_row, geo.status_row, geo.verb_row]
         .into_iter()
         .flatten()
         .min()
-        .unwrap_or(height);
+        .unwrap_or(geo.height);
     // Blank row 0, the title's wrapped rows from 1, divider, notes, steps, meta last.
     let title_rows = title_rows.max(1);
     let title_y: u16 = if bottom >= 2 { 1 } else { 0 };
     let title_end = title_y.saturating_add(title_rows);
-    let meta_y = if bottom >= 4 { Some(bottom - 1) } else { None };
+    // Even at tiny heights the footer cannot overlap the title or the last note row.
+    let footer_rows = u16::try_from(footer_rows)
+        .unwrap_or(u16::MAX)
+        .min(bottom.saturating_sub(title_end.saturating_add(1)));
+    let meta_y = (bottom >= 4 && footer_rows > 0).then(|| bottom - footer_rows);
+    let content_end = meta_y.unwrap_or(bottom);
     // The divider shows only when a note row survives under it; otherwise the
     // notes body starts directly under the title.
-    let divider_y = if bottom >= title_end.saturating_add(3) {
+    let divider_y = if content_end >= title_end.saturating_add(2) {
         Some(title_end)
     } else {
         None
@@ -2795,7 +3410,6 @@ pub fn task_page_layout(
     } else {
         bottom
     };
-    let content_end = meta_y.unwrap_or(bottom);
     let content_rows = content_end.saturating_sub(notes_y);
     TaskPageLayout {
         bottom,
@@ -2830,6 +3444,23 @@ pub fn task_column_title_cap(geo: &TierGeometry) -> usize {
 /// body starts on the row after the rule, and the meta footer keeps the last row above the
 /// shared footer. There is no in-page title block and no divider.
 pub fn task_column_layout(geo: &TierGeometry, title_rows: u16) -> TaskPageLayout {
+    task_column_layout_rows(geo, title_rows, 1)
+}
+
+/// [`task_column_layout`] with a meta footer that wraps onto as many rows as `meta` needs.
+pub fn task_column_layout_with_meta(
+    geo: &TierGeometry,
+    title_rows: u16,
+    meta: &str,
+) -> TaskPageLayout {
+    task_column_layout_rows(geo, title_rows, footer_rows(meta, geo.row_width).len())
+}
+
+fn task_column_layout_rows(
+    geo: &TierGeometry,
+    title_rows: u16,
+    footer_rows: usize,
+) -> TaskPageLayout {
     let (title_y, bottom) = task_column_bounds(geo);
     let title_rows = title_rows.clamp(1, task_column_title_cap(geo) as u16);
     // The title rows (glyph, identifier, state slot on the first) start on the selector
@@ -2838,7 +3469,10 @@ pub fn task_column_layout(geo: &TierGeometry, title_rows: u16) -> TaskPageLayout
         .saturating_add(title_rows)
         .saturating_add(1)
         .min(bottom);
-    let meta_y = (bottom >= notes_y.saturating_add(2)).then(|| bottom - 1);
+    let footer_rows = u16::try_from(footer_rows)
+        .unwrap_or(u16::MAX)
+        .min(bottom.saturating_sub(notes_y.saturating_add(1)));
+    let meta_y = (footer_rows > 0).then(|| bottom - footer_rows);
     let content_end = meta_y.unwrap_or(bottom);
     TaskPageLayout {
         bottom,
@@ -2909,33 +3543,33 @@ fn paint_task_page(
     step_scroll: usize,
     step_marked: Option<usize>,
     inline_step_editor: Option<&InlineStepEditor<'_>>,
+    block_rows: &[BlockPageRow],
+    block_cursor: Option<(usize, u16)>,
+    trail_rows: &[BlockPageRow],
     meta: &str,
+    meta_assignee_x: Option<u16>,
+    meta_assignee_width: u16,
+    meta_base_x: Option<u16>,
+    meta_base_width: u16,
     meta_scope_x: u16,
     meta_scope_width: u16,
     focus: Option<CaptureField>,
     footer_input_open: bool,
     column: bool,
     hits: &mut QueueHitMap,
-) {
+) -> Option<TaskPageLayout> {
     let width = geo.row_width;
     if width == 0 || geo.height == 0 {
-        return;
+        return None;
     }
-    // `focus == Notes` arrives from the same frame's input mode the payload builder
-    // used, so both sides of the payload/paint seam budget the same notes floor.
     let title_row_count = header_rows.len().max(1) as u16;
     let lay = if column {
-        task_column_layout(geo, title_row_count)
+        task_column_layout_with_meta(geo, title_row_count, meta)
     } else {
-        task_page_layout(
-            geo,
-            steps_section(step_views.len()),
-            u16::from(focus == Some(CaptureField::Notes)),
-            title_row_count,
-        )
+        task_page_layout_with_meta(geo, title_row_count, meta)
     };
     if lay.bottom == 0 {
-        return;
+        return None;
     }
     if !column {
         frame.render_widget(
@@ -3077,6 +3711,8 @@ fn paint_task_page(
 
     // Notes and steps form one vertical stream. Steps begin two blank rows after the
     // notes, and the header and metadata footer never participate in this scroll.
+    // A blocked task's BLOCKED section and its rule lead the stream, ahead of the notes.
+    let block_count = block_rows.len();
     let note_count = notes_rows.len().max(1);
     let step_rows: usize = step_views.iter().map(|step| step.rows.len().max(1)).sum();
     // The parent line paints before the steps, the children after the `+ step` row.
@@ -3084,10 +3720,11 @@ fn paint_task_page(
         relation_rows.iter().partition(|row| row.after_steps);
     // Every checklist has a trailing add control, including an empty one.
     let content = page_content_layout(
-        note_count,
+        block_count + note_count,
         parent_rows.len(),
         child_rows.len(),
         step_rows + 1,
+        trail_rows.len(),
         lay.notes_rows,
     );
     let scroll = step_scroll.min(content.max_scroll);
@@ -3120,7 +3757,32 @@ fn paint_task_page(
             break;
         }
         let y = lay.notes_y.saturating_add(visible as u16);
-        if absolute < note_count {
+        let section = if absolute >= content.trail_start {
+            trail_rows.get(absolute - content.trail_start)
+        } else if absolute < block_count {
+            block_rows.get(absolute)
+        } else {
+            None
+        };
+        if absolute >= content.trail_start || absolute < block_count {
+            let Some(row) = section else {
+                continue;
+            };
+            put_line(
+                frame,
+                surface,
+                y,
+                content_width,
+                paint_section_row(row, content_width),
+            );
+            if let Some(target) = row.target {
+                hits.push(target, Rect::new(0, y, content_width, 1));
+            }
+            if !matches!(row.kind, BlockRowKind::Rule) {
+                hits.push_copyable(Rect::new(2, y, content_width.saturating_sub(3), 1));
+            }
+        } else if absolute < block_count + note_count {
+            let absolute = absolute - block_count;
             let text = notes_rows
                 .get(absolute)
                 .map(String::as_str)
@@ -3307,6 +3969,19 @@ fn paint_task_page(
             );
         }
     }
+    if let Some((row, col)) = block_cursor {
+        if row >= scroll && row < scroll.saturating_add(lay.notes_rows as usize) {
+            place_edit_cursor_at(
+                frame,
+                local_rect(
+                    surface,
+                    Rect::new(0, lay.notes_y, content_width, lay.notes_rows),
+                ),
+                u16::try_from(row - scroll).unwrap_or(u16::MAX),
+                col.min(content_width.saturating_sub(1)),
+            );
+        }
+    }
     if let Some((row, col)) = notes_cursor {
         place_edit_cursor_at(
             frame,
@@ -3336,52 +4011,158 @@ fn paint_task_page(
         );
     }
 
-    // Meta footer: scope · created · updated. Inline step drafts leave this footer
-    // visible and do not claim its input slot.
+    // Meta footer: assignee · base · after · scope. Inline step drafts leave this footer
+    // visible and do not claim its input slot. Every footer row shares the inset. Field
+    // offsets are unwrapped display-cell ranges, intersected with each wrapped row for both
+    // selection and pointer hits.
     if let Some(y) = lay.meta_y {
-        put_line(
-            frame,
-            surface,
-            y,
-            width,
-            paint_bounded_line(&format!("  {meta}"), width, style_dim()),
-        );
+        let rows = footer_rows(meta, width);
+        for (offset, row) in rows.iter().take(usize::from(lay.bottom - y)).enumerate() {
+            put_line(
+                frame,
+                surface,
+                y + offset as u16,
+                width,
+                Line::from(Span::styled(format!("  {}", row.text), style_dim())),
+            );
+        }
 
-        let scope_slot: String = meta.chars().skip(usize::from(meta_scope_x)).collect();
-        // The separator stays footer chrome. Scope begins after it.
-        let scope_prefix = u16::from(scope_slot.starts_with(" · ")) * 3;
-        let scope_x = 2u16
-            .saturating_add(meta_scope_x)
-            .saturating_add(scope_prefix)
-            .min(width);
-        let selected = match focus {
-            Some(CaptureField::Scope) => Some((scope_x, meta_scope_width)),
-            _ => None,
-        };
-        if let Some((selected_x, selected_width)) = selected {
-            let selected_width = selected_width.min(width.saturating_sub(selected_x));
-            let buffer = frame.buffer_mut();
-            for x in selected_x..selected_x.saturating_add(selected_width) {
-                buffer[(surface.x.saturating_add(x), surface.y.saturating_add(y))].set_style(
-                    Style::default()
-                        .add_modifier(Modifier::REVERSED)
-                        .remove_modifier(Modifier::DIM),
-                );
+        let mut component_x = 0u16;
+        let mut after_slot = None;
+        let mut before_slots: Vec<(u64, u16, u16)> = Vec::new();
+        for component in meta.split(" · ") {
+            if component_x >= meta_scope_x {
+                break;
+            }
+            let component_width = u16::try_from(display_width(component)).unwrap_or(u16::MAX);
+            if let Some(list) = component.strip_prefix("before ") {
+                let mut x = component_x.saturating_add(7);
+                for item in list.split(", ") {
+                    let cells = u16::try_from(display_width(item)).unwrap_or(u16::MAX);
+                    if let Some(number) = item.strip_prefix('T').and_then(|n| n.parse().ok()) {
+                        before_slots.push((number, x, cells));
+                    }
+                    x = x.saturating_add(cells).saturating_add(2);
+                }
+            }
+            if component == "after" || component.starts_with("after T") {
+                after_slot = Some((component_x, component_width));
+            }
+            component_x = component_x
+                .saturating_add(component_width)
+                .saturating_add(3);
+        }
+        let slots = [
+            (
+                CaptureField::Assignee,
+                QueueHitTarget::FormAssignee,
+                meta_assignee_x.map(|x| (x, meta_assignee_width)),
+            ),
+            (
+                CaptureField::Base,
+                QueueHitTarget::FormBase,
+                meta_base_x.map(|x| (x, meta_base_width)),
+            ),
+            (CaptureField::After, QueueHitTarget::FormAfter, after_slot),
+            (
+                CaptureField::Scope,
+                QueueHitTarget::FormScope,
+                Some((meta_scope_x, meta_scope_width)),
+            ),
+        ];
+        for (field, target, slot) in slots {
+            let Some((start, cells)) = slot else { continue };
+            for area in footer_field_rects(meta, &rows, &lay, start, cells, width) {
+                if focus == Some(field) {
+                    let buffer = frame.buffer_mut();
+                    for x in area.x..area.right() {
+                        buffer[(
+                            surface.x.saturating_add(x),
+                            surface.y.saturating_add(area.y),
+                        )]
+                            .set_style(
+                                Style::default()
+                                    .add_modifier(Modifier::REVERSED)
+                                    .remove_modifier(Modifier::DIM),
+                            );
+                    }
+                }
+                if !footer_input_open {
+                    hits.push(target, area);
+                }
             }
         }
-        if footer_input_open {
-            return;
+        if !footer_input_open {
+            for (number, start, cells) in before_slots {
+                for area in footer_field_rects(meta, &rows, &lay, start, cells, width) {
+                    hits.push(QueueHitTarget::FooterBefore(number), area);
+                }
+            }
         }
-        hits.push(
-            QueueHitTarget::FormScope,
-            Rect::new(
-                scope_x,
-                y,
-                meta_scope_width.min(width.saturating_sub(scope_x)),
-                1,
-            ),
-        );
     }
+    Some(lay)
+}
+
+/// One row of a task-page section (BLOCKED, REVIEW, PAPER TRAIL): the `▸` gutter on a selected
+/// stop, the closing rule, or text in the row's weight.
+fn paint_section_row(row: &BlockPageRow, content_width: u16) -> Line<'static> {
+    let gutter = if row.selected { "▸ " } else { "  " };
+    let room = (content_width as usize).saturating_sub(2);
+    match row.kind {
+        BlockRowKind::Rule => paint_bounded_line(
+            &format!("  {}", "─".repeat(room)),
+            content_width,
+            style_plain(),
+        ),
+        kind => paint_bounded_line(
+            &format!("{gutter}{}", row.text),
+            content_width,
+            match kind {
+                BlockRowKind::Dim => style_dim(),
+                BlockRowKind::Bold => style_bold(),
+                _ => style_plain(),
+            },
+        ),
+    }
+}
+
+/// Project an unwrapped display-cell range through the shared wrap engine's rows.
+/// Raw scalar offsets locate row starts, while display widths preserve wide glyphs.
+fn footer_field_rects(
+    meta: &str,
+    rows: &[super::edit::WrappedRow],
+    lay: &TaskPageLayout,
+    start: u16,
+    cells: u16,
+    width: u16,
+) -> Vec<Rect> {
+    let Some(y) = lay.meta_y else {
+        return Vec::new();
+    };
+    let mut offsets = vec![0usize];
+    for ch in meta.chars() {
+        offsets.push(offsets.last().copied().unwrap_or(0) + display_width(&ch.to_string()));
+    }
+    let start = usize::from(start);
+    let end = start.saturating_add(usize::from(cells));
+    rows.iter()
+        .take(usize::from(lay.bottom - y))
+        .enumerate()
+        .filter_map(|(index, row)| {
+            let row_start = offsets[row.first_raw];
+            let left = start.max(row_start);
+            let right = end
+                .min(row_start.saturating_add(row.width.min(usize::from(width.saturating_sub(2)))));
+            (right > left).then(|| {
+                Rect::new(
+                    2 + (left - row_start) as u16,
+                    y + index as u16,
+                    (right - left) as u16,
+                    1,
+                )
+            })
+        })
+        .collect()
 }
 
 /// Paint the shared-content scroll indicator on the viewport's right edge. The
@@ -3412,14 +4193,14 @@ fn paint_page_scrollbar(
     }
 }
 
-/// The page's scope chooser stacks its options directly above the scope footer (left,
-/// indented like the footer), never in the selector's corner: the footer is the control
-/// being answered, so the chooser sits beside it.
-fn paint_page_scope_dropdown(
+/// A page footer chooser stacks its options directly above the field being answered.
+fn paint_page_form_dropdown(
     frame: &mut Frame<'_>,
     geo: &TierGeometry,
     surface: Rect,
-    dropdown: FormScopeDropdown<'_>,
+    dropdown: FormDropdown<'_>,
+    lay: &TaskPageLayout,
+    meta: &str,
     hits: &mut QueueHitMap,
 ) {
     let width = geo.row_width;
@@ -3428,10 +4209,21 @@ fn paint_page_scope_dropdown(
     }
     // The dropdown anchors on the meta footer, which never moves with the steps,
     // and never opens while a field edit owns the page.
-    let lay = task_page_layout(geo, StepsSection::None, 0, 1);
     let Some(meta_y) = lay.meta_y else {
         return;
     };
+    let anchor = footer_field_rects(
+        meta,
+        &footer_rows(meta, width),
+        lay,
+        dropdown.anchor_x.saturating_sub(2),
+        1,
+        width,
+    )
+    .into_iter()
+    .next();
+    let anchor_y = anchor.map_or(meta_y, |area| area.y);
+    let anchor_x = anchor.map_or(2, |area| area.x);
     let max_label = dropdown
         .options
         .iter()
@@ -3439,7 +4231,7 @@ fn paint_page_scope_dropdown(
         .max()
         .unwrap_or(0);
     let col_w = (max_label + 4).min(width as usize).max(8);
-    let rows_fit = meta_y.saturating_sub(1) as usize;
+    let rows_fit = anchor_y.saturating_sub(1) as usize;
     let rows = rows_fit.min(dropdown.options.len());
     if rows == 0 {
         return;
@@ -3455,7 +4247,7 @@ fn paint_page_scope_dropdown(
     };
     // Options read top to bottom in list order, the last visible one directly above
     // the footer, so `Down` (the next option) moves the marker down the screen.
-    let top = meta_y - rows as u16;
+    let top = anchor_y - rows as u16;
     for (j, opt) in dropdown.options.iter().enumerate().skip(scroll).take(rows) {
         let y = top + (j - scroll) as u16;
         let marker = if j == selected { "▸ " } else { "  " };
@@ -3465,72 +4257,630 @@ fn paint_page_scope_dropdown(
         } else {
             format!("{}{}", body, " ".repeat(col_w - display_width(&body)))
         };
-        put_line(
+        let x = anchor_x.min(width);
+        let painted_width = u16::try_from(col_w)
+            .unwrap_or(u16::MAX)
+            .min(width.saturating_sub(x));
+        put_line_at(
             frame,
             surface,
-            y,
-            width,
-            paint_bounded_line(&format!("  {text}"), width, style_plain()),
+            Rect::new(x, y, painted_width, 1),
+            paint_bounded_line(&text, painted_width, style_plain()),
         );
-        hits.push(
-            QueueHitTarget::FormScopeOption(j),
-            Rect::new(0, y, width, 1),
-        );
-        hits.push_copyable(Rect::new(0, y, width, 1));
+        let area = Rect::new(x, y, painted_width, 1);
+        hits.push(QueueHitTarget::FormDropdownOption(j), area);
+        hits.push_copyable(area);
     }
 }
 
-pub(crate) const LAUNCH_FOOTER: &[VerbEntry<'static>] = &[
-    VerbEntry {
-        key: "y",
-        label: "unarchive",
+/// One body line of a cleanup card. Fields share a label column with a hanging indent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CleanupCardLine {
+    Text(String),
+    /// A section break: the first thing dropped when the card is taller than the frame.
+    Blank,
+    Field {
+        label: String,
+        value: String,
     },
-    VerbEntry {
-        key: "n",
-        label: "keep archived",
+    /// One option: its key, then what it does, wrapped under the text. `index` is its place
+    /// in the card's option list, and the line is that option's mouse target.
+    Option {
+        index: usize,
+        key: &'static str,
+        text: String,
+        bold: bool,
+        selected: bool,
     },
-];
+    /// The dim, right-aligned way out (`esc cancel`): the cancel target.
+    Esc(String),
+}
 
-/// The launch card: raised before the first keypress when the invocation default
-/// resolved to an archived project. Two explicit choices, no `Enter` default.
-fn paint_launch_card(
+/// A cleanup card's title at three lengths. The question it asks (the counts, on a bulk card)
+/// is never cut: when neither the full nor the short title fits the border, the card uses
+/// `bare` and moves `question` to the first body line instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupTitle {
+    pub full: String,
+    pub short: String,
+    pub bare: String,
+    pub question: String,
+}
+
+/// Where a painted cleanup card's option lines sit among its scrollable rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CleanupLayout {
+    /// Body rows the frame shows at once.
+    pub capacity: usize,
+    /// The first body row painted, after clamping and any scroll to the `▸` option.
+    pub scroll: usize,
+    /// Each option's first row and one past its last, in option order.
+    pub options: Vec<(usize, usize)>,
+}
+
+struct CleanupCard<'a> {
+    title: &'a CleanupTitle,
+    lines: &'a [CleanupCardLine],
+    scroll: usize,
+    follow: bool,
+}
+
+/// Below this many value cells beside the label column, fields stack label over value.
+const CLEANUP_MIN_VALUE_WIDTH: usize = 16;
+
+fn wrapped_rows(text: &str, width: usize) -> Vec<String> {
+    crate::ui::edit::wrap_text(&crate::ui::terminal_text(text), width.max(1))
+        .into_iter()
+        .map(|row| row.text)
+        .collect()
+}
+
+/// One laid-out row of a cleanup card body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CleanupCardRow {
+    pub text: String,
+    pub bold: bool,
+    pub dim: bool,
+    /// The option this row belongs to (any of its wrapped rows).
+    pub option: Option<usize>,
+    /// The `esc` line.
+    pub esc: bool,
+}
+
+impl CleanupCardRow {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            bold: false,
+            dim: false,
+            option: None,
+            esc: false,
+        }
+    }
+}
+
+/// Lay a cleanup card's body out at `width` cells: labels in one fixed column, values wrapped
+/// with a hanging indent, or stacked label then indented value when the column leaves too
+/// little room; options wrapped under their text column. Never truncates.
+pub(crate) fn cleanup_card_layout(lines: &[CleanupCardLine], width: usize) -> Vec<CleanupCardRow> {
+    let label_w = lines
+        .iter()
+        .filter_map(|line| match line {
+            CleanupCardLine::Field { label, .. } => Some(display_width(label)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let stacked = width < label_w + 2 + CLEANUP_MIN_VALUE_WIDTH;
+    let mut rows = Vec::new();
+    let plain = |rows: &mut Vec<CleanupCardRow>, texts: Vec<String>| {
+        rows.extend(texts.into_iter().map(CleanupCardRow::plain));
+    };
+    for line in lines {
+        match line {
+            CleanupCardLine::Blank => rows.push(CleanupCardRow::plain(String::new())),
+            CleanupCardLine::Text(text) => plain(&mut rows, wrapped_rows(text, width)),
+            CleanupCardLine::Field { label, value } if stacked => {
+                if !label.is_empty() {
+                    plain(&mut rows, wrapped_rows(label, width));
+                }
+                let indent = 2.min(width.saturating_sub(1));
+                plain(
+                    &mut rows,
+                    wrapped_rows(value, width - indent)
+                        .into_iter()
+                        .map(|row| format!("{}{row}", " ".repeat(indent)))
+                        .collect(),
+                );
+            }
+            CleanupCardLine::Field { label, value } => {
+                let gutter = " ".repeat(label_w + 2);
+                let texts = wrapped_rows(value, width - label_w - 2)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        if index == 0 {
+                            let pad = " ".repeat(label_w - display_width(label));
+                            format!("{label}{pad}  {row}")
+                        } else {
+                            format!("{gutter}{row}")
+                        }
+                    })
+                    .collect();
+                plain(&mut rows, texts);
+            }
+            CleanupCardLine::Option {
+                index,
+                key,
+                text,
+                bold,
+                selected,
+            } => {
+                let marker = if *selected { "▸ " } else { "  " };
+                let column = (display_width(marker) + display_width(key) + 2).min(width / 2);
+                let gutter = " ".repeat(column);
+                for (row_index, row) in wrapped_rows(text, width.saturating_sub(column))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let text = if row_index == 0 {
+                        format!("{marker}{key}  {row}")
+                    } else {
+                        format!("{gutter}{row}")
+                    };
+                    rows.push(CleanupCardRow {
+                        text,
+                        bold: *bold,
+                        dim: false,
+                        option: Some(*index),
+                        esc: false,
+                    });
+                }
+            }
+            CleanupCardLine::Esc(label) => {
+                let pad = width.saturating_sub(display_width(label));
+                for (row_index, row) in wrapped_rows(label, width).into_iter().enumerate() {
+                    rows.push(CleanupCardRow {
+                        text: if row_index == 0 {
+                            format!("{}{row}", " ".repeat(pad))
+                        } else {
+                            row
+                        },
+                        bold: false,
+                        dim: true,
+                        option: None,
+                        esc: true,
+                    });
+                }
+            }
+        }
+    }
+    rows
+}
+
+fn paint_cleanup_card(
     frame: &mut Frame<'_>,
     geo: &TierGeometry,
     surface: Rect,
-    name: &str,
+    card: CleanupCard<'_>,
     hits: &mut QueueHitMap,
 ) {
     if geo.row_width == 0 {
         return;
     }
     let bounds = Rect::new(0, 0, geo.row_width, geo.height);
-    // AC-22 (amended): no title row and no option rows. One body line asks the
-    // question; the two choices live in the footer legend and are clickable there.
+    let pad: u16 = if geo.tier == Tier::Compact { 0 } else { 1 };
+    let card_w = modal_card_width(geo, bounds, 24);
+    // Room inside the side borders; the title keeps its rule and `[x]`.
+    let inner = usize::from(card_w.saturating_sub(2));
+    // Room for the title beside its rule and `[x]`, keeping three cells for a scroll marker.
+    let title_budget = inner.saturating_sub(9);
+    let fits = |title: &str| display_width(title) + 3 <= title_budget;
+    let (base_title, question) = if fits(&card.title.full) {
+        (card.title.full.as_str(), None)
+    } else if fits(&card.title.short) {
+        (card.title.short.as_str(), None)
+    } else {
+        (
+            card.title.bare.as_str(),
+            Some(CleanupCardLine::Text(card.title.question.clone()))
+                .filter(|_| !card.title.question.is_empty()),
+        )
+    };
+    let wrap_width = usize::from(card_w.saturating_sub(2 + 2 * pad).max(1));
+    let lines: Vec<CleanupCardLine> = question
+        .into_iter()
+        .chain(card.lines.iter().cloned())
+        .collect();
+    let capacity = usize::from(
+        bounds
+            .height
+            .saturating_sub(modal_chrome_rows(geo.tier, false)),
+    );
+    // A card taller than the frame drops its section breaks before it scrolls.
+    let mut rows = cleanup_card_layout(&lines, wrap_width);
+    if rows.len() > capacity {
+        let packed: Vec<CleanupCardLine> = lines
+            .iter()
+            .filter(|line| **line != CleanupCardLine::Blank)
+            .cloned()
+            .collect();
+        rows = cleanup_card_layout(&packed, wrap_width);
+    }
+    let max_scroll = rows.len().saturating_sub(capacity);
+    hits.cleanup_max_scroll = Some(max_scroll);
+    let mut options: Vec<(usize, usize)> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let Some(option) = row.option else {
+            continue;
+        };
+        if options.len() <= option {
+            options.resize(option + 1, (index, index));
+            options[option] = (index, index + 1);
+        } else {
+            options[option].1 = index + 1;
+        }
+    }
+    let mut scroll = card.scroll.min(max_scroll);
+    if card.follow {
+        let selected = card.lines.iter().find_map(|line| match line {
+            CleanupCardLine::Option {
+                index,
+                selected: true,
+                ..
+            } => Some(*index),
+            _ => None,
+        });
+        if let Some(&(start, end)) = selected.and_then(|index| options.get(index)) {
+            // Show the whole `▸` option, or its first rows when it is taller than the frame.
+            if start < scroll {
+                scroll = start;
+            } else if end > scroll + capacity {
+                scroll = end.saturating_sub(capacity).min(start).min(max_scroll);
+            }
+        }
+    }
+    hits.cleanup_layout = Some(CleanupLayout {
+        capacity,
+        scroll,
+        options,
+    });
+    let window: Vec<&CleanupCardRow> = rows.iter().skip(scroll).take(capacity).collect();
+    let title =
+        titled_with_scroll_marker(base_title, scroll > 0, scroll + window.len() < rows.len());
     let content = paint_modal_card(
         frame,
         geo,
         surface,
         bounds,
         ModalCardSpec {
-            title: "",
-            content_rows: 1,
-            min_content_width: 0,
-            legend: LAUNCH_FOOTER,
+            title: &title,
+            content_rows: u16::try_from(window.len()).unwrap_or(u16::MAX),
+            min_content_width: 24,
+            legend: &[],
             dismiss: None,
-            legend_hits: Some(QueueHitTarget::LaunchOption),
+            legend_hits: None,
+        },
+        hits,
+    );
+    for (row, line) in window.iter().enumerate().take(content.height as usize) {
+        let style = if line.bold {
+            style_bold()
+        } else if line.dim {
+            style_dim()
+        } else {
+            style_plain()
+        };
+        let area = Rect::new(content.x, content.y + row as u16, content.width, 1);
+        put_line_at(
+            frame,
+            surface,
+            area,
+            paint_bounded_line(&line.text, content.width, style),
+        );
+        if let Some(option) = line.option {
+            hits.push(QueueHitTarget::CleanupOption(option), area);
+        } else if line.esc {
+            let label = line.text.trim_start();
+            let width = u16::try_from(display_width(label))
+                .unwrap_or(u16::MAX)
+                .min(content.width);
+            hits.push(
+                QueueHitTarget::ModalClose,
+                Rect::new(
+                    content.x + content.width.saturating_sub(width),
+                    area.y,
+                    width,
+                    1,
+                ),
+            );
+        }
+    }
+}
+
+const BLOCK_CARD_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "block",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "tab",
+        label: "next field",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
+    },
+];
+
+const BLOCK_EDIT_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "save",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "tab",
+        label: "next field",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
+    },
+];
+
+const REVIEW_CARD_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "review",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "shift+enter",
+        label: "new check",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "tab",
+        label: "next field",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
+    },
+];
+
+const REVIEW_EDIT_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "save",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "shift+enter",
+        label: "new check",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "tab",
+        label: "next field",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "esc",
+        label: "cancel",
+        shed: 0,
+    },
+];
+
+/// Wrapped rows of the block or review card body, with the caret's (row, column) when focused.
+pub(crate) fn block_card_rows(
+    card: &BlockCardPaint,
+    width: usize,
+) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+    const LABEL: usize = 7;
+    let value_width = width.saturating_sub(LABEL).max(1);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut caret = None;
+    let label_style = |focused: bool| if focused { style_bold() } else { style_dim() };
+    let field = |rows: &mut Vec<Line<'static>>,
+                 caret: &mut Option<(u16, u16)>,
+                 label: &str,
+                 value: &str,
+                 placeholder: &str,
+                 focused: bool,
+                 cursor: usize| {
+        let buffer = crate::ui::edit::EditBuffer::new(value, cursor);
+        let (wrapped, cursor_row, cursor_col) =
+            crate::ui::edit::wrapped_edit_rows(&buffer, value_width);
+        if focused {
+            *caret = Some((
+                u16::try_from(rows.len() + cursor_row).unwrap_or(u16::MAX),
+                u16::try_from(LABEL + cursor_col).unwrap_or(u16::MAX),
+            ));
+        }
+        for (index, row) in wrapped.iter().enumerate() {
+            let lead = if index == 0 {
+                format!("{label:<LABEL$}")
+            } else {
+                " ".repeat(LABEL)
+            };
+            let (text, style) = if value.is_empty() && !focused {
+                (placeholder.to_string(), style_dim())
+            } else {
+                (row.clone(), style_plain())
+            };
+            rows.push(Line::from(vec![
+                Span::styled(lead, label_style(focused)),
+                Span::styled(text, style),
+            ]));
+        }
+    };
+    let on_row = |rows: &mut Vec<Line<'static>>,
+                  caret: &mut Option<(u16, u16)>,
+                  focus: usize,
+                  kinds: [&str; 3]| {
+        let mut on_spans = vec![
+            Span::styled(
+                format!("{:<LABEL$}", "on"),
+                label_style(card.focus == focus),
+            ),
+            Span::styled("‹ ".to_string(), style_dim()),
+        ];
+        for (index, kind) in kinds.into_iter().enumerate() {
+            if index > 0 {
+                on_spans.push(Span::styled(" · ".to_string(), style_dim()));
+            }
+            let style = if kind == card.on_kind {
+                style_bold().add_modifier(Modifier::UNDERLINED)
+            } else {
+                style_dim()
+            };
+            on_spans.push(Span::styled(kind.to_string(), style));
+        }
+        on_spans.push(Span::styled(" ›".to_string(), style_dim()));
+        rows.push(Line::from(on_spans));
+        if card.on_kind != "you" {
+            let placeholder = match card.on_kind {
+                "task" => "task number, like T12",
+                "agent" => "agent profile, like pi",
+                _ => "what it waits on",
+            };
+            field(
+                rows,
+                caret,
+                "",
+                &card.on_text,
+                placeholder,
+                card.focus == focus,
+                card.cursor,
+            );
+        } else if card.focus == focus {
+            *caret = Some((
+                u16::try_from(rows.len() - 1).unwrap_or(u16::MAX),
+                u16::try_from(LABEL).unwrap_or(u16::MAX),
+            ));
+        }
+    };
+    if card.review {
+        field(
+            &mut rows,
+            &mut caret,
+            "done",
+            &card.done,
+            "what was done",
+            card.focus == 0,
+            card.cursor,
+        );
+        field(
+            &mut rows,
+            &mut caret,
+            "check",
+            &card.checks,
+            "one per line",
+            card.focus == 1,
+            card.cursor,
+        );
+        field(
+            &mut rows,
+            &mut caret,
+            "next",
+            &card.next,
+            "optional",
+            card.focus == 2,
+            card.cursor,
+        );
+        on_row(&mut rows, &mut caret, 3, ["you", "agent", "other"]);
+    } else {
+        field(
+            &mut rows,
+            &mut caret,
+            "why",
+            &card.why,
+            "optional",
+            card.focus == 0,
+            card.cursor,
+        );
+        on_row(&mut rows, &mut caret, 1, ["you", "task", "other"]);
+        field(
+            &mut rows,
+            &mut caret,
+            "needs",
+            &card.needs,
+            "optional",
+            card.focus == 2,
+            card.cursor,
+        );
+    }
+    if let Some(refusal) = card.refusal.as_deref() {
+        for row in crate::ui::edit::wrap_text(refusal, width.max(1)) {
+            rows.push(Line::from(Span::styled(row.text, style_bold())));
+        }
+    }
+    (rows, caret)
+}
+
+fn paint_block_card(
+    frame: &mut Frame<'_>,
+    geo: &TierGeometry,
+    surface: Rect,
+    card: &BlockCardPaint,
+    hits: &mut QueueHitMap,
+) {
+    if geo.row_width == 0 {
+        return;
+    }
+    let bounds = Rect::new(0, 0, geo.row_width, geo.height);
+    let pad: u16 = if geo.tier == Tier::Compact { 0 } else { 1 };
+    let content_width = modal_card_width(geo, bounds, 0).saturating_sub(2 + 2 * pad);
+    let (rows, caret) = block_card_rows(card, content_width as usize);
+    let content = paint_modal_card(
+        frame,
+        geo,
+        surface,
+        bounds,
+        ModalCardSpec {
+            title: &card.title,
+            content_rows: u16::try_from(rows.len()).unwrap_or(u16::MAX),
+            min_content_width: 0,
+            legend: match (card.review, card.edit) {
+                (true, true) => REVIEW_EDIT_FOOTER,
+                (true, false) => REVIEW_CARD_FOOTER,
+                (false, true) => BLOCK_EDIT_FOOTER,
+                (false, false) => BLOCK_CARD_FOOTER,
+            },
+            dismiss: None,
+            legend_hits: None,
         },
         hits,
     );
     if content.width == 0 || content.height == 0 {
         return;
     }
-    let message = format!("project {name} is archived, would you like to unarchive it?");
-    put_line_at(
-        frame,
-        surface,
-        Rect::new(content.x, content.y, content.width, 1),
-        paint_bounded_line(&message, content.width, style_plain()),
-    );
+    for (offset, line) in rows.into_iter().enumerate() {
+        let Ok(offset) = u16::try_from(offset) else {
+            break;
+        };
+        if offset >= content.height {
+            break;
+        }
+        put_line_at(
+            frame,
+            surface,
+            Rect::new(content.x, content.y + offset, content.width, 1),
+            bound_line(line, content.width as usize),
+        );
+    }
+    if let Some((row, column)) = caret.filter(|(row, _)| *row < content.height) {
+        place_edit_cursor_at(frame, local_rect(surface, content), row, column);
+    }
 }
 
 /// The board's `P` project-scope picker: a centered modal card, not the chip-anchored
@@ -3545,6 +4895,7 @@ fn paint_scope_dropdown(
     selected: usize,
     title_override: Option<&str>,
     query: Option<&str>,
+    legend: Option<&'static [VerbEntry<'static>]>,
     hits: &mut QueueHitMap,
 ) {
     if geo.row_width == 0 || (title_override.is_none() && options.is_empty()) {
@@ -3581,6 +4932,7 @@ fn paint_scope_dropdown(
     };
     let above = scroll > 0;
     let below = scroll + rows < options.len();
+    let legend = legend.unwrap_or(SCOPE_FOOTER);
     let default_title = "project";
     let base_title = title_override.unwrap_or(default_title);
     let title = match query {
@@ -3608,7 +4960,7 @@ fn paint_scope_dropdown(
             } else {
                 0
             },
-            legend: SCOPE_FOOTER,
+            legend,
             dismiss: None,
             legend_hits: None,
         },
@@ -3665,6 +5017,7 @@ fn paint_wrapping_picker(
     title: Option<&str>,
     query: Option<&str>,
     state: &PickerRowState,
+    legend: Option<&[VerbEntry<'_>]>,
     hits: &mut QueueHitMap,
 ) {
     if geo.row_width == 0 {
@@ -3742,7 +5095,7 @@ fn paint_wrapping_picker(
             title: &card_title,
             content_rows: window as u16,
             min_content_width,
-            legend: SCOPE_FOOTER,
+            legend: legend.unwrap_or(SCOPE_FOOTER),
             dismiss: None,
             legend_hits: None,
         },
@@ -3796,6 +5149,273 @@ fn paint_wrapping_picker(
     }
 }
 
+/// What the task picker paints: its rows are the pinned tasks followed by the matches, in
+/// the model's visible order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AfterPickerPaint<'a> {
+    /// `T5 runs after`.
+    pub title: &'a str,
+    pub query: &'a str,
+    pub rows: &'a [String],
+    /// How many leading rows are pinned tasks.
+    pub pinned_rows: usize,
+    pub selected: usize,
+}
+
+/// The task picker's legend.
+const AFTER_PICKER_FOOTER: &[VerbEntry<'static>] = &[
+    VerbEntry {
+        key: "enter",
+        label: "pin",
+        shed: 0,
+    },
+    VerbEntry {
+        key: "ctrl+x",
+        label: "clear",
+        shed: 1,
+    },
+    VerbEntry {
+        key: "shift+enter",
+        label: "save",
+        shed: 0,
+    },
+];
+
+/// The match window keeps this many rows whatever the match count, so the card holds one
+/// size while the query changes.
+const AFTER_PICKER_MATCH_ROWS: usize = 8;
+
+/// The task picker card: the query row, the pinned block, then a fixed-height match window
+/// with a scroll bar when the matches overflow it. Long rows wrap inside the card, never
+/// clipped. Every painted line is a `ListPickerOption` hit for its row, in visible order.
+fn paint_after_picker(
+    frame: &mut Frame<'_>,
+    geo: &TierGeometry,
+    surface: Rect,
+    picker: &AfterPickerPaint<'_>,
+    hits: &mut QueueHitMap,
+) {
+    if geo.row_width == 0 || geo.height == 0 {
+        return;
+    }
+    let bounds = Rect::new(0, 0, geo.row_width, geo.height);
+    let capacity = bounds
+        .height
+        .saturating_sub(modal_chrome_rows(geo.tier, true)) as usize;
+    // The query row and the two rules around the pinned block.
+    let fixed = 3;
+    let avail = capacity.saturating_sub(fixed).max(2);
+    // The same content width `paint_modal_card` carves out below.
+    let pad: u16 = if geo.tier == Tier::Compact { 0 } else { 1 };
+    let width = modal_card_width(geo, bounds, 0).saturating_sub(2 + 2 * pad) as usize;
+    let pinned_rows = picker.pinned_rows.min(picker.rows.len());
+    let selected = picker.selected.min(picker.rows.len().saturating_sub(1));
+    // A row's wrapped lines; the first two cells carry the `▸ ` marker, and a pinned row's
+    // continuation lines indent under its text, past the `✓ `.
+    let wrap = |index: usize, row_width: usize| -> Vec<String> {
+        let label = &picker.rows[index];
+        let (tick, text) = match label.strip_prefix("✓ ") {
+            Some(text) => ("✓ ", text),
+            None => ("", label.as_str()),
+        };
+        let indent = if tick.is_empty() { "" } else { "  " };
+        let room = row_width.saturating_sub(2 + display_width(tick)).max(1);
+        let mut lines: Vec<String> = crate::ui::edit::wrap_text(text, room)
+            .into_iter()
+            .enumerate()
+            .map(|(part, row)| {
+                let lead = if part == 0 { tick } else { indent };
+                format!("{lead}{}", row.text)
+            })
+            .collect();
+        if lines.is_empty() {
+            lines.push(tick.to_string());
+        }
+        lines
+    };
+    let pinned: Vec<Vec<String>> = (0..pinned_rows).map(|index| wrap(index, width)).collect();
+    // Nothing pinned still shows one row, saying so.
+    let pinned_total = pinned.iter().map(Vec::len).sum::<usize>().max(1);
+    let match_window = AFTER_PICKER_MATCH_ROWS
+        .min(avail.saturating_sub(pinned_total.min(avail - 1)))
+        .max(1);
+    let pinned_shown = pinned_total.min(avail.saturating_sub(match_window)).max(1);
+    let match_rows = pinned_rows..picker.rows.len();
+    let mut matches: Vec<Vec<String>> =
+        match_rows.clone().map(|index| wrap(index, width)).collect();
+    let mut match_total: usize = matches.iter().map(Vec::len).sum();
+    let overflow = scrollbar::needs_scrollbar(match_total, match_window);
+    let match_width = if overflow {
+        width.saturating_sub(usize::from(scrollbar::SCROLLBAR_RESERVE_COLS))
+    } else {
+        width
+    };
+    if overflow {
+        matches = match_rows.map(|index| wrap(index, match_width)).collect();
+        match_total = matches.iter().map(Vec::len).sum();
+    }
+    let pinned_start = after_window_start(
+        &pinned.iter().map(Vec::len).collect::<Vec<_>>(),
+        (selected < pinned_rows).then_some(selected),
+        pinned_shown,
+    );
+    let match_counts: Vec<usize> = matches.iter().map(Vec::len).collect();
+    let match_start = after_window_start(
+        &match_counts,
+        selected.checked_sub(pinned_rows),
+        match_window,
+    );
+
+    let content = paint_modal_card(
+        frame,
+        geo,
+        surface,
+        bounds,
+        ModalCardSpec {
+            title: picker.title,
+            content_rows: (fixed + pinned_shown + match_window) as u16,
+            min_content_width: 0,
+            legend: AFTER_PICKER_FOOTER,
+            dismiss: None,
+            legend_hits: None,
+        },
+        hits,
+    );
+    if content.width == 0 || content.height == 0 {
+        return;
+    }
+    let width = content.width;
+    let row_rect = |offset: usize| Rect::new(content.x, content.y + offset as u16, width, 1);
+    let fits = |offset: usize| offset < content.height as usize;
+
+    // `> query` with the caret after it; an empty query says what to type.
+    let query_line = if picker.query.is_empty() {
+        Line::from(vec![
+            Span::styled("> ".to_string(), style_bold()),
+            Span::styled("type a number or words".to_string(), style_dim()),
+        ])
+    } else {
+        paint_bounded_line(&format!("> {}", picker.query), width, style_bold())
+    };
+    put_line_at(frame, surface, row_rect(0), query_line);
+    let caret = 2 + display_width(picker.query);
+    place_edit_cursor_at(
+        frame,
+        local_rect(surface, row_rect(0)),
+        0,
+        u16::try_from(caret).unwrap_or(u16::MAX),
+    );
+
+    let rule = |frame: &mut Frame<'_>, offset: usize| {
+        if fits(offset) {
+            put_line_at(
+                frame,
+                surface,
+                row_rect(offset),
+                Line::from(Span::styled("─".repeat(width as usize), style_dim())),
+            );
+        }
+    };
+    rule(frame, 1);
+    let mut offset = 2usize;
+
+    // Paint rows from `start` into `window` lines at `top`, each line a hit for its row.
+    let mut paint_rows = |frame: &mut Frame<'_>,
+                          top: usize,
+                          window: usize,
+                          first_index: usize,
+                          rows: &[Vec<String>],
+                          start: usize,
+                          text_width: u16| {
+        let mut line = 0usize;
+        for (slot, lines) in rows.iter().enumerate().skip(start) {
+            let index = first_index + slot;
+            let is_selected = index == selected;
+            let style = if is_selected {
+                style_reverse()
+            } else {
+                style_plain()
+            };
+            for (part, text) in lines.iter().enumerate() {
+                if line >= window || !fits(top + line) {
+                    return;
+                }
+                let marker = match (part, is_selected) {
+                    (0, true) => "▸ ",
+                    _ => "  ",
+                };
+                let rect = Rect::new(content.x, content.y + (top + line) as u16, text_width, 1);
+                put_line_at(
+                    frame,
+                    surface,
+                    rect,
+                    paint_bounded_line(&format!("{marker}{text}"), text_width, style),
+                );
+                hits.push(QueueHitTarget::ListPickerOption(index), rect);
+                hits.push_copyable(rect);
+                line += 1;
+            }
+        }
+    };
+    if pinned_rows == 0 {
+        if fits(offset) {
+            put_line_at(
+                frame,
+                surface,
+                row_rect(offset),
+                paint_bounded_line("  nothing selected", width, style_dim()),
+            );
+        }
+    } else {
+        paint_rows(frame, offset, pinned_shown, 0, &pinned, pinned_start, width);
+    }
+    offset += pinned_shown;
+    rule(frame, offset);
+    offset += 1;
+
+    if matches.is_empty() && !picker.query.trim().is_empty() && fits(offset) {
+        put_line_at(
+            frame,
+            surface,
+            row_rect(offset),
+            paint_bounded_line("  no matching tasks", width, style_dim()),
+        );
+    }
+    paint_rows(
+        frame,
+        offset,
+        match_window,
+        pinned_rows,
+        &matches,
+        match_start,
+        u16::try_from(match_width).unwrap_or(width),
+    );
+    if overflow {
+        let shown = match_window.min((content.height as usize).saturating_sub(offset));
+        let track = Rect::new(
+            content.x + width.saturating_sub(1),
+            content.y + offset as u16,
+            1,
+            shown as u16,
+        );
+        let scroll = match_counts[..match_start].iter().sum();
+        scrollbar::paint(frame, local_rect(surface, track), scroll, match_total);
+    }
+}
+
+/// The first row a task-picker window paints so the `selected` row's lines all fit in
+/// `window` lines below it; `counts` are each row's wrapped line counts.
+fn after_window_start(counts: &[usize], selected: Option<usize>, window: usize) -> usize {
+    let Some(selected) = selected.filter(|index| *index < counts.len()) else {
+        return 0;
+    };
+    let mut start = 0;
+    while start < selected && counts[start..=selected].iter().sum::<usize>() > window {
+        start += 1;
+    }
+    start
+}
+
 enum ListRow {
     Blank,
     /// Section header row for NEEDS YOU, IN MOTION, ON DECK and the drawer.
@@ -3824,12 +5444,35 @@ enum ListRow {
         /// Content width (identifier + title on the first line, title only on continuations).
         content_width: u16,
     },
+    /// A row under a task that is not the task itself (the inline reply box).
+    Detail {
+        line: Line<'static>,
+        content_x: u16,
+        content_width: u16,
+    },
 }
 
 impl ListRow {
     fn is_sticky_header(&self) -> bool {
         matches!(self, ListRow::Header(..) | ListRow::ArchivedHeader { .. })
     }
+}
+
+/// The first painted line of the task the pin belongs to: its `▸` title line. The pin is the
+/// last line of a task's block (title, live line) or of the peek under it; any other row (a
+/// header, a project row) is its own head.
+fn pinned_head(rows: &[ListRow], pin: Option<usize>) -> Option<usize> {
+    let mut head = pin?;
+    while head > 0 && matches!(rows[head], ListRow::Detail { .. }) {
+        head -= 1;
+    }
+    let ListRow::Task { id, .. } = &rows[head] else {
+        return pin;
+    };
+    while head > 0 && matches!(&rows[head - 1], ListRow::Task { id: other, .. } if other == id) {
+        head -= 1;
+    }
+    Some(head)
 }
 
 /// Last section header strictly above `scroll`. None when `scroll` is already on a header
@@ -3923,17 +5566,136 @@ fn paint_list_row(
             }
             hits.push_copyable(Rect::new(*content_x, y, *copy_w, 1));
         }
+        ListRow::Detail {
+            line,
+            content_x,
+            content_width: copy_w,
+        } => {
+            put_line(frame, surface, y, content_width, line.clone());
+            hits.push_copyable(Rect::new(*content_x, y, *copy_w, 1));
+        }
     }
 }
 
+/// Ends the label of a row whose message line `z` hid.
+pub const HIDDEN_MESSAGE_MARKER: &str = "✉";
+
+/// The list rows, the selected row (which must stay fully visible in the viewport), and the
+/// inline reply box's caret (list row, column).
+type BuiltListRows = (Vec<ListRow>, Option<usize>, Option<(usize, u16)>);
+
 /// Builds the list rows plus the index of the selected row, which must stay fully visible in
 /// the viewport.
-fn build_list_rows(
-    model: &QueueFrameModel<'_>,
-    geo: &TierGeometry,
-) -> (Vec<ListRow>, Option<usize>) {
+fn build_list_rows(model: &QueueFrameModel<'_>, geo: &TierGeometry) -> BuiltListRows {
+    let (mut out, selected, mut caret) = build_list_rows_inner(model, geo);
+    // A refresh can take the reply box's row off this list (unblocked or finished
+    // elsewhere) while the box still owns input: keep the draft painted below the list,
+    // under the task's own line, so it never edits out of sight.
+    if let Some(reply) = model.row_reply {
+        let painted = out
+            .iter()
+            .any(|row| matches!(row, ListRow::Task { id, .. } if *id == reply.task));
+        if !painted {
+            out.push(ListRow::Blank);
+            if let Some(task) = model.tasks.iter().find(|task| task.id == reply.task) {
+                let label = format!(
+                    "  {} {}  · not on this list",
+                    task.board_identifier().unwrap_or_default(),
+                    super::terminal_text(&task.title.replace(['\n', '\r'], " "))
+                );
+                out.push(ListRow::Detail {
+                    line: paint_bounded_line(&label, geo.row_width, style_dim()),
+                    content_x: 2,
+                    content_width: u16::try_from(display_width(&label))
+                        .unwrap_or(u16::MAX)
+                        .max(1),
+                });
+            }
+            let (rows, row_caret) = row_reply_rows(&reply, geo.row_width);
+            let first = out.len();
+            out.extend(rows);
+            if let Some((row, column)) = row_caret.filter(|_| reply.caret) {
+                caret = Some((first + row, column));
+            }
+        }
+    }
+    (out, selected, caret)
+}
+
+/// The inline reply box's list rows, and its caret (row within them, column).
+fn row_reply_rows(
+    reply: &RowReplyPaint<'_>,
+    row_width: u16,
+) -> (Vec<ListRow>, Option<(usize, u16)>) {
+    const INDENT: &str = "    ";
+    let width = row_width as usize;
+    let mut rows = Vec::new();
+    let labelled = |label: &str, text: &str, style: Style, rows: &mut Vec<ListRow>| {
+        let lead = format!("{INDENT}{label}");
+        let indent = display_width(&lead);
+        let room = width.saturating_sub(indent).max(1);
+        for (index, wrapped) in crate::ui::edit::wrap_text(&super::terminal_text(text), room)
+            .into_iter()
+            .enumerate()
+        {
+            let head = if index == 0 {
+                lead.clone()
+            } else {
+                " ".repeat(indent)
+            };
+            rows.push(ListRow::Detail {
+                line: paint_bounded_line(&format!("{head}{}", wrapped.text), row_width, style),
+                content_x: u16::try_from(indent).unwrap_or(u16::MAX),
+                content_width: u16::try_from(display_width(&wrapped.text))
+                    .unwrap_or(u16::MAX)
+                    .max(1),
+            });
+        }
+    };
+    for (label, text) in reply.context.into_iter().flatten() {
+        labelled(label, text, style_plain(), &mut rows);
+    }
+    let lead = format!("{INDENT}└ you  ");
+    let indent = display_width(&lead);
+    let field_width = width.saturating_sub(indent).max(1);
+    reply.width.set(field_width);
+    let (draft_rows, cursor_row, cursor_col) =
+        crate::ui::edit::wrapped_edit_rows(reply.draft, field_width);
+    let first = rows.len();
+    let empty = reply.draft.value().is_empty();
+    for (index, row) in draft_rows.iter().enumerate() {
+        let head = if index == 0 {
+            lead.clone()
+        } else {
+            " ".repeat(indent)
+        };
+        let text = if empty {
+            reply.placeholder.to_string()
+        } else {
+            super::terminal_text(row)
+        };
+        rows.push(ListRow::Detail {
+            line: paint_bounded_line(&format!("{head}{text}"), row_width, style_bold()),
+            content_x: u16::try_from(indent).unwrap_or(u16::MAX),
+            content_width: u16::try_from(display_width(&text))
+                .unwrap_or(u16::MAX)
+                .max(1),
+        });
+    }
+    let caret = (
+        first + cursor_row,
+        u16::try_from(indent + cursor_col).unwrap_or(u16::MAX),
+    );
+    if let Some(refusal) = reply.refusal {
+        labelled("       ", refusal, style_dim(), &mut rows);
+    }
+    (rows, Some(caret))
+}
+
+fn build_list_rows_inner(model: &QueueFrameModel<'_>, geo: &TierGeometry) -> BuiltListRows {
     let mut out = Vec::new();
     let mut selected_idx: Option<usize> = None;
+    let reply_caret: std::cell::Cell<Option<(usize, u16)>> = std::cell::Cell::new(None);
     // Every section heading has one blank list row above it. This row remains ordinary list
     // content, so selection scrolling keeps the section and its first task reachable.
     out.push(ListRow::Blank);
@@ -3959,7 +5721,10 @@ fn build_list_rows(
                 return;
             };
             let selected = model.selection_id == Some(task.id)
-                && !matches!(model.overlay, QueueOverlay::ScopeDropdown { .. });
+                && !matches!(
+                    model.overlay,
+                    QueueOverlay::ScopeDropdown { .. } | QueueOverlay::AfterPicker(_)
+                );
             let marked = model.marked_ids.contains(&task.id);
             // A long title wraps onto continuation lines indented under its own first
             // row; every painted line carries the task's hit target and selection.
@@ -3976,7 +5741,13 @@ fn build_list_rows(
                 (Some(steps), Some(children)) => Some(format!("{steps} {children}")),
                 (steps, children) => steps.or(children),
             };
-            let status = row_status_line(task);
+            // A block or review addressed to you says so on the optional second line, ahead of
+            // the notes' own status line; `z` hides it.
+            let status = (!model.messages_hidden)
+                .then(|| row_live_line(task, model.tasks, model.now))
+                .flatten()
+                .map(|text| (text, false))
+                .or_else(|| row_status_line(task));
             // Keep the stall mark first: its leading position owns the refresh hit target.
             let mut alert = model.task_marks.get(&task.id).cloned().unwrap_or_default();
             if status.as_ref().is_some_and(|(_, blocked)| *blocked) {
@@ -4022,6 +5793,15 @@ fn build_list_rows(
                 // never leaves its tail below the fold.
                 *selected_idx = Some(out.len() - 1);
             }
+            // The reply box (`r`) opens under its row and scrolls with the list.
+            if let Some(reply) = model.row_reply.filter(|reply| reply.task == task.id) {
+                let (rows, caret) = row_reply_rows(&reply, geo.row_width);
+                let first = out.len();
+                out.extend(rows);
+                if let Some((row, column)) = caret.filter(|_| reply.caret) {
+                    reply_caret.set(Some((first + row, column)));
+                }
+            }
         };
     // Project order on a multi-scope surface: a dim, unselectable project heading opens each
     // run of one project's rows inside a section.
@@ -4062,7 +5842,7 @@ fn build_list_rows(
             geo.row_width,
             style_dim(),
         )));
-        return (out, selected_idx);
+        return (out, selected_idx, reply_caret.get());
     }
 
     if let Some(summary) = model.summary.as_deref() {
@@ -4149,13 +5929,13 @@ fn build_list_rows(
             push_task(id, &mut out, &mut selected_idx, false);
         }
     }
-    (out, selected_idx)
+    (out, selected_idx, reply_caret.get())
 }
 
 /// A collapsible group header: `{chevron} {word} · {n}` with no rule. Selected,
 /// the word is bold and the rest dim; unselected, everything is dim. Never reverse.
 fn paint_group_header(
-    word: &'static str,
+    word: &str,
     count: usize,
     width: u16,
     selected: bool,
@@ -4234,7 +6014,7 @@ fn paint_empty_hint(width: u16) -> Line<'static> {
     let spans = vec![
         Span::styled("    no open tasks here — ".to_string(), style_dim()),
         Span::styled("+".to_string(), style_bold()),
-        Span::styled(" add".to_string(), style_dim()),
+        Span::styled(" add task".to_string(), style_dim()),
     ];
     bound_line(Line::from(spans), width as usize)
 }
@@ -4255,6 +6035,17 @@ fn paint_rule_row(width: u16) -> Line<'static> {
 /// first in that text rather than the one actually painted -- Minor 1's regression. The one
 /// thing this function still verifies is that the control survived the row's own width
 /// clipping, exactly as the pre-fix code did for a control it had located by search.
+/// An input's placeholder in `width` cells. Its ` · `-separated hints (quick-add's
+/// `!p project · !t thread …`) leave whole from the right, never cut, as footer entries do.
+fn fit_placeholder(placeholder: &str, width: usize) -> String {
+    let parts: Vec<&str> = placeholder.split(VERB_SEPARATOR).collect();
+    (1..=parts.len())
+        .rev()
+        .map(|count| parts[..count].join(VERB_SEPARATOR))
+        .find(|shown| display_width(shown) <= width)
+        .unwrap_or_else(|| present_line(parts[0], width))
+}
+
 /// Paint a shared bottom input: a bold prompt glyph, mono body, dim placeholder
 /// while empty, and an optional refusal tail. The caller supplies already-windowed
 /// text at `width - 2` cells, exactly matching the cursor budget below.
@@ -4296,7 +6087,11 @@ pub(crate) fn paint_bottom_input_slot(
     let prefix_width = display_width(prefix) as u16;
     let avail = width.saturating_sub(prefix_width) as usize;
     let empty = body.is_empty();
-    let shown = present_line(if empty { placeholder } else { body }, avail);
+    let shown = if empty {
+        fit_placeholder(placeholder, avail)
+    } else {
+        present_line(body, avail)
+    };
     let style = if empty { style_dim() } else { style_bold() };
     let mut spans = vec![
         Span::styled(prefix, style_bold()),
@@ -4574,8 +6369,18 @@ fn paint_selector_row(
 fn mutating_verb_key(key: &str) -> bool {
     matches!(
         key,
-        "s" | "d" | "o" | "b" | "r" | "x" | "a" | "e" | "u" | "n" | "f" | "q"
+        "s" | "d" | "o" | "b" | "r" | "x" | "a" | "e" | "u" | "n" | "f" | "g" | "q"
     )
+}
+
+/// The short label a verb falls back to when the full bar outgrows its row; Help keeps the
+/// full wording.
+fn compact_verb_label(label: &str) -> &str {
+    match label {
+        "save step" | "add step" => "step",
+        "save all" => "save",
+        _ => label,
+    }
 }
 
 fn paint_verb_bar(
@@ -4584,42 +6389,168 @@ fn paint_verb_bar(
     width: u16,
     prefix: bool,
 ) -> (Line<'static>, Vec<(usize, u16, u16)>) {
-    let shown: Vec<&VerbEntry<'_>> = entries.iter().take(budget).collect();
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut hits = Vec::new();
-    let mut x = 0u16;
-
-    spans.push(Span::styled(" ".to_string(), style_plain()));
-    x = x.saturating_add(1);
-
-    for (i, entry) in shown.iter().enumerate() {
-        if i > 0 {
-            let sep = " · ";
-            spans.push(Span::styled(sep.to_string(), style_dim()));
-            x = x.saturating_add(display_width(sep) as u16);
-        }
-        let key = if prefix && mutating_verb_key(entry.key) {
-            format!("ctrl+{}", entry.key)
-        } else {
-            entry.key.to_string()
-        };
-        let key_w = display_width(&key) as u16;
-        let start = x;
-        spans.push(Span::styled(key, style_bold()));
-        x = x.saturating_add(key_w);
-        let label = format!(" {}", entry.label);
-        let label_w = display_width(&label) as u16;
-        spans.push(Span::styled(label, style_plain()));
-        x = x.saturating_add(label_w);
-        hits.push((i, start, key_w.saturating_add(label_w)));
-    }
-
-    let line = bound_line(Line::from(spans), width as usize);
-    // Drop hits that fall entirely past the clipped width.
-    hits.retain(|(_, start, w)| (*start as usize) < width as usize && *w > 0);
-    (line, hits)
+    let keys: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            if prefix && mutating_verb_key(entry.key) {
+                format!("ctrl+{}", entry.key)
+            } else {
+                entry.key.to_string()
+            }
+        })
+        .collect();
+    let fit = fit_verbs(entries, &keys, budget, width as usize, 1);
+    paint_fitted_verbs(entries, &keys, &fit, 1, style_plain())
 }
 
+/// The separator between footer entries, and the one a footer too narrow for its essentials
+/// falls back to.
+const VERB_SEPARATOR: &str = " · ";
+const VERB_SEPARATOR_TIGHT: &str = " ";
+
+/// Which entries a footer row paints, and how tightly. Entries are whole or absent, never cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FittedVerbs {
+    /// Indices into the declared entries, in declared order.
+    kept: Vec<usize>,
+    /// Short labels ([`compact_verb_label`]) in place of the full wording.
+    compact: bool,
+    /// The lead padding and ` · ` separators are gone: the essentials alone did not fit.
+    tight: bool,
+}
+
+/// Fit one footer row of `entries` (painted with `keys`) into `width` cells after a `lead`
+/// of padding. Every footer, verb bar and card legend alike, goes through here: at most
+/// `budget` entries, then full labels, then short labels, then one whole entry dropped by
+/// [`VerbEntry::shed`] and both label lengths measured again, until the row fits.
+/// Essentials that still do not fit lose `: commands` ([`COMMANDS_VERB`]), then the padding
+/// and separators, and below that only the leading essentials that fit whole remain.
+fn fit_verbs(
+    entries: &[VerbEntry<'_>],
+    keys: &[String],
+    budget: usize,
+    width: usize,
+    lead: usize,
+) -> FittedVerbs {
+    let painted = |kept: &[usize], compact: bool, tight: bool| -> usize {
+        let (lead, separator) = if tight {
+            (0, VERB_SEPARATOR_TIGHT)
+        } else {
+            (lead, VERB_SEPARATOR)
+        };
+        let labels: usize = kept
+            .iter()
+            .map(|&index| {
+                let label = if compact {
+                    compact_verb_label(entries[index].label)
+                } else {
+                    entries[index].label
+                };
+                display_width(&keys[index]) + 1 + display_width(label)
+            })
+            .sum();
+        lead + labels + display_width(separator) * kept.len().saturating_sub(1)
+    };
+    // The next entry to go: the highest `shed`, the rightmost among equals. None once only
+    // essentials remain.
+    let shed_one = |kept: &mut Vec<usize>| -> bool {
+        let next = kept
+            .iter()
+            .enumerate()
+            .filter(|(_, &index)| entries[index].shed > 0)
+            .max_by_key(|(position, &index)| (entries[index].shed, *position))
+            .map(|(position, _)| position);
+        next.map(|position| kept.remove(position)).is_some()
+    };
+
+    // Budget, then full labels, then short labels, then one shed at a time. `Err` carries the
+    // essentials that still overflow.
+    let shed_to_fit = |mut kept: Vec<usize>| -> Result<FittedVerbs, Vec<usize>> {
+        while kept.len() > budget && shed_one(&mut kept) {}
+        loop {
+            for compact in [false, true] {
+                if painted(&kept, compact, false) <= width {
+                    return Ok(FittedVerbs {
+                        kept,
+                        compact,
+                        tight: false,
+                    });
+                }
+            }
+            if !shed_one(&mut kept) {
+                return Err(kept);
+            }
+        }
+    };
+
+    let all: Vec<usize> = (0..entries.len()).collect();
+    let mut kept = match shed_to_fit(all.clone()) {
+        Ok(fit) => return fit,
+        Err(kept) => kept,
+    };
+    // Essentials that overflow give up `: commands` first, and the fit runs again from the
+    // whole row, so a seat shed only to make room for it comes back.
+    if kept.iter().any(|&index| entries[index] == COMMANDS_VERB) {
+        let without: Vec<usize> = all
+            .into_iter()
+            .filter(|&index| entries[index] != COMMANDS_VERB)
+            .collect();
+        kept = match shed_to_fit(without) {
+            Ok(fit) => return fit,
+            Err(kept) => kept,
+        };
+    }
+    while !kept.is_empty() && painted(&kept, true, true) > width {
+        kept.pop();
+    }
+    FittedVerbs {
+        kept,
+        compact: true,
+        tight: true,
+    }
+}
+
+/// Paint a fitted footer row: bold keys, `label_style` labels, dim separators. Returns hit
+/// regions as (declared entry index, x, width), so a click still names the entry it shows.
+fn paint_fitted_verbs(
+    entries: &[VerbEntry<'_>],
+    keys: &[String],
+    fit: &FittedVerbs,
+    lead: usize,
+    label_style: Style,
+) -> (Line<'static>, Vec<(usize, u16, u16)>) {
+    let (lead, separator) = if fit.tight {
+        (0, VERB_SEPARATOR_TIGHT)
+    } else {
+        (lead, VERB_SEPARATOR)
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut hits = Vec::new();
+    let mut x = lead as u16;
+    if lead > 0 {
+        spans.push(Span::styled(" ".repeat(lead), style_plain()));
+    }
+    for (position, &index) in fit.kept.iter().enumerate() {
+        if position > 0 {
+            spans.push(Span::styled(separator.to_string(), style_dim()));
+            x = x.saturating_add(display_width(separator) as u16);
+        }
+        let key = keys[index].clone();
+        let key_w = display_width(&key) as u16;
+        let label = if fit.compact {
+            compact_verb_label(entries[index].label)
+        } else {
+            entries[index].label
+        };
+        let label = format!(" {label}");
+        let label_w = display_width(&label) as u16;
+        hits.push((index, x, key_w.saturating_add(label_w)));
+        spans.push(Span::styled(key, style_bold()));
+        spans.push(Span::styled(label, label_style));
+        x = x.saturating_add(key_w).saturating_add(label_w);
+    }
+    (Line::from(spans), hits)
+}
 pub(crate) fn format_age(now: SystemTime, then: SystemTime) -> String {
     let secs = now.duration_since(then).unwrap_or_default().as_secs();
     if secs < 60 {
@@ -4749,6 +6680,140 @@ mod tests {
             .collect::<String>()
     }
 
+    const fn verb(key: &'static str, label: &'static str, shed: u8) -> VerbEntry<'static> {
+        VerbEntry { key, label, shed }
+    }
+
+    /// A started row's board bar: open · four status verbs · help.
+    const STARTED_BAR: &[VerbEntry<'static>] = &[
+        verb("enter", "open", 0),
+        verb("d", "done", 1),
+        verb("n", "next", 1),
+        verb("o", "inbox", 1),
+        verb("b", "block", 1),
+        verb("?", "help", 0),
+    ];
+
+    #[test]
+    fn a_narrow_verb_bar_drops_whole_entries_rightmost_first_and_keeps_essentials() {
+        let bar = |budget: usize, width: u16| {
+            let (line, hits) = paint_verb_bar(STARTED_BAR, budget, width, true);
+            let indices: Vec<usize> = hits.iter().map(|(index, _, _)| *index).collect();
+            (plain(&line), indices)
+        };
+        assert_eq!(
+            bar(7, 120).0,
+            " enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ctrl+b block · ? help"
+        );
+        // The compact budget sheds `block`, not `? help`.
+        assert_eq!(
+            bar(5, 120),
+            (
+                " enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ? help".to_string(),
+                vec![0, 1, 2, 3, 5]
+            )
+        );
+        // Hits keep the declared index, so a click on `? help` still opens Help.
+        assert_eq!(
+            bar(7, 40),
+            (
+                " enter open · ctrl+d done · ? help".to_string(),
+                vec![0, 1, 5]
+            )
+        );
+        let (_, hits) = paint_verb_bar(STARTED_BAR, 7, 40, true);
+        assert_eq!(hits.last(), Some(&(5, 28, 6)));
+    }
+
+    #[test]
+    fn commands_sits_before_help_stays_through_sheds_and_drops_first_when_essentials_overflow() {
+        const BAR: &[VerbEntry<'static>] = &[
+            verb("enter", "open", 0),
+            verb("d", "done", 1),
+            verb("n", "next", 1),
+            verb("o", "inbox", 1),
+            verb("b", "block", 1),
+            COMMANDS_VERB,
+            verb("?", "help", 0),
+        ];
+        let bar = |budget: usize, width: u16| plain(&paint_verb_bar(BAR, budget, width, true).0);
+        assert_eq!(
+            bar(7, 120),
+            " enter open · ctrl+d done · ctrl+n next · ctrl+o inbox · ctrl+b block · : commands · ? help"
+        );
+        // The compact budget and a narrow row shed status verbs, never `: commands`.
+        assert_eq!(
+            bar(5, 120),
+            " enter open · ctrl+d done · ctrl+n next · : commands · ? help"
+        );
+        assert_eq!(bar(7, 33), " enter open · : commands · ? help");
+        // Below the essentials: `: commands` goes before `? help`, then the separators.
+        assert_eq!(bar(7, 32), " enter open · ? help");
+        assert_eq!(bar(7, 19), "enter open ? help");
+        assert_eq!(bar(7, 16), "enter open");
+        // A seat shed only to make room for `: commands` comes back once it goes: the armed
+        // undo bar on a group header keeps `← fold` at 44 columns.
+        const HEADER: &[VerbEntry<'static>] = &[
+            verb("u", "undo", 0),
+            verb("enter", "open", 0),
+            verb("←", "fold", 1),
+            verb("+", "add", 1),
+            COMMANDS_VERB,
+            verb("?", "help", 0),
+        ];
+        assert_eq!(
+            plain(&paint_verb_bar(HEADER, 7, 44, true).0),
+            " ctrl+u undo · enter open · ← fold · ? help"
+        );
+        // A click on `: commands` names its declared entry.
+        let (_, hits) = paint_verb_bar(BAR, 7, 33, true);
+        let indices: Vec<usize> = hits.iter().map(|(index, _, _)| *index).collect();
+        assert_eq!(indices, vec![0, 5, 6]);
+    }
+
+    #[test]
+    fn essentials_too_wide_for_their_row_shed_padding_then_trailing_entries_never_a_cut() {
+        const EDIT: &[VerbEntry<'static>] = &[
+            verb("shift+enter", "save", 0),
+            verb("tab", "next", 1),
+            verb("esc", "cancel", 0),
+        ];
+        let bar = |width: u16| plain(&paint_verb_bar(EDIT, 7, width, false).0);
+        assert_eq!(bar(30), " shift+enter save · esc cancel");
+        // Below the essentials: the padding and ` · ` go first.
+        assert_eq!(bar(29), "shift+enter save esc cancel");
+        assert_eq!(bar(27), "shift+enter save esc cancel");
+        // Then trailing entries go whole; a label is never cut.
+        assert_eq!(bar(26), "shift+enter save");
+        assert_eq!(bar(15), "");
+    }
+
+    #[test]
+    fn a_placeholder_drops_trailing_hints_whole() {
+        let hints = "title…   !p project · !t thread · !a assignee · !b base";
+        assert_eq!(fit_placeholder(hints, 60), hints);
+        // The 41-column quick-add line leaves 39 cells after its prompt glyph.
+        assert_eq!(
+            fit_placeholder(hints, 39),
+            "title…   !p project · !t thread"
+        );
+        assert_eq!(fit_placeholder(hints, 19), "title…   !p project");
+        assert_eq!(fit_placeholder("thread…", 40), "thread…");
+    }
+
+    #[test]
+    fn a_card_legend_fits_inside_its_borders_with_a_blank_cell_before_the_right_one() {
+        // `  ↑↓ move · enter run · esc close` is 33 cells; a 35-cell card holds it whole,
+        // its last two cells a blank and the right border.
+        let (line, hits) = modal_legend_line(PALETTE_FOOTER, 35);
+        assert_eq!(plain(&line), "  ↑↓ move · enter run · esc close");
+        assert_eq!(hits, vec![(0, 2, 7), (1, 12, 9), (2, 24, 9)]);
+        // One cell narrower sheds `↑↓ move` whole.
+        let (line, hits) = modal_legend_line(PALETTE_FOOTER, 34);
+        assert_eq!(plain(&line), "  enter run · esc close");
+        assert_eq!(hits, vec![(1, 2, 9), (2, 14, 9)]);
+    }
+
     fn paint_to_buffer(line: Line<'static>, width: u16) -> Buffer {
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -4765,6 +6830,7 @@ mod tests {
         let view = VIEW.get_or_init(|| QueueView {
             sections: vec![],
             counts: crate::ui::queue::StatusCounts::default(),
+            group: crate::ui::queue::GroupBy::None,
         });
         QueueFrameModel {
             tasks: &[],
@@ -4779,17 +6845,19 @@ mod tests {
             },
             surface: BoardSurface::All,
             project_groups: false,
+            assignee_labels: true,
+            messages_hidden: false,
             search_query: "",
             search_pinned: false,
             summary: None,
             context: " all".to_string(),
-            has_update_notice: false,
             status_message: None,
             status_undo_offset: None,
             status_undo_width: None,
             verb_items: &[],
             now: SystemTime::UNIX_EPOCH,
             overlay: QueueOverlay::None,
+            row_reply: None,
             list_scroll: 0,
             follow_list: false,
             archived_collapsed: true,
@@ -4873,23 +6941,23 @@ mod tests {
 
     #[test]
     fn steps_start_two_rows_after_the_notes_block() {
-        let layout = page_content_layout(1, 0, 0, 3, 16);
+        let layout = page_content_layout(1, 0, 0, 3, 0, 16);
         assert_eq!(layout.steps_start, 3);
 
-        let layout = page_content_layout(5, 0, 0, 3, 16);
+        let layout = page_content_layout(5, 0, 0, 3, 0, 16);
         assert_eq!(layout.steps_start, 7);
     }
 
     #[test]
     fn relationship_rows_sit_between_notes_and_steps_with_a_blank_each_side() {
         // notes 0..2, blank 2, relations 3..5, blank 5, steps label 6.
-        let layout = page_content_layout(2, 2, 0, 3, 16);
+        let layout = page_content_layout(2, 2, 0, 3, 0, 16);
         assert_eq!(layout.relation_start, 3);
         assert_eq!(layout.steps_start, 6);
         assert_eq!(layout.total_rows, 6 + 1 + 3 + 1);
         assert_eq!(layout.children_start, layout.total_rows);
         // No relationship rows: the original two-blank gap is unchanged.
-        let layout = page_content_layout(2, 0, 0, 3, 16);
+        let layout = page_content_layout(2, 0, 0, 3, 0, 16);
         assert_eq!(layout.steps_start, 4);
         assert_eq!(layout.relation_start, layout.steps_start);
     }
@@ -4898,7 +6966,7 @@ mod tests {
     fn children_follow_the_add_step_row_after_one_blank() {
         // notes 0..2, blank 2, parent 3, blank 4, steps label 5, steps 6..9 (+ step at 8),
         // blank 9, children 10..12, trailing blank 12.
-        let layout = page_content_layout(2, 1, 2, 3, 16);
+        let layout = page_content_layout(2, 1, 2, 3, 0, 16);
         assert_eq!(layout.relation_start, 3);
         assert_eq!(layout.steps_start, 5);
         assert_eq!(layout.children_start, 10);

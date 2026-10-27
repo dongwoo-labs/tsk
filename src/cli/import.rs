@@ -173,7 +173,7 @@ pub fn parse(args: &[String]) -> Result<ImportInput, String> {
                     _ => {
                         return Err(format!(
                             "--assignee must be me, any, or an email address, not {assignee}"
-                        ))
+                        ));
                     }
                 };
                 index += consumed;
@@ -555,11 +555,7 @@ pub struct ImportReport {
 }
 
 pub fn status_name(status: HumanStatus) -> &'static str {
-    match status {
-        HumanStatus::Todo => "todo",
-        HumanStatus::Doing => "doing",
-        HumanStatus::Done => "done",
-    }
+    super::list::legacy_status_name(status)
 }
 
 /// Run the import with the process transport (`LINEAR_API_KEY`, curl, fixture hook).

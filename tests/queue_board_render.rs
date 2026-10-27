@@ -43,6 +43,11 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, secs_ago: 
         id: Uuid::from_u128(id),
         number: None,
         parent_task_id: None,
+        thread: None,
+        assignee: None,
+        assignee_kind: tsk_tui::domain::AssigneeKind::Agent,
+        base: None,
+        dispatch: None,
         after: Vec::new(),
         notice: None,
         revision: Uuid::from_u128(id),
@@ -50,12 +55,11 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, secs_ago: 
         title: title.to_string(),
         notes: None,
         status,
+        block: None,
+        past_blocks: Vec::new(),
         scope,
         provenance: ProvenanceOrigin::Manual,
-        history: vec![TaskEvent {
-            kind: TaskEventKind::Created,
-            at,
-        }],
+        history: vec![TaskEvent::new(TaskEventKind::Created, at)],
         steps: Vec::new(),
         soft_deleted: false,
         archived: false,
@@ -205,6 +209,15 @@ fn fixture_tasks() -> Vec<Task> {
     for (index, task) in tasks.iter_mut().enumerate() {
         task.number = Some((index + 1) as u64);
     }
+    // The blocked task carries an agent's block: its live line reads `@claude: <why>`.
+    tasks[4].block = Some(tsk_tui::domain::Block::open(
+        tsk_tui::domain::BlockDraft {
+            why: Some("Which receipt format?".into()),
+            ..Default::default()
+        },
+        "claude",
+        at_secs_ago(41 * 60),
+    ));
     tasks
 }
 
@@ -213,6 +226,8 @@ fn fixture_tasks() -> Vec<Task> {
 /// selection.
 fn base_board_model() -> BoardModel {
     let mut model = BoardModel::from_tasks(fixture_tasks(), Some(PathBuf::from("/repos/tsk")));
+    // Painted ages (the live line's `· 41m`) read this fixed clock, never today's date.
+    model.set_clock(Some(now()));
     // The desk's NEEDS YOU lane is global now, so seeding no longer lands on task 1
     // (the started /repos/tsk row): the render fixtures pin task 1's legend explicitly.
     let pinned_index = model
@@ -244,7 +259,7 @@ fn fixture_verbs() -> &'static [VerbEntry<'static>] {
 /// Imp-A (round 3 finding): a **Todo**-selected model, so `board_verb_items` yields six
 /// entries (`s start` plus the base five) instead of the Doing selection's five. Used
 /// only where the trim-the-sixth path needs a budget-5 bar to actually drop an entry --
-/// `fixture_verbs()`'s Doing selection is exactly 5 against a budget of 5, so `take(5)`
+/// `fixture_verbs()`'s Doing selection is exactly 5 against a budget of 5, so the budget
 /// never drops anything and a test built on it can't fail.
 fn todo_verbs() -> Vec<VerbEntry<'static>> {
     let mut model = base_board_model();
@@ -276,7 +291,7 @@ fn todo_verbs() -> Vec<VerbEntry<'static>> {
 ///
 /// Matches this file's palette scene: the fixture's selected task (1, Doing) with a "stat"
 /// query narrowed to the status tail, second row (`set status: blocked`) highlighted.
-fn palette_commands() -> Vec<PaletteCommandRow<'static>> {
+fn palette_commands() -> Vec<PaletteCommandRow> {
     let mut model = base_board_model();
     let mut domain = DomainState::new();
     apply_intent(
@@ -300,17 +315,20 @@ fn palette_commands() -> Vec<PaletteCommandRow<'static>> {
         "stat",
         "fixture query drifted from the scene's \"stat\" query"
     );
-    let labels: Vec<&str> = model
+    let labels: Vec<String> = model
         .visible_commands()
         .iter()
-        .map(|command| command.label)
+        .map(|command| command.label.clone())
         .collect();
     assert_eq!(
         labels,
-        vec!["set status: todo", "set status: doing", "set status: done",],
-        "the \"stat\" query against the real M1 catalog must narrow to exactly the three \
-         status commands (no dispatch, no other tail entry) -- if the product catalog \
-         changed, this fixture must follow it, not be hand-patched"
+        vec![
+            "set status: todo",
+            "set status: doing",
+            "set status: done",
+            "set after (wait for)…"
+        ],
+        "the \"stat\" query matches the status commands and the after command by subsequence"
     );
     for _ in 0..1 {
         apply_intent(&mut domain, &mut model, BoardIntent::CommandNext, None)
@@ -327,7 +345,7 @@ fn palette_commands() -> Vec<PaletteCommandRow<'static>> {
         .iter()
         .enumerate()
         .map(|(i, command)| PaletteCommandRow {
-            label: command.label,
+            label: command.label.clone(),
             selected: Some(i) == selected,
         })
         .collect()
@@ -454,7 +472,9 @@ fn fixture_model_on_scope<'a>(
         search_pinned: false,
         summary: None,
         context: " desk".to_string(),
-        has_update_notice: false,
+        assignee_labels: false,
+        messages_hidden: false,
+        row_reply: None,
         status_message: None,
         status_undo_offset: None,
         status_undo_width: None,
@@ -675,10 +695,15 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         list.contains("Smoke-test worktree dispatch"),
         "task titles must appear:\n{list}"
     );
-    // Standard trailing meta keeps scope/thread identity without relative ages.
+    // The default board keeps every task on one line, including blocked and review tasks.
+    let corners = list
+        .lines()
+        .filter(|line| line.contains("└─"))
+        .map(|line| line.trim().trim_end_matches(['▌', '█']).trim_end())
+        .collect::<Vec<_>>();
     assert!(
-        !list.contains("└─"),
-        "collapsed board must hide attribution:\n{list}"
+        corners.is_empty(),
+        "one-line board must hide attribution and message lines:\n{list}"
     );
     assert!(
         !list.contains("ago"),
@@ -694,8 +719,11 @@ fn standard_78x24_fixture_has_selector_list_rule_status_verb_and_no_other_chrome
         list.contains("Docs refresh pass after F9 ships"),
         "review rows join blocked rows in the global lane:\n{list}"
     );
+    // A block's live line names who asks (`@claude: …`); no other agent field paints.
     assert!(
-        !list.contains("claude") && !list.contains("grok") && !list.contains("agent"),
+        !list.replace("└─ @claude: ", "").contains("claude")
+            && !list.contains("grok")
+            && !list.contains("agent"),
         "M1 must not paint agent fields:\n{list}"
     );
 
@@ -991,20 +1019,21 @@ fn overlay_rows_are_padded_exact_no_base_bleed() {
 
     // --- Palette query paints on status row; must be exact padded query, no status tail ---
     {
+        let commands = [
+            PaletteCommandRow {
+                label: "reopen".into(),
+                selected: true,
+            },
+            PaletteCommandRow {
+                label: "delete".into(),
+                selected: false,
+            },
+        ];
         let mut model = fixture_model(&tasks, &view);
         model.status_message = Some(status);
         model.overlay = QueueOverlay::Palette {
             query: "re",
-            commands: &[
-                PaletteCommandRow {
-                    label: "reopen",
-                    selected: true,
-                },
-                PaletteCommandRow {
-                    label: "delete",
-                    selected: false,
-                },
-            ],
+            commands: &commands,
         };
         let (rows, geo) = paint(80, 24, &model);
         let qrow = geo.status_row.expect("status row at 80x24");
@@ -1083,6 +1112,7 @@ fn overlay_rows_are_padded_exact_no_base_bleed() {
             title: None,
             query: None,
             wrap: None,
+            removable: false,
         };
         let (rows, _geo) = paint(80, 24, &model);
         let desk_row = rows
@@ -1116,7 +1146,7 @@ fn compact_77x24_and_48x19_and_40x10_paint_glyph_title_only_rows_and_leq_5_verb_
     let view = fixture_view(&tasks, false);
     // Imp-A: a Todo selection gives `board_verb_items` six entries (`s start` plus the
     // base five), so the budget-5 trim below is genuinely exercised -- the Doing selection
-    // `fixture_model` otherwise uses yields exactly five, which `take(5)` never trims.
+    // `fixture_model` otherwise uses yields exactly five, which the budget never trims.
     let verbs = todo_verbs();
     let model = QueueFrameModel {
         verb_items: &verbs,
@@ -1146,7 +1176,8 @@ fn compact_77x24_and_48x19_and_40x10_paint_glyph_title_only_rows_and_leq_5_verb_
         );
 
         // Glyph+title only: known age tokens from the fixture must not trail as meta.
-        // (Titles in the fixture contain none of these standalone age tokens.)
+        // (Titles in the fixture contain none of these standalone age tokens.) The live line
+        // under a row names its age on purpose, so its lines are left out.
         for age in ["3m", "12m", "41m", "1h", "1d", "2d", "3h", "5h", "6h"] {
             // Compact may still show counts like "2" on headers; ages are multi-char with unit.
             if let Some(verb_row) = geo.verb_row {
@@ -1155,6 +1186,7 @@ fn compact_77x24_and_48x19_and_40x10_paint_glyph_title_only_rows_and_leq_5_verb_
                     .enumerate()
                     .filter(|(i, _)| *i as u16 != verb_row && Some(*i as u16) != geo.status_row)
                     .map(|(_, r)| trimmed(r))
+                    .filter(|r| !r.trim_start().starts_with("└─"))
                     .collect::<Vec<_>>()
                     .join("\n");
                 assert!(
@@ -1166,16 +1198,10 @@ fn compact_77x24_and_48x19_and_40x10_paint_glyph_title_only_rows_and_leq_5_verb_
 
         if let Some(verb_row) = geo.verb_row {
             let painted = trimmed(&rows[verb_row as usize]);
-            // Count key tokens from the fixture set that actually appear.
+            // Count the fixture set's whole `key label` entries that actually appear.
             let shown = todo_verbs()
                 .iter()
-                .filter(|v| {
-                    if v.key == "+" {
-                        painted.contains("+ capture")
-                    } else {
-                        painted.contains(v.key)
-                    }
-                })
+                .filter(|v| painted.contains(&format!("{} {}", v.key, v.label)))
                 .count();
             assert!(
                 shown <= 5,
@@ -1350,8 +1376,15 @@ fn task_page_header_shows_identifier_not_footer() {
         step_scroll: 0,
         step_marked: None,
         inline_step_editor: None,
+        block_rows: Vec::new(),
+        block_cursor: None,
+        trail_rows: Vec::new(),
         bottom_input: None,
         meta: "desk · created 1m ago · updated 1m ago".to_string(),
+        meta_assignee_x: None,
+        meta_assignee_width: 0,
+        meta_base_x: None,
+        meta_base_width: 0,
         meta_scope_x: 0,
         meta_scope_width: 4,
         focus: None,
@@ -1464,8 +1497,15 @@ fn task_page_renders_header_notes_and_meta_as_a_full_takeover_in_both_tiers() {
         step_scroll: 0,
         step_marked: None,
         inline_step_editor: None,
+        block_rows: Vec::new(),
+        block_cursor: None,
+        trail_rows: Vec::new(),
         bottom_input: None,
         meta: "tsk \u{b7} created 1h ago \u{b7} updated 1h ago".to_string(),
+        meta_assignee_x: None,
+        meta_assignee_width: 0,
+        meta_base_x: None,
+        meta_base_width: 0,
         meta_scope_x: 0,
         meta_scope_width: 11,
         focus: None,
@@ -1545,7 +1585,7 @@ fn task_page_paints_steps_section_between_notes_and_footer() {
     let notes_row = find("the notes body", &shown);
     let parent_row = find("parent  none · P to set", &shown);
     let label_row = find("steps 2/3", &shown);
-    let meta_row = find("created", &shown);
+    let meta_row = find("⎇", &shown);
     assert_eq!(
         (parent_row, label_row),
         (notes_row + 2, notes_row + 4),
@@ -2056,8 +2096,17 @@ fn shift_tab_from_scope_resets_notes_stream_origin_and_aligns_caret() {
         shift_tab.clone().expect("Shift+Tab intent"),
         None,
     )
-    .expect("Shift+Tab selects the trailing add target from Scope");
-    assert_eq!(model.input_mode(), BoardInputMode::TaskPage);
+    .expect("Shift+Tab selects After from Scope");
+    assert_eq!(model.input_mode(), BoardInputMode::SelectAfter);
+    for mode in [
+        BoardInputMode::SelectBase,
+        BoardInputMode::EditAssignee,
+        BoardInputMode::TaskPage,
+    ] {
+        apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
+            .expect("reverse footer fields to add target");
+        assert_eq!(model.input_mode(), mode);
+    }
     apply_intent(&mut domain, &mut model, BoardIntent::FormFocusPrev, None)
         .expect("Shift+Tab from the add target enters Notes");
     assert_eq!(model.input_mode(), BoardInputMode::EditNotes);
@@ -2183,7 +2232,10 @@ fn task_page_scrolls_notes_and_steps_as_one_content_region() {
         shown[1].contains("Scrollable page"),
         "header must stay fixed"
     );
-    assert!(shown[20].contains("created"), "footer must stay fixed");
+    assert!(
+        shown[20].contains("⎇ default · desk"),
+        "footer must stay fixed"
+    );
     assert!(
         shown.iter().any(|row| row.contains('▌')),
         "overflow needs a scrollbar"
@@ -2211,7 +2263,10 @@ fn task_page_scrolls_notes_and_steps_as_one_content_region() {
         shown[1].contains("Scrollable page"),
         "header must stay fixed"
     );
-    assert!(shown[20].contains("created"), "footer must stay fixed");
+    assert!(
+        shown[20].contains("⎇ default · desk"),
+        "footer must stay fixed"
+    );
     assert!(shown.iter().any(|row| row.contains("steps 0/1")));
     let step_row = shown
         .iter()
@@ -2936,10 +2991,18 @@ fn surface_goldens_board_wide_palette_help_drawer_exist_for_reviewer_side_by_sid
 #[test]
 fn palette_golden_scene_commands_are_bound_to_the_real_m1_catalog_and_exclude_dispatch() {
     let commands = palette_commands();
-    let labels: Vec<&str> = commands.iter().map(|command| command.label).collect();
+    let labels: Vec<String> = commands
+        .iter()
+        .map(|command| command.label.clone())
+        .collect();
     assert_eq!(
         labels,
-        vec!["set status: todo", "set status: doing", "set status: done",],
+        vec![
+            "set status: todo",
+            "set status: doing",
+            "set status: done",
+            "set after (wait for)…"
+        ],
         "the palette golden scene's command rows must be exactly what \
          `BoardModel::visible_commands` produces for the fixture's selection and query, not \
          a hand-rolled stand-in"
@@ -2950,6 +3013,50 @@ fn palette_golden_scene_commands_are_bound_to_the_real_m1_catalog_and_exclude_di
             .all(|command| !command.label.contains("dispatch")),
         "AC-17 excludes dispatch from the M1 palette outright; the golden scene must never \
          show it: {commands:?}"
+    );
+}
+
+/// T235: a verb bar that outgrows its row falls back to short labels; a wide row keeps the
+/// full words.
+#[test]
+fn step_editor_bar_falls_back_to_short_labels_when_narrow() {
+    let step_bar = |width: u16| -> String {
+        let mut domain = DomainState::new();
+        let id = domain
+            .create_threaded(
+                "Step bar witness",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+                None,
+            )
+            .expect("create task");
+        domain.add_step(id, "only step").expect("add step");
+        let mut model = BoardModel::from_domain(&domain, None);
+        apply_intent(&mut domain, &mut model, BoardIntent::OpenTaskPage, None)
+            .expect("open task page");
+        apply_intent(&mut domain, &mut model, BoardIntent::BeginAddStep, None).expect("add step");
+        let rows = board_rows(&model, width, 24);
+        let verb_row = tier::resolve(width, 24).verb_row.expect("verb row");
+        trimmed(&rows[verb_row as usize])
+    };
+
+    let wide = step_bar(100);
+    assert!(
+        wide.contains("enter save step · shift+enter save all · esc cancel"),
+        "a wide bar names the whole action:\n{wide}"
+    );
+    let middling = step_bar(50);
+    assert!(
+        middling.contains("enter step · shift+enter save · esc cancel"),
+        "a narrower bar falls back to the short labels:\n{middling}"
+    );
+    // T252: where even short labels overflow, `shift+enter save all` leaves whole and the
+    // full words come back for what stays.
+    let narrow = step_bar(40);
+    assert_eq!(
+        narrow, " enter save step · esc cancel",
+        "a narrow bar drops a whole entry, never cuts one"
     );
 }
 
@@ -2990,7 +3097,7 @@ fn footer_lists_the_step_add_verb() {
 
     for row in [&with, &without] {
         assert!(
-            row.contains("ctrl+a step"),
+            row.contains("ctrl+a add step"),
             "task edit mode must list the step-add verb, including an empty checklist:\n{row}"
         );
     }
@@ -3001,7 +3108,7 @@ fn footer_lists_the_step_add_verb() {
 
     let floor = page_verb_row_with(&["only step"], 78);
     assert!(
-        floor.contains("ctrl+a step") && floor.contains("esc cancel"),
+        floor.contains("ctrl+a add step") && floor.contains("esc cancel"),
         "the editing bar fits the standard floor without clipping:\n{floor}"
     );
 }
@@ -4129,4 +4236,389 @@ fn a_project_heading_paints_its_palette_colour_on_the_board() {
     );
     let desk = row_of("desk");
     assert!((0..80u16).all(|x| buffer[(x, desk)].fg == ratatui::style::Color::Reset));
+}
+
+/// One task per live-line case, numbered from `T1`, plus the tasks they point at.
+fn live_line_tasks() -> Vec<Task> {
+    use tsk_tui::domain::{
+        Block, BlockDraft, BlockOn, Check, CheckState, Reply, ReviewDraft, OWNER,
+    };
+    let numbered = |number: u64, title: &str, status: HumanStatus, secs_ago: u64| {
+        let mut task = task(
+            u128::from(number),
+            title,
+            status,
+            project("/repos/tsk"),
+            secs_ago,
+        );
+        task.number = Some(number);
+        task
+    };
+    let blocked = |number: u64, title: &str, by: &str, draft: BlockDraft, secs_ago: u64| {
+        let mut task = numbered(number, title, HumanStatus::Blocked, 9 * 3600);
+        task.block = Some(Block::open(draft, by, at_secs_ago(secs_ago)));
+        task
+    };
+    let review = |number: u64, title: &str, on: BlockOn, secs_ago: u64| {
+        let mut task = numbered(number, title, HumanStatus::Review, 9 * 3600);
+        let draft = ReviewDraft {
+            done: Some("Built the widget; empty input now handled.".into()),
+            checks: [
+                ("A works", CheckState::Passed),
+                ("B works on empty input", CheckState::Open),
+                ("C works", CheckState::Failed),
+            ]
+            .into_iter()
+            .map(|(text, state)| Check {
+                text: text.into(),
+                state,
+            })
+            .collect(),
+            next: None,
+            on,
+        };
+        task.block = Some(Block::open_review(
+            draft,
+            "claude",
+            at_secs_ago(secs_ago),
+            1,
+        ));
+        task
+    };
+    let on = |number: u64| BlockDraft {
+        on: BlockOn::Task(number),
+        ..Default::default()
+    };
+
+    let mut asks = blocked(
+        1,
+        "Agent asks",
+        "claude",
+        BlockDraft {
+            why: Some("Review found 2 file-safety issues in move-aside. Which way?".into()),
+            needs: Some("a decision".into()),
+            options: vec!["Drop move-aside".into(), "Keep it and fix F-1/F-2".into()],
+            on: BlockOn::You,
+        },
+        2 * 3600,
+    );
+    asks.notes = Some("These notes stay off a blocked peek.".into());
+    let mut finished = numbered(20, "Finished blocker", HumanStatus::Done, 9 * 3600);
+    finished
+        .history
+        .push(TaskEvent::new(TaskEventKind::Completed, at_secs_ago(3600)));
+    let mut deleted = numbered(21, "Deleted blocker", HumanStatus::Open, 9 * 3600);
+    deleted.soft_deleted = true;
+    deleted.history.push(TaskEvent::new(
+        TaskEventKind::SoftDeleted,
+        at_secs_ago(5 * 60),
+    ));
+    let mut after_open = numbered(8, "Waits on two", HumanStatus::Ready, 9 * 3600);
+    after_open.after = vec![22, 23, 20];
+    let mut after_done = numbered(9, "Waited on a done task", HumanStatus::Ready, 9 * 3600);
+    after_done.after = vec![20];
+    let mut assigned = numbered(10, "Assigned and started", HumanStatus::Started, 9 * 3600);
+    assigned.assignee = Some("claude".into());
+    let mut archived = blocked(11, "Archived block", "claude", BlockDraft::default(), 60);
+    archived.archived = true;
+    let reply = |by: &str, secs_ago: u64, text: &str| Reply {
+        by: by.into(),
+        at: at_secs_ago(secs_ago),
+        text: text.into(),
+        edited: false,
+        deleted: false,
+        sent: false,
+    };
+    let asked = |why: Option<&str>, needs: Option<&str>| BlockDraft {
+        why: why.map(Into::into),
+        needs: needs.map(Into::into),
+        ..Default::default()
+    };
+    // The asker answered your reply: the board row shows the asker's newest words.
+    let mut answered = blocked(
+        16,
+        "Reply thread",
+        "claude",
+        asked(Some("Which port?"), Some("a port number")),
+        3 * 3600,
+    );
+    if let Some(block) = answered.block.as_mut() {
+        block.replies = vec![
+            reply(OWNER, 2 * 3600, "8080?"),
+            reply("claude", 25, "8080 is taken; 8081 then?"),
+            reply(OWNER, 10, "a reply I deleted"),
+        ];
+        block.replies[2].deleted = true;
+    }
+    // You replied last: the row falls back to the needs.
+    let mut replied = blocked(
+        17,
+        "You replied last",
+        "claude",
+        asked(None, Some("a port number")),
+        3 * 3600,
+    );
+    if let Some(block) = replied.block.as_mut() {
+        block.replies = vec![
+            reply("claude", 2 * 3600, "any port works"),
+            reply(OWNER, 60, "try 8080"),
+        ];
+    }
+    vec![
+        asks,
+        blocked(
+            2,
+            "Self block",
+            OWNER,
+            BlockDraft {
+                needs: Some("the vendor's reply".into()),
+                ..Default::default()
+            },
+            30 * 60,
+        ),
+        review(3, "Review on you", BlockOn::You, 40 * 60),
+        blocked(4, "Blocker finished", "claude", on(20), 3 * 3600),
+        blocked(5, "Blocker deleted", "claude", on(21), 3 * 3600),
+        blocked(6, "Blocker purged", "claude", on(99), 3 * 3600),
+        blocked(
+            7,
+            "Blocked elsewhere",
+            OWNER,
+            BlockDraft {
+                on: BlockOn::Other("design team".into()),
+                ..Default::default()
+            },
+            60,
+        ),
+        after_open,
+        after_done,
+        assigned,
+        archived,
+        blocked(12, "Waits on a started task", OWNER, on(22), 60),
+        review(13, "Review on pi", BlockOn::Agent("pi".into()), 60),
+        finished,
+        deleted,
+        {
+            let mut bare = numbered(14, "Bare review", HumanStatus::Review, 9 * 3600);
+            bare.notes = Some("Read me first".into());
+            bare
+        },
+        numbered(22, "Started prerequisite", HumanStatus::Started, 9 * 3600),
+        numbered(23, "Open prerequisite", HumanStatus::Open, 9 * 3600),
+        blocked(
+            15,
+            "Why only",
+            "claude",
+            asked(Some("Which staging\nclient?"), None),
+            25,
+        ),
+        answered,
+        replied,
+        blocked(18, "No message", "claude", BlockDraft::default(), 60),
+        blocked(
+            19,
+            "Blocked on pi with a message",
+            "claude",
+            BlockDraft {
+                needs: Some("pi's schema\nfor the pagination".into()),
+                on: BlockOn::Agent("pi".into()),
+                ..Default::default()
+            },
+            3 * 60,
+        ),
+        blocked(
+            24,
+            "Blocked on pi without one",
+            "claude",
+            BlockDraft {
+                on: BlockOn::Agent("pi".into()),
+                ..Default::default()
+            },
+            60,
+        ),
+        {
+            let mut silent = review(25, "Review without done", BlockOn::You, 60);
+            if let Some(block) = silent.block.as_mut() {
+                block.done = None;
+            }
+            silent
+        },
+        {
+            // Someone else replied last: the asker's reply after yours still shows.
+            let mut third = blocked(
+                27,
+                "Third party replied last",
+                "claude",
+                asked(None, Some("a port number")),
+                3 * 3600,
+            );
+            if let Some(block) = third.block.as_mut() {
+                block.replies = vec![
+                    reply(OWNER, 2 * 3600, "8080?"),
+                    reply("claude", 30 * 60, "8081 instead?"),
+                    reply("pi", 60, "8081 is free"),
+                ];
+            }
+            third
+        },
+        {
+            let mut open = numbered(26, "Open and waiting", HumanStatus::Open, 9 * 3600);
+            open.after = vec![23];
+            open
+        },
+        {
+            let mut chained = numbered(28, "Runs after an open task", HumanStatus::Ready, 9 * 3600);
+            chained.after = vec![26];
+            chained
+        },
+    ]
+}
+
+#[test]
+fn live_line_says_what_is_going_on_for_every_case() {
+    use tsk_tui::ui::render::live_line;
+    let tasks = live_line_tasks();
+    let line = |number: u64| {
+        let task = tasks
+            .iter()
+            .find(|task| task.number == Some(number))
+            .expect("task");
+        live_line(task, &tasks, now())
+    };
+    let cases: [(u64, Option<&str>); 16] = [
+        (1, Some("@claude blocked on you · 2h")),
+        (2, Some("blocked on you · 30m")),
+        (3, Some("@claude needs your review · 40m")),
+        (4, Some("T20 is done · unblock it · 1h")),
+        (5, Some("T21 was deleted · unblock it · 5m")),
+        // A purged blocker has no time to show.
+        (6, Some("T99 was deleted · unblock it")),
+        (7, Some("blocked on design team · 1m")),
+        (8, Some("after T22 (started), T23 (open)")),
+        // Every prerequisite done: nothing left to say.
+        (9, None),
+        // A plain started task, assigned or not, says nothing.
+        (10, None),
+        (11, None),
+        (12, Some("blocked on T22 · 1m")),
+        (13, Some("@claude needs a review from @pi · 1m")),
+        (20, None),
+        (22, None),
+        (23, None),
+    ];
+    for (number, expected) in cases {
+        assert_eq!(line(number).as_deref(), expected, "T{number}");
+    }
+}
+
+/// What each case paints on the board row: the asker's own words under it, or what it waits on
+/// in its label (`waiting on @pi`, `after T22, T23`, `before T8`). The peek and task page keep
+/// the status words.
+const ROW_CASES: [(u64, &str, Option<&str>, Option<&str>); 26] = [
+    // Blocked on you with a message: the needs (options never replace it here).
+    (1, "Agent asks", Some("@claude: a decision · 2h"), None),
+    // Your own block: no asker.
+    (2, "Self block", Some("the vendor's reply · 30m"), None),
+    (
+        3,
+        "Review on you",
+        Some("@claude: Built the widget; empty input now handled. · 40m"),
+        None,
+    ),
+    (
+        4,
+        "Blocker finished",
+        Some("T20 is done · unblock it · 1h"),
+        None,
+    ),
+    (
+        5,
+        "Blocker deleted",
+        Some("T21 was deleted · unblock it · 5m"),
+        None,
+    ),
+    (
+        6,
+        "Blocker purged",
+        Some("T99 was deleted · unblock it"),
+        None,
+    ),
+    (7, "Blocked elsewhere", None, Some("waiting on design team")),
+    (8, "Waits on two", None, Some("after T22, T23")),
+    (9, "Waited on a done task", None, None),
+    (10, "Assigned and started", None, None),
+    (12, "Waits on a started task", None, Some("waiting on T22")),
+    // A row waiting elsewhere never paints a line, even when the asker said something: it is
+    // not addressed to you.
+    (13, "Review on pi", None, Some("@pi reviewing")),
+    (14, "Bare review", None, None),
+    // A multi-line message flattens onto one line.
+    (
+        15,
+        "Why only",
+        Some("@claude: Which staging client? · 25s"),
+        None,
+    ),
+    // The asker's reply after yours, aged from the reply; a deleted reply never counts.
+    (
+        16,
+        "Reply thread",
+        Some("@claude: 8080 is taken; 8081 then? · 25s"),
+        None,
+    ),
+    (
+        17,
+        "You replied last",
+        Some("@claude: a port number · 3h"),
+        None,
+    ),
+    (18, "No message", None, None),
+    (
+        19,
+        "Blocked on pi with a message",
+        None,
+        Some("waiting on @pi"),
+    ),
+    (
+        24,
+        "Blocked on pi without one",
+        None,
+        Some("waiting on @pi"),
+    ),
+    (25, "Review without done", None, None),
+    // Both sides of a chain: what it runs after, then what runs after it.
+    (26, "Open and waiting", None, Some("after T23 · before T28")),
+    (28, "Runs after an open task", None, Some("after T26")),
+    (
+        27,
+        "Third party replied last",
+        Some("@claude: 8081 instead? · 30m"),
+        None,
+    ),
+    (20, "Finished blocker", None, None),
+    // A prerequisite names the unfinished tasks that wait on it (T20 is done: none).
+    (22, "Started prerequisite", None, Some("before T8")),
+    (23, "Open prerequisite", None, Some("before T8, T26")),
+];
+
+#[test]
+fn row_live_line_says_the_askers_words_and_the_label_says_what_it_waits_on() {
+    use tsk_tui::ui::render::{row_live_line, row_wait_label};
+    let tasks = live_line_tasks();
+    for (number, title, live, label) in ROW_CASES {
+        let task = tasks
+            .iter()
+            .find(|task| task.number == Some(number))
+            .expect("task");
+        assert_eq!(task.title, title);
+        assert_eq!(
+            row_live_line(task, &tasks, now()).as_deref(),
+            live,
+            "T{number}"
+        );
+        assert_eq!(row_wait_label(task, &tasks).as_deref(), label, "T{number}");
+    }
+    let archived = tasks.iter().find(|task| task.number == Some(11)).unwrap();
+    assert_eq!(row_live_line(archived, &tasks, now()), None);
+    assert_eq!(row_wait_label(archived, &tasks), None);
 }

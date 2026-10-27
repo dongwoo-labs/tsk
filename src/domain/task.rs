@@ -8,16 +8,32 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ProvenanceOrigin, TaskEvent, TaskEventKind, UndoEntry, UNDO_CAP};
+use super::{
+    block_text, current_actor, Block, BlockDraft, BlockField, BlockKey, BlockKind, BlockOn,
+    BlockPatch, CheckState, CleanupOutcome, EditedField, EventDetail, ProvenanceOrigin, Reply,
+    Resolution, ReviewDraft, ReviewPatch, TaskEvent, TaskEventKind, UndoEntry, UNDO_CAP,
+};
 use crate::scope::paths_equivalent;
 
 /// Human-facing task progress. Source of truth for board state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanStatus {
-    Todo,
-    Doing,
+    #[serde(rename = "todo", alias = "open")]
+    Open,
+    Ready,
+    #[serde(rename = "doing", alias = "started")]
+    Started,
+    Blocked,
+    Review,
     Done,
+}
+
+impl HumanStatus {
+    #[allow(non_upper_case_globals)]
+    pub const Todo: Self = Self::Open;
+    #[allow(non_upper_case_globals)]
+    pub const Doing: Self = Self::Started;
 }
 
 /// Where a task belongs: global or a project identified by stable path scope key.
@@ -50,6 +66,35 @@ pub struct Notice {
     pub number: Option<u64>,
 }
 
+/// One durable record of an agent launch for a task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dispatch {
+    /// Fully rendered profile argv, retained for inspection after launch.
+    pub argv: Vec<String>,
+    pub worktree: String,
+    pub branch: String,
+    /// Branch or commit the dispatch branch was created from. Older v6 records omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// Exact branch namespace, preserved across subsequent remote configuration changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+    /// Commit resolved from `base` when the dispatch worktree was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    /// Exact fetch remote, retained so overlapping remote names cannot change provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_remote: Option<String>,
+    pub herdr_workspace_id: String,
+    #[serde(with = "super::time_serde")]
+    pub at: SystemTime,
+    /// The recorded worktree has been removed or was already missing. The record stays
+    /// available for inspection and a deliberate relaunch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cleaned: bool,
+}
+
 /// One unit of intended work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,11 +117,33 @@ pub struct Task {
     /// One direct parent by stable UUID; missing/deleted parents remain referenced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<Uuid>,
-    /// Tasks that must be done before this one may start. A condition only: no order among
-    /// parent and children, and nothing starts by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// Optional normalized assignee name: an agent profile, `you`, or a person's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    /// What `assignee` names, fixed when it was assigned: an agent profile (a start dispatches
+    /// it) or a person (a start only sets started). Agent while unassigned.
+    #[serde(default, skip_serializing_if = "AssigneeKind::is_agent")]
+    pub assignee_kind: AssigneeKind,
+    /// Optional explicit branch from which this task should be dispatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// Last successful dispatch. Status changes never alter this record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<Dispatch>,
+    /// Store-global numbers of the tasks this one runs after, in the order they were added.
+    /// The task waits while any of them is not done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub after: Vec<Uuid>,
+    pub after: Vec<u64>,
     pub status: HumanStatus,
+    /// The open record: a block while the task is `blocked`, a review round while it is
+    /// `review`. A task from an older store may have none; it reads as on you with no reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<Block>,
+    /// Closed blocks and review rounds, oldest first. Read-only history.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub past_blocks: Vec<Block>,
     pub scope: TaskScope,
     pub provenance: ProvenanceOrigin,
     /// Append-only domain event history.
@@ -93,6 +160,131 @@ pub struct Task {
     pub created_at: SystemTime,
     #[serde(with = "super::time_serde")]
     pub updated_at: SystemTime,
+}
+
+/// What an assignee name stands for. Decided once, when the task is assigned, and never
+/// re-derived from `config.toml`: a removed profile's name stays an agent, so its start still
+/// refuses instead of silently starting without a launch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssigneeKind {
+    /// An agent profile: starting the task dispatches it.
+    #[default]
+    Agent,
+    /// You (stored as `you`) or a named person: starting the task only sets started.
+    Person,
+}
+
+impl AssigneeKind {
+    pub fn is_agent(&self) -> bool {
+        *self == AssigneeKind::Agent
+    }
+
+    /// The JSON spelling: `agent` or `person`.
+    pub fn name(self) -> &'static str {
+        match self {
+            AssigneeKind::Agent => "agent",
+            AssigneeKind::Person => "person",
+        }
+    }
+}
+
+/// A resolved assignee: the stored name and what it stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assignee {
+    pub name: String,
+    pub kind: AssigneeKind,
+}
+
+impl Assignee {
+    /// An agent profile, by its exact name.
+    pub fn agent(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: AssigneeKind::Agent,
+        }
+    }
+
+    /// A person, by their normalized name.
+    pub fn person(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: AssigneeKind::Person,
+        }
+    }
+
+    /// You, the board's owner.
+    pub fn you() -> Self {
+        Self::person(super::OWNER)
+    }
+
+    pub fn is_person(&self) -> bool {
+        self.kind == AssigneeKind::Person
+    }
+}
+
+/// Read a typed assignee by the name rule: `you`, `me`, or your configured name is you; a name
+/// `is_profile` accepts, with or without `@`, is that agent; any other name is a person. Names
+/// follow the thread-name rules and are stored lowercase.
+pub fn resolve_assignee(
+    input: &str,
+    is_profile: impl Fn(&str) -> bool,
+) -> Result<Assignee, super::ThreadError> {
+    let input = input.trim();
+    let name = input.strip_prefix('@').unwrap_or(input);
+    if !name.is_empty() && super::is_owner_alias(name) {
+        return Ok(Assignee::you());
+    }
+    let name = super::normalize_thread(name)?;
+    Ok(if is_profile(&name) {
+        Assignee::agent(name)
+    } else {
+        Assignee::person(name)
+    })
+}
+
+/// A bare name is an agent profile, as every assignee was before people could be assigned.
+impl From<&str> for Assignee {
+    fn from(name: &str) -> Self {
+        Self::agent(name)
+    }
+}
+
+impl From<String> for Assignee {
+    fn from(name: String) -> Self {
+        Self::agent(name)
+    }
+}
+
+impl Task {
+    /// The assignee with its kind, if any.
+    pub fn assigned(&self) -> Option<Assignee> {
+        self.assignee.as_ref().map(|name| Assignee {
+            name: name.clone(),
+            kind: self.assignee_kind,
+        })
+    }
+
+    /// The assignee's name when it is an agent profile: the agent a start dispatches and
+    /// replies go to. `None` when unassigned or assigned to a person.
+    pub fn agent_assignee(&self) -> Option<&str> {
+        self.assignee
+            .as_deref()
+            .filter(|_| self.assignee_kind == AssigneeKind::Agent)
+    }
+
+    fn set_assigned(&mut self, assignee: Option<Assignee>) {
+        match assignee {
+            Some(Assignee { name, kind }) => {
+                self.assignee = Some(name);
+                self.assignee_kind = kind;
+            }
+            None => {
+                self.assignee = None;
+                self.assignee_kind = AssigneeKind::Agent;
+            }
+        }
+    }
 }
 
 /// Domain command failures.
@@ -120,6 +312,31 @@ pub enum DomainError {
     AfterCycle(Uuid),
     /// Start refused: the task still waits for these predecessors (task numbers).
     WaitingForAfter(Vec<u64>),
+    /// Block or reply text is longer than [`super::BLOCK_TEXT_MAX`] bytes.
+    TextTooLong(BlockField),
+    /// The task has no open block to reply to or edit.
+    NotBlocked(Uuid),
+    /// No reply at this index, or it is not the owner's to change.
+    UnknownReply(usize),
+    /// Reply text was empty or whitespace-only after trim.
+    EmptyReply,
+    /// The task already has an open block; edit it instead.
+    AlreadyBlocked(Uuid),
+    /// The task has no open review round.
+    NotInReview(Uuid),
+    /// No check at this index on the open review round.
+    UnknownCheck(usize),
+    /// A task cannot run after itself.
+    AfterSelf(u64),
+    /// No live task carries this number (unknown, deleted, or a notice).
+    AfterUnknown(u64),
+    /// The prerequisite is already done.
+    AfterDone(u64),
+    /// `waiting` already runs after `prerequisite`, directly or through other tasks.
+    AfterLoop {
+        waiting: u64,
+        prerequisite: u64,
+    },
 }
 
 impl std::fmt::Display for DomainError {
@@ -153,21 +370,195 @@ impl std::fmt::Display for DomainError {
                 let list: Vec<String> = numbers.iter().map(|n| format!("T{n}")).collect();
                 write!(f, "waiting for {} to be done", list.join(", "))
             }
+            DomainError::TextTooLong(field) => write!(
+                f,
+                "{} is longer than {} bytes",
+                field.name(),
+                super::BLOCK_TEXT_MAX
+            ),
+            DomainError::NotBlocked(id) => write!(f, "task {id} is not blocked"),
+            DomainError::UnknownReply(index) => write!(f, "no reply {index} of yours"),
+            DomainError::EmptyReply => write!(f, "reply must be non-empty after trim"),
+            DomainError::AlreadyBlocked(id) => write!(f, "task {id} already has an open block"),
+            DomainError::NotInReview(id) => write!(f, "task {id} is not in review"),
+            DomainError::UnknownCheck(index) => write!(f, "no check {index}"),
+            DomainError::AfterSelf(number) => write!(f, "T{number} cannot run after itself"),
+            DomainError::AfterUnknown(number) => write!(f, "T{number} is not on the board"),
+            DomainError::AfterDone(number) => write!(f, "T{number} is already done"),
+            DomainError::AfterLoop {
+                waiting,
+                prerequisite,
+            } => write!(f, "T{waiting} already runs after T{prerequisite}"),
         }
     }
 }
 
 impl std::error::Error for DomainError {}
 
+/// Keep the open record in step with a status change: entering `blocked` opens an empty
+/// block and entering `review` an empty review round when none of that kind is open; a record
+/// of any other kind closes into `past_blocks`.
+pub(super) fn sync_block_with_status(task: &mut Task, at: SystemTime, by: &str) {
+    let want = BlockKind::for_status(task.status);
+    if task
+        .block
+        .as_ref()
+        .is_some_and(|block| Some(block.kind) != want)
+    {
+        close_record(task, at, by);
+    }
+    if task.block.is_none() {
+        match want {
+            Some(BlockKind::Blocked) => {
+                task.block = Some(Block::open(BlockDraft::default(), by, at));
+            }
+            Some(BlockKind::Review) => {
+                task.block = Some(Block::open_review(
+                    ReviewDraft::default(),
+                    by,
+                    at,
+                    next_round(task),
+                ));
+            }
+            None => {}
+        }
+    }
+}
+
+/// Close the open record into `past_blocks`. A review round closed by a start was sent back,
+/// one closed by done was approved.
+fn close_record(task: &mut Task, at: SystemTime, by: &str) {
+    if let Some(mut block) = task.block.take() {
+        block.closed_at = Some(at);
+        block.closed_by = Some(by.to_string());
+        if block.is_review() {
+            block.resolution = match task.status {
+                HumanStatus::Started => Some(Resolution::SentBack),
+                HumanStatus::Done => Some(Resolution::Approved),
+                _ => None,
+            };
+        }
+        task.past_blocks.push(block);
+    }
+}
+
+/// The number of the next review round: one past the last closed round.
+fn next_round(task: &Task) -> u32 {
+    task.past_blocks
+        .iter()
+        .filter(|block| block.is_review())
+        .map(|block| block.round)
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// Reopen the last closed record when going back to the status that kept it open, so an undo
+/// restores the block or review round rather than an empty one.
+fn reopen_last_record(task: &mut Task, previous: HumanStatus) {
+    let Some(kind) = BlockKind::for_status(previous) else {
+        return;
+    };
+    if task.block.is_some() || task.past_blocks.last().map(|block| block.kind) != Some(kind) {
+        return;
+    }
+    if let Some(mut block) = task.past_blocks.pop() {
+        block.closed_at = None;
+        block.closed_by = None;
+        block.resolution = None;
+        task.block = Some(block);
+    }
+}
+
 fn record_mutation(task: &mut Task, kind: TaskEventKind) {
     record_mutation_at(task, kind, SystemTime::now());
 }
 
 fn record_mutation_at(task: &mut Task, kind: TaskEventKind, at: SystemTime) {
+    record_event(task, kind, at, None, None);
+}
+
+/// Record one mutation: a new revision and an event by `by`, or by this thread's actor.
+pub(super) fn record_event(
+    task: &mut Task,
+    kind: TaskEventKind,
+    at: SystemTime,
+    by: Option<&str>,
+    detail: Option<EventDetail>,
+) {
     task.merge_base_revision = Some(task.revision);
     task.revision = Uuid::new_v4();
     task.updated_at = at;
-    task.history.push(TaskEvent { kind, at });
+    task.history.push(event(kind, at, by, detail));
+}
+
+/// One event by `by`, or by this thread's actor.
+fn event(
+    kind: TaskEventKind,
+    at: SystemTime,
+    by: Option<&str>,
+    detail: Option<EventDetail>,
+) -> TaskEvent {
+    TaskEvent {
+        kind,
+        at,
+        by: Some(by.map_or_else(current_actor, str::to_string)),
+        detail,
+    }
+}
+
+/// The task fields that differ between `before` and `after`.
+fn edited_fields(before: &Task, after: &Task) -> Vec<EditedField> {
+    let mut fields = Vec::new();
+    if before.title != after.title {
+        fields.push(EditedField::Title);
+    }
+    if before.notes != after.notes {
+        fields.push(EditedField::Notes);
+    }
+    if before.thread != after.thread {
+        fields.push(EditedField::Thread);
+    }
+    if before.scope != after.scope {
+        fields.push(EditedField::Project);
+    }
+    if before.after != after.after {
+        fields.push(EditedField::After);
+    }
+    fields
+}
+
+/// Detail of an `edited` event, or none when no field changed text.
+fn edited_detail(fields: Vec<EditedField>) -> Option<EventDetail> {
+    Some(EventDetail {
+        fields,
+        ..EventDetail::default()
+    })
+}
+
+/// Detail of an `assigned` event.
+fn assigned_detail(assignee: &Option<String>) -> Option<EventDetail> {
+    Some(EventDetail {
+        assignee: assignee.clone(),
+        ..EventDetail::default()
+    })
+}
+
+/// Detail of an `on_set` event.
+fn on_detail(from: &BlockOn, to: &BlockOn) -> Option<EventDetail> {
+    Some(EventDetail {
+        on_from: Some(from.clone()),
+        on_to: Some(to.clone()),
+        ..EventDetail::default()
+    })
+}
+
+/// Detail of a `base_set` event.
+fn base_detail(base: &Option<String>) -> Option<EventDetail> {
+    Some(EventDetail {
+        base: base.clone(),
+        ..EventDetail::default()
+    })
 }
 
 /// When a task was finished: its last `completed` event, else `updated_at`.
@@ -187,7 +578,7 @@ fn moved_to_done_file(task: &Task, disk: &DomainState) -> bool {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 10;
+pub const STORE_FORMAT_VERSION: u32 = 16;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]
@@ -330,7 +721,7 @@ pub struct DomainState {
     /// The next `N` number for notice rows. Absent from v2 documents, so it defaults.
     #[serde(default = "default_next_notice_number")]
     pub next_notice_number: u64,
-    tasks: Vec<Task>,
+    pub(super) tasks: Vec<Task>,
     /// Per-project records keyed by scope path. Always serialized: an empty map
     /// writes `"projects": {}` so the v2 wire shape is pinned.
     #[serde(default)]
@@ -341,11 +732,32 @@ pub struct DomainState {
     /// merge so a plain union can never resurrect a record this process just removed.
     #[serde(skip)]
     project_intents: BTreeMap<String, bool>,
+    /// Person names removed from the assignee picker. Tasks keep them; only the picker's
+    /// list skips them. Absent before v6, and left out of the document while empty.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    hidden_assignees: BTreeSet<String>,
+    /// This process's not-yet-saved hide (true) and unhide (false) intents, re-applied after
+    /// every disk merge the way `project_intents` are.
+    #[serde(skip)]
+    hidden_intents: BTreeMap<String, bool>,
     /// LIFO undo records for soft-delete and complete.
-    undo_stack: Vec<UndoEntry>,
     /// Shareable metadata only. Full content lives in immutable private snapshots.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) questions: Vec<super::QuestionRef>,
+    pub(super) undo_stack: Vec<UndoEntry>,
+    /// Tasks this process moved to `done` since the caller last took them, oldest first.
+    /// Transient: the board and CLI take them before saving to start what was waiting.
+    #[serde(skip)]
+    pub(super) completed: Vec<Uuid>,
+    /// Released tasks started in the save that carries their prerequisite's done, whose agent
+    /// launches once that save lands: (task, the prerequisite that released it). Transient, and
+    /// kept with a failed save so Retry still launches them.
+    #[serde(skip)]
+    pub(super) pending_launches: Vec<(Uuid, u64)>,
+    /// The store's restore token when this state was loaded; `None` for a state never loaded
+    /// from a store. Transient: a merge-save refuses a state loaded before a whole-store restore.
+    #[serde(skip)]
+    restore_token: Option<String>,
 }
 
 impl Default for DomainState {
@@ -363,8 +775,13 @@ impl DomainState {
             tasks: Vec::new(),
             projects: BTreeMap::new(),
             project_intents: BTreeMap::new(),
+            hidden_assignees: BTreeSet::new(),
+            hidden_intents: BTreeMap::new(),
             undo_stack: Vec::new(),
             questions: Vec::new(),
+            completed: Vec::new(),
+            pending_launches: Vec::new(),
+            restore_token: None,
         }
     }
 
@@ -372,9 +789,24 @@ impl DomainState {
         self.format_version
     }
 
+    /// The store's restore token when this state was loaded (see `TaskStore::load`).
+    pub(crate) fn restore_token(&self) -> Option<&str> {
+        self.restore_token.as_deref()
+    }
+
+    pub(crate) fn set_restore_token(&mut self, token: String) {
+        self.restore_token = Some(token);
+    }
+
     /// Inspect the top undo entry without consuming it.
     pub(crate) fn last_undo(&self) -> Option<&UndoEntry> {
         self.undo_stack.last()
+    }
+
+    /// How many undo entries the stack holds.
+    #[cfg(test)]
+    pub(crate) fn undo_len(&self) -> usize {
+        self.undo_stack.len()
     }
 
     /// Pop the top undo entry after its revision guard has passed.
@@ -465,6 +897,69 @@ impl DomainState {
         Err(DomainError::UnknownProject(path.to_string()))
     }
 
+    /// Person names the assignee picker leaves out.
+    pub fn hidden_assignees(&self) -> &BTreeSet<String> {
+        &self.hidden_assignees
+    }
+
+    /// Remove a person name from the assignee picker, undoably. Tasks keep the name.
+    /// `false` when it was already hidden.
+    pub fn hide_assignee(&mut self, name: &str) -> bool {
+        if !self.set_assignee_hidden(name, true) {
+            return false;
+        }
+        self.undo_stack.push(UndoEntry::HideAssignee {
+            name: name.to_string(),
+        });
+        true
+    }
+
+    /// Put a hidden name back on the assignee picker. `false` when it was not hidden.
+    pub(crate) fn unhide_assignee(&mut self, name: &str) -> bool {
+        self.set_assignee_hidden(name, false)
+    }
+
+    /// Hide a name again when the assignment that showed it is undone.
+    pub(crate) fn rehide_assignee(&mut self, name: &str) {
+        self.set_assignee_hidden(name, true);
+    }
+
+    /// Assigning a person names them again: the name goes back on the picker. The intent is
+    /// recorded even when this copy shows the name already, so a hide another writer saved
+    /// meanwhile does not survive this assignment's merge. When this copy had it hidden, the
+    /// returned entry hides it again on undo, inside the assignment's own undo entry.
+    fn show_assigned(&mut self, assignee: Option<&Assignee>) -> Option<UndoEntry> {
+        let name = assignee
+            .filter(|assignee| assignee.is_person() && assignee.name != super::OWNER)?
+            .name
+            .clone();
+        let was_hidden = self.hidden_assignees.remove(&name);
+        self.hidden_intents.insert(name.clone(), false);
+        was_hidden.then_some(UndoEntry::ShowAssignee { name })
+    }
+
+    /// Whether a name entry still describes the hidden set: a removal while the name is hidden,
+    /// a re-show while it is not. Entries about tasks are always live here.
+    pub(crate) fn name_leaf_is_live(&self, leaf: &UndoEntry) -> bool {
+        match leaf {
+            UndoEntry::HideAssignee { name } => self.hidden_assignees.contains(name),
+            UndoEntry::ShowAssignee { name } => !self.hidden_assignees.contains(name),
+            _ => true,
+        }
+    }
+
+    fn set_assignee_hidden(&mut self, name: &str, hidden: bool) -> bool {
+        let changed = if hidden {
+            self.hidden_assignees.insert(name.to_string())
+        } else {
+            self.hidden_assignees.remove(name)
+        };
+        if changed {
+            self.hidden_intents.insert(name.to_string(), hidden);
+        }
+        changed
+    }
+
     fn has_project_task(&self, path: &str) -> bool {
         self.tasks.iter().any(|task| {
             matches!(&task.scope, TaskScope::Project { path: task_path } if paths_equivalent(task_path, path))
@@ -532,20 +1027,9 @@ impl DomainState {
         Ok(())
     }
 
-    /// Predecessors of `task_id` that are not done yet, as task numbers. A missing or deleted
-    /// predecessor counts as not done; an archived one counts when its status is done.
     pub fn unfinished_after(&self, task_id: Uuid) -> Vec<u64> {
-        let Some(task) = self.get(task_id) else {
-            return Vec::new();
-        };
-        task.after
-            .iter()
-            .filter_map(|id| match self.get(*id) {
-                Some(p) if !p.soft_deleted && p.status == HumanStatus::Done => None,
-                Some(p) => Some(p.number.unwrap_or_default()),
-                None => Some(0),
-            })
-            .collect()
+        self.get(task_id)
+            .map_or_else(Vec::new, |task| self.waiting_on(task))
     }
 
     fn ensure_after_done(&self, task_id: Uuid) -> Result<(), DomainError> {
@@ -555,53 +1039,6 @@ impl DomainState {
         } else {
             Err(DomainError::WaitingForAfter(waiting))
         }
-    }
-
-    pub fn validate_after(&self, task_id: Uuid, after: &[Uuid]) -> Result<(), DomainError> {
-        let task = self.get(task_id).ok_or(DomainError::UnknownId(task_id))?;
-        if task.soft_deleted {
-            return Err(DomainError::SoftDeleted(task_id));
-        }
-        for id in after {
-            if *id == task_id
-                || !self
-                    .get(*id)
-                    .is_some_and(|t| !t.soft_deleted && !t.is_notice())
-            {
-                return Err(DomainError::InvalidAfter(*id));
-            }
-        }
-        let mut seen = BTreeSet::new();
-        let mut stack: Vec<Uuid> = after.to_vec();
-        while let Some(id) = stack.pop() {
-            if id == task_id {
-                return Err(DomainError::AfterCycle(task_id));
-            }
-            if seen.insert(id) {
-                if let Some(t) = self.get(id) {
-                    stack.extend(t.after.iter().copied());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Replace the wait list. Returns whether anything changed.
-    pub fn set_after(&mut self, task_id: Uuid, after: Vec<Uuid>) -> Result<bool, DomainError> {
-        let mut deduped = Vec::with_capacity(after.len());
-        for id in after {
-            if !deduped.contains(&id) {
-                deduped.push(id);
-            }
-        }
-        self.validate_after(task_id, &deduped)?;
-        let task = self.task_mut(task_id)?;
-        if task.after == deduped {
-            return Ok(false);
-        }
-        task.after = deduped;
-        record_mutation(task, TaskEventKind::Edited);
-        Ok(true)
     }
 
     pub fn set_parent(
@@ -674,20 +1111,70 @@ impl DomainState {
             title: title.to_string(),
             notes,
             parent_task_id,
+            thread: None,
+            assignee: None,
+            assignee_kind: AssigneeKind::Agent,
+            base: None,
+            dispatch: None,
             after: Vec::new(),
-            status: HumanStatus::Todo,
+            status: HumanStatus::Open,
+            block: None,
+            past_blocks: Vec::new(),
             scope,
             provenance,
-            history: vec![TaskEvent {
-                kind: TaskEventKind::Created,
-                at: now,
-            }],
+            history: vec![event(TaskEventKind::Created, now, None, None)],
             steps: Vec::new(),
             soft_deleted: false,
             archived: false,
             created_at: now,
             updated_at: now,
         });
+        Ok(id)
+    }
+
+    pub fn create_threaded(
+        &mut self,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        provenance: ProvenanceOrigin,
+        thread: Option<String>,
+    ) -> Result<Uuid, DomainError> {
+        let id = self.create(title, notes, scope, provenance)?;
+        self.task_mut(id)?.thread = thread;
+        Ok(id)
+    }
+
+    /// Create with an optional validated assignee in the same creation mutation.
+    pub fn create_assigned(
+        &mut self,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        provenance: ProvenanceOrigin,
+        thread: Option<String>,
+        assignee: Option<Assignee>,
+    ) -> Result<Uuid, DomainError> {
+        self.create_configured(title, notes, scope, provenance, thread, assignee, None)
+    }
+
+    /// Create with optional validated assignment and base in the same creation mutation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_configured(
+        &mut self,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        provenance: ProvenanceOrigin,
+        thread: Option<String>,
+        assignee: Option<Assignee>,
+        base: Option<String>,
+    ) -> Result<Uuid, DomainError> {
+        let id = self.create_threaded(title, notes, scope, provenance, thread)?;
+        self.show_assigned(assignee.as_ref());
+        let task = self.task_mut(id)?;
+        task.set_assigned(assignee);
+        task.base = base;
         Ok(id)
     }
 
@@ -731,14 +1218,463 @@ impl DomainState {
         self.apply_status(id, status, TaskEventKind::StatusSet)
     }
 
+    /// [`Self::set_status`] on behalf of `by` (`you` or an agent profile), who opens or
+    /// closes the block the change implies.
+    pub fn set_status_by(
+        &mut self,
+        id: Uuid,
+        status: HumanStatus,
+        by: &str,
+    ) -> Result<(), DomainError> {
+        self.apply_status_by(id, status, TaskEventKind::StatusSet, by)
+    }
+
+    /// Block a task with reasons. A task that is not blocked becomes blocked with a new
+    /// block; a blocked task without an open block (an older store's) gains one. A task that
+    /// already has an open block is refused: edit it with [`Self::edit_block`].
+    pub fn block(&mut self, id: Uuid, draft: BlockDraft, by: &str) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        if task.block.as_ref().is_some_and(|block| !block.is_review()) {
+            return Err(DomainError::AlreadyBlocked(id));
+        }
+        let at = SystemTime::now();
+        close_record(task, at, by);
+        let from = task.status;
+        let (kind, detail) = if from == HumanStatus::Blocked {
+            (TaskEventKind::BlockEdited, None)
+        } else {
+            (
+                TaskEventKind::StatusSet,
+                Some(EventDetail::status(from, HumanStatus::Blocked)),
+            )
+        };
+        task.status = HumanStatus::Blocked;
+        task.block = Some(Block::open(draft, by, at));
+        record_event(task, kind, at, Some(by), detail);
+        Ok(())
+    }
+
+    /// Block an ordered set with one draft as one atomic, undoable action. Tasks that
+    /// already have an open block are left as they are. Duplicate ids keep their first
+    /// position. Returns whether any task changed.
+    pub fn block_batch(
+        &mut self,
+        ids: &[Uuid],
+        draft: &BlockDraft,
+        by: &str,
+    ) -> Result<bool, DomainError> {
+        let ids: Vec<_> = self
+            .prevalidate_batch_ids(ids)?
+            .into_iter()
+            .filter(|id| {
+                self.get(*id)
+                    .is_some_and(|task| task.block.as_ref().is_none_or(Block::is_review))
+            })
+            .collect();
+        if ids.is_empty() {
+            return Ok(false);
+        }
+        let mut entries = Vec::with_capacity(ids.len());
+        for id in ids {
+            let previous = self.task_mut(id)?.status;
+            self.block(id, draft.clone(), by)?;
+            entries.push(UndoEntry::Block {
+                id,
+                previous,
+                expected_revision: self.task_mut(id)?.revision,
+            });
+        }
+        self.undo_stack.push(UndoEntry::Batch { entries });
+        Ok(true)
+    }
+
+    /// Reverse [`Self::block_batch`] or [`Self::review_batch`] for one task: drop the record
+    /// it opened and restore the earlier status, reopening the record that status had.
+    pub(crate) fn restore_unblocked(
+        &mut self,
+        id: Uuid,
+        previous: HumanStatus,
+    ) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let from = task.status;
+        task.block = None;
+        task.status = previous;
+        reopen_last_record(task, previous);
+        record_event(
+            task,
+            TaskEventKind::StatusSet,
+            SystemTime::now(),
+            None,
+            Some(EventDetail::status(from, previous)),
+        );
+        Ok(())
+    }
+
+    /// Put a task up for review with what was done, what to check and what is next. A task
+    /// not in review enters it with a new round; one in review without an open round (an older
+    /// store's) gains one. An open round is refused: edit it with [`Self::edit_review`].
+    pub fn review(&mut self, id: Uuid, draft: ReviewDraft, by: &str) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        if task.block.as_ref().is_some_and(Block::is_review) {
+            return Err(DomainError::AlreadyBlocked(id));
+        }
+        let at = SystemTime::now();
+        close_record(task, at, by);
+        let from = task.status;
+        let (kind, detail) = if from == HumanStatus::Review {
+            (TaskEventKind::ReviewEdited, None)
+        } else {
+            (
+                TaskEventKind::StatusSet,
+                Some(EventDetail::status(from, HumanStatus::Review)),
+            )
+        };
+        task.status = HumanStatus::Review;
+        task.block = Some(Block::open_review(draft, by, at, next_round(task)));
+        record_event(task, kind, at, Some(by), detail);
+        Ok(())
+    }
+
+    /// Put an ordered set up for review with one draft as one atomic, undoable action. Tasks
+    /// that already have an open round are left as they are. Returns whether any changed.
+    pub fn review_batch(
+        &mut self,
+        ids: &[Uuid],
+        draft: &ReviewDraft,
+        by: &str,
+    ) -> Result<bool, DomainError> {
+        let ids: Vec<_> = self
+            .prevalidate_batch_ids(ids)?
+            .into_iter()
+            .filter(|id| {
+                self.get(*id)
+                    .is_some_and(|task| !task.block.as_ref().is_some_and(Block::is_review))
+            })
+            .collect();
+        if ids.is_empty() {
+            return Ok(false);
+        }
+        let mut entries = Vec::with_capacity(ids.len());
+        for id in ids {
+            let previous = self.task_mut(id)?.status;
+            self.review(id, draft.clone(), by)?;
+            entries.push(UndoEntry::Block {
+                id,
+                previous,
+                expected_revision: self.task_mut(id)?.revision,
+            });
+        }
+        self.undo_stack.push(UndoEntry::Batch { entries });
+        Ok(true)
+    }
+
+    /// Change the open review round's content and mark it edited: re-running review while the
+    /// task is in review updates the same round. A replaced check list keeps the state of each
+    /// check whose text is unchanged. An empty patch changes nothing.
+    pub fn edit_review(&mut self, id: Uuid, patch: ReviewPatch) -> Result<bool, DomainError> {
+        let task = self.task_mut(id)?;
+        let block = task
+            .block
+            .as_mut()
+            .filter(|block| block.is_review())
+            .ok_or(DomainError::NotInReview(id))?;
+        let mut next = block.clone();
+        if let Some(done) = patch.done {
+            next.done = done;
+        }
+        if let Some(checks) = patch.checks {
+            next.checks = checks
+                .into_iter()
+                .map(|mut check| {
+                    if let Some(old) = block.checks.iter().find(|old| old.text == check.text) {
+                        check.state = old.state;
+                    }
+                    check
+                })
+                .collect();
+        }
+        if let Some(value) = patch.next {
+            next.next = value;
+        }
+        if let Some(on) = patch.on {
+            next.on = on;
+        }
+        if next == *block {
+            return Ok(false);
+        }
+        let at = SystemTime::now();
+        next.edited_at = Some(at);
+        *block = next;
+        record_mutation_at(task, TaskEventKind::ReviewEdited, at);
+        Ok(true)
+    }
+
+    /// Set one check of the open review round. Returns whether it changed.
+    pub fn set_check(
+        &mut self,
+        id: Uuid,
+        index: usize,
+        state: CheckState,
+    ) -> Result<bool, DomainError> {
+        let task = self.task_mut(id)?;
+        let block = task
+            .block
+            .as_mut()
+            .filter(|block| block.is_review())
+            .ok_or(DomainError::NotInReview(id))?;
+        let check = block
+            .checks
+            .get_mut(index)
+            .ok_or(DomainError::UnknownCheck(index))?;
+        if check.state == state {
+            return Ok(false);
+        }
+        check.state = state;
+        record_mutation(task, TaskEventKind::CheckSet);
+        Ok(true)
+    }
+
+    /// Change the open block's content and mark it edited. An empty patch changes nothing.
+    pub fn edit_block(&mut self, id: Uuid, patch: BlockPatch) -> Result<bool, DomainError> {
+        let task = self.task_mut(id)?;
+        let block = task
+            .block
+            .as_mut()
+            .filter(|block| !block.is_review())
+            .ok_or(DomainError::NotBlocked(id))?;
+        let mut next = block.clone();
+        if let Some(why) = patch.why {
+            next.why = why;
+        }
+        if let Some(needs) = patch.needs {
+            next.needs = needs;
+        }
+        if let Some(options) = patch.options {
+            next.options = options;
+        }
+        if let Some(on) = patch.on {
+            next.on = on;
+        }
+        if next == *block {
+            return Ok(false);
+        }
+        let at = SystemTime::now();
+        next.edited_at = Some(at);
+        *block = next;
+        record_mutation_at(task, TaskEventKind::BlockEdited, at);
+        Ok(true)
+    }
+
+    /// Change who the open block or review round waits on, and nothing else: the record, its
+    /// round, text, checks and replies stay. One `on_set` event and one undo entry. Returns
+    /// whether it changed.
+    pub fn set_on(&mut self, id: Uuid, on: BlockOn) -> Result<bool, DomainError> {
+        self.set_on_batch(&[(id, on)])
+    }
+
+    /// [`Self::set_on`] for an ordered set, as one atomic action with one undo entry. Every
+    /// task needs an open record; one without refuses the whole set (`NotBlocked`) before any
+    /// change. Tasks already waiting on their value are left as they are.
+    pub fn set_on_batch(&mut self, changes: &[(Uuid, BlockOn)]) -> Result<bool, DomainError> {
+        let ids: Vec<Uuid> = changes.iter().map(|(id, _)| *id).collect();
+        self.prevalidate_batch_ids(&ids)?;
+        for (id, _) in changes {
+            if self.get(*id).and_then(|task| task.block.as_ref()).is_none() {
+                return Err(DomainError::NotBlocked(*id));
+            }
+        }
+        let at = SystemTime::now();
+        let mut entries = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (id, on) in changes {
+            if !seen.insert(*id) {
+                continue;
+            }
+            let task = self.task_mut(*id)?;
+            let Some(block) = task.block.as_mut() else {
+                continue;
+            };
+            if block.on == *on {
+                continue;
+            }
+            let previous = std::mem::replace(&mut block.on, on.clone());
+            record_event(
+                task,
+                TaskEventKind::OnSet,
+                at,
+                None,
+                on_detail(&previous, on),
+            );
+            entries.push(UndoEntry::SetOn {
+                id: *id,
+                previous,
+                expected_revision: task.revision,
+            });
+        }
+        if entries.is_empty() {
+            return Ok(false);
+        }
+        self.undo_stack.push(if entries.len() == 1 {
+            entries.pop().expect("one waiting-on undo")
+        } else {
+            UndoEntry::Batch { entries }
+        });
+        Ok(true)
+    }
+
+    /// Undo of [`Self::set_on`]: put `on` back on the same open record.
+    pub(crate) fn restore_on(&mut self, id: Uuid, on: BlockOn) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let block = task.block.as_mut().ok_or(DomainError::NotBlocked(id))?;
+        let previous = std::mem::replace(&mut block.on, on.clone());
+        record_event(
+            task,
+            TaskEventKind::OnSet,
+            SystemTime::now(),
+            None,
+            on_detail(&previous, &on),
+        );
+        Ok(())
+    }
+
+    /// Add a reply by `by` to the open block. Returns its index.
+    pub fn reply(&mut self, id: Uuid, text: &str, by: &str) -> Result<usize, DomainError> {
+        let text = block_text(Some(text), BlockField::Reply)
+            .map_err(DomainError::TextTooLong)?
+            .ok_or(DomainError::EmptyReply)?;
+        let task = self.task_mut(id)?;
+        let block = task.block.as_mut().ok_or(DomainError::NotBlocked(id))?;
+        let at = SystemTime::now();
+        block.replies.push(Reply {
+            by: by.to_string(),
+            at,
+            text,
+            edited: false,
+            deleted: false,
+            sent: false,
+        });
+        let index = block.replies.len() - 1;
+        record_mutation_at(task, TaskEventKind::Replied, at);
+        Ok(index)
+    }
+
+    /// Run several mutations of one task as one transaction: on success the task keeps the
+    /// merge base it had before the first, so the locked save merges them as one change; on
+    /// failure the task is restored.
+    pub fn as_one_change<T>(
+        &mut self,
+        id: Uuid,
+        change: impl FnOnce(&mut Self) -> Result<T, DomainError>,
+    ) -> Result<T, DomainError> {
+        let baseline = self.task_mut(id)?.clone();
+        match change(self) {
+            Ok(value) => {
+                let task = self.task_mut(id)?;
+                if task.revision != baseline.revision {
+                    task.merge_base_revision =
+                        baseline.merge_base_revision.or(Some(baseline.revision));
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                *self.task_mut(id)? = baseline;
+                Err(error)
+            }
+        }
+    }
+
+    /// Rewrite one of the owner's live replies on the open block.
+    pub fn edit_reply(&mut self, id: Uuid, index: usize, text: &str) -> Result<(), DomainError> {
+        let text = block_text(Some(text), BlockField::Reply)
+            .map_err(DomainError::TextTooLong)?
+            .ok_or(DomainError::EmptyReply)?;
+        let reply = self.owner_reply_mut(id, index)?;
+        if reply.text == text {
+            return Ok(());
+        }
+        reply.text = text;
+        reply.edited = true;
+        // The agent has not seen this text: the record's close sends it.
+        reply.sent = false;
+        record_mutation(self.task_mut(id)?, TaskEventKind::ReplyEdited);
+        Ok(())
+    }
+
+    /// Soft-delete one of the owner's replies on the open block; a stub stays in place.
+    pub fn delete_reply(&mut self, id: Uuid, index: usize) -> Result<(), DomainError> {
+        self.owner_reply_mut(id, index)?.deleted = true;
+        record_mutation(self.task_mut(id)?, TaskEventKind::ReplyDeleted);
+        Ok(())
+    }
+
+    /// Mark your reply `index` on the open record as delivered to its agent on its own
+    /// (`tsk reply --send`), so the record's close does not send it again. Only while that
+    /// record is still `record` and the reply still reads `text`: a record closed and reopened
+    /// since the reply was stored, or an edit since the send, leaves it unsent. Delivery bookkeeping, not a user
+    /// action: no event, and undo entries follow the new revision. Returns whether it marked.
+    pub fn mark_reply_sent(
+        &mut self,
+        id: Uuid,
+        record: &BlockKey,
+        index: usize,
+        text: &str,
+    ) -> Result<bool, DomainError> {
+        let task = self.task_mut(id)?;
+        let before = task.revision;
+        let Some(reply) = task
+            .block
+            .as_mut()
+            .filter(|block| block.key() == *record)
+            .and_then(|block| block.replies.get_mut(index))
+            .filter(|reply| {
+                reply.is_owner() && !reply.deleted && !reply.sent && reply.text == text
+            })
+        else {
+            return Ok(false);
+        };
+        reply.sent = true;
+        task.merge_base_revision = Some(task.revision);
+        task.revision = Uuid::new_v4();
+        let after = task.revision;
+        for entry in &mut self.undo_stack {
+            entry.retarget(id, before, after);
+        }
+        Ok(true)
+    }
+
+    fn owner_reply_mut(&mut self, id: Uuid, index: usize) -> Result<&mut Reply, DomainError> {
+        let task = self.task_mut(id)?;
+        let block = task.block.as_mut().ok_or(DomainError::NotBlocked(id))?;
+        block
+            .replies
+            .get_mut(index)
+            .filter(|reply| reply.is_owner() && !reply.deleted)
+            .ok_or(DomainError::UnknownReply(index))
+    }
+
     /// Complete: set human status to `done`. Pushes an undo entry.
     pub fn complete(&mut self, id: Uuid) -> Result<(), DomainError> {
+        let previous = self.task_mut(id)?.status;
         self.apply_status(id, HumanStatus::Done, TaskEventKind::Completed)?;
         let expected_revision = self.get(id).expect("completed task exists").revision;
         self.undo_stack.push(UndoEntry::Complete {
             id,
+            previous,
             expected_revision,
         });
+        Ok(())
+    }
+
+    /// Complete after cleanup mutated the same task in this unsaved transaction.
+    ///
+    /// The cleanup revision must keep its original durable merge base across the completion,
+    /// while the completion alone remains the undoable part.
+    pub fn complete_after_cleanup(&mut self, id: Uuid) -> Result<(), DomainError> {
+        let cleanup_merge_base = self.task_mut(id)?.merge_base_revision;
+        self.complete(id)?;
+        if cleanup_merge_base.is_some() {
+            self.task_mut(id)?.merge_base_revision = cleanup_merge_base;
+        }
         Ok(())
     }
 
@@ -759,35 +1695,82 @@ impl DomainState {
         let at = SystemTime::now();
         let mut entries = Vec::with_capacity(ids.len());
         for id in ids {
+            let by = current_actor();
             let task = self.task_mut(id)?;
+            let from = task.status;
             task.status = HumanStatus::Done;
-            record_mutation_at(task, TaskEventKind::Completed, at);
+            sync_block_with_status(task, at, &by);
+            record_event(
+                task,
+                TaskEventKind::Completed,
+                at,
+                Some(&by),
+                Some(EventDetail::status(from, HumanStatus::Done)),
+            );
             entries.push(UndoEntry::Complete {
                 id,
+                previous: from,
                 expected_revision: task.revision,
             });
+            self.completed.push(id);
         }
         self.undo_stack.push(UndoEntry::Batch { entries });
         Ok(())
     }
 
-    /// Reopen a `done` task to `todo`.
+    /// [`Self::complete_batch`] after cleanup mutated some of the same tasks in this unsaved
+    /// transaction: each cleanup revision keeps its original durable merge base, and the
+    /// completion of the whole set stays the one undoable part.
+    pub fn complete_batch_after_cleanup(&mut self, ids: &[Uuid]) -> Result<(), DomainError> {
+        let merge_bases = ids
+            .iter()
+            .filter_map(|id| self.get(*id).map(|task| (*id, task.merge_base_revision)))
+            .collect::<Vec<_>>();
+        self.complete_batch(ids)?;
+        for (id, merge_base) in merge_bases {
+            if merge_base.is_some() {
+                self.task_mut(id)?.merge_base_revision = merge_base;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reopen a `done` task to `open` (inbox).
     pub fn reopen(&mut self, id: Uuid) -> Result<(), DomainError> {
         self.apply_status(id, HumanStatus::Todo, TaskEventKind::Reopened)
+    }
+
+    /// Reverse a done: restore the status it left, reopening the block or review round that
+    /// status had. Recorded as a reopen.
+    pub(crate) fn restore_uncompleted(
+        &mut self,
+        id: Uuid,
+        previous: HumanStatus,
+    ) -> Result<(), DomainError> {
+        self.restore_status_as(id, previous, TaskEventKind::Reopened)
     }
 
     /// Soft-delete: mark excluded from board views until restore. Stays in store.
     /// Pushes an undo entry so `undo` can restore.
     pub fn soft_delete(&mut self, id: Uuid) -> Result<(), DomainError> {
+        // One moment for the delete and the links it drops, so the unlinks never read as a
+        // later undoable action that would send the deleted task to trash at once.
+        let at = SystemTime::now();
         let expected_revision = {
             let task = self.task_mut(id)?;
             task.soft_deleted = true;
-            record_mutation(task, TaskEventKind::SoftDeleted);
+            record_mutation_at(task, TaskEventKind::SoftDeleted, at);
             task.revision
         };
-        self.undo_stack.push(UndoEntry::SoftDelete {
+        let mut entries = vec![UndoEntry::SoftDelete {
             id,
             expected_revision,
+        }];
+        entries.extend(self.unlink_deleted(&[id], at));
+        self.undo_stack.push(if entries.len() == 1 {
+            entries.pop().expect("one delete undo")
+        } else {
+            UndoEntry::Batch { entries }
         });
         Ok(())
     }
@@ -805,7 +1788,7 @@ impl DomainState {
         }
         let at = SystemTime::now();
         let mut entries = Vec::with_capacity(ids.len());
-        for id in ids {
+        for id in ids.iter().copied() {
             let task = self.task_mut(id)?;
             task.soft_deleted = true;
             record_mutation_at(task, TaskEventKind::SoftDeleted, at);
@@ -814,6 +1797,7 @@ impl DomainState {
                 expected_revision: task.revision,
             });
         }
+        entries.extend(self.unlink_deleted(&ids, at));
         self.undo_stack.push(UndoEntry::Batch { entries });
         Ok(())
     }
@@ -838,6 +1822,54 @@ impl DomainState {
         self.set_archived(id, false, TaskEventKind::Unarchived)
     }
 
+    /// Archive each of `ids` that is not archived and unarchive each that is, as one undoable
+    /// action: one [`UndoEntry::Archive`] for a single task, an [`UndoEntry::Batch`] for a
+    /// marked set. All or nothing. Returns whether any task changed.
+    pub fn file_tasks(&mut self, ids: &[Uuid], marked: bool) -> Result<bool, DomainError> {
+        let ids = self.prevalidate_batch_ids(ids)?;
+        let baseline = self.clone();
+        let mut entries = Vec::new();
+        for id in ids {
+            let previous = self.task_mut(id)?.archived;
+            let changed = if previous {
+                self.unarchive_task(id)
+            } else {
+                self.archive_task(id)
+            };
+            match changed {
+                Ok(true) => entries.push(UndoEntry::Archive {
+                    id,
+                    previous,
+                    expected_revision: self.task_mut(id)?.revision,
+                }),
+                Ok(false) => {}
+                Err(error) => {
+                    *self = baseline;
+                    return Err(error);
+                }
+            }
+        }
+        if entries.is_empty() {
+            return Ok(false);
+        }
+        self.undo_stack.push(if marked {
+            UndoEntry::Batch { entries }
+        } else {
+            entries.pop().expect("one archive undo")
+        });
+        Ok(true)
+    }
+
+    /// Reverse an archive or unarchive: put the `previous` flag back.
+    pub(crate) fn restore_archived(&mut self, id: Uuid, previous: bool) -> Result<(), DomainError> {
+        let kind = if previous {
+            TaskEventKind::Archived
+        } else {
+            TaskEventKind::Unarchived
+        };
+        self.set_archived(id, previous, kind).map(|_| ())
+    }
+
     fn set_archived(
         &mut self,
         id: Uuid,
@@ -856,7 +1888,402 @@ impl DomainState {
         Ok(true)
     }
 
-    /// Edit title, notes, and scope together. Title uses the same non-empty trim rule as create.
+    /// Assign one task and make the change undoable.
+    pub fn assign(&mut self, id: Uuid, assignee: Option<Assignee>) -> Result<bool, DomainError> {
+        self.assign_batch(&[id], assignee)
+    }
+
+    /// Assign an ordered set as one atomic, undoable action. The same name with another kind
+    /// counts as a change.
+    pub fn assign_batch(
+        &mut self,
+        ids: &[Uuid],
+        assignee: Option<Assignee>,
+    ) -> Result<bool, DomainError> {
+        let ids = self.prevalidate_batch_ids(ids)?;
+        // Assigning a removed name again puts it back on the picker, undone with the assignment.
+        let shown = self.show_assigned(assignee.as_ref());
+        let changed = ids
+            .into_iter()
+            .filter(|id| {
+                self.get(*id)
+                    .is_some_and(|task| task.assigned() != assignee)
+            })
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            // Nothing to reassign: only the name came back, and that alone is the undo.
+            return Ok(shown.map(|entry| self.undo_stack.push(entry)).is_some());
+        }
+        let at = SystemTime::now();
+        let name = assignee.as_ref().map(|assignee| assignee.name.clone());
+        let mut entries = Vec::with_capacity(changed.len());
+        for id in changed {
+            let task = self.task_mut(id)?;
+            let previous = task.assignee.clone();
+            let previous_kind = task.assignee_kind;
+            task.set_assigned(assignee.clone());
+            record_event(
+                task,
+                TaskEventKind::Assigned,
+                at,
+                None,
+                assigned_detail(&name),
+            );
+            entries.push(UndoEntry::Assign {
+                id,
+                previous,
+                previous_kind,
+                expected_revision: task.revision,
+            });
+        }
+        entries.extend(shown);
+        self.undo_stack.push(if entries.len() == 1 {
+            entries.pop().expect("one assignment undo")
+        } else {
+            UndoEntry::Batch { entries }
+        });
+        Ok(true)
+    }
+
+    pub(crate) fn restore_assignee(
+        &mut self,
+        id: Uuid,
+        assignee: Option<String>,
+        kind: AssigneeKind,
+    ) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let detail = assigned_detail(&assignee);
+        task.set_assigned(assignee.map(|name| Assignee { name, kind }));
+        record_event(
+            task,
+            TaskEventKind::Assigned,
+            SystemTime::now(),
+            None,
+            detail,
+        );
+        Ok(())
+    }
+
+    /// Set one task's explicit dispatch base and make the change undoable.
+    pub fn set_base(&mut self, id: Uuid, base: Option<String>) -> Result<bool, DomainError> {
+        self.set_base_batch(&[id], base)
+    }
+
+    /// Set an ordered task set's explicit dispatch base as one atomic, undoable action.
+    pub fn set_base_batch(
+        &mut self,
+        ids: &[Uuid],
+        base: Option<String>,
+    ) -> Result<bool, DomainError> {
+        let ids = self.prevalidate_batch_ids(ids)?;
+        let changed = ids
+            .into_iter()
+            .filter(|id| self.get(*id).is_some_and(|task| task.base != base))
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            return Ok(false);
+        }
+        let at = SystemTime::now();
+        let mut entries = Vec::with_capacity(changed.len());
+        for id in changed {
+            let task = self.task_mut(id)?;
+            let previous = task.base.clone();
+            task.base = base.clone();
+            record_event(task, TaskEventKind::BaseSet, at, None, base_detail(&base));
+            entries.push(UndoEntry::SetBase {
+                id,
+                previous,
+                expected_revision: task.revision,
+            });
+        }
+        self.undo_stack.push(if entries.len() == 1 {
+            entries.pop().expect("one base undo")
+        } else {
+            UndoEntry::Batch { entries }
+        });
+        Ok(true)
+    }
+
+    pub(crate) fn restore_base(
+        &mut self,
+        id: Uuid,
+        base: Option<String>,
+    ) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let detail = base_detail(&base);
+        task.base = base;
+        record_event(
+            task,
+            TaskEventKind::BaseSet,
+            SystemTime::now(),
+            None,
+            detail,
+        );
+        Ok(())
+    }
+
+    /// Record one successful launch and set human status to started as one mutation.
+    /// Dispatch is external and deliberately creates no undo entry.
+    pub fn record_dispatch(&mut self, id: Uuid, dispatch: Dispatch) -> Result<(), DomainError> {
+        self.record_dispatch_with_status(id, dispatch, true)
+    }
+
+    /// Record a dispatch, and start the task only when `start` is set: a bulk launch landing
+    /// after the human changed the task's status records the agent but keeps that status.
+    pub fn record_dispatch_with_status(
+        &mut self,
+        id: Uuid,
+        mut dispatch: Dispatch,
+        start: bool,
+    ) -> Result<(), DomainError> {
+        let by = current_actor();
+        let task = self.task_mut(id)?;
+        dispatch.cleaned = false;
+        let at = dispatch.at;
+        let from = task.status;
+        if start {
+            task.status = HumanStatus::Started;
+            sync_block_with_status(task, at, &by);
+        }
+        let detail = EventDetail {
+            from: (task.status != from).then_some(from),
+            to: (task.status != from).then_some(task.status),
+            base: dispatch.base.clone(),
+            branch: Some(dispatch.branch.clone()),
+            sha: dispatch
+                .base_commit
+                .as_deref()
+                .map(|commit| commit.chars().take(7).collect()),
+            relaunch: task.dispatch.is_some(),
+            ..EventDetail::default()
+        };
+        task.dispatch = Some(dispatch);
+        record_event(task, TaskEventKind::Dispatched, at, Some(&by), Some(detail));
+        Ok(())
+    }
+
+    /// Make a start that dispatched undoable: call right after the launch is recorded. Undo
+    /// restores `previous` only; the agent keeps running and the record stays.
+    pub fn push_start_undo(&mut self, id: Uuid, previous: HumanStatus) -> Result<(), DomainError> {
+        let expected_revision = self.task_mut(id)?.revision;
+        self.undo_stack.push(UndoEntry::Start {
+            id,
+            previous,
+            expected_revision,
+        });
+        Ok(())
+    }
+
+    /// Start `ids` (plain, no launch) as one undo step: one [`UndoEntry::Start`] per task in an
+    /// [`UndoEntry::Batch`]. Tasks already started are skipped. Returns whether any changed.
+    pub fn start_batch(&mut self, ids: &[Uuid]) -> Result<bool, DomainError> {
+        let ids: Vec<_> = self
+            .prevalidate_batch_ids(ids)?
+            .into_iter()
+            .filter(|id| {
+                self.get(*id)
+                    .is_some_and(|task| task.status != HumanStatus::Started)
+            })
+            .collect();
+        if ids.is_empty() {
+            return Ok(false);
+        }
+        let mut entries = Vec::with_capacity(ids.len());
+        for id in ids {
+            let previous = self.task_mut(id)?.status;
+            self.set_status(id, HumanStatus::Started)?;
+            entries.push(UndoEntry::Start {
+                id,
+                previous,
+                expected_revision: self.task_mut(id)?.revision,
+            });
+        }
+        self.undo_stack.push(UndoEntry::Batch { entries });
+        Ok(true)
+    }
+
+    /// Reverse a start or a plain status change: restore the earlier status. A change out of
+    /// `blocked` or `review` closed that record, so going back reopens it rather than an empty
+    /// one. Undoing a reopen puts a task back to done without releasing what runs after it:
+    /// the release belonged to the original done, and nothing here could undo it.
+    pub(crate) fn restore_status(
+        &mut self,
+        id: Uuid,
+        previous: HumanStatus,
+    ) -> Result<(), DomainError> {
+        self.restore_status_as(id, previous, TaskEventKind::StatusSet)
+    }
+
+    fn restore_status_as(
+        &mut self,
+        id: Uuid,
+        previous: HumanStatus,
+        kind: TaskEventKind,
+    ) -> Result<(), DomainError> {
+        let by = current_actor();
+        let task = self.task_mut(id)?;
+        let from = task.status;
+        task.status = previous;
+        reopen_last_record(task, previous);
+        let at = SystemTime::now();
+        sync_block_with_status(task, at, &by);
+        record_event(
+            task,
+            kind,
+            at,
+            Some(&by),
+            Some(EventDetail::status(from, previous)),
+        );
+        Ok(())
+    }
+
+    /// Set `ids` to `status` as one undoable action: one [`UndoEntry::Status`] for a single
+    /// task, an [`UndoEntry::Batch`] for a marked set. Tasks already there are skipped; a done
+    /// going back to open is recorded as a reopen. All or nothing. Returns whether any changed.
+    pub fn change_status(
+        &mut self,
+        ids: &[Uuid],
+        status: HumanStatus,
+        marked: bool,
+    ) -> Result<bool, DomainError> {
+        let ids = self.prevalidate_batch_ids(ids)?;
+        let baseline = self.clone();
+        let mut entries = Vec::new();
+        for id in ids {
+            let previous = self.task_mut(id)?.status;
+            if previous == status {
+                continue;
+            }
+            let kind = if previous == HumanStatus::Done && status == HumanStatus::Open {
+                TaskEventKind::Reopened
+            } else {
+                TaskEventKind::StatusSet
+            };
+            if let Err(error) = self.apply_status(id, status, kind) {
+                *self = baseline;
+                return Err(error);
+            }
+            entries.push(UndoEntry::Status {
+                id,
+                previous,
+                expected_revision: self.task_mut(id)?.revision,
+            });
+        }
+        if entries.is_empty() {
+            return Ok(false);
+        }
+        self.undo_stack.push(if marked {
+            UndoEntry::Batch { entries }
+        } else {
+            entries.pop().expect("one status undo")
+        });
+        Ok(true)
+    }
+
+    /// Run `change` on task `id` and make what it did to the steps undoable as one
+    /// [`UndoEntry::Steps`]. A change that leaves the steps as they were pushes nothing.
+    pub fn with_steps_undo<T>(
+        &mut self,
+        id: Uuid,
+        change: impl FnOnce(&mut Self) -> Result<T, DomainError>,
+    ) -> Result<T, DomainError> {
+        let previous = self.task_mut(id)?.steps.clone();
+        let value = change(self)?;
+        let task = self.task_mut(id)?;
+        if task.steps != previous {
+            let expected_revision = task.revision;
+            self.undo_stack.push(UndoEntry::Steps {
+                id,
+                previous,
+                expected_revision,
+            });
+        }
+        Ok(value)
+    }
+
+    /// Reverse a steps change: put `previous` back, journaling each step it adds back, removes,
+    /// renames, or ticks.
+    pub(crate) fn restore_steps(
+        &mut self,
+        id: Uuid,
+        previous: Vec<Step>,
+    ) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let mut kinds = Vec::new();
+        for step in &previous {
+            match task.steps.iter().find(|current| current.id == step.id) {
+                None => kinds.push(TaskEventKind::StepAdded),
+                Some(current) => {
+                    if current.text != step.text {
+                        kinds.push(TaskEventKind::StepRenamed);
+                    }
+                    if current.done != step.done {
+                        kinds.push(if step.done {
+                            TaskEventKind::StepChecked
+                        } else {
+                            TaskEventKind::StepUnchecked
+                        });
+                    }
+                }
+            }
+        }
+        kinds.extend(
+            task.steps
+                .iter()
+                .filter(|current| !previous.iter().any(|step| step.id == current.id))
+                .map(|_| TaskEventKind::StepRemoved),
+        );
+        task.steps = previous;
+        let mut kinds = kinds.into_iter();
+        record_mutation(task, kinds.next().unwrap_or(TaskEventKind::Edited));
+        let at = task.updated_at;
+        task.history
+            .extend(kinds.map(|kind| event(kind, at, None, None)));
+        Ok(())
+    }
+
+    /// Mark the retained dispatch record cleaned without changing human status, recording what
+    /// the cleanup did.
+    pub fn record_dispatch_cleaned(
+        &mut self,
+        id: Uuid,
+        outcome: CleanupOutcome,
+    ) -> Result<(), DomainError> {
+        let task = self.task_mut(id)?;
+        let dispatch = task.dispatch.as_mut().ok_or(DomainError::UnknownId(id))?;
+        dispatch.cleaned = true;
+        record_event(
+            task,
+            TaskEventKind::Cleaned,
+            SystemTime::now(),
+            None,
+            Some(EventDetail {
+                outcome: Some(outcome),
+                ..EventDetail::default()
+            }),
+        );
+        Ok(())
+    }
+
+    /// [`Self::record_dispatch_cleaned`] for a cleanup that landed after its task's completion
+    /// was saved (the board cleans off the event loop). Cleaned is host bookkeeping, not a user
+    /// action: undo entries that expected the pre-cleanup revision follow it, so undo still
+    /// reverses the completion.
+    pub fn record_dispatch_cleaned_keeping_undo(
+        &mut self,
+        id: Uuid,
+        outcome: CleanupOutcome,
+    ) -> Result<(), DomainError> {
+        let before = self.task_mut(id)?.revision;
+        self.record_dispatch_cleaned(id, outcome)?;
+        let after = self.task_mut(id)?.revision;
+        for entry in &mut self.undo_stack {
+            entry.retarget(id, before, after);
+        }
+        Ok(())
+    }
+
+    /// Edit title, notes, scope, and thread together. Title uses the same non-empty trim rule as create.
     pub fn edit(
         &mut self,
         id: Uuid,
@@ -869,10 +2296,69 @@ impl DomainState {
             return Err(DomainError::EmptyTitle);
         }
         let task = self.task_mut(id)?;
+        let before = task.clone();
         task.title = title.to_string();
         task.notes = notes;
         task.scope = scope;
-        record_mutation(task, TaskEventKind::Edited);
+        let fields = edited_fields(&before, task);
+        record_event(
+            task,
+            TaskEventKind::Edited,
+            SystemTime::now(),
+            None,
+            edited_detail(fields),
+        );
+        Ok(())
+    }
+
+    pub fn edit_threaded(
+        &mut self,
+        id: Uuid,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        thread: Option<String>,
+    ) -> Result<(), DomainError> {
+        self.edit(id, title, notes, scope)?;
+        self.task_mut(id)?.thread = thread;
+        Ok(())
+    }
+
+    /// Edit ordinary fields, assignee, and base without creating a standalone undo entry.
+    #[allow(clippy::too_many_arguments)]
+    pub fn edit_with_assignee_and_base(
+        &mut self,
+        id: Uuid,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        thread: Option<String>,
+        assignee: Option<Assignee>,
+        base: Option<String>,
+    ) -> Result<(), DomainError> {
+        let changed_assignee = self.get(id).is_some_and(|task| task.assigned() != assignee);
+        let changed_base = self.get(id).is_some_and(|task| task.base != base);
+        self.edit_threaded(id, title, notes, scope, thread)?;
+        if changed_assignee {
+            self.show_assigned(assignee.as_ref());
+        }
+        let task = self.task_mut(id)?;
+        let at = task.updated_at;
+        if changed_assignee {
+            let name = assignee.as_ref().map(|assignee| assignee.name.clone());
+            task.history.push(event(
+                TaskEventKind::Assigned,
+                at,
+                None,
+                assigned_detail(&name),
+            ));
+        }
+        if changed_base {
+            task.history
+                .push(event(TaskEventKind::BaseSet, at, None, base_detail(&base)));
+        }
+        task.set_assigned(assignee);
+        task.base = base;
         Ok(())
     }
 
@@ -906,6 +2392,68 @@ impl DomainState {
         title: impl AsRef<str>,
         notes: Option<String>,
         scope: TaskScope,
+        step_renames: &[(Uuid, String)],
+        step_removals: &[Uuid],
+        step_adds: &[String],
+        step_adds_after: Option<Uuid>,
+    ) -> Result<(), DomainError> {
+        let task = self.get(id).ok_or(DomainError::UnknownId(id))?;
+        self.edit_with_step_changes_and_base(
+            id,
+            title,
+            notes,
+            scope,
+            task.thread.clone(),
+            task.assigned(),
+            task.base.clone(),
+            step_renames,
+            step_removals,
+            step_adds,
+            step_adds_after,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn edit_with_step_changes_threaded(
+        &mut self,
+        id: Uuid,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        thread: Option<String>,
+        assignee: Option<Assignee>,
+        step_renames: &[(Uuid, String)],
+        step_removals: &[Uuid],
+        step_adds: &[String],
+        step_adds_after: Option<Uuid>,
+    ) -> Result<(), DomainError> {
+        let base = self.get(id).and_then(|task| task.base.clone());
+        self.edit_with_step_changes_and_base(
+            id,
+            title,
+            notes,
+            scope,
+            thread,
+            assignee,
+            base,
+            step_renames,
+            step_removals,
+            step_adds,
+            step_adds_after,
+        )
+    }
+
+    /// Apply task fields including base plus staged step changes in one edit mutation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn edit_with_step_changes_and_base(
+        &mut self,
+        id: Uuid,
+        title: impl AsRef<str>,
+        notes: Option<String>,
+        scope: TaskScope,
+        thread: Option<String>,
+        assignee: Option<Assignee>,
+        base: Option<String>,
         step_renames: &[(Uuid, String)],
         step_removals: &[Uuid],
         step_adds: &[String],
@@ -948,9 +2496,16 @@ impl DomainState {
             .map(|step| step.id)
             .collect::<Vec<_>>();
 
+        let before = task.clone();
         task.title = title.to_string();
         task.notes = notes;
+        let changed_assignee = task.assigned() != assignee;
+        let changed_base = task.base != base;
         task.scope = scope;
+        task.thread = thread;
+        let shown = assignee.clone();
+        task.set_assigned(assignee);
+        task.base = base;
         task.steps.retain(|step| !removals.contains(&step.id));
         for (step_id, text) in &actual_renames {
             if let Some(step) = task.steps.iter_mut().find(|step| step.id == *step_id) {
@@ -971,22 +2526,40 @@ impl DomainState {
             .and_then(|anchor| task.steps.iter().position(|step| step.id == anchor))
             .map_or(task.steps.len(), |anchor| anchor + 1);
         task.steps.splice(insert_at..insert_at, added);
-        record_mutation(task, TaskEventKind::Edited);
+        let fields = edited_fields(&before, task);
+        record_event(
+            task,
+            TaskEventKind::Edited,
+            SystemTime::now(),
+            None,
+            edited_detail(fields),
+        );
         let at = task.updated_at;
+        if changed_assignee {
+            let detail = assigned_detail(&task.assignee);
+            task.history
+                .push(event(TaskEventKind::Assigned, at, None, detail));
+        }
+        if changed_base {
+            let detail = base_detail(&task.base);
+            task.history
+                .push(event(TaskEventKind::BaseSet, at, None, detail));
+        }
+        task.history.extend(
+            actual_renames
+                .iter()
+                .map(|_| event(TaskEventKind::StepRenamed, at, None, None)),
+        );
+        task.history.extend(
+            actual_removals
+                .iter()
+                .map(|_| event(TaskEventKind::StepRemoved, at, None, None)),
+        );
         task.history
-            .extend(actual_renames.iter().map(|_| TaskEvent {
-                kind: TaskEventKind::StepRenamed,
-                at,
-            }));
-        task.history
-            .extend(actual_removals.iter().map(|_| TaskEvent {
-                kind: TaskEventKind::StepRemoved,
-                at,
-            }));
-        task.history.extend((0..added_count).map(|_| TaskEvent {
-            kind: TaskEventKind::StepAdded,
-            at,
-        }));
+            .extend((0..added_count).map(|_| event(TaskEventKind::StepAdded, at, None, None)));
+        if changed_assignee {
+            self.show_assigned(shown.as_ref());
+        }
         Ok(())
     }
 
@@ -1117,13 +2690,35 @@ impl DomainState {
         status: HumanStatus,
         kind: TaskEventKind,
     ) -> Result<(), DomainError> {
+        self.apply_status_by(id, status, kind, &current_actor())
+    }
+
+    fn apply_status_by(
+        &mut self,
+        id: Uuid,
+        status: HumanStatus,
+        kind: TaskEventKind,
+        by: &str,
+    ) -> Result<(), DomainError> {
         let task = self.task_mut(id)?;
+        let at = SystemTime::now();
+        let from = task.status;
         task.status = status;
-        record_mutation(task, kind);
+        sync_block_with_status(task, at, by);
+        record_event(
+            task,
+            kind,
+            at,
+            Some(by),
+            Some(EventDetail::status(from, status)),
+        );
+        if status == HumanStatus::Done && from != HumanStatus::Done {
+            self.completed.push(id);
+        }
         Ok(())
     }
 
-    fn prevalidate_batch_ids(&self, ids: &[Uuid]) -> Result<Vec<Uuid>, DomainError> {
+    pub(super) fn prevalidate_batch_ids(&self, ids: &[Uuid]) -> Result<Vec<Uuid>, DomainError> {
         let mut seen = BTreeSet::new();
         let mut ordered = Vec::with_capacity(ids.len());
         for id in ids.iter().copied() {
@@ -1137,7 +2732,7 @@ impl DomainState {
         Ok(ordered)
     }
 
-    fn task_mut(&mut self, id: Uuid) -> Result<&mut Task, DomainError> {
+    pub(super) fn task_mut(&mut self, id: Uuid) -> Result<&mut Task, DomainError> {
         self.tasks
             .iter_mut()
             .find(|t| t.id == id)
@@ -1159,6 +2754,7 @@ impl DomainState {
             }
         }
         self.merge_project_records(&other.projects);
+        self.merge_hidden_assignees(&other.hidden_assignees);
         self.drop_tasks_trashed_elsewhere(other);
         self.merge_undo_entries(other);
     }
@@ -1186,6 +2782,7 @@ impl DomainState {
         self.next_task_number = self.next_task_number.max(disk.next_task_number);
         self.next_notice_number = self.next_notice_number.max(disk.next_notice_number);
         self.merge_project_records(&disk.projects);
+        self.merge_hidden_assignees(&disk.hidden_assignees);
         self.drop_tasks_trashed_elsewhere(disk);
         self.merge_undo_entries(disk);
         Ok(())
@@ -1203,6 +2800,19 @@ impl DomainState {
                     .insert(path.clone(), ProjectRecord { archived: true });
             } else {
                 self.projects.remove(path);
+            }
+        }
+    }
+
+    /// Take the disk's hidden names, then re-apply this process's unsaved hides and unhides,
+    /// as [`Self::merge_project_records`] does for archived projects.
+    fn merge_hidden_assignees(&mut self, disk: &BTreeSet<String>) {
+        self.hidden_assignees = disk.clone();
+        for (name, hidden) in &self.hidden_intents {
+            if *hidden {
+                self.hidden_assignees.insert(name.clone());
+            } else {
+                self.hidden_assignees.remove(name);
             }
         }
     }
@@ -1307,10 +2917,29 @@ impl DomainState {
             task.merge_base_revision = None;
         }
         self.project_intents.clear();
+        self.hidden_intents.clear();
     }
 
     fn merge_undo_entries(&mut self, other: &DomainState) {
         for incoming in &other.undo_stack {
+            // An entry expecting the very revision this local copy mutated from can never
+            // succeed after this save (the local revision wins the merge). Unioning it back
+            // would bury a live local entry, such as a completion whose cleaned marker landed
+            // after it, under a stale one.
+            let superseded = incoming.targets().into_iter().any(|(id, expected)| {
+                self.get(id).is_some_and(|task| {
+                    task.merge_base_revision == Some(expected) && task.revision != expected
+                })
+            });
+            // A name-only entry undone here (or by an assignment) no longer matches the merged
+            // hidden set: importing it back would let `ctrl+u` replay it. Inside an assignment
+            // a stale name step is a harmless no-op, so the assignment still comes back.
+            let leaves = incoming.leaf_entries();
+            let stale_name = leaves.iter().all(|leaf| leaf.targets().is_empty())
+                && leaves.iter().any(|leaf| !self.name_leaf_is_live(leaf));
+            if superseded || stale_name {
+                continue;
+            }
             let incoming_leaves = incoming.leaf_entries();
             let already_present = incoming_leaves.iter().all(|incoming_leaf| {
                 self.undo_stack.iter().any(|existing| {
@@ -1353,6 +2982,19 @@ impl DomainState {
                             UndoEntry::Complete { .. } => {
                                 task.last_event_at(TaskEventKind::Completed)
                             }
+                            UndoEntry::Assign { .. } => task.last_event_at(TaskEventKind::Assigned),
+                            UndoEntry::SetBase { .. } => task.last_event_at(TaskEventKind::BaseSet),
+                            UndoEntry::Block { .. } => task.block.as_ref().map(|block| block.at),
+                            UndoEntry::Start { .. } => {
+                                task.last_event_at(TaskEventKind::Dispatched)
+                            }
+                            UndoEntry::SetAfter { .. } => task.last_event_at(TaskEventKind::Edited),
+                            UndoEntry::SetOn { .. } => task.last_event_at(TaskEventKind::OnSet),
+                            UndoEntry::HideAssignee { .. } | UndoEntry::ShowAssignee { .. } => None,
+                            // A live entry's target was last changed by the action it records.
+                            UndoEntry::Status { .. }
+                            | UndoEntry::Steps { .. }
+                            | UndoEntry::Archive { .. } => Some(task.updated_at),
                             UndoEntry::Batch { .. } => unreachable!("batches are flattened"),
                         }
                     })
@@ -1431,7 +3073,12 @@ impl DomainState {
                 .flat_map(|task| {
                     task.parent_task_id
                         .into_iter()
-                        .chain(task.after.iter().copied())
+                        .chain(task.after.iter().filter_map(|number| {
+                            self.tasks
+                                .iter()
+                                .find(|predecessor| predecessor.number == Some(*number))
+                                .map(|task| task.id)
+                        }))
                 })
                 .filter(|id| eligible.contains(id))
                 .collect();
@@ -1459,8 +3106,24 @@ impl DomainState {
         view
     }
 
+    /// Take a trash purge another copy of this state saved: drop `trashed`, and take `saved`'s
+    /// copy of every task whose revision differs and its undo stack, so a link the purge
+    /// unlinked keeps the revision that went to disk instead of being unlinked again.
+    pub(crate) fn adopt_trash_purge(&mut self, saved: &DomainState, trashed: &BTreeSet<Uuid>) {
+        self.tasks.retain(|task| !trashed.contains(&task.id));
+        for task in &mut self.tasks {
+            if let Some(persisted) = saved.get(task.id) {
+                if persisted.revision != task.revision {
+                    *task = persisted.clone();
+                }
+            }
+        }
+        self.undo_stack = saved.undo_stack.clone();
+    }
+
     /// Remove the given tasks and every undo entry targeting one of them.
     pub(crate) fn remove_tasks(&mut self, ids: &BTreeSet<Uuid>) {
+        self.unlink_removed(ids);
         self.tasks.retain(|task| !ids.contains(&task.id));
         self.undo_stack.retain(|entry| {
             entry
@@ -1482,7 +3145,8 @@ impl DomainState {
     /// assignment so every save path and `locked_transition` gets it.
     ///
     /// 1. Drop entries whose target task is missing, or whose `expected_revision`
-    ///    no longer matches the task's current revision (stale, can never succeed).
+    ///    no longer matches the task's current revision (stale, can never succeed), and
+    ///    name entries the hidden set no longer matches.
     /// 2. Evict the oldest entries until the stack fits [`UNDO_CAP`].
     ///
     /// Order matters: stale entries go first so the cap never evicts a live entry
@@ -1490,16 +3154,46 @@ impl DomainState {
     /// In-memory `undo()` on a stale top entry is unchanged (refuse, retain)
     /// because pruning happens only at save.
     pub(crate) fn prune_undo_for_persistence(&mut self) {
-        self.undo_stack.retain(|entry| {
-            let targets = entry.targets();
-            !targets.is_empty()
-                && targets.into_iter().all(|(id, expected_revision)| {
-                    self.tasks
-                        .iter()
-                        .find(|task| task.id == id)
-                        .is_some_and(|task| task.revision == expected_revision)
-                })
-        });
+        let stack = std::mem::take(&mut self.undo_stack);
+        // A removal that a later assignment undid comes live again once that assignment's
+        // entry is undone, so it stays while that entry does.
+        let shown_later = |index: usize, name: &str| {
+            stack[index + 1..].iter().any(|later| {
+                later.leaf_entries().into_iter().any(
+                    |leaf| matches!(leaf, UndoEntry::ShowAssignee { name: shown } if shown == name),
+                )
+            })
+        };
+        let keep: Vec<bool> = stack
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let leaves = entry.leaf_entries();
+                // Name steps decide only for an entry that is nothing else: inside an
+                // assignment a stale one reverses as a no-op and never drops the assignment.
+                let name_only = leaves.iter().all(|leaf| leaf.targets().is_empty());
+                !leaves.is_empty()
+                    && leaves.into_iter().all(|leaf| match leaf {
+                        UndoEntry::HideAssignee { name } => {
+                            !name_only || self.name_leaf_is_live(leaf) || shown_later(index, name)
+                        }
+                        UndoEntry::ShowAssignee { .. } => {
+                            !name_only || self.name_leaf_is_live(leaf)
+                        }
+                        leaf => leaf.targets().into_iter().all(|(id, expected_revision)| {
+                            self.tasks
+                                .iter()
+                                .find(|task| task.id == id)
+                                .is_some_and(|task| task.revision == expected_revision)
+                        }),
+                    })
+            })
+            .collect();
+        self.undo_stack = stack
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(entry, keep)| keep.then_some(entry))
+            .collect();
         if self.undo_stack.len() > UNDO_CAP {
             let excess = self.undo_stack.len() - UNDO_CAP;
             self.undo_stack.drain(..excess);
@@ -2580,9 +4274,23 @@ mod tests {
     }
 
     #[test]
-    fn removed_status_and_step_wire_names_are_rejected() {
-        assert!(serde_json::from_str::<HumanStatus>("\"open\"").is_err());
-        assert!(serde_json::from_str::<HumanStatus>("\"blocked\"").is_err());
+    fn supported_status_and_removed_step_wire_names() {
+        for (wire, expected) in [
+            ("todo", HumanStatus::Open),
+            ("open", HumanStatus::Open),
+            ("ready", HumanStatus::Ready),
+            ("doing", HumanStatus::Started),
+            ("started", HumanStatus::Started),
+            ("blocked", HumanStatus::Blocked),
+            ("review", HumanStatus::Review),
+            ("done", HumanStatus::Done),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<HumanStatus>(serde_json::json!(wire)).unwrap(),
+                expected,
+            );
+        }
+        assert!(serde_json::from_str::<HumanStatus>("\"unknown\"").is_err());
         assert!(serde_json::from_str::<TaskEventKind>("\"checklist_item_added\"").is_err());
 
         let mut state = DomainState::new();

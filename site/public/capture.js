@@ -1,5 +1,3 @@
-// Quick-add title tokens. Only `!p` remains: tasks carry no thread label since store v8,
-// so `!t` is ordinary title text, as in the app.
 export function parseCapture(raw, fallbackProject) {
   const parts = raw.trim().split(/\s+/).filter(Boolean);
   let project = fallbackProject;

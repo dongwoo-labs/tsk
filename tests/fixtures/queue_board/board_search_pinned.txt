@@ -22,5 +22,5 @@
 │                                                                                │
 │────────────────────────────────────────────────────────────────────────────────│
 │ all · /worktree                                                                │
-│ enter open · ctrl+o todo · ctrl+d done · ? help                                │
+│ enter open · ctrl+o todo · ctrl+d done · ctrl+b block · : commands · ? help    │
 └────────────────────────────────────────────────────────────────────────────────┘

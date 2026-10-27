@@ -8,23 +8,23 @@ A terminal task board for you and your agents: one shared queue, a TUI for you, 
 
 Keep the next task, the work in progress, and the things waiting on you in view.
 Press `+` to capture a thought, add notes and steps when it needs a plan, and give
-your agent the task number when you're ready to work on it. New tasks start in Todo; use Doing for work in progress and Done for finished work. Questions wait for answers separately from Task status.
+your agent the task number when you are ready. New tasks start in the open inbox. Legacy CLI JSON keeps `todo`, `doing`, and `done`; questions wait separately from Task status.
 
-### the flow
+### Beside your agent
 
 ![The tsk board beside an agent working on the selected Redis-to-Postgres migration task](docs/images/board-in-herdr.png)
 
-In Herdr, **prefix+t** opens or focuses your workspace's board, even across tabs;
-other workspaces keep their own views of the same tasks. **prefix+a** opens quick capture.
+In Herdr, `prefix+t` opens or focuses your workspace's board, even across tabs.
+Other workspaces keep their own view of the same tasks. `prefix+a` opens quick capture.
 Click a task's `T` number to copy it, then paste it into your agent conversation.
 
 ### Room to think
 
 ![A wide tsk board with the selected task's notes and steps open alongside it](docs/images/wide-task-page.png)
 
-In a wide pane, click a task or press `→` / `l` to open its details beside the board; `←` / `h` brings you back.
-Press `Enter` for a full-screen task and `Esc` to return. For a standalone board,
-run `tsk` in your terminal.
+In a wide pane, click a task or press `→` or `l` to open it beside the board; `←` or `h`
+brings you back. `Enter` opens the task full screen and `Esc` returns. Without Herdr,
+run `tsk` in any terminal.
 
 ### Related tasks
 
@@ -36,11 +36,14 @@ the page lists the direct children, and their parent's row shows `⊂done/total`
 Press `Enter` on the parent or a child line to open it, and `Esc` to go back.
 Relationships never complete or delete other tasks. See the [CLI guide](https://gettsk.sh/docs/cli/#edit).
 
-### Coming soon
+### From task to implementation
 
-**From task to implementation.** The next phase brings agent execution into the
-board: assign a task to an agent, start implementation from tsk, and run the work
-in Herdr worktrees.
+Define your agents once in `config.toml`, press `@` to assign a task, and press
+`ctrl+s` to start it. Starting an assigned task dispatches it: tsk creates a Git
+worktree and a Herdr workspace for the task and launches the agent there. When the
+pull request is merged, `ctrl+d` completes the task and removes the worktree and
+branch, never touching uncommitted or unmerged work. Dispatch runs in Herdr; on
+Windows it is a preview.
 
 ## Quickstart
 
@@ -52,25 +55,25 @@ macOS and Linux (ARM64 or x86-64):
 curl -fsSL https://gettsk.sh/install.sh | sh
 ```
 
-Or install with Homebrew:
+Or with Homebrew:
 
 ```sh
 brew install smarzban/tap/tsk
 ```
 
-Windows 10/11 on ARM64 or x86-64, in a PowerShell window:
+Windows 10/11 (ARM64 or x86-64), in a PowerShell window:
 
 ```powershell
 irm https://www.gettsk.sh/install.ps1 | iex
 ```
 
-The installers add tsk to your PATH and, when Herdr or coding agents are detected,
-offer to set them up. If prompted, reopen your terminal. Options, upgrades, and
+The installers add tsk to your PATH and offer to set up Herdr and your coding agents
+when they find them. If prompted, reopen your terminal. Options, upgrades, and
 uninstall are in the [install guide](https://gettsk.sh/docs/install/).
 
 ### Add to Herdr
 
-[Install Herdr](https://herdr.dev/docs/install/) if you haven't already, then:
+[Install Herdr](https://herdr.dev/docs/install/) first, then:
 
 ```sh
 tsk setup herdr
@@ -79,17 +82,17 @@ herdr server reload-config
 
 ### Give your agent the skill
 
-Install the tsk skill so your agent knows how to read the board, add tasks, and
-update their status and steps:
+Two skills: `tsk-cli` teaches your agent to read the board, add tasks, and update
+their status and steps. `tsk-coordinator` lets it brief builder agents, review their
+pull requests, and report back on the board:
 
 ```sh
 tsk setup
 ```
 
-On a TTY that detects agents once and asks to install. Or name one agent
-(`pi`, `omp`, `claude`, `cursor`, `grok`, `codex`, or `opencode`) to install into its
-user-level skills directory.
-[Other skill directories and setup options](https://gettsk.sh/docs/cli/#setup).
+In a terminal, `tsk setup` finds your agents and asks once. To install for one agent,
+name it: `tsk setup pi`, or `omp`, `claude`, `cursor`, `grok`, `codex`, or `opencode`.
+[Skill directories and options](https://gettsk.sh/docs/cli/#setup).
 
 ### Agent questions
 
@@ -128,12 +131,8 @@ Git, it opens every task: your desk and all your projects.
 tsk add -t "your task title"
 ```
 
-Or press **prefix+a** in Herdr, or ask your agent to add a task to the board.
-
-For example: “Add a task to the board to fix the login timeout, with steps to reproduce
-the bug.”
-
-[Installation details and upgrades](https://gettsk.sh/docs/install/).
+Or press `+` on the board, `prefix+a` in Herdr, or ask your agent: “Add a task to fix
+the login timeout, with steps to reproduce the bug.”
 
 ## Usage
 
@@ -153,18 +152,24 @@ Prefer the keyboard? A few keys for everyday use:
 | Key | Action |
 | --- | --- |
 | `↑` / `↓` or `j` / `k` | Move between tasks |
-| `Shift+M` | Enter or leave multi-select |
-| `Shift+↑` / `Shift+↓` | In multi-select, mark the current task, then move |
-| `Space` or click | In multi-select, mark or unmark a task |
-| `→` / `←` or `l` / `h` | In wide panes, move between the task list and the task detail beside it |
-| `+` | Add a task |
 | `Enter` | Open the selected task |
-| `ctrl+s` | Set a Todo task to Doing |
+| `→` / `←` or `l` / `h` | Wide pane: move between board and task |
+| `+` | Add a task |
+| `ctrl+s` | Start an open, ready, or blocked task |
 | `ctrl+o` | Set Todo, including reopening Done |
+| `ctrl+b` | Block a task with a reason, or unblock it back to ready |
+| `ctrl+r` | Send a task to review with what was done and what to check, or back to ready |
 | `ctrl+d` | Mark the selected task done |
-| `d` | Show or hide completed tasks |
+| `ctrl+u` | Undo the last change |
+| `@` | Assign a task to an agent, yourself, or a person |
+| `shift+M` | Enter or leave multi-select |
+| `shift+↑` / `shift+↓` | In multi-select, mark the current task, then move |
+| `Space` or click | In multi-select, mark or unmark a task |
 | `v` | Show or hide notes status lines (session-only) |
-| `?` | Show all shortcuts |
+| `d` | Show or hide done tasks |
+| `/` | Search the board |
+| `:` | Open the command palette |
+| `?` | Show every shortcut |
 
 [Full keymap](https://gettsk.sh/docs/keys/) ·
 [Board guide](https://gettsk.sh/docs/board/) ·
@@ -172,8 +177,8 @@ Prefer the keyboard? A few keys for everyday use:
 
 ## Docs
 
-See the [user guide](https://gettsk.sh/docs/) for installation, task management,
-agent setup, and the full CLI reference.
+The [user guide](https://gettsk.sh/docs/) covers installation, the board, agents,
+and the full CLI reference.
 
 ## Contributing and security
 

@@ -13,10 +13,41 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tsk_tui::cli::{run_with, run_with_terminal_width};
-use tsk_tui::domain::{DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
+use tsk_tui::domain::{Dispatch, DomainState, HumanStatus, ProvenanceOrigin, TaskScope};
 use tsk_tui::store::TaskStore;
 
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A direct human listing without its trailing `activity` block, whose ages follow the clock.
+fn without_activity(stdout: &str) -> String {
+    match stdout.find("\n\n   activity\n") {
+        Some(index) => format!("{}\n", &stdout[..index]),
+        None => stdout.to_string(),
+    }
+}
+
+/// The `activity` block's entries, each trailing age (`0s`, `2m`) replaced by `<age>`.
+fn activity_lines(stdout: &str) -> Vec<String> {
+    let Some(index) = stdout.find("\n   activity\n") else {
+        return Vec::new();
+    };
+    stdout[index..]
+        .lines()
+        .skip(2)
+        .map(|line| {
+            let line = line.trim();
+            match line.rsplit_once(' ') {
+                Some((head, age))
+                    if age.len() > 1
+                        && age[..age.len() - 1].bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    format!("{head} <age>")
+                }
+                _ => line.to_string(),
+            }
+        })
+        .collect()
+}
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -97,11 +128,48 @@ fn list_at_width(args: &[String], terminal_width: usize) -> tsk_tui::cli::CliOut
     )
 }
 
+#[test]
+fn list_does_not_seed_agent_profiles() {
+    let _env = env_lock();
+    let dir = temp_state_dir("no-agent-seed");
+    let output = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+        "--all".into(),
+    ]);
+
+    assert_eq!(output.code, 0);
+    assert!(!dir.join("config.toml").exists());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn create_task(state: &mut DomainState, title: &str, scope: TaskScope, status: HumanStatus) {
     let id = state
         .create(title, None, scope, ProvenanceOrigin::Manual)
         .expect("create task");
     state.set_status(id, status).expect("set status");
+}
+
+fn create_task_with_thread(
+    state: &mut DomainState,
+    title: &str,
+    scope: TaskScope,
+    status: HumanStatus,
+    thread: Option<&str>,
+) -> uuid::Uuid {
+    let id = state
+        .create_threaded(
+            title,
+            None,
+            scope,
+            ProvenanceOrigin::Manual,
+            thread.map(str::to_owned),
+        )
+        .expect("create task");
+    state.set_status(id, status).expect("set status");
+    id
 }
 
 fn create_task_returning_id(
@@ -115,6 +183,117 @@ fn create_task_returning_id(
         .expect("create task");
     state.set_status(id, status).expect("set status");
     id
+}
+
+#[test]
+fn list_filters_by_assignee_and_json_includes_nullable_assignee() {
+    let _env = env_lock();
+    let dir = temp_state_dir("assignee");
+    let mut state = DomainState::new();
+    let assigned = state
+        .create_threaded(
+            "assigned",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create assigned");
+    state
+        .assign(assigned, Some("reviewer".into()))
+        .expect("assign");
+    state
+        .create_threaded(
+            "unassigned",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create unassigned");
+    TaskStore::new(&dir).save(&state).expect("save");
+
+    let filtered = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+        "--all".into(),
+        "--assignee".into(),
+        "reviewer".into(),
+    ]);
+    assert_eq!(filtered.code, 0, "{}", filtered.stderr);
+    assert!(filtered.stdout.contains("assigned"));
+    assert!(!filtered.stdout.contains("T2"), "{}", filtered.stdout);
+
+    let json = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+        "--all".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(json.code, 0, "{}", json.stderr);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).expect("json rows");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| row["assignee"] == "reviewer"));
+    assert!(rows.iter().any(|row| row["assignee"].is_null()));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_human_and_json_include_each_tasks_optional_base() {
+    let _env = env_lock();
+    let dir = temp_state_dir("base");
+    let mut state = DomainState::new();
+    let based = state
+        .create_threaded(
+            "based",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create based");
+    state
+        .set_base(based, Some("release".into()))
+        .expect("set base");
+    state
+        .create_threaded(
+            "defaulted",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create defaulted");
+    TaskStore::new(&dir).save(&state).expect("save");
+
+    let human = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+        "--all".into(),
+    ]);
+    assert_eq!(human.code, 0, "{human:?}");
+    assert!(human.stdout.contains("based ⎇ release"), "{human:?}");
+
+    let json = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+        "--all".into(),
+        "--json".into(),
+    ]);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).expect("json rows");
+    assert!(rows.iter().any(|row| row["base"] == "release"));
+    assert!(rows.iter().any(|row| row["base"].is_null()));
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -198,7 +377,7 @@ fn list_defaults_to_invocation_project_open_tasks_in_human_and_json_group_order(
     assert!(human.stderr.is_empty());
     assert_eq!(
         human.stdout,
-        "DOING\n - 4 blocked target\n - 3 started target\n - 1 review target\n\nTODO\n - 2 ready target\n - 5 open target\n"
+        "STARTED\n - 4 blocked target\n - 3 started target\n - 1 review target\n\nOPEN\n - 2 ready target\n - 5 open target\n"
     );
 
     let json = list(&[
@@ -482,7 +661,7 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
     assert_eq!(
         open.stdout,
         format!(
-            "DOING\n  desk\n    - 6 global review\n    - 1 global started\n  other\n    - 5 other blocked\n    - 3 other started\n  {project_name}\n    - 2 project started\n\nTODO\n  {project_name}\n    - 4 project ready\n"
+            "STARTED\n  desk\n    - 6 global review\n    - 1 global started\n  other\n    - 5 other blocked\n    - 3 other started\n  {project_name}\n    - 2 project started\n\nOPEN\n  {project_name}\n    - 4 project ready\n"
         )
     );
 
@@ -538,6 +717,11 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             vec![
+                "after",
+                "assignee",
+                "assignee_kind",
+                "base",
+                "before",
                 "children_done",
                 "children_total",
                 "id",
@@ -545,6 +729,7 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
                 "parent_task_id",
                 "project",
                 "status",
+                "thread",
                 "title"
             ]
         );
@@ -663,7 +848,7 @@ fn list_all_distinguishes_global_from_project_global_and_uses_visible_scope_labe
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "TODO\n  desk\n    - 1 global task\n  project: global\n    - 2 project global token\n  work/global\n    - 3 project global path\n  work/api\n    - 4 work api\n  personal/api\n    - 5 personal api\n  project: <empty project 1>\n    - 6 whitespace scope\n"
+        "OPEN\n  desk\n    - 1 global task\n  project: global\n    - 2 project global token\n  work/global\n    - 3 project global path\n  work/api\n    - 4 work api\n  personal/api\n    - 5 personal api\n  project: <empty project 1>\n    - 6 whitespace scope\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -724,7 +909,7 @@ fn list_all_uses_shortest_unique_trailing_scope_labels_across_statuses() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "DOING\n  project: <empty project 1>\n    - 6 blank two\n  personal/api\n    - 5 personal api\n  work/api\n    - 2 work api\n  global\n    - 1 project global\n\nTODO\n  desk\n    - 3 global\n  project: <empty project 2>\n    - 4 blank one\n"
+        "STARTED\n  project: <empty project 1>\n    - 6 blank two\n  personal/api\n    - 5 personal api\n  work/api\n    - 2 work api\n  global\n    - 1 project global\n\nOPEN\n  desk\n    - 3 global\n  project: <empty project 2>\n    - 4 blank one\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -761,7 +946,7 @@ fn list_all_preserves_raw_scope_syntax_after_trailing_segments_are_exhausted() {
     assert_eq!(output.code, 0);
     assert_eq!(
         output.stdout,
-        "TODO\n  project: \"/work/api\"\n    - 1 absolute api\n  project: \"work/api\"\n    - 2 relative api\n  project: \"/work/api/\"\n    - 3 trailing api\n  project: \"//work//api\"\n    - 4 repeated api\n"
+        "OPEN\n  project: \"/work/api\"\n    - 1 absolute api\n  project: \"work/api\"\n    - 2 relative api\n  project: \"/work/api/\"\n    - 3 trailing api\n  project: \"//work//api\"\n    - 4 repeated api\n"
     );
     assert!(
         !output.stdout.contains("(scope "),
@@ -865,11 +1050,12 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
     let notes = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
     let step = "implement the surprisingly long step and verify every continuation remains aligned";
     let task = state
-        .create(
+        .create_threaded(
             title,
             Some(notes.into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
+            Some("release-2026-long-thread".into()),
         )
         .expect("create wrapping notes task");
     state.add_step(task, step).expect("seed wrapping step");
@@ -888,8 +1074,8 @@ fn direct_human_list_wraps_notes_with_a_hanging_indent() {
 
     assert_eq!(output.code, 0);
     assert_eq!(
-        output.stdout,
-        "TODO\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   Steps: 0/1 done (0%)\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n"
+        without_activity(&output.stdout),
+        "OPEN\n - 1 wrap target with a title long enough to wrap \n     at fifty columns\n   alpha beta gamma delta epsilon zeta eta theta \n   iota kappa lambda\n\n   Steps: 0/1 done (0%)\n   [ ] implement the surprisingly long step and \n       verify every continuation remains aligned\n\n   #release-2026-long-thread\n"
     );
     assert!(
         output.stdout.lines().all(|line| line.len() <= 50),
@@ -1075,11 +1261,12 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
     let notes = "first\tcell\nsecond\u{001b}]52;c;clipboard\u{0007}";
     let mut state = DomainState::new();
     let task = state
-        .create(
+        .create_threaded(
             "notes target",
             Some(notes.into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
+            Some("release".into()),
         )
         .expect("create notes task");
     TaskStore::new(&dir).save(&state).expect("seed store");
@@ -1093,8 +1280,8 @@ fn direct_human_list_keeps_note_lines_and_escapes_other_controls() {
     ]);
     assert_eq!(human.code, 0);
     assert_eq!(
-        human.stdout,
-        "TODO\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n"
+        without_activity(&human.stdout),
+        "OPEN\n - 1 notes target\n   first\\u{0009}cell\n   second\\u{001b}]52;c;clipboard\\u{0007}\n\n   #release\n"
     );
     assert!(!human.stdout.contains('\t'));
     assert!(!human.stdout.contains('\u{001b}'));
@@ -1301,6 +1488,12 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
             "parent_task_id": null,
             "children_done": 0,
             "children_total": 0,
+            "assignee": null,
+            "assignee_kind": null,
+            "base": null,
+            "thread": null,
+            "after": [],
+            "before": [],
         })]
     );
 
@@ -1410,11 +1603,12 @@ fn list_uses_environment_state_dir_by_default() {
 fn state_with_steps(done_first: bool) -> (DomainState, tsk_tui::domain::Step) {
     let mut state = DomainState::new();
     let id = state
-        .create(
+        .create_threaded(
             "steps target",
             Some("First note\nSecond note".into()),
             TaskScope::Global,
             ProvenanceOrigin::Manual,
+            Some("release".into()),
         )
         .expect("seed steps task");
     state.add_step(id, "First step").expect("seed first step");
@@ -1457,9 +1651,18 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     assert_eq!(output.code, 0, "{}", output.stderr);
     assert!(output.stderr.is_empty());
     assert_eq!(
-        output.stdout,
-        "TODO\n - 1 steps target\n   First note\n   Second note\n\n   Steps: 1/2 done (50%)\n   [x] First step\n   [ ] Second step\n",
-        "direct detail separates notes and steps"
+        without_activity(&output.stdout),
+        "OPEN\n - 1 steps target\n   First note\n   Second note\n\n   Steps: 1/2 done (50%)\n   [x] First step\n   [ ] Second step\n\n   #release\n",
+        "direct detail separates notes, steps, and the trailing thread"
+    );
+    assert_eq!(
+        activity_lines(&output.stdout),
+        vec![
+            "step checked · you <age>",
+            "2 steps added · you <age>",
+            "created · you <age>",
+        ],
+        "the activity block lists the latest entries, newest first, grouped"
     );
     assert!(
         first_step.id.to_string().starts_with("aaa1"),
@@ -1476,13 +1679,82 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     ]);
     assert_eq!(json.code, 0);
     let expected_json = format!(
-        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[]}}]\n",
+        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":\"release\",\"after\":[],\"before\":[],\"activity\":",
         task, first_step.id
     );
     assert_eq!(
-        json.stdout, expected_json,
-        "direct JSON keeps title, notes, and steps together in contract order"
+        json.stdout
+            .split_once("\"activity\":")
+            .map(|(head, _)| head.to_string() + "\"activity\":"),
+        Some(expected_json),
+        "direct JSON keeps title, notes, steps, and thread together in contract order, then activity"
     );
+    let value: serde_json::Value = serde_json::from_str(&json.stdout).expect("direct JSON");
+    let activity = value[0]["activity"].as_array().expect("activity list");
+    assert_eq!(
+        activity
+            .iter()
+            .map(|event| (event["kind"].as_str(), event["by"].as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("step_checked"), Some("you")),
+            (Some("step_added"), Some("you")),
+            (Some("step_added"), Some("you")),
+            (Some("created"), Some("you")),
+        ],
+        "activity lists every event newest first with its author"
+    );
+    assert!(activity
+        .iter()
+        .all(|event| event["at"].is_array() && event.get("detail").is_some()));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn direct_json_includes_the_full_existing_dispatch_base_and_commit() {
+    let dir = temp_state_dir("dispatch-detail");
+    let mut state = DomainState::new();
+    let id = state
+        .create_threaded(
+            "dispatched",
+            None,
+            TaskScope::Global,
+            ProvenanceOrigin::Manual,
+            None,
+        )
+        .expect("create task");
+    state
+        .record_dispatch(
+            id,
+            Dispatch {
+                argv: vec!["runner".into()],
+                worktree: "/tmp/worktree".into(),
+                branch: "tsk/t1-dispatched".into(),
+                base: Some("origin/main".into()),
+                base_commit: Some("0123456789abcdef".into()),
+                base_remote: None,
+                base_ref: None,
+                herdr_workspace_id: "workspace-1".into(),
+                at: SystemTime::now(),
+                cleaned: false,
+            },
+        )
+        .expect("record dispatch");
+    TaskStore::new(&dir).save(&state).expect("seed store");
+
+    let output = list(&[
+        "tsk".into(),
+        "list".into(),
+        "T1".into(),
+        "--json".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(output.code, 0, "{output:?}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&output.stdout).expect("JSON rows");
+    assert_eq!(rows[0]["dispatch"]["base"], "origin/main");
+    assert_eq!(rows[0]["dispatch"]["base_commit"], "0123456789abcdef");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1508,7 +1780,7 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
         state_dir_arg(&dir),
     ]);
     assert_eq!(plain.code, 0);
-    assert_eq!(plain.stdout, "TODO\n - 1 plain target\n");
+    assert_eq!(without_activity(&plain.stdout), "OPEN\n - 1 plain target\n");
 
     let plain_json = list(&[
         "tsk".into(),
@@ -1523,10 +1795,10 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["notes"], serde_json::Value::Null);
     assert_eq!(rows[0]["steps"], serde_json::json!([]));
-    assert!(rows[0].get("thread").is_none(), "v8 rows carry no thread");
+    assert_eq!(rows[0]["thread"], serde_json::Value::Null);
     let raw = plain_json.stdout.as_str();
     assert!(
-        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"parent_task_id\""),
+        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":null"),
         "direct JSON keeps empty detail fields and their contract order: {raw}"
     );
 
@@ -1609,7 +1881,7 @@ fn human_list_rows_show_bare_digits() {
     ]);
 
     assert_eq!(output.code, 0, "{}", output.stderr);
-    assert_eq!(output.stdout, "TODO\n - 1 numbered task\n");
+    assert_eq!(output.stdout, "OPEN\n - 1 numbered task\n");
     assert!(!output.stdout.contains("#1"));
     assert!(!output.stdout.contains("T1"));
 
@@ -1817,6 +2089,91 @@ fn list_unknown_number_matches_unknown_uuid_refusal() {
 }
 
 #[test]
+fn human_output_appends_thread_marker_iff_row_threaded_snapshots() {
+    let _env = env_lock();
+    let repo = project_repo("thread-human");
+    let _context = EnvironmentGuard::context_for(&repo);
+    let dir = temp_state_dir("thread-human");
+    let project = TaskScope::Project {
+        path: repo.to_string_lossy().into_owned(),
+    };
+    let mut state = DomainState::new();
+    create_task_with_thread(
+        &mut state,
+        "scoped threaded",
+        project.clone(),
+        HumanStatus::Ready,
+        Some("alpha"),
+    );
+    create_task(
+        &mut state,
+        "scoped unthreaded",
+        project.clone(),
+        HumanStatus::Ready,
+    );
+    create_task_with_thread(
+        &mut state,
+        "global threaded",
+        TaskScope::Global,
+        HumanStatus::Ready,
+        Some("ops"),
+    );
+    let step = create_task_with_thread(
+        &mut state,
+        "step threaded",
+        TaskScope::Global,
+        HumanStatus::Done,
+        Some("steps"),
+    );
+    state.add_step(step, "Keep this line").expect("add step");
+    TaskStore::new(&dir).save(&state).expect("seed store");
+    let project_name = repo
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("project basename");
+
+    let scoped = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(
+        scoped.stdout,
+        "READY\n - 1 scoped threaded #alpha\n - 2 scoped unthreaded\n"
+    );
+
+    let all = list(&[
+        "tsk".into(),
+        "list".into(),
+        "--all".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(
+        all.stdout,
+        format!(
+            "READY\n  {project_name}\n    - 1 scoped threaded #alpha\n    - 2 scoped unthreaded\n  desk\n    - 3 global threaded #ops\n"
+        )
+    );
+
+    let single = list(&[
+        "tsk".into(),
+        "list".into(),
+        step.to_string(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(
+        without_activity(&single.stdout),
+        "DONE\n - 4 step threaded\n   Steps: 0/1 done (0%)\n   [ ] Keep this line\n\n   #steps\n"
+    );
+
+    let _ = std::fs::remove_dir_all(repo);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn default_list_views_exclude_archived_tasks_and_tasks_of_archived_projects() {
     let dir = temp_state_dir("archived-excluded");
     let mut state = DomainState::new();
@@ -1953,7 +2310,7 @@ fn every_list_view_omits_notices_and_a_notice_uuid_is_unknown() {
 
     let open = run(&[]);
     assert_eq!(open.code, 0);
-    assert_eq!(open.stdout, "TODO\n - 1 ordinary task\n");
+    assert_eq!(open.stdout, "OPEN\n - 1 ordinary task\n");
 
     let done = run(&["--done"]);
     assert_eq!(done.code, 0);
@@ -2247,6 +2604,200 @@ fn list_open_and_ready_conflicts_are_usage_errors() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Launched from `work/alpha` while the store knows the same repository as the
+/// symlink `links/beta` (plus a legacy task under the launch spelling and one under a
+/// second alias `mirror/alpha`), bare `list` and
+/// `-p` by either basename or path list the project's tasks and nothing else.
+#[cfg(unix)]
+#[test]
+fn list_from_an_aliased_launch_repo_matches_the_stored_project() {
+    let _env = env_lock();
+    let root = temp_state_dir("alias-root");
+    let real = root.join("work").join("alpha");
+    std::fs::create_dir_all(real.join(".git")).expect("create git marker");
+    std::fs::create_dir(root.join("links")).expect("links directory");
+    let alias = root.join("links").join("beta");
+    std::os::unix::fs::symlink(&real, &alias).expect("alias");
+    // A second alias sharing the launch basename must not make `-p alpha` ambiguous.
+    std::fs::create_dir(root.join("mirror")).expect("mirror directory");
+    let mirror = root.join("mirror").join("alpha");
+    std::os::unix::fs::symlink(&real, &mirror).expect("mirror alias");
+    let other = project_repo("alias-other");
+    let _context = EnvironmentGuard::context_for(&real);
+    let dir = temp_state_dir("alias-rows");
+    let mut state = DomainState::new();
+    let stored = TaskScope::Project {
+        path: alias.to_string_lossy().into_owned(),
+    };
+    create_task(&mut state, "stored", stored.clone(), HumanStatus::Ready);
+    create_task(
+        &mut state,
+        "legacy twin",
+        TaskScope::Project {
+            path: real.to_string_lossy().into_owned(),
+        },
+        HumanStatus::Open,
+    );
+    create_task(
+        &mut state,
+        "mirror",
+        TaskScope::Project {
+            path: mirror.to_string_lossy().into_owned(),
+        },
+        HumanStatus::Started,
+    );
+    create_task(&mut state, "desk", TaskScope::Global, HumanStatus::Ready);
+    create_task(
+        &mut state,
+        "elsewhere",
+        TaskScope::Project {
+            path: other.to_string_lossy().into_owned(),
+        },
+        HumanStatus::Ready,
+    );
+    TaskStore::new(&dir).save(&state).expect("save fixture");
+
+    for project in [
+        None,
+        Some("alpha".to_string()),
+        Some("beta".to_string()),
+        Some(real.to_string_lossy().into_owned()),
+    ] {
+        let mut args: Vec<String> = vec![
+            "tsk".into(),
+            "list".into(),
+            "--state-dir".into(),
+            state_dir_arg(&dir),
+            "--json".into(),
+        ];
+        if let Some(project) = &project {
+            args.extend(["-p".into(), project.clone()]);
+        }
+        let output = list(&args);
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&output.stdout).expect("rows");
+        let mut titles: Vec<&str> = rows
+            .iter()
+            .map(|row| row["title"].as_str().expect("title"))
+            .collect();
+        titles.sort();
+        assert_eq!(
+            titles,
+            vec!["legacy twin", "mirror", "stored"],
+            "-p {project:?}"
+        );
+    }
+    let reloaded = TaskStore::new(&dir).load().expect("reload");
+    assert_eq!(
+        reloaded.tasks()[0].scope,
+        stored,
+        "list never moves a scope"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(other);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A verb run by a dispatched agent (`TSK_AGENT`) records the agent as the author, with what
+/// changed; the same verb without it records you. JSON lists both, newest first.
+#[test]
+fn activity_records_the_agent_from_tsk_agent_and_you_otherwise() {
+    let _lock = env_lock();
+    let dir = temp_state_dir("activity-author");
+    let mut state = DomainState::new();
+    create_task(
+        &mut state,
+        "authored target",
+        TaskScope::Global,
+        HumanStatus::Open,
+    );
+    TaskStore::new(&dir).save(&state).expect("seed store");
+    let status = |to: &str| {
+        run_with(
+            [
+                "tsk",
+                "status",
+                "1",
+                to,
+                "--state-dir",
+                &state_dir_arg(&dir),
+            ],
+            Cursor::new(Vec::<u8>::new()),
+            true,
+        )
+    };
+    {
+        let _agent = EnvironmentGuard::set("TSK_AGENT", "claude");
+        assert_eq!(status("started").code, 0);
+    }
+    {
+        let _agent = EnvironmentGuard::set("TSK_AGENT", "");
+        assert_eq!(status("ready").code, 0);
+    }
+    {
+        // `edit` names no author itself: the whole verb runs as the agent.
+        let _agent = EnvironmentGuard::set("TSK_AGENT", "claude");
+        let edit = run_with(
+            [
+                "tsk",
+                "edit",
+                "1",
+                "--notes",
+                "from the agent",
+                "--state-dir",
+                &state_dir_arg(&dir),
+            ],
+            Cursor::new(Vec::<u8>::new()),
+            true,
+        );
+        assert_eq!(edit.code, 0, "{}", edit.stderr);
+    }
+    let json = list(&[
+        "tsk".into(),
+        "list".into(),
+        "1".into(),
+        "--json".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    let value: serde_json::Value = serde_json::from_str(&json.stdout).expect("json");
+    let activity = value[0]["activity"].as_array().expect("activity");
+    assert_eq!(activity[0]["by"], "claude");
+    assert_eq!(activity[0]["kind"], "edited");
+    assert_eq!(
+        activity[0]["detail"],
+        serde_json::json!({"fields": ["notes"]})
+    );
+    let activity = &activity[1..];
+    assert_eq!(activity[0]["by"], "you");
+    assert_eq!(
+        activity[0]["detail"],
+        serde_json::json!({"from": "doing", "to": "ready"})
+    );
+    assert_eq!(activity[1]["by"], "claude");
+    assert_eq!(activity[1]["kind"], "status_set");
+    assert_eq!(
+        activity[1]["detail"],
+        serde_json::json!({"from": "todo", "to": "doing"})
+    );
+
+    let plain = list(&[
+        "tsk".into(),
+        "list".into(),
+        "1".into(),
+        "--state-dir".into(),
+        state_dir_arg(&dir),
+    ]);
+    assert_eq!(
+        activity_lines(&plain.stdout)[..3],
+        [
+            "notes edited · @claude <age>".to_string(),
+            "started → ready · you <age>".to_string(),
+            "open → started · @claude <age>".to_string(),
+        ]
+    );
+}
+
 fn cli(dir: &Path, args: &[&str]) -> tsk_tui::cli::CliOutput {
     let mut argv: Vec<String> = vec!["tsk".into()];
     argv.extend(args.iter().map(|arg| (*arg).to_owned()));
@@ -2288,6 +2839,11 @@ fn list_ready_puts_the_oldest_pick_first_like_the_board() {
     set_status(&dir, "T1", "todo");
     assert_eq!(listed_numbers(&dir, &["--desk", "--todo"]), vec![1, 2]);
     assert_eq!(listed_numbers(&dir, &["--desk"]), vec![1, 2]);
+
+    set_status(&dir, "T2", "ready");
+    set_status(&dir, "T1", "ready");
+    assert_eq!(listed_numbers(&dir, &["--desk", "--ready"]), vec![2, 1]);
+    assert_eq!(listed_numbers(&dir, &["--desk"]), vec![2, 1]);
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2382,7 +2938,7 @@ fn list_all_groups_interleaved_scopes_by_first_row_and_keeps_board_order_inside(
     assert_eq!(human.code, 0, "{}", human.stderr);
     assert_eq!(
         human.stdout,
-        "DOING\n  other\n    - 4 task 4\n    - 2 task 2\n  desk\n    - 3 task 3\n    - 1 task 1\n\nTODO\n  desk\n    - 5 task 5\n    - 7 task 7\n  other\n    - 6 task 6\n    - 8 task 8\n"
+        "STARTED\n  other\n    - 4 task 4\n    - 2 task 2\n  desk\n    - 3 task 3\n    - 1 task 1\n\nOPEN\n  desk\n    - 5 task 5\n    - 7 task 7\n  other\n    - 6 task 6\n    - 8 task 8\n"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -2588,4 +3144,652 @@ fn list_reads_done_tasks_moved_to_the_dated_done_files() {
         "{}",
         refused.stderr
     );
+}
+
+/// Two repos plus the desk, threads spread across them. Status changes are spaced so
+/// the board's hottest-first group order is deterministic; later rows are hotter.
+/// Returns (state dir, alpha repo, beta repo).
+fn seed_threads_across_scopes(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = temp_state_dir(label);
+    let alpha = project_repo(&format!("{label}-alpha"));
+    let beta = project_repo(&format!("{label}-beta"));
+    let scope = |repo: &Path| TaskScope::Project {
+        path: repo.to_string_lossy().into_owned(),
+    };
+    let mut state = DomainState::new();
+    for (title, scope, status, thread) in [
+        (
+            "alpha api",
+            scope(&alpha),
+            HumanStatus::Started,
+            Some("api"),
+        ),
+        ("beta loose", scope(&beta), HumanStatus::Started, None),
+        (
+            "alpha release",
+            scope(&alpha),
+            HumanStatus::Started,
+            Some("release"),
+        ),
+        (
+            "desk release",
+            TaskScope::Global,
+            HumanStatus::Started,
+            Some("release"),
+        ),
+        ("desk loose", TaskScope::Global, HumanStatus::Started, None),
+        (
+            "beta release",
+            scope(&beta),
+            HumanStatus::Ready,
+            Some("release"),
+        ),
+    ] {
+        create_task_with_thread(&mut state, title, scope, status, thread);
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+    TaskStore::new(&dir).save(&state).expect("seed store");
+    (dir, alpha, beta)
+}
+
+fn list_args(dir: &Path, rest: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = vec!["tsk".into(), "list".into()];
+    args.extend(rest.iter().map(|arg| arg.to_string()));
+    args.extend(["--state-dir".into(), state_dir_arg(dir)]);
+    args
+}
+
+fn json_rows(output: &tsk_tui::cli::CliOutput) -> Vec<serde_json::Value> {
+    assert_eq!(output.code, 0, "{}", output.stderr);
+    serde_json::from_str(&output.stdout).expect("JSON rows")
+}
+
+fn titles(rows: &[serde_json::Value]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row["title"].as_str().expect("title").to_owned())
+        .collect()
+}
+
+fn groups(rows: &[serde_json::Value]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row["group"].as_str().expect("group").to_owned())
+        .collect()
+}
+
+#[test]
+fn list_repeated_scope_or_thread_flag_is_usage() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("repeated");
+    let state = state_dir_arg(&dir);
+
+    for repeated in [
+        vec!["-p", "alpha", "-p", "beta"],
+        vec!["--project=alpha", "--project", "beta"],
+        vec!["--thread", "api", "--thread=release"],
+        vec!["--state-dir", state.as_str()],
+        vec!["--all", "--group", "thread", "--group", "none"],
+        vec!["--sort=title", "--sort", "recent"],
+    ] {
+        let output = list(&list_args(&dir, &repeated));
+        assert_eq!(output.code, 2, "{repeated:?}: {}", output.stdout);
+        assert!(output.stdout.is_empty(), "{repeated:?}");
+        assert!(
+            output.stderr.contains("given more than once"),
+            "{repeated:?}: {}",
+            output.stderr
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_no_thread_filters_within_scope() {
+    let _env = env_lock();
+    let (dir, alpha, beta) = seed_threads_across_scopes("no-thread");
+    let alpha_path = alpha.to_string_lossy().into_owned();
+    let beta_path = beta.to_string_lossy().into_owned();
+
+    let all = json_rows(&list(&list_args(&dir, &["--all", "--no-thread", "--json"])));
+    assert_eq!(titles(&all), vec!["desk loose", "beta loose"]);
+    assert!(all.iter().all(|row| row["thread"].is_null()));
+    let desk = json_rows(&list(&list_args(
+        &dir,
+        &["--desk", "--no-thread", "--json"],
+    )));
+    assert_eq!(titles(&desk), vec!["desk loose"]);
+    let project = json_rows(&list(&list_args(
+        &dir,
+        &["-p", &beta_path, "--no-thread", "--json"],
+    )));
+    assert_eq!(titles(&project), vec!["beta loose"]);
+    let alpha_only = json_rows(&list(&list_args(
+        &dir,
+        &["-p", &alpha_path, "--no-thread", "--json"],
+    )));
+    assert!(alpha_only.is_empty(), "alpha has no unthreaded task");
+
+    // Every view: done, archived, deleted.
+    let mut state = TaskStore::new(&dir).load().expect("load");
+    let id_of = |state: &DomainState, title: &str| {
+        state
+            .tasks()
+            .iter()
+            .find(|task| task.title == title)
+            .expect("seeded task")
+            .id
+    };
+    let (loose, release) = (id_of(&state, "desk loose"), id_of(&state, "desk release"));
+    state.set_status(loose, HumanStatus::Done).expect("done");
+    state.set_status(release, HumanStatus::Done).expect("done");
+    TaskStore::new(&dir).save(&state).expect("save");
+    let done = json_rows(&list(&list_args(
+        &dir,
+        &["--desk", "--done", "--no-thread", "--json"],
+    )));
+    assert_eq!(titles(&done), vec!["desk loose"]);
+
+    state.archive_task(loose).expect("archive");
+    state.archive_task(release).expect("archive");
+    TaskStore::new(&dir).save(&state).expect("save");
+    let archived = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--archived", "--no-thread", "--json"],
+    )));
+    assert_eq!(titles(&archived), vec!["desk loose"]);
+
+    let beta_loose = id_of(&state, "beta loose");
+    let alpha_api = id_of(&state, "alpha api");
+    state.soft_delete(beta_loose).expect("delete");
+    state.soft_delete(alpha_api).expect("delete");
+    TaskStore::new(&dir).save(&state).expect("save");
+    let deleted = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--deleted", "--no-thread", "--json"],
+    )));
+    assert_eq!(titles(&deleted), vec!["beta loose"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_no_thread_conflicts_with_thread() {
+    let _env = env_lock();
+    let dir = temp_state_dir("no-thread-conflict");
+
+    for args in [
+        vec!["--no-thread", "--thread", "api"],
+        vec!["--thread=api", "--no-thread"],
+    ] {
+        let output = list(&list_args(&dir, &args));
+        assert_eq!(output.code, 2, "{args:?}");
+        assert!(output.stdout.is_empty());
+        assert!(
+            output
+                .stderr
+                .contains("--no-thread cannot be used with --thread"),
+            "{}",
+            output.stderr
+        );
+    }
+    let task = list(&list_args(&dir, &["T1", "--no-thread"]));
+    assert_eq!(task.code, 2);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_group_thread_orders_groups_hottest_first_under_each_status() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("group-thread");
+
+    let rows = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--group", "thread", "--json"],
+    )));
+    // STARTED: `no thread` holds the hottest row (desk loose), then #release, then #api.
+    assert_eq!(
+        titles(&rows),
+        vec![
+            "desk loose",
+            "beta loose",
+            "desk release",
+            "alpha release",
+            "alpha api",
+            "beta release",
+        ]
+    );
+    assert_eq!(
+        groups(&rows),
+        vec![
+            "no thread",
+            "no thread",
+            "#release",
+            "#release",
+            "#api",
+            "#release"
+        ]
+    );
+
+    let human = list(&list_args(&dir, &["--all", "--group=thread"]));
+    assert_eq!(human.code, 0, "{}", human.stderr);
+    assert!(
+        human
+            .stdout
+            .starts_with("STARTED\n  no thread\n    - 5 desk loose · desk\n"),
+        "{}",
+        human.stdout
+    );
+    assert!(
+        human
+            .stdout
+            .contains("\nREADY\n  #release\n    - 6 beta release · "),
+        "{}",
+        human.stdout
+    );
+    assert!(
+        !human.stdout.contains(" #release ·"),
+        "rows drop the grouped thread"
+    );
+
+    // Ungrouped JSON keeps no `group` key.
+    let plain = json_rows(&list(&list_args(&dir, &["--all", "--json"])));
+    assert!(plain.iter().all(|row| row.get("group").is_none()));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_group_project_needs_all_and_orders_hottest_first() {
+    let _env = env_lock();
+    let (dir, alpha, beta) = seed_threads_across_scopes("group-project");
+
+    let rows = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--group", "project", "--sort", "title", "--json"],
+    )));
+    // STARTED: desk holds the hottest row, then alpha, then beta; title order inside.
+    assert_eq!(
+        titles(&rows),
+        vec![
+            "desk loose",
+            "desk release",
+            "alpha api",
+            "alpha release",
+            "beta loose",
+            "beta release",
+        ]
+    );
+    let basename = |repo: &Path| {
+        repo.file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (a, b) = (basename(&alpha), basename(&beta));
+    assert_eq!(groups(&rows), vec!["desk", "desk", &a, &a, &b, &b]);
+
+    let human = list(&list_args(&dir, &["--all", "--group", "project"]));
+    assert_eq!(human.code, 0, "{}", human.stderr);
+    assert!(
+        human
+            .stdout
+            .starts_with("STARTED\n  desk\n    - 5 desk loose\n    - 4 desk release #release\n"),
+        "{}",
+        human.stdout
+    );
+
+    // A single scope has one project, like the project board's `g` choices.
+    let alpha_path = alpha.to_string_lossy().into_owned();
+    for args in [
+        vec!["--group", "project"],
+        vec!["--desk", "--group", "project"],
+        vec!["-p", alpha_path.as_str(), "--group", "project"],
+        vec!["-p", alpha_path.as_str(), "--sort", "project"],
+    ] {
+        let output = list(&list_args(&dir, &args));
+        assert_eq!(output.code, 2, "{args:?}");
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.contains("need --all"), "{}", output.stderr);
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_group_and_sort_combine_with_scope_and_thread() {
+    let _env = env_lock();
+    let (dir, alpha, _beta) = seed_threads_across_scopes("group-combos");
+    let alpha_path = alpha.to_string_lossy().into_owned();
+
+    // -p + --group thread: one project's rows grouped by thread.
+    let project = json_rows(&list(&list_args(
+        &dir,
+        &["-p", &alpha_path, "--group", "thread", "--json"],
+    )));
+    assert_eq!(titles(&project), vec!["alpha release", "alpha api"]);
+    assert_eq!(groups(&project), vec!["#release", "#api"]);
+
+    // -p + --sort title: recent order is alpha release, alpha api.
+    let by_title = json_rows(&list(&list_args(
+        &dir,
+        &["-p", &alpha_path, "--sort", "title", "--json"],
+    )));
+    assert_eq!(titles(&by_title), vec!["alpha api", "alpha release"]);
+
+    // --all + --sort project: alpha, beta, then the desk last; ties keep recent order.
+    let by_project = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--sort", "project", "--json"],
+    )));
+    assert_eq!(
+        titles(&by_project),
+        vec![
+            "alpha release",
+            "alpha api",
+            "beta loose",
+            "desk loose",
+            "desk release",
+            "beta release",
+        ]
+    );
+    assert!(by_project.iter().all(|row| row.get("group").is_none()));
+
+    // Human --all --sort without --group keeps the sort inside each status: no scope
+    // sub-headings regroup it, and each row names its scope.
+    let human = list(&list_args(&dir, &["--all", "--sort", "title"]));
+    assert_eq!(human.code, 0, "{}", human.stderr);
+    let started: Vec<&str> = human
+        .stdout
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    assert_eq!(started.len(), 5, "{}", human.stdout);
+    for (line, title) in started.iter().zip([
+        "alpha api",
+        "alpha release",
+        "beta loose",
+        "desk loose",
+        "desk release",
+    ]) {
+        assert!(
+            line.starts_with(" - "),
+            "flat rows, no scope sub-heading: {line}"
+        );
+        assert!(line.contains(title), "{line} should be {title}");
+    }
+    assert!(started[3].ends_with(" · desk"), "{}", started[3]);
+
+    // --all + --thread + --group project: the cross-project thread view.
+    let thread = json_rows(&list(&list_args(
+        &dir,
+        &[
+            "--all", "--thread", "release", "--group", "project", "--json",
+        ],
+    )));
+    assert_eq!(
+        titles(&thread),
+        vec!["desk release", "alpha release", "beta release"]
+    );
+    assert_eq!(groups(&thread)[0], "desk");
+
+    // --all + --sort thread (ungrouped): unthreaded last, ties keep recent order.
+    let sorted = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--sort", "thread", "--json"],
+    )));
+    assert_eq!(
+        titles(&sorted),
+        vec![
+            "alpha api",
+            "desk release",
+            "alpha release",
+            "desk loose",
+            "beta loose",
+            "beta release",
+        ]
+    );
+
+    // A dimension the filter fixes, and the drawer views, refuse like the board.
+    for args in [
+        vec!["--thread", "api", "--group", "thread"],
+        vec!["--no-thread", "--sort", "thread"],
+        vec!["--done", "--group", "thread"],
+        vec!["--archived", "--sort", "title"],
+        vec!["--done", "--sort", "recent"],
+        vec!["--archived", "--group", "none"],
+        vec!["--deleted", "--sort=recent"],
+        vec!["T1", "--sort", "recent"],
+        vec!["T1", "--group=none"],
+        vec!["--deleted", "--all", "--group", "project"],
+        vec!["--group", "status"],
+        vec!["--sort", "newest"],
+        vec!["T1", "--group", "thread"],
+    ] {
+        let output = list(&list_args(&dir, &args));
+        assert_eq!(output.code, 2, "{args:?}: {}", output.stdout);
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_all_thread_includes_desk_tasks() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("all-thread-desk");
+
+    let rows = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--thread", "release", "--json"],
+    )));
+    assert_eq!(
+        titles(&rows),
+        vec!["desk release", "alpha release", "beta release"]
+    );
+    assert!(rows[0]["project"].is_null(), "the desk task is included");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_desk_thread_filters_desk_only() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("desk-thread");
+
+    let rows = json_rows(&list(&list_args(
+        &dir,
+        &["--desk", "--thread", "release", "--json"],
+    )));
+    assert_eq!(titles(&rows), vec!["desk release"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_thread_combines_with_done_and_archived() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("thread-views");
+    let mut state = TaskStore::new(&dir).load().expect("load");
+    let ids: Vec<(String, uuid::Uuid)> = state
+        .tasks()
+        .iter()
+        .map(|task| (task.title.clone(), task.id))
+        .collect();
+    let id = |title: &str| ids.iter().find(|(t, _)| t == title).expect("seeded").1;
+    for title in ["alpha release", "alpha api", "desk release"] {
+        state
+            .set_status(id(title), HumanStatus::Done)
+            .expect("done");
+    }
+    state.archive_task(id("desk release")).expect("archive");
+    state.archive_task(id("desk loose")).expect("archive");
+    TaskStore::new(&dir).save(&state).expect("save");
+
+    let done = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--done", "--thread", "release", "--json"],
+    )));
+    assert_eq!(titles(&done), vec!["alpha release"]);
+    let archived = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--archived", "--thread", "release", "--json"],
+    )));
+    assert_eq!(titles(&archived), vec!["desk release"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_group_and_sort_by_assignee_match_the_board() {
+    let _env = env_lock();
+    let (dir, _alpha, _beta) = seed_threads_across_scopes("group-assignee");
+    let store = TaskStore::new(&dir);
+    let mut state = store.load().expect("load seed");
+    for (title, assignee) in [
+        ("alpha api", "claude"),
+        ("desk loose", "claude"),
+        ("beta loose", "pi"),
+    ] {
+        let id = state
+            .tasks()
+            .iter()
+            .find(|task| task.title == title)
+            .expect("seeded task")
+            .id;
+        state.assign(id, Some(assignee.into())).expect("assign");
+    }
+    store.save(&state).expect("save assignees");
+
+    let rows = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--group", "assignee", "--json"],
+    )));
+    let started: Vec<(String, String)> = rows
+        .iter()
+        .filter(|row| row["status"] == "doing")
+        .map(|row| {
+            (
+                row["group"].as_str().expect("group label").to_owned(),
+                row["title"].as_str().expect("title").to_owned(),
+            )
+        })
+        .collect();
+    // One run per assignee under the status, unassigned rows grouped as `unassigned`.
+    let mut seen: Vec<String> = Vec::new();
+    for (group, _) in &started {
+        if seen.last() != Some(group) {
+            assert!(!seen.contains(group), "{group} split: {started:?}");
+            seen.push(group.clone());
+        }
+    }
+    assert_eq!(
+        seen.iter().map(String::as_str).collect::<Vec<_>>(),
+        vec!["@claude", "unassigned", "@pi"],
+        "{started:?}"
+    );
+
+    let human = list(&list_args(&dir, &["--all", "--group=assignee"]));
+    assert_eq!(human.code, 0, "{}", human.stderr);
+    assert!(
+        human
+            .stdout
+            .contains("\n  @claude\n    - 5 desk loose · desk\n    - 1 alpha api #api · "),
+        "{}",
+        human.stdout
+    );
+    assert!(
+        human
+            .stdout
+            .lines()
+            .filter(|line| line.starts_with("    - "))
+            .all(|line| !line.contains('@')),
+        "rows drop the grouped assignee: {}",
+        human.stdout
+    );
+    assert!(
+        human.stdout.contains(" · desk\n"),
+        "scope label: {}",
+        human.stdout
+    );
+
+    let sorted = json_rows(&list(&list_args(
+        &dir,
+        &["--all", "--sort", "assignee", "--json"],
+    )));
+    let started: Vec<serde_json::Value> = sorted
+        .iter()
+        .filter(|row| row["status"] == "doing")
+        .map(|row| row["assignee"].clone())
+        .collect();
+    assert_eq!(
+        started,
+        vec![
+            serde_json::json!("claude"),
+            serde_json::json!("claude"),
+            serde_json::json!("pi"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]
+    );
+
+    for refused in [
+        vec!["--all", "--assignee", "claude", "--group", "assignee"],
+        vec!["--all", "--assignee=claude", "--sort=assignee"],
+        vec!["--all", "--assignee", "claude", "--assignee", "pi"],
+    ] {
+        let output = list(&list_args(&dir, &refused));
+        assert_eq!(output.code, 2, "{refused:?}: {}", output.stdout);
+        assert!(output.stdout.is_empty(), "{refused:?}");
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn legacy_status_json_projection_and_filters_cover_rich_statuses() {
+    let _env = env_lock();
+    let dir = temp_state_dir("legacy-status-contract");
+    let mut state = DomainState::default();
+    for (title, status) in [
+        ("open", HumanStatus::Open),
+        ("ready", HumanStatus::Ready),
+        ("started", HumanStatus::Started),
+        ("blocked", HumanStatus::Blocked),
+        ("review", HumanStatus::Review),
+        ("done", HumanStatus::Done),
+    ] {
+        create_task(&mut state, title, TaskScope::Global, status);
+    }
+    TaskStore::new(&dir).save(&state).expect("save");
+    let run = |rest: &[&str]| {
+        let mut args = vec!["tsk".to_string(), "list".into()];
+        args.extend(rest.iter().map(|arg| arg.to_string()));
+        args.extend(["--state-dir".into(), state_dir_arg(&dir)]);
+        list(&args)
+    };
+    for (filter, expected, count) in [
+        ("--todo", "todo", 2),
+        ("--doing", "doing", 3),
+        ("--done", "done", 1),
+    ] {
+        let output = run(&["--all", filter, "--json"]);
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        let rows: serde_json::Value = serde_json::from_str(&output.stdout).expect("JSON array");
+        assert_eq!(rows.as_array().expect("rows").len(), count);
+        for row in rows.as_array().expect("rows") {
+            assert_eq!(row["status"], expected);
+            let address = format!("T{}", row["number"].as_u64().expect("number"));
+            let direct = run(&[&address, "--json"]);
+            assert_eq!(direct.code, 0, "{}", direct.stderr);
+            let direct: serde_json::Value =
+                serde_json::from_str(&direct.stdout).expect("direct JSON");
+            assert_eq!(direct[0]["status"], expected);
+            let projected = run(&[&address, "--field", "status"]);
+            assert_eq!(projected.code, 0, "{}", projected.stderr);
+            assert_eq!(projected.stdout, format!("{expected}\n"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }

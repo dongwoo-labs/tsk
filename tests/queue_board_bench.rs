@@ -156,6 +156,8 @@ fn cold_start_to_first_frame_under_200ms_at_80x24_with_100_tasks() {
             plain.contains("bench task"),
             "first frame must paint fixture tasks: {plain}"
         );
+        // Live lines give each NEEDS YOU row a second line, so at 80x24 that section can fill
+        // the first frame. Assert that a section header is painted, not which one.
         assert!(
             plain.contains("DOING"),
             "first frame must paint a section header: {plain}"

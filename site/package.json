@@ -8,11 +8,10 @@
     "start": "npm run dev",
     "prebuild": "node scripts/generate-apple-touch.mjs && node scripts/sync-agents-page.mjs",
     "build": "astro build",
-    "pretest": "node scripts/sync-agents-page.mjs",
     "preview": "astro preview",
     "astro": "astro",
     "generate-apple-touch": "node scripts/generate-apple-touch.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
     "test:parity": "cargo build --release --manifest-path ../Cargo.toml --bin tsk && npm run build && npm run parity:reference && playwright test",
     "parity:reference": "TSK_PARITY_OUTPUT=\"$PWD/parity-reference\" cargo test --manifest-path ../Cargo.toml --test demo_parity -- --ignored",
     "format": "prettier --write public/board-demo.js public/task-steps.js public/board-wrap.js public/landing.js \"parity/*.mjs\" playwright.config.mjs"
@@ -27,6 +26,7 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@vercel/routing-utils": "6.5.0",
+    "js-yaml": "^4.3.2",
     "prettier": "^3.9.6"
   }
 }

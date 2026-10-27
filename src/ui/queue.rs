@@ -1,12 +1,13 @@
 //! Queue Section Query: pure derivation of the board sections from a task snapshot.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::time::SystemTime;
 
 use uuid::Uuid;
 
-use crate::domain::{HumanStatus, Task, TaskScope};
+use crate::domain::{BlockOn, HumanStatus, Task, TaskScope};
 use crate::scope::PathIdentityCache;
 
 /// The board's persistent navigation tabs: `1` the task board, `2` the questions, `3` the
@@ -52,6 +53,436 @@ pub const ARCHIVED_HEADER_ROW_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_0
 /// Chrome, not a task: `BoardModel::selected_id()` hides it from verbs.
 pub const INBOX_HEADER_ROW_ID: Uuid = Uuid::from_u128(0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0002);
 
+/// Session thread filter for the project board. It narrows every status section,
+/// done drawer included; `All` is the unfiltered board.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ThreadFilter {
+    #[default]
+    All,
+    /// Only tasks whose normalized thread matches this name (ASCII-case-insensitive).
+    Named(String),
+    /// Only tasks with no thread at all.
+    Without,
+}
+
+impl ThreadFilter {
+    /// Whether `task` passes this filter.
+    pub(crate) fn admits(&self, task: &Task) -> bool {
+        match self {
+            ThreadFilter::All => true,
+            ThreadFilter::Named(name) => task
+                .thread
+                .as_deref()
+                .is_some_and(|thread| thread.eq_ignore_ascii_case(name)),
+            ThreadFilter::Without => task.thread.is_none(),
+        }
+    }
+
+    /// The label the board's thread control paints for this filter.
+    pub fn label(&self) -> String {
+        match self {
+            ThreadFilter::All => "all".to_string(),
+            ThreadFilter::Named(name) => format!("#{name}"),
+            ThreadFilter::Without => "without a thread".to_string(),
+        }
+    }
+}
+
+/// Session assignee filter for the project board. It combines with the thread filter
+/// (both must admit a task) and narrows every status section, done drawer included.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AssigneeFilter {
+    #[default]
+    All,
+    /// Only tasks assigned to this name (ASCII-case-insensitive), even when its profile
+    /// was removed from `config.toml`.
+    Named(String),
+    /// Only tasks with no assignee.
+    Unassigned,
+}
+
+impl AssigneeFilter {
+    /// Whether `task` passes this filter.
+    fn admits(&self, task: &Task) -> bool {
+        match self {
+            AssigneeFilter::All => true,
+            AssigneeFilter::Named(name) => task
+                .assignee
+                .as_deref()
+                .is_some_and(|assignee| assignee.eq_ignore_ascii_case(name)),
+            AssigneeFilter::Unassigned => task.assignee.is_none(),
+        }
+    }
+
+    /// The label the board's filter control paints for this filter.
+    pub fn label(&self) -> String {
+        match self {
+            AssigneeFilter::All => "all".to_string(),
+            AssigneeFilter::Named(name) => crate::ui::render::assignee_handle(name),
+            AssigneeFilter::Unassigned => "unassigned".to_string(),
+        }
+    }
+}
+
+/// The project board's combined filter: a thread choice AND an assignee choice.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BoardFilter {
+    pub thread: ThreadFilter,
+    pub assignee: AssigneeFilter,
+}
+
+impl BoardFilter {
+    /// A thread-only filter (assignee `All`).
+    pub fn thread(thread: ThreadFilter) -> Self {
+        Self {
+            thread,
+            assignee: AssigneeFilter::All,
+        }
+    }
+
+    /// An assignee-only filter (thread `All`).
+    pub fn assignee(assignee: AssigneeFilter) -> Self {
+        Self {
+            thread: ThreadFilter::All,
+            assignee,
+        }
+    }
+
+    pub fn is_all(&self) -> bool {
+        self.thread == ThreadFilter::All && self.assignee == AssigneeFilter::All
+    }
+
+    /// The chip label: `all`, one active choice, or both joined by a space
+    /// (`#release @claude`).
+    pub fn label(&self) -> String {
+        match (&self.thread, &self.assignee) {
+            (ThreadFilter::All, AssigneeFilter::All) => "all".to_string(),
+            (thread, AssigneeFilter::All) => thread.label(),
+            (ThreadFilter::All, assignee) => assignee.label(),
+            (thread, assignee) => format!("{} {}", thread.label(), assignee.label()),
+        }
+    }
+}
+
+/// Session project filter for the desk's live sections. `All` is the unfiltered desk.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ProjectFilter {
+    #[default]
+    All,
+    /// Only projectless (desk) tasks.
+    Desk,
+    /// Only tasks of the project at this stored path (path spellings compared by identity).
+    Named(String),
+}
+
+impl ProjectFilter {
+    /// The label the desk's filter control paints for this dimension, `None` when unset.
+    pub fn label(&self) -> Option<String> {
+        match self {
+            ProjectFilter::All => None,
+            ProjectFilter::Desk => Some("desk".to_string()),
+            ProjectFilter::Named(path) => Some(short_project_name(path).to_string()),
+        }
+    }
+}
+
+/// The desk's session filter: one project, one thread, and one assignee choice, combined.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DeskFilter {
+    pub project: ProjectFilter,
+    pub thread: ThreadFilter,
+    pub assignee: AssigneeFilter,
+}
+
+impl DeskFilter {
+    pub fn is_all(&self) -> bool {
+        self.project == ProjectFilter::All
+            && self.thread == ThreadFilter::All
+            && self.assignee == AssigneeFilter::All
+    }
+
+    /// The desk filter control's label: `all`, or the active choices, e.g.
+    /// `tsk #release @claude`.
+    pub fn label(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(project) = self.project.label() {
+            parts.push(project);
+        }
+        if self.thread != ThreadFilter::All {
+            parts.push(self.thread.label());
+        }
+        if self.assignee != AssigneeFilter::All {
+            parts.push(self.assignee.label());
+        }
+        if parts.is_empty() {
+            "all".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    fn admits(&self, task: &Task, identities: &PathIdentityCache) -> bool {
+        let project = match (&self.project, &task.scope) {
+            (ProjectFilter::All, _) => true,
+            (ProjectFilter::Desk, scope) => matches!(scope, TaskScope::Global),
+            (ProjectFilter::Named(wanted), TaskScope::Project { path }) => {
+                identities.equivalent(path, wanted)
+            }
+            (ProjectFilter::Named(_), TaskScope::Global) => false,
+        };
+        project && self.thread.admits(task) && self.assignee.admits(task)
+    }
+}
+
+/// One-level grouping inside the live status sections. Session-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupBy {
+    #[default]
+    None,
+    Project,
+    Thread,
+    Assignee,
+}
+
+impl GroupBy {
+    pub const ALL: [GroupBy; 4] = [
+        GroupBy::None,
+        GroupBy::Project,
+        GroupBy::Thread,
+        GroupBy::Assignee,
+    ];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            GroupBy::None => "none",
+            GroupBy::Project => "project",
+            GroupBy::Thread => "thread",
+            GroupBy::Assignee => "assignee",
+        }
+    }
+
+    /// The choice a [`Self::word`] names, as `config.toml` spells it.
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|group| group.word() == word)
+    }
+}
+
+/// Row order inside a group, or inside a section while ungrouped. Session-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortBy {
+    /// Each section's own order (status-change recency, picks, captures).
+    #[default]
+    Recent,
+    Project,
+    Thread,
+    Title,
+    Assignee,
+}
+
+impl SortBy {
+    pub const ALL: [SortBy; 5] = [
+        SortBy::Recent,
+        SortBy::Project,
+        SortBy::Thread,
+        SortBy::Title,
+        SortBy::Assignee,
+    ];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            SortBy::Recent => "recent",
+            SortBy::Project => "project",
+            SortBy::Thread => "thread",
+            SortBy::Title => "title",
+            SortBy::Assignee => "assignee",
+        }
+    }
+
+    /// The choice a [`Self::word`] names, as `config.toml` spells it.
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|sort| sort.word() == word)
+    }
+}
+
+/// The order of the project lists: the project picker and the Projects view. Session-only,
+/// never written to `config.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProjectSort {
+    /// By project name, case-insensitive; ties by path.
+    #[default]
+    NameAsc,
+    NameDesc,
+    /// By the project's earliest task, newest project first.
+    Newest,
+    Oldest,
+}
+
+impl ProjectSort {
+    pub const ALL: [ProjectSort; 4] = [
+        ProjectSort::NameAsc,
+        ProjectSort::NameDesc,
+        ProjectSort::Newest,
+        ProjectSort::Oldest,
+    ];
+
+    /// The picker's and the picker footer's name for the order.
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectSort::NameAsc => "name A–Z",
+            ProjectSort::NameDesc => "name Z–A",
+            ProjectSort::Newest => "newest first",
+            ProjectSort::Oldest => "oldest first",
+        }
+    }
+
+    /// The Projects view header's word (`sort: name ▾`).
+    pub fn word(self) -> &'static str {
+        match self {
+            ProjectSort::NameAsc => "name",
+            ProjectSort::NameDesc => "name Z–A",
+            ProjectSort::Newest => "newest",
+            ProjectSort::Oldest => "oldest",
+        }
+    }
+
+    /// The order `s` in the project picker steps to.
+    pub fn next(self) -> Self {
+        let at = Self::ALL.iter().position(|sort| *sort == self).unwrap_or(0);
+        Self::ALL[(at + 1) % Self::ALL.len()]
+    }
+}
+
+/// Put `items` in `sort` order, reading each item's project path with `path_of`. A project's
+/// age is its earliest task's creation: tsk keeps no project date. A project with no task
+/// yet (the current repository, before its first capture) counts as the newest.
+pub fn sort_projects<T: Clone>(
+    items: &mut [T],
+    path_of: impl Fn(&T) -> String,
+    tasks: &[Task],
+    sort: ProjectSort,
+) {
+    let identities = PathIdentityCache::default();
+    // Earliest task per stored spelling first, so aliases are matched once per spelling.
+    let mut earliest: HashMap<&str, SystemTime> = HashMap::new();
+    for task in tasks.iter().filter(|task| !task.soft_deleted) {
+        if let TaskScope::Project { path } = &task.scope {
+            earliest
+                .entry(path.as_str())
+                .and_modify(|at| *at = (*at).min(task.created_at))
+                .or_insert(task.created_at);
+        }
+    }
+    let mut keyed: Vec<(String, String, Option<SystemTime>, usize)> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let path = path_of(item);
+            let first = earliest
+                .iter()
+                .filter(|(spelling, _)| identities.equivalent(spelling, &path))
+                .map(|(_, at)| *at)
+                .min();
+            (short_project_name(&path).to_lowercase(), path, first, index)
+        })
+        .collect();
+    keyed.sort_by(|a, b| {
+        let by_name = || a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1));
+        match sort {
+            ProjectSort::NameAsc => by_name(),
+            ProjectSort::NameDesc => by_name().reverse(),
+            // `None` (no task yet) is the newest: it sorts after every time, then reverses.
+            ProjectSort::Newest => match (a.2, b.2) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Less,
+                (Some(_), None) => Ordering::Greater,
+                (Some(a), Some(b)) => b.cmp(&a),
+            }
+            .then_with(by_name),
+            ProjectSort::Oldest => match (a.2, b.2) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => a.cmp(&b),
+            }
+            .then_with(by_name),
+        }
+    });
+    let sorted: Vec<T> = keyed
+        .into_iter()
+        .map(|(_, _, _, index)| items[index].clone())
+        .collect();
+    items.clone_from_slice(&sorted);
+}
+
+/// One sub-group of a status section: a dim, foldable sub-header over its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueGroup {
+    /// Painted name: a project basename, `desk`, `#thread`, `no thread`, `@assignee`, or
+    /// `unassigned`.
+    pub label: String,
+    /// Chrome row id of the sub-header. Always selectable; its rows follow unless folded.
+    pub header_id: Uuid,
+    pub task_ids: Vec<Uuid>,
+    /// Where Enter or a double-click on the sub-header goes.
+    pub target: GroupTarget,
+}
+
+/// The board a group sub-header opens: its project's board, the desk, or its thread's or
+/// assignee's cross-project view. `no thread` and `unassigned` open nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupTarget {
+    Project(String),
+    Desk,
+    Thread(String),
+    Assignee(String),
+    None,
+}
+
+impl GroupTarget {
+    fn of(task: &Task, group: GroupBy) -> Self {
+        match (group, &task.scope, task.thread.as_deref()) {
+            (GroupBy::Project, TaskScope::Project { path }, _) => {
+                GroupTarget::Project(path.clone())
+            }
+            (GroupBy::Project, TaskScope::Global, _) => GroupTarget::Desk,
+            (GroupBy::Thread, _, Some(thread)) => GroupTarget::Thread(thread.to_string()),
+            (GroupBy::Assignee, _, _) => {
+                task.assignee.as_deref().map_or(GroupTarget::None, |name| {
+                    GroupTarget::Assignee(name.to_string())
+                })
+            }
+            (GroupBy::Thread, _, None) | (GroupBy::None, _, _) => GroupTarget::None,
+        }
+    }
+}
+
+/// High 64 bits shared by every group sub-header row id (chrome, never a task).
+const GROUP_HEADER_ID_PREFIX: u128 = 0xFFFF_FFFF_FFFF_FFFE << 64;
+
+/// Whether `id` is a group sub-header's chrome row id.
+pub fn is_group_header_id(id: Uuid) -> bool {
+    id.as_u128() >> 64 == GROUP_HEADER_ID_PREFIX >> 64
+}
+
+/// Whether `id` is any fold header's chrome row id: a group sub-header, the inbox, or the
+/// archived group.
+pub fn is_fold_header_id(id: Uuid) -> bool {
+    matches!(id, ARCHIVED_HEADER_ROW_ID | INBOX_HEADER_ROW_ID) || is_group_header_id(id)
+}
+
+/// Deterministic sub-header id for one group key inside one section kind, so fold state
+/// survives repaints and snapshot merges while the group exists.
+fn group_header_id(kind: SectionKind, key: &str) -> Uuid {
+    // FNV-1a over the section tag and key: stable across runs and platforms.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let tag = format!("{kind:?}\u{0}{key}");
+    for byte in tag.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    Uuid::from_u128(GROUP_HEADER_ID_PREFIX | u128::from(hash))
+}
+
 /// Normalized content-search terms. Every term must match, but each may match a
 /// different task field.
 pub fn search_words(query: &str) -> Vec<String> {
@@ -59,7 +490,8 @@ pub fn search_words(query: &str) -> Vec<String> {
 }
 
 /// Whether a task matches every content-search term in its title, notes, steps,
-/// or painted task number. Search is Unicode-case-insensitive substring.
+/// assignee (with or without its `@`), or painted task number. Search is
+/// Unicode-case-insensitive substring.
 pub fn task_matches(task: &Task, words: &[String]) -> bool {
     if words.is_empty() {
         return true;
@@ -72,6 +504,11 @@ pub fn task_matches(task: &Task, words: &[String]) -> bool {
     for step in &task.steps {
         searchable.push('\n');
         searchable.push_str(&step.text.to_lowercase());
+    }
+    // `@claude` and `claude` both find the assignee, as the row's `@name` reads.
+    if let Some(assignee) = task.assignee.as_deref() {
+        searchable.push_str("\n@");
+        searchable.push_str(&assignee.to_lowercase());
     }
     if let Some(identifier) = task.board_identifier() {
         searchable.push('\n');
@@ -104,6 +541,9 @@ pub struct QueueSection {
     pub count: usize,
     /// True when a section has zero tasks (renderer paints the empty hint).
     pub empty_hint: bool,
+    /// Sub-groups in paint order while the board is grouped; empty when ungrouped.
+    /// `task_ids` stays their exact concatenation.
+    pub groups: Vec<QueueGroup>,
 }
 
 /// Status-line counts.
@@ -119,6 +559,8 @@ pub struct StatusCounts {
 pub struct QueueView {
     pub sections: Vec<QueueSection>,
     pub counts: StatusCounts,
+    /// The dimension [`arrange_view`] grouped by. Only sections with `groups` are grouped.
+    pub group: GroupBy,
 }
 
 /// Derive queue sections for the active board lens in the default number order.
@@ -158,7 +600,14 @@ pub fn query_board_search(
     let words = search_words(query);
     let mut view = match lens {
         BoardLens::All => query_all(tasks, archived_projects, drawer_open, &identities, &words),
-        BoardLens::Desk => query_desk(tasks, archived_projects, drawer_open, &identities, &words),
+        BoardLens::Desk => query_desk(
+            tasks,
+            archived_projects,
+            drawer_open,
+            &DeskFilter::default(),
+            &identities,
+            &words,
+        ),
         BoardLens::Project(path) => query_project_focus(
             tasks,
             archived_projects,
@@ -260,11 +709,23 @@ pub fn visible_task_ids(
     archived_collapsed: bool,
     inbox_collapsed: bool,
 ) -> Vec<Uuid> {
+    visible_row_ids(view, archived_collapsed, inbox_collapsed, &BTreeSet::new())
+}
+
+/// Selectable row ids: [`visible_task_ids`] plus every group sub-header. Each sub-header
+/// is a stop of its own (so ←/→ can fold it and Enter can open it); a folded group
+/// contributes only its sub-header.
+pub fn visible_row_ids(
+    view: &QueueView,
+    archived_collapsed: bool,
+    inbox_collapsed: bool,
+    folded: &BTreeSet<Uuid>,
+) -> Vec<Uuid> {
     let mut out = Vec::new();
     for section in &view.sections {
         match section.kind {
             SectionKind::Archived => {
-                // The archived header is always selectable so Enter can toggle it;
+                // The archived header is always selectable so ←/→ can fold it;
                 // its rows paint only when the group is expanded.
                 out.push(ARCHIVED_HEADER_ROW_ID);
                 if !archived_collapsed {
@@ -273,10 +734,16 @@ pub fn visible_task_ids(
             }
             SectionKind::Inbox => {
                 out.push(INBOX_HEADER_ROW_ID);
-                if !inbox_collapsed {
+                if inbox_collapsed {
+                    continue;
+                }
+                if section.groups.is_empty() {
                     out.extend(section.task_ids.iter().copied());
+                } else {
+                    push_group_rows(&mut out, section, folded);
                 }
             }
+            _ if !section.groups.is_empty() => push_group_rows(&mut out, section, folded),
             _ => out.extend(section.task_ids.iter().copied()),
         }
     }
@@ -310,12 +777,12 @@ fn query_all(
     let need: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| is_needs_you_status(t.status))
+        .filter(|t| is_needs_you(t, tasks))
         .collect();
     let motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Doing)
+        .filter(|t| is_in_motion(t, tasks))
         .collect();
     let deck: Vec<&Task> = live
         .iter()
@@ -334,7 +801,18 @@ fn query_all(
 
     QueueView {
         sections,
-        counts: status_counts(&live),
+        counts: status_counts(&live, tasks),
+        group: GroupBy::None,
+    }
+}
+
+/// A grouped section's selectable rows: each group's header, then its tasks unless folded.
+fn push_group_rows(out: &mut Vec<Uuid>, section: &QueueSection, folded: &BTreeSet<Uuid>) {
+    for group in &section.groups {
+        out.push(group.header_id);
+        if !folded.contains(&group.header_id) {
+            out.extend(group.task_ids.iter().copied());
+        }
     }
 }
 
@@ -342,6 +820,7 @@ fn query_desk(
     tasks: &[Task],
     archived_projects: &BTreeSet<String>,
     drawer_open: bool,
+    filter: &DeskFilter,
     identities: &PathIdentityCache,
     search: &[String],
 ) -> QueueView {
@@ -349,6 +828,7 @@ fn query_desk(
         .iter()
         .filter(|task| {
             is_live(task, archived_projects, identities)
+                && filter.admits(task, identities)
                 && (task_matches(task, search)
                     || (!drawer_open && task.status == HumanStatus::Done))
         })
@@ -357,23 +837,24 @@ fn query_desk(
         .iter()
         .filter(|task| {
             !task_owned_by_archived_project(task, archived_projects, identities)
+                && filter.admits(task, identities)
                 && (!drawer_open || task_matches(task, search))
         })
         .collect();
 
     // NEEDS YOU is the global attention lane: blocked and review across every live
-    // scope, desk included, with project attribution painted beside each row.
+    // scope, desk included. Wide rows label each task's project and thread.
     let mut need: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| is_needs_you_status(t.status))
+        .filter(|t| is_needs_you(t, tasks))
         .collect();
     sort_by_status_change_desc(&mut need);
 
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Doing)
+        .filter(|t| is_in_motion(t, tasks))
         .collect();
     sort_by_status_change_desc(&mut motion);
 
@@ -397,7 +878,8 @@ fn query_desk(
 
     QueueView {
         sections,
-        counts: status_counts(&live),
+        counts: status_counts(&live, tasks),
+        group: GroupBy::None,
     }
 }
 
@@ -422,7 +904,7 @@ fn query_project_focus(
     let mut motion: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| t.status == HumanStatus::Doing)
+        .filter(|t| is_in_motion(t, tasks))
         .collect();
     sort_by_status_change_desc(&mut motion);
 
@@ -432,9 +914,9 @@ fn query_project_focus(
     let pending: Vec<&Task> = live
         .iter()
         .copied()
-        .filter(|t| !matches!(t.status, HumanStatus::Doing | HumanStatus::Done))
+        .filter(|t| !is_in_motion(t, tasks) && t.status != HumanStatus::Done)
         .collect();
-    let (mut need, ready) = split_needs_you(&pending);
+    let (mut need, ready) = split_needs_you(&pending, tasks);
     sort_by_status_change_desc(&mut need);
 
     let label = live
@@ -482,12 +964,14 @@ fn query_project_focus(
             task_ids: Vec::new(),
             count: 0,
             empty_hint: true,
+            groups: Vec::new(),
         });
     }
 
     QueueView {
         sections,
-        counts: status_counts(&live),
+        counts: status_counts(&live, tasks),
+        group: GroupBy::None,
     }
 }
 
@@ -515,6 +999,7 @@ fn append_done(
             task_ids: Vec::new(),
             count: done.len(),
             empty_hint: false,
+            groups: Vec::new(),
         });
         return;
     }
@@ -540,19 +1025,13 @@ fn append_archived(sections: &mut Vec<QueueSection>, in_scope: &[&Task], drawer_
     }
 }
 
-fn status_counts(live: &[&Task]) -> StatusCounts {
-    let in_motion = live
-        .iter()
-        .filter(|t| t.status == HumanStatus::Doing)
-        .count();
+fn status_counts(live: &[&Task], tasks: &[Task]) -> StatusCounts {
+    let in_motion = live.iter().filter(|t| is_in_motion(t, tasks)).count();
     let done = live
         .iter()
         .filter(|t| t.status == HumanStatus::Done)
         .count();
-    let need = live
-        .iter()
-        .filter(|t| is_needs_you_status(t.status))
-        .count();
+    let need = live.iter().filter(|t| is_needs_you(t, tasks)).count();
     StatusCounts {
         in_motion,
         done,
@@ -560,20 +1039,65 @@ fn status_counts(live: &[&Task]) -> StatusCounts {
     }
 }
 
-fn is_needs_you_status(_status: HumanStatus) -> bool {
-    // Questions are separate records; human progress never means waiting for a user.
-    false
+/// What a blocked task waits on, as the board reads it. A block on another task that is done
+/// (or gone) is waiting on you again: the owner decides whether to unblock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockWait {
+    /// Blocked on you, or blocked with no recorded block.
+    You,
+    /// Blocked on a task that is not done yet, or on something else.
+    Elsewhere,
+    /// Blocked on a task that is now done.
+    BlockerDone(u64),
+    /// Blocked on a task that is no longer on the board.
+    BlockerGone(u64),
+}
+
+/// Read a task's block or review round against the whole store. `None` unless the task is
+/// blocked or in review.
+pub fn block_wait(task: &Task, tasks: &[Task]) -> Option<BlockWait> {
+    if !matches!(task.status, HumanStatus::Blocked | HumanStatus::Review) {
+        return None;
+    }
+    Some(match task.block.as_ref().map(|block| &block.on) {
+        None | Some(BlockOn::You) => BlockWait::You,
+        Some(BlockOn::Agent(_) | BlockOn::Other(_)) => BlockWait::Elsewhere,
+        Some(BlockOn::Task(number)) => match tasks
+            .iter()
+            .find(|other| other.number == Some(*number) && !other.is_notice())
+        {
+            Some(other) if other.soft_deleted => BlockWait::BlockerGone(*number),
+            Some(other) if other.status == HumanStatus::Done => BlockWait::BlockerDone(*number),
+            Some(_) => BlockWait::Elsewhere,
+            None => BlockWait::BlockerGone(*number),
+        },
+    })
+}
+
+/// NEEDS YOU: blocked or in review, unless the record waits elsewhere.
+pub fn is_needs_you(task: &Task, tasks: &[Task]) -> bool {
+    match task.status {
+        HumanStatus::Review | HumanStatus::Blocked => {
+            block_wait(task, tasks) != Some(BlockWait::Elsewhere)
+        }
+        _ => false,
+    }
+}
+
+/// IN MOTION: started, and blocked or in review on another task, an agent or something else.
+pub fn is_in_motion(task: &Task, tasks: &[Task]) -> bool {
+    task.status == HumanStatus::Started || block_wait(task, tasks) == Some(BlockWait::Elsewhere)
 }
 
 fn is_on_deck_status(status: HumanStatus) -> bool {
-    matches!(status, HumanStatus::Todo)
+    matches!(status, HumanStatus::Open | HumanStatus::Ready)
 }
 
-fn split_needs_you<'a>(tasks: &[&'a Task]) -> (Vec<&'a Task>, Vec<&'a Task>) {
+fn split_needs_you<'a>(tasks: &[&'a Task], all: &[Task]) -> (Vec<&'a Task>, Vec<&'a Task>) {
     let mut need = Vec::new();
     let mut rest = Vec::new();
     for task in tasks {
-        if is_needs_you_status(task.status) {
+        if is_needs_you(task, all) {
             need.push(*task);
         } else {
             rest.push(*task);
@@ -599,7 +1123,7 @@ fn push_deck(
     let mut ready: Vec<&Task> = deck
         .iter()
         .copied()
-        .filter(|task| task.status == HumanStatus::Todo)
+        .filter(|task| is_on_deck_status(task.status))
         .collect();
     sort_by_created_asc(&mut ready);
     if ready.is_empty()
@@ -617,6 +1141,7 @@ fn push_deck(
         task_ids: ready.iter().map(|task| task.id).collect(),
         count,
         empty_hint: count == 0,
+        groups: Vec::new(),
     });
 }
 
@@ -668,7 +1193,13 @@ fn cmp_created_asc(a: &Task, b: &Task) -> Ordering {
 /// capture, every other status by most recent status change.
 pub fn cmp_within_status(a: &Task, b: &Task) -> Ordering {
     match a.status {
-        HumanStatus::Todo => cmp_created_asc(a, b),
+        HumanStatus::Ready => b
+            .is_notice()
+            .cmp(&a.is_notice())
+            .then_with(|| a.status_changed_at().cmp(&b.status_changed_at()))
+            .then_with(|| a.created_at.cmp(&b.created_at))
+            .then_with(|| a.id.cmp(&b.id)),
+        HumanStatus::Open => cmp_created_asc(a, b),
         _ => cmp_status_change_desc(a, b),
     }
 }
@@ -682,7 +1213,198 @@ fn section_from(kind: SectionKind, project_label: Option<String>, tasks: &[&Task
         task_ids,
         count,
         empty_hint: false,
+        groups: Vec::new(),
     }
+}
+
+/// Group and sort the live status sections in place. NEEDS YOU, IN MOTION, ON DECK and
+/// the inbox group (inbox sub-groups nest under its own fold); the done drawer and
+/// archived group keep their own order. Project grouping is a no-op on the desk's ON DECK
+/// and inbox, which only ever hold desk tasks. Groups paint hottest first: the group whose
+/// newest row changed status most recently leads, ties by label. Sorting is stable over
+/// each section's own order, so ties keep recent order; notice rows keep leading.
+pub fn arrange_view(
+    view: &mut QueueView,
+    tasks: &[Task],
+    lens: BoardLens<'_>,
+    group: GroupBy,
+    sort: SortBy,
+) {
+    view.group = group;
+    if group == GroupBy::None && sort == SortBy::Recent {
+        return;
+    }
+    let identities = PathIdentityCache::default();
+    let by_id: HashMap<Uuid, &Task> = tasks.iter().map(|task| (task.id, task)).collect();
+    for section in &mut view.sections {
+        let groupable = matches!(
+            section.kind,
+            SectionKind::NeedsYou
+                | SectionKind::InMotion
+                | SectionKind::OnDeck
+                | SectionKind::Inbox
+        );
+        if !groupable || section.task_ids.is_empty() {
+            continue;
+        }
+        let mut rows: Vec<&Task> = section
+            .task_ids
+            .iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .collect();
+        sort_rows(&mut rows, sort);
+        // The desk's ON DECK and inbox hold desk tasks only: one project, nothing to group.
+        let desk_deck = matches!(section.kind, SectionKind::OnDeck | SectionKind::Inbox)
+            && matches!(lens, BoardLens::Desk);
+        let group = if desk_deck && group == GroupBy::Project {
+            GroupBy::None
+        } else {
+            group
+        };
+        if group == GroupBy::None {
+            section.task_ids = rows.iter().map(|task| task.id).collect();
+            continue;
+        }
+        let buckets = bucket_rows(rows, group, &identities);
+        section.groups = buckets
+            .into_iter()
+            .map(|(key, label, rows)| QueueGroup {
+                label,
+                header_id: group_header_id(section.kind, &key),
+                target: rows
+                    .first()
+                    .map(|task| GroupTarget::of(task, group))
+                    .unwrap_or(GroupTarget::None),
+                task_ids: rows.iter().map(|task| task.id).collect(),
+            })
+            .collect();
+        section.task_ids = section
+            .groups
+            .iter()
+            .flat_map(|group| group.task_ids.iter().copied())
+            .collect();
+    }
+}
+
+/// Split already-sorted rows into one-level groups, hottest first: the group whose newest
+/// row changed status most recently leads, ties by label. Rows keep their order inside a
+/// group. Returns `(key, label, rows)`; the board and `tsk list --group` share it.
+fn bucket_rows<'a>(
+    rows: Vec<&'a Task>,
+    group: GroupBy,
+    identities: &PathIdentityCache,
+) -> Vec<(String, String, Vec<&'a Task>)> {
+    let mut buckets: Vec<(String, String, Vec<&Task>)> = Vec::new();
+    for task in rows {
+        let (key, label) = group_key(task, group);
+        // One project, one group: path spellings of the same repository (a trailing
+        // slash, `/tmp` vs `/private/tmp`, a symlink) share a bucket, keyed by the
+        // smallest spelling so the fold id survives re-sorting.
+        let same = |other: &str| match (key.strip_prefix("p:"), other.strip_prefix("p:")) {
+            (Some(a), Some(b)) => identities.equivalent(a, b),
+            _ => other == key,
+        };
+        match buckets.iter_mut().find(|bucket| same(&bucket.0)) {
+            Some(bucket) => {
+                if key < bucket.0 {
+                    bucket.0 = key;
+                    bucket.1 = label;
+                }
+                bucket.2.push(task);
+            }
+            None => buckets.push((key, label, vec![task])),
+        }
+    }
+    let hottest = |rows: &[&Task]| rows.iter().map(|task| task.status_changed_at()).max();
+    buckets.sort_by(|a, b| {
+        hottest(&b.2)
+            .cmp(&hottest(&a.2))
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    buckets
+}
+
+/// Sort and group one status's rows the way the board arranges a section, for surfaces
+/// outside the board (`tsk list --group/--sort`). Rows arrive in [`cmp_within_status`]
+/// order; ungrouped output is one unlabeled group.
+pub fn arrange_rows(
+    mut rows: Vec<&Task>,
+    group: GroupBy,
+    sort: SortBy,
+) -> Vec<(Option<String>, Vec<&Task>)> {
+    sort_rows(&mut rows, sort);
+    if group == GroupBy::None {
+        return vec![(None, rows)];
+    }
+    bucket_rows(rows, group, &PathIdentityCache::default())
+        .into_iter()
+        .map(|(_, label, rows)| (Some(label), rows))
+        .collect()
+}
+
+/// A task's group identity and painted label for one grouping dimension.
+fn group_key(task: &Task, group: GroupBy) -> (String, String) {
+    match (group, &task.scope, task.thread.as_deref()) {
+        (GroupBy::Project, TaskScope::Project { path }, _) => (
+            format!(
+                "p:{}",
+                path.trim_end_matches(
+                    |character| character == '/' || (cfg!(windows) && character == '\\')
+                )
+            ),
+            short_project_name(path).to_string(),
+        ),
+        (GroupBy::Project, TaskScope::Global, _) => ("desk".to_string(), "desk".to_string()),
+        (GroupBy::Thread, _, Some(thread)) => {
+            let thread = thread.to_ascii_lowercase();
+            (format!("t:{thread}"), format!("#{thread}"))
+        }
+        (GroupBy::Assignee, _, _) => match task.assignee.as_deref() {
+            Some(name) => {
+                let name = name.to_ascii_lowercase();
+                let label = crate::ui::render::assignee_handle(&name);
+                (format!("a:{name}"), label)
+            }
+            None => ("unassigned".to_string(), "unassigned".to_string()),
+        },
+        (GroupBy::Thread, _, None) | (GroupBy::None, _, _) => {
+            ("none".to_string(), "no thread".to_string())
+        }
+    }
+}
+
+/// Stable in-place sort by the chosen key. Desk tasks sort after projects, unthreaded
+/// tasks after threads, and unassigned tasks after assigned ones, with yours first; notice
+/// rows lead regardless.
+fn sort_rows(rows: &mut [&Task], sort: SortBy) {
+    let key = |task: &Task| -> (bool, String) {
+        match sort {
+            SortBy::Recent => (false, String::new()),
+            SortBy::Project => match &task.scope {
+                TaskScope::Project { path } => (false, short_project_name(path).to_lowercase()),
+                TaskScope::Global => (true, String::new()),
+            },
+            SortBy::Thread => match task.thread.as_deref() {
+                Some(thread) => (false, thread.to_lowercase()),
+                None => (true, String::new()),
+            },
+            SortBy::Title => (false, task.title.to_lowercase()),
+            SortBy::Assignee => match task.assignee.as_deref() {
+                // Yours sort first: the empty key precedes every name.
+                Some(crate::domain::OWNER) => (false, String::new()),
+                Some(assignee) => (false, assignee.to_lowercase()),
+                None => (true, String::new()),
+            },
+        }
+    };
+    if sort == SortBy::Recent {
+        return;
+    }
+    rows.sort_by(|a, b| {
+        b.is_notice()
+            .cmp(&a.is_notice())
+            .then_with(|| key(a).cmp(&key(b)))
+    });
 }
 
 /// Basename of a project path, for labels and search.
@@ -718,13 +1440,17 @@ mod tests {
             merge_base_revision: None,
             title: format!("task-{id}"),
             notes: None,
+            thread: None,
+            assignee: None,
+            assignee_kind: Default::default(),
+            base: None,
+            dispatch: None,
             status,
+            block: None,
+            past_blocks: Vec::new(),
             scope,
             provenance: ProvenanceOrigin::Manual,
-            history: vec![TaskEvent {
-                kind: TaskEventKind::Created,
-                at,
-            }],
+            history: vec![TaskEvent::new(TaskEventKind::Created, at)],
             steps: Vec::new(),
             soft_deleted,
             archived: false,
@@ -743,10 +1469,10 @@ mod tests {
     /// reorder a section.
     fn with_status_event(task: Task, kind: TaskEventKind, at_secs: u64) -> Task {
         let mut task = task;
-        task.history.push(TaskEvent {
+        task.history.push(TaskEvent::new(
             kind,
-            at: SystemTime::UNIX_EPOCH + Duration::from_secs(at_secs),
-        });
+            SystemTime::UNIX_EPOCH + Duration::from_secs(at_secs),
+        ));
         task
     }
 
@@ -756,10 +1482,7 @@ mod tests {
     fn mutated(task: Task, kind: TaskEventKind, at_secs: u64) -> Task {
         let mut task = task;
         task.updated_at = SystemTime::UNIX_EPOCH + Duration::from_secs(at_secs);
-        task.history.push(TaskEvent {
-            kind,
-            at: task.updated_at,
-        });
+        task.history.push(TaskEvent::new(kind, task.updated_at));
         task
     }
 
@@ -1093,6 +1816,132 @@ mod tests {
         );
     }
 
+    fn blocked_on(id: u128, number: u64, on: crate::domain::BlockOn) -> Task {
+        let mut blocked = task(id, HumanStatus::Blocked, TaskScope::Global, false, 10);
+        blocked.number = Some(number);
+        blocked.block = Some(crate::domain::Block::open(
+            crate::domain::BlockDraft {
+                on,
+                ..Default::default()
+            },
+            "claude",
+            SystemTime::UNIX_EPOCH,
+        ));
+        blocked
+    }
+
+    #[test]
+    fn a_block_waiting_elsewhere_rides_in_motion_until_its_blocker_is_done() {
+        let mut blocker = task(1, HumanStatus::Started, TaskScope::Global, false, 10);
+        blocker.number = Some(1);
+        let on_task = blocked_on(2, 2, crate::domain::BlockOn::Task(1));
+        let on_other = blocked_on(3, 3, crate::domain::BlockOn::Other("legal".into()));
+        let on_you = blocked_on(4, 4, crate::domain::BlockOn::You);
+        let legacy = task(5, HumanStatus::Blocked, TaskScope::Global, false, 10);
+        let mut tasks = vec![blocker, on_task, on_other, on_you, legacy];
+
+        let view = query_lens(&tasks, BoardLens::Desk, false);
+        let mut motion = section_ids(&view, SectionKind::InMotion);
+        motion.sort();
+        assert_eq!(
+            motion,
+            vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)]
+        );
+        let mut need = section_ids(&view, SectionKind::NeedsYou);
+        need.sort();
+        assert_eq!(need, vec![Uuid::from_u128(4), Uuid::from_u128(5)]);
+        assert_eq!((view.counts.in_motion, view.counts.need), (3, 2));
+
+        tasks[0].status = HumanStatus::Done;
+        let view = query_lens(&tasks, BoardLens::Desk, false);
+        assert!(
+            section_ids(&view, SectionKind::NeedsYou).contains(&Uuid::from_u128(2)),
+            "a done blocker hands the task back to you"
+        );
+        assert_eq!(
+            block_wait(&tasks[1], &tasks),
+            Some(BlockWait::BlockerDone(1))
+        );
+        assert_eq!(tasks[1].status, HumanStatus::Blocked, "tsk never unblocks");
+    }
+
+    #[test]
+    fn a_block_on_a_trashed_or_missing_task_comes_back_to_you() {
+        let mut blocker = task(1, HumanStatus::Started, TaskScope::Global, false, 10);
+        blocker.number = Some(1);
+        blocker.soft_deleted = true;
+        let on_trashed = blocked_on(2, 2, crate::domain::BlockOn::Task(1));
+        let on_missing = blocked_on(3, 3, crate::domain::BlockOn::Task(9));
+        let tasks = vec![blocker, on_trashed, on_missing];
+
+        assert_eq!(
+            block_wait(&tasks[1], &tasks),
+            Some(BlockWait::BlockerGone(1)),
+            "a started blocker in the trash is gone, not still in motion"
+        );
+        assert_eq!(
+            block_wait(&tasks[2], &tasks),
+            Some(BlockWait::BlockerGone(9))
+        );
+        let view = query_lens(&tasks, BoardLens::Desk, false);
+        let mut need = section_ids(&view, SectionKind::NeedsYou);
+        need.sort();
+        assert_eq!(need, vec![Uuid::from_u128(2), Uuid::from_u128(3)]);
+        assert!(section_ids(&view, SectionKind::InMotion).is_empty());
+        assert_eq!((view.counts.in_motion, view.counts.need), (0, 2));
+        assert!(
+            tasks[1..]
+                .iter()
+                .all(|task| task.status == HumanStatus::Blocked),
+            "tsk never unblocks"
+        );
+    }
+
+    #[test]
+    fn project_board_puts_a_block_on_another_task_in_motion_not_on_deck() {
+        let mut on_task = blocked_on(2, 2, crate::domain::BlockOn::Other("vendor".into()));
+        on_task.scope = project("/repos/a");
+        let mut on_you = blocked_on(3, 3, crate::domain::BlockOn::You);
+        on_you.scope = project("/repos/a");
+        let tasks = vec![on_task, on_you];
+        let view = query_lens(&tasks, BoardLens::Project(Path::new("/repos/a")), false);
+        assert_eq!(
+            section_ids(&view, SectionKind::InMotion),
+            vec![Uuid::from_u128(2)]
+        );
+        assert_eq!(
+            section_ids(&view, SectionKind::NeedsYou),
+            vec![Uuid::from_u128(3)]
+        );
+        assert!(section_ids(&view, SectionKind::OnDeck).is_empty());
+    }
+
+    #[test]
+    fn board_search_matches_the_assignee_with_or_without_its_at() {
+        let mut assigned = task(1, HumanStatus::Ready, TaskScope::Global, false, 0);
+        assigned.assignee = Some("claude".to_string());
+        let other = task(2, HumanStatus::Ready, TaskScope::Global, false, 0);
+        for query in ["claude", "@claude", "@CLA"] {
+            let view = query_board_search(
+                &[assigned.clone(), other.clone()],
+                &BTreeSet::new(),
+                BoardLens::Desk,
+                false,
+                BoardSort::Number,
+                query,
+            );
+            assert_eq!(
+                visible_task_ids(&view, false, false)
+                    .into_iter()
+                    .filter(|id| *id != INBOX_HEADER_ROW_ID)
+                    .collect::<Vec<_>>(),
+                vec![assigned.id],
+                "{query}"
+            );
+        }
+        assert!(!task_matches(&other, &search_words("@")));
+    }
+
     #[test]
     fn desk_needs_you_is_global_across_every_live_scope() {
         let tasks = vec![
@@ -1332,8 +2181,8 @@ mod tests {
             "painted DONE drawer rows must stay in the selectable set"
         );
 
-        // With an archived task present, the header row is always selectable so Enter
-        // can toggle the group; the collapsed group paints only its header.
+        // With an archived task present, the header row is always selectable so ←/→
+        // can fold the group; the collapsed group paints only its header.
         let mut tasks = tasks.clone();
         let mut archived = task(3, HumanStatus::Todo, project("/repos/a"), false, 50);
         archived.archived = true;
@@ -1466,5 +2315,260 @@ mod tests {
         assert_eq!(section_ids(&view, SectionKind::Inbox), Vec::<Uuid>::new());
         assert!(!all_listed_ids(&view).contains(&Uuid::from_u128(3)));
         assert!(!all_listed_ids(&view).contains(&Uuid::from_u128(4)));
+    }
+
+    fn task_with_thread(
+        id: u128,
+        status: HumanStatus,
+        scope: TaskScope,
+        soft_deleted: bool,
+        updated_secs: u64,
+        thread: Option<&str>,
+    ) -> Task {
+        let mut task = task(id, status, scope, soft_deleted, updated_secs);
+        task.thread = thread.map(str::to_string);
+        task
+    }
+
+    /// The desk query in its own status-change order, before the board's number order.
+    fn desk_view(tasks: &[Task], filter: &DeskFilter) -> QueueView {
+        query_desk(
+            tasks,
+            &BTreeSet::new(),
+            false,
+            filter,
+            &PathIdentityCache::default(),
+            &[],
+        )
+    }
+
+    fn section(view: &QueueView, kind: SectionKind) -> &QueueSection {
+        view.sections
+            .iter()
+            .find(|section| section.kind == kind)
+            .expect("section present")
+    }
+
+    fn labels(section: &QueueSection) -> Vec<&str> {
+        section
+            .groups
+            .iter()
+            .map(|group| group.label.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn grouping_by_project_orders_groups_hottest_first_and_keeps_the_section_total() {
+        let tasks = vec![
+            task(1, HumanStatus::Started, project("/r/alpha"), false, 10),
+            task(2, HumanStatus::Started, project("/r/beta"), false, 30),
+            task(3, HumanStatus::Started, TaskScope::Global, false, 20),
+            task(4, HumanStatus::Started, project("/r/alpha"), false, 5),
+        ];
+        let mut view = desk_view(&tasks, &DeskFilter::default());
+        arrange_view(
+            &mut view,
+            &tasks,
+            BoardLens::Desk,
+            GroupBy::Project,
+            SortBy::Recent,
+        );
+        let motion = section(&view, SectionKind::InMotion);
+        assert_eq!(labels(motion), vec!["beta", "desk", "alpha"]);
+        assert_eq!(motion.count, 4, "the section header keeps its total");
+        assert_eq!(
+            motion.task_ids,
+            vec![2, 3, 1, 4]
+                .into_iter()
+                .map(Uuid::from_u128)
+                .collect::<Vec<_>>(),
+            "task_ids is the exact concatenation of the groups"
+        );
+        assert!(motion
+            .groups
+            .iter()
+            .all(|group| is_group_header_id(group.header_id)));
+    }
+
+    #[test]
+    fn grouping_by_thread_names_unthreaded_rows_and_sort_ties_keep_recent_order() {
+        let tasks = vec![
+            task_with_thread(
+                1,
+                HumanStatus::Blocked,
+                TaskScope::Global,
+                false,
+                40,
+                Some("ship"),
+            ),
+            task_with_thread(2, HumanStatus::Review, project("/r/a"), false, 30, None),
+            task_with_thread(
+                3,
+                HumanStatus::Blocked,
+                project("/r/b"),
+                false,
+                20,
+                Some("ship"),
+            ),
+            task_with_thread(
+                4,
+                HumanStatus::Review,
+                project("/r/a"),
+                false,
+                10,
+                Some("api"),
+            ),
+        ];
+        let mut view = desk_view(&tasks, &DeskFilter::default());
+        arrange_view(
+            &mut view,
+            &tasks,
+            BoardLens::Desk,
+            GroupBy::Thread,
+            SortBy::Project,
+        );
+        let need = section(&view, SectionKind::NeedsYou);
+        assert_eq!(labels(need), vec!["#ship", "no thread", "#api"]);
+        // Inside #ship, sort by project: `b` before the desk row (desk sorts last).
+        assert_eq!(
+            need.groups[0].task_ids,
+            vec![Uuid::from_u128(3), Uuid::from_u128(1)]
+        );
+    }
+
+    #[test]
+    fn the_done_drawer_and_archived_group_stay_ungrouped() {
+        let mut archived = task(3, HumanStatus::Done, project("/r/a"), false, 5);
+        archived.archived = true;
+        let tasks = vec![
+            task(1, HumanStatus::Done, project("/r/a"), false, 10),
+            task(2, HumanStatus::Done, project("/r/b"), false, 20),
+            archived,
+        ];
+        let mut view = query_desk(
+            &tasks,
+            &BTreeSet::new(),
+            true,
+            &DeskFilter::default(),
+            &PathIdentityCache::default(),
+            &[],
+        );
+        arrange_view(
+            &mut view,
+            &tasks,
+            BoardLens::Desk,
+            GroupBy::Project,
+            SortBy::Title,
+        );
+        for kind in [SectionKind::Done, SectionKind::Archived] {
+            let section = section(&view, kind);
+            assert!(section.groups.is_empty(), "{kind:?} stays ungrouped");
+        }
+        assert_eq!(
+            section(&view, SectionKind::Done).task_ids,
+            vec![Uuid::from_u128(2), Uuid::from_u128(1)],
+            "and keeps its own order (newest status change first), not title order"
+        );
+    }
+
+    #[test]
+    fn sub_headers_are_always_selectable_and_folding_hides_their_rows() {
+        let tasks = vec![
+            task(1, HumanStatus::Started, project("/r/a"), false, 10),
+            task(2, HumanStatus::Started, project("/r/b"), false, 20),
+        ];
+        let mut view = desk_view(&tasks, &DeskFilter::default());
+        arrange_view(
+            &mut view,
+            &tasks,
+            BoardLens::Desk,
+            GroupBy::Project,
+            SortBy::Recent,
+        );
+        let groups = section(&view, SectionKind::InMotion).groups.clone();
+        assert_eq!(
+            visible_row_ids(&view, true, false, &BTreeSet::new()),
+            vec![
+                groups[0].header_id,
+                Uuid::from_u128(2),
+                groups[1].header_id,
+                Uuid::from_u128(1)
+            ],
+            "an unfolded sub-header is a stop of its own, so ← can fold it"
+        );
+        let folded: BTreeSet<Uuid> = [groups[0].header_id].into();
+        assert_eq!(
+            visible_row_ids(&view, true, false, &folded),
+            vec![groups[0].header_id, groups[1].header_id, Uuid::from_u128(1)]
+        );
+    }
+
+    #[test]
+    fn the_desk_filter_combines_project_and_thread_across_every_status() {
+        let tasks = vec![
+            task_with_thread(
+                1,
+                HumanStatus::Started,
+                project("/r/a"),
+                false,
+                10,
+                Some("ship"),
+            ),
+            task_with_thread(2, HumanStatus::Started, project("/r/a"), false, 20, None),
+            task_with_thread(
+                3,
+                HumanStatus::Blocked,
+                project("/r/b"),
+                false,
+                30,
+                Some("ship"),
+            ),
+            task_with_thread(
+                4,
+                HumanStatus::Ready,
+                TaskScope::Global,
+                false,
+                40,
+                Some("ship"),
+            ),
+            task_with_thread(
+                5,
+                HumanStatus::Done,
+                project("/r/a"),
+                false,
+                50,
+                Some("ship"),
+            ),
+            task_with_thread(
+                6,
+                HumanStatus::Done,
+                project("/r/b"),
+                false,
+                60,
+                Some("ship"),
+            ),
+        ];
+        let filter = DeskFilter {
+            project: ProjectFilter::Named("/r/a".into()),
+            thread: ThreadFilter::Named("ship".into()),
+            assignee: AssigneeFilter::All,
+        };
+        assert_eq!(filter.label(), "a #ship");
+        let view = desk_view(&tasks, &filter);
+        assert_eq!(all_listed_ids(&view), vec![Uuid::from_u128(1)]);
+        assert_eq!(view.counts.in_motion, 1);
+        assert_eq!(view.counts.need, 0);
+        assert_eq!(view.counts.done, 1, "the drawer count narrows too");
+
+        let desk_only = DeskFilter {
+            project: ProjectFilter::Desk,
+            thread: ThreadFilter::All,
+            assignee: AssigneeFilter::All,
+        };
+        assert_eq!(
+            all_listed_ids(&desk_view(&tasks, &desk_only)),
+            vec![Uuid::from_u128(4)]
+        );
+        assert_eq!(DeskFilter::default().label(), "all");
     }
 }

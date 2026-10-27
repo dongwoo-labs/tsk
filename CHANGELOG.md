@@ -88,6 +88,96 @@ the GitHub release notes verbatim.
 
 - Question commands also refuse case variants of personal-board roots and their child paths before those roots exist. Existing question records and trash backups use non-truncating write-capable sync handles, as Windows requires.
 
+## v0.13.0
+
+### Breaking
+
+- Store format 6: assignees, dispatch, blocks, reviews, after, paper trail, wider undo. Older tsk refuses it; to roll back, restore the `tsk.json.v5` copy.
+
+### Added
+
+- Agent profiles in `config.toml`. The first board open writes a commented starter with examples for Claude Code, Codex, Pi, and Grok.
+- Agent prompts: `prompt_append` adds to the default prompt, and `[project."<path>"]` adds per-repository lines and `review_on`. `tsk dispatch T12 --show-prompt` previews it.
+- Assign a task to an agent profile, yourself, or a named person with `@`, `!a name`, or `--assignee`. Only an agent dispatches. `v` on Projects shows one assignee's tasks.
+- Dispatch: in Herdr, starting an assigned project task (`ctrl+s`, `tsk status T12 started`, `tsk dispatch`) launches its agent in its own Git worktree and workspace. Windows: preview.
+- Set the branch a dispatch starts from with `!b branch`, the task page's Base field, or `tsk add`/`tsk edit --base`; otherwise it is the repository's default branch.
+- A dispatched task whose agent is gone asks before relaunching in the same worktree (`--again` in the CLI). Starting a marked set opens one card listing what launches.
+- Completing a dispatched task offers to remove its worktree and merged branch; with `gh`, squash and rebase merges count. `tsk clean` does the same from a script.
+- `m` on the cleanup card merges the task's pull request with `gh`, then completes the task and cleans up. `[merge] method` in `config.toml` picks the method; CLI: `--merge`.
+- Block with a reason: `ctrl+b` asks why and what you need. Answer on the task page, under the row (`r`), or with `tsk reply`. Unblocking sends replies to the agent.
+- Review with checks: `ctrl+r` asks what was done and what to check. Mark checks, give feedback (`r`, `tsk reply`), then approve (`ctrl+d`) or send back (`ctrl+s`).
+- A block or review waiting on someone else moves to IN MOTION as `□` or `△` with `waiting on @name`, so NEEDS YOU holds only yours. Thanks @joops (#171).
+- A started task with a live dispatched agent shows `◉`.
+- Change who a block or review waits on, keeping its replies: `w` on its task page, palette **set waiting on…**, or `tsk edit --on`.
+- A blocked or review row addressed to you shows the asker's words on a dim line under it. `z` hides these lines, leaving `✉`; `[board] messages` sets the default.
+- Paper trail: the task page lists who did what, newest first, below the steps, and drops created and updated dates from its footer. `tsk list T12` shows it as `activity`.
+- After: a task can wait for other tasks in any project (`!w T202`, the After field, `tsk edit --after`). When the last one is done, a waiting ready task starts. Thanks @ffittschen (#124).
+- Agents block and hand back for review with `tsk status`, and use `tsk dispatch`, `tsk clean`, and `tsk reply`. Agent skill 1.6.0 covers them; `tsk update` refreshes installed copies.
+- `ctrl+u` undoes status changes, step changes, and archiving; a marked set is one step. Undoing a start that launched an agent leaves the agent running. Thanks @LukasGold (#173, #252).
+- Group and sort by assignee with `g` and `s` or `tsk list --group assignee` and `--sort assignee`. The `t` filter gains an `@assignees` tab.
+- `[board]` in `config.toml` sets the group and sort a fresh desk or project board opens with, and `me` the name the board calls you.
+- Back up tasks and `config.toml` to git on every save or daily. `tsk backup setup` makes a private GitHub repository with `gh`; `tsk backup add <git-url>` adds any other. Thanks @ari-becker (#128).
+- `tsk edit --append-notes` adds text below a task's notes after a blank line, without rewriting them.
+- `tsk setup` also installs the `tsk-coordinator` skill: your agent can brief builder agents, gate their pull requests with a review, live-test, and report back on the board.
+- `tsk restore` lists the newest 20 backed-up versions per machine (`--all` for every one) and puts the one you pick back, keeping the replaced store.
+- Sort the project picker and the Projects view by name or age with `s`. Both list projects A–Z by name by default. Thanks @LukasGold (#250).
+
+### Changed
+
+- `ctrl+b` and `ctrl+r` open the block and review cards; `Enter` on an empty card still blocks or sets review at once.
+- A footer too narrow for its actions drops whole actions, least likely first, instead of cutting the last one with `…`.
+- Board footers show `: commands` next to `? help`, and the task page's action bar ends with it; clicking it opens the command palette.
+- Word jumps match macOS Option+arrow: `alt+→` or `ctrl+→` lands at the end of the next word, `alt+←` or `ctrl+←` at the start of the previous one.
+- A row whose title wraps above an open peek or live line shows a dim `│` beside each wrapped line, so the row reads as one block.
+- Help, footers, and the palette name each action verb first and in full (`ctrl+b` **block / unblock**). Help's **SURFACE CONTROLS** group is renamed **PICKERS & EDITING**.
+- The archived-project launch card puts each option on its own line; `↑`/`↓` and `Enter` pick one, as on the cleanup card.
+- `ctrl+s` starts a blocked task, closing its block; one `ctrl+u` reopens it. On a task it cannot start, the status row says why. Thanks @LukasGold (#252).
+
+### Fixed
+
+- `tsk help capture` and `tsk capture --help` print the capture reference instead of failing or opening the popup.
+- `ctrl+u` names what it undid or why it refused, and undoing a done puts back the task's earlier status instead of open. Thanks @LukasGold (#173).
+- Saving a task with a step's text cleared reopens that step with `text required` on its row, as for an empty new step. Thanks @LukasGold (#173).
+- A project reached through a symlinked path, such as `/tmp/repo` and `/private/tmp/repo` on macOS, is one project.
+- With tasks marked, `Esc` in the thread or view picker closes the picker and keeps the marks.
+- With tasks marked, `ctrl+b` and `ctrl+r` skip done tasks, as starting does, and the status row counts them.
+- `Esc` on a selected Thread on the task page cancels only the thread, not the whole edit.
+- `ctrl+x` in a new step's row discards that row, instead of removing the step above it or deleting a task.
+- `tsk steps` takes `--` before step text that starts with `-`, as `tsk reply` does.
+- `tsk trash restore` gives a task the next free number when another task holds its old one, so no two tasks share a number.
+- `tsk capture --state-dir <dir>` saves into that store instead of the default one; any other argument is refused.
+- Notes keep underscores inside words, such as `file_name`, instead of turning them into emphasis.
+
+## v0.12.0
+
+### Added
+
+- Board rows show their thread and project as a dim `#thread · project` label (`desk` for a desk task), leaving out whatever the view already says. Thanks @LukasGold (#175).
+- Group, sort, and fold the board: `g` groups by project or thread, `s` sorts by recent, project, thread, or title, `f` folds the group under the cursor, and `Shift+F` folds every group. Group headers are cursor stops: `←` / `→` fold and unfold, `Enter` opens the group's board, and `Shift+M` marks the whole group. Also as clickable `group:` and `sort:` controls and in the `:` palette. Thanks @LukasGold and @GalShnapp (#175, #158).
+- Filter the desk by thread and project with `t` (or the `all ▾` control), so a thread that spans repositories reads as one initiative. Thanks @GalShnapp (#158).
+- Reorder steps: `alt+↑` / `alt+↓` moves the selected step and `ctrl+a` adds a step below it. From the CLI, `tsk steps T12 move <id> --before|--after <id>` (or `--first` / `--last`), and `tsk steps T12 add` takes the same place flags. Thanks @LukasGold (#159).
+- Text editing keys in every field: macOS word moves and deletes (`alt+←` / `alt+→`, `alt+Backspace` or `ctrl+w`, `alt+Delete` or `alt+d`), and `ctrl+u` / `ctrl+k` to delete to the line start or end. The footer shows how to start a new line in Notes. Thanks @maximilliangeorge (#204).
+- `tsk list --group project|thread`, `--sort recent|project|thread|title`, and `--no-thread`. `tsk list --all --thread X` lists a thread across every project and the desk.
+
+### Changed
+
+- In a text field `ctrl+a` moves to the line start, so macOS `Cmd+←` no longer adds a step while you type. It still adds a step when no field is open (#204).
+- Bare `g` opens **group by** instead of folding the inbox or archived group; fold with `f` or `Shift+F`. `Enter` and a single click on those headings no longer fold them.
+- Agent skill 1.5.0 covers threads across projects, grouping, and step reordering. Rerun `tsk setup` to update installed copies.
+
+### Fixed
+
+- Windows: `tsk update` and the board's update check no longer crash on the first HTTPS request, and `tsk add --file` and piped JSON plans accept the byte order mark Windows PowerShell 5.1 writes.
+- Windows: characters typed with AltGr, such as `[ ] { } @` on a German layout, insert in every text field. Thanks @LukasGold (#178).
+- `tsk setup herdr` follows a symlinked Herdr config, as dotfiles managers create, instead of failing with `Too many levels of symbolic links`. Thanks @yasith (#129).
+- `tsk setup` shows terminal control characters in paths as visible escapes instead of printing them raw.
+- `tsk list` orders tasks within each status like the board does. Thanks @dangerousdan (#123).
+- `tsk list` refuses a repeated `-p`, `--thread`, or `--state-dir` (exit 2) instead of silently keeping the last one.
+- A form that receives `Shift+Enter` as `ctrl+j` (such as Ghostty's `shift+enter=text:\n` binding) says so instead of ignoring the key. Thanks @WAWLixiong and @Rag0n (#125).
+- Done drawer and archive: Help says where archived tasks live, `ctrl+s` on a marked set says how many done tasks it skipped, and at 110+ columns the Task view keeps the done drawer and archived fold. Thanks @LukasGold (#174).
+- The `Deleted T12 "…" · ctrl+u undo` line clears on your next move or after a few seconds; the footer keeps offering undo while it applies.
+- The task page's project chooser lists top to bottom, so `↓` moves down.
+
 ## v0.11.6
 
 ### Added

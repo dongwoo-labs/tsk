@@ -65,8 +65,9 @@ Press `Enter` to pin the query and return to board keys. Navigation, task action
 
 | Section | Status |
 | --- | --- |
-| **DOING** | `doing` |
-| **TODO** | `todo` |
+| **NEEDS YOU** | `blocked` or `review`, when the task waits on you |
+| **DOING** | `doing`/`started`, or a block or review waiting elsewhere |
+| **TODO** | `todo`/`open` and `ready` |
 | Done drawer | `done` |
 
 Questions do not create a blocked Task status, and a `Blocked:` notes line only paints the row. Human progress is independent of Herdr execution status. Notice tasks lead within the desk group. There is no separate inbox group; with the done drawer open, `g` folds or unfolds its archived group.
@@ -83,7 +84,7 @@ On a task-board list, `ctrl+s`, `ctrl+o`, `ctrl+d`, `ctrl+x`, and `ctrl+f` act o
 | `ctrl+o` | Set Todo, including reopening Done |
 | `ctrl+d` | Mark Done |
 
-Doing and Done tasks are skipped by `ctrl+s`; the status row reports skipped Done tasks. Repeating an absolute status does nothing. The old next, block and review status shortcuts are removed.
+Doing and Done tasks are skipped by `ctrl+s`; the status row reports skipped Done tasks. Repeating an absolute status does nothing. `ctrl+b` and `ctrl+r` open the [block and review cards](#block-review-reply). `ctrl+n` does nothing.
 
 Agents can set any status with [the CLI](/docs/cli/#status). Task status does not change automatically when steps are checked or an agent stops.
 
@@ -254,8 +255,12 @@ Press `:` on the board or a task page and type to find an action. Use arrows or 
 
 | Available actions | When |
 | --- | --- |
-| New task, undo, done drawer, help, quit | Always |
-| Set todo/doing/done, edit notes, change scope, delete | A task is selected |
+| Add task, undo, show / hide done drawer, show all keys, quit | Always |
+| Hide agent messages | A task list has focus |
+| Set todo/doing/done, edit notes, move to project / desk, set assignee, set base, set after (wait for)…, delete task | A task is selected |
+| Set waiting on… | A task with an open block or review is selected or marked |
+| Dispatch again | A task with a dispatch record is selected |
+| Chain marked tasks in order | Two or more tasks are marked |
 | Move step up, move step down | A task-page step is selected |
 | Check stalled tasks | Inside Herdr |
 | Check task's thread | Inside Herdr, the task has a Thread line |
@@ -277,3 +282,69 @@ If saving fails, the draft stays open.
 - `c` or `Esc`: cancel the pending change.
 
 Resolve the failure before making another change. See [storage](/docs/storage/) for directory and backup information.
+
+## Block, review, reply
+
+`ctrl+b` blocks a task and `ctrl+r` puts it up for review. Both open a card, and `Enter` on an empty card sets the status with nothing said.
+
+| Card | Fields |
+| --- | --- |
+| Block | **why** it stops · **on**: you, another task, or other text · **needs**: what would unblock it |
+| Review | **done**: what was done · **check**: one thing to verify per line · **next** · **on**: you, an agent profile, or other text |
+
+A block or review on you lands in NEEDS YOU. One on another task, an agent, or something else goes to DOING. Leaving `blocked` closes the block: `ctrl+b` returns the task to ready, and `ctrl+s` starts it. One `ctrl+u` reopens the block. Card keys are under [Keys](/docs/keys/#detailed-task-status-and-assignment).
+
+To hand an open block or review to someone else later, change who it [waits on](/docs/task-page/#waiting-on) from the task page or the palette. The block or round keeps everything else.
+
+Agents block and ask for review from the [CLI](/docs/cli/#status). Each review is a **round**: after a send-back, the agent's next review opens the next round.
+
+Press `r` on a blocked or review row to reply, or give feedback, right under it. The box and its keys are the [task page's](/docs/task-page/#blocked). `r` answers the cursor row only. On any other row the status row says `not blocked or in review`.
+
+### Replies reach a running agent
+
+You can unblock a dispatched task whose agent still runs, or send its review back. Once that is saved, tsk sends your answers to the agent:
+
+- An unblock sends every reply you left on the block, oldest first: `[tsk T12 unblocked] <your reply>`. With no reply of yours, a start sends the bare tag and a return to ready sends nothing.
+- A send-back sends every feedback entry of the round, then the failed checks: `[tsk T12 sent back] <feedback> Failed checks: <check>; <check>`.
+
+Two or more entries are numbered, one per line. Each reply goes out once: one already sent with [`tsk reply --send`](/docs/cli/#reply) is skipped. Saving a reply without unblocking sends nothing.
+
+tsk sends only to the agent it dispatched, named like `t12-claude`. The status row says how it went, for example `started · reply sent to @claude`.
+
+When nothing was sent, the status row says why: the agent is waiting on a prompt, cannot be reached, or is not in its pane. Outside Herdr nothing is sent. Your reply stays on the task either way, and nothing relaunches or retries.
+
+## After
+
+A task can run **after** other tasks: it waits while any of them is not done. Task numbers are board-wide, so a prerequisite can be in any project or on the desk.
+
+Set it with:
+
+- the task page's **After** field,
+- palette **set after (wait for)…**, for the cursor task or every marked task,
+- `!w T202` in [quick-add](/docs/capture/),
+- [`tsk edit --after`](/docs/cli/#edit).
+
+Palette **chain marked tasks in order** makes each marked task run after the one marked before it, in one undo step.
+
+When the last prerequisite is done, each waiting **ready** task starts in the same save, and an assigned one [dispatches](/docs/dispatch/#dispatch). Review does not count as done. The status row says so, for example `T205 started · T202 done`. Waiting tasks in open, blocked, or review stay put.
+
+- A launch that fails puts the task back to ready and never blocks the done.
+- `ctrl+u` on the done reverts the statuses only. A launched agent keeps running.
+- Starting a waiting task yourself asks first: `Start anyway?`.
+- Deleting a task removes it from every after list, and `ctrl+u` restores the links. A ready task left waiting on nothing does not start.
+
+### Task picker
+
+The task picker is a search box titled `T12 runs after`, or `3 tasks run after` for a marked set. The tasks it runs after sit pinned at the top, marked `✓`, a done one also `· done`.
+
+1. Type a task number (`202` or `T202`) or words from its title, such as `login timeout`. Matches list below the pinned tasks, this project's first. Others show their project. Done and archived tasks are not offered.
+2. `Enter` or a click on a match pins it and clears the search. `Enter` or a click on a pinned task unpins it. `ctrl+x` unpins every task.
+3. `shift+Enter` saves exactly the pinned tasks. With none pinned, the task runs after nothing.
+
+`Esc` closes with no change. A loop is refused and the picker stays open: `T202 already runs after T205`.
+
+## Assignment and detailed status
+
+The fork keeps its board, questions, and reports tabs, one-line task rows, and notes status cards. Upstream's detailed human statuses are also available: open, ready, started, blocked, review, and done. Legacy `todo` and `doing` commands and JSON keep their compatibility view. Questions remain separate records and never change task status.
+
+Assignment, dispatch, cleanup, and backup configuration follow the [dispatch guide](/docs/dispatch/) and [storage guide](/docs/storage/). A task label is metadata only; focusing a working Agent Thread still requires the exact four-token `Thread:` notes line.

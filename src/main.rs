@@ -7,9 +7,15 @@ use tsk_tui::cli::router::{route, Surface};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    // Saves and board opens of this binary may start a detached `tsk backup run`.
+    tsk_tui::backup::enable_background_backups();
     match route(&args, std::env::var(tsk_tui::app::MODE_ENV).ok().as_deref()) {
         Surface::FindBoardPane => find_board_main(false),
         Surface::FindBoardTab => find_board_main(true),
+        Surface::NameAgent => {
+            tsk_tui::dispatch::name_agent(&args[2], &args[3]);
+            ExitCode::SUCCESS
+        }
         Surface::GlobalHelp => {
             print!("{}", tsk_tui::cli::presenter::top_level_help());
             ExitCode::SUCCESS
@@ -26,9 +32,14 @@ fn main() -> ExitCode {
         | Surface::Steps
         | Surface::List
         | Surface::Status
+        | Surface::Reply
+        | Surface::Dispatch
+        | Surface::Clean
         | Surface::Edit
         | Surface::Notes
         | Surface::Trash
+        | Surface::Backup
+        | Surface::Restore
         | Surface::Archive
         | Surface::Unarchive
         | Surface::Project
@@ -42,16 +53,31 @@ fn main() -> ExitCode {
             }
         },
         Surface::Setup | Surface::Guide | Surface::Help => headless_main(args),
-        Surface::Board | Surface::Capture => match tsk_tui::store::require_home_or_override(&args)
-            .map_err(|message| message.into())
-            .and_then(|()| tsk_tui::run(args))
-        {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                eprintln!("tsk: {err}");
-                ExitCode::from(1)
+        // `capture --help` is reference text like every other verb's: the headless runner owns it.
+        Surface::Capture if args.len() == 3 && args[2] == "--help" => headless_main(args),
+        Surface::Capture => {
+            match tsk_tui::cli::router::capture_state_dir(args.get(2..).unwrap_or_default()) {
+                Ok(_) => board_main(args),
+                Err(reason) => {
+                    eprint!("{}", tsk_tui::cli::presenter::capture_usage(&reason).stderr);
+                    ExitCode::from(2)
+                }
             }
-        },
+        }
+        Surface::Board => board_main(args),
+    }
+}
+
+fn board_main(args: Vec<String>) -> ExitCode {
+    match tsk_tui::store::require_home_or_override(&args)
+        .map_err(|message| message.into())
+        .and_then(|()| tsk_tui::run(args))
+    {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("tsk: {err}");
+            ExitCode::from(1)
+        }
     }
 }
 
@@ -99,6 +125,7 @@ fn headless_main(args: Vec<String>) -> ExitCode {
     if io::stderr().write_all(output.stderr.as_bytes()).is_err() {
         return ExitCode::from(1);
     }
+    let _ = io::stdout().flush();
     ExitCode::from(output.code)
 }
 

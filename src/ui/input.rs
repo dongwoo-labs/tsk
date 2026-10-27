@@ -65,7 +65,7 @@ pub enum CaptureIntent {
     /// Either end of the cursor's own line.
     MoveLineStart,
     MoveLineEnd,
-    /// The nearest word boundary in the asked direction.
+    /// Start of the previous word / end of the next word, as macOS Option+arrow moves.
     MoveWordLeft,
     MoveWordRight,
     FocusNext,
@@ -153,6 +153,19 @@ pub enum BoardIntent {
     BeginEditNotes,
     /// Open the same bound task form as `e`, focused on Scope (palette Change scope).
     BeginEditScope,
+    /// Open the common branch picker for the selected task, marked set, or Base field.
+    OpenBasePicker,
+    /// Open the task picker for what the selected task, marked set, or After field runs after
+    /// (palette **set after…**, the page's After field).
+    OpenAfterPicker,
+    /// A click on one number of the task page footer's `before T6, T7`: open that task's page.
+    OpenBeforeTask(u64),
+    /// Open the waiting-on picker for who the open block or review waits on: the page's task
+    /// (`Enter` on its top line), or the selected task or marked set (palette **set waiting
+    /// on…**).
+    OpenOnPicker,
+    /// Palette **chain in order**: each marked task runs after the one marked before it.
+    ChainAfter,
     /// Open the steps section's one-line editor empty to add an step (page `a`). With a
     /// stored step selected the row opens directly below it.
     BeginAddStep,
@@ -167,16 +180,19 @@ pub enum BoardIntent {
     FocusFormCursor(CaptureField, usize, usize),
     /// Cycle the shared form's chosen task scope directly from its Scope field.
     FormCycleScope,
-    /// Open the shared form's keyboard scope dropdown, move its pending selection, apply it,
+    /// Cycle the shared form's assignee choices, or confirm the current choice.
+    FormAssigneeNext,
+    FormAssigneePrev,
+    /// Open a shared form footer dropdown, move its pending selection, apply it,
     /// or return to the parent form without applying it.
-    OpenFormScopeDropdown,
-    FormScopeNext,
-    FormScopePrev,
-    ConfirmFormScopeDropdown,
-    CancelFormScopeDropdown,
+    OpenFormDropdown(CaptureField),
+    FormDropdownNext,
+    FormDropdownPrev,
+    ConfirmFormDropdown,
+    CancelFormDropdown,
     /// Choose a form dropdown option by its painted source index, apply only its parent
     /// draft, and return to that form (mouse).
-    SelectFormScopeOption(usize),
+    SelectFormDropdownOption(usize),
     EditInsert(char),
     /// Insert a pasted run at the cursor.
     EditInsertText(String),
@@ -193,9 +209,15 @@ pub enum BoardIntent {
     /// Either end of the cursor's own line.
     EditMoveLineStart,
     EditMoveLineEnd,
-    /// The nearest word boundary in the asked direction.
+    /// Start of the previous word / end of the next word, as macOS Option+arrow moves.
     EditMoveWordLeft,
     EditMoveWordRight,
+    /// Remove the word before / after the cursor, never across a line break.
+    EditDeleteWordLeft,
+    EditDeleteWordRight,
+    /// Remove to the start / end of the cursor's line, or the break there (joining lines).
+    EditDeleteToLineStart,
+    EditDeleteToLineEnd,
     ConfirmEdit,
     /// Shift+Enter in the inline step editor: save and continue. Add mode reopens the
     /// empty next row, while rename mode downgrades to a plain save-and-close (decided by
@@ -217,6 +239,10 @@ pub enum BoardIntent {
     QuickAddMoveLineEnd,
     QuickAddMoveWordLeft,
     QuickAddMoveWordRight,
+    QuickAddDeleteWordLeft,
+    QuickAddDeleteWordRight,
+    QuickAddDeleteToLineStart,
+    QuickAddDeleteToLineEnd,
     QuickAddSave,
     QuickAddSaveNext,
     ExpandQuickAdd,
@@ -234,6 +260,13 @@ pub enum BoardIntent {
     /// completion report, if it has one. Navigation only -- it opens a read-only document,
     /// it never mutates the task -- so it takes no Ctrl, the same as `Enter`.
     OpenTaskReport,
+    /// Open the assignee picker over the selected task, the marked set, or the open task
+    /// page (bare `@`, the page's footer assignee, palette **set assignee**).
+    OpenAssigneePicker,
+    /// `ctrl+x` in the assignee picker: remove the person name under the cursor from the list.
+    RemoveAssigneeName,
+    /// `ctrl+u` in the assignee picker: put back the name `ctrl+x` just removed.
+    ListPickerUndo,
     /// Focus the active board lens's search field (`/` or a click).
     FocusSearch,
     /// Pin the live query and return input to normal board keys.
@@ -241,6 +274,15 @@ pub enum BoardIntent {
     /// Move the open list picker's selection.
     ListPickerNext,
     ListPickerPrev,
+    /// List picker `Tab` / `shift+Tab`: step through a tabbed picker's tabs (the desk
+    /// filter's three, the Filter / View picker's `threads · @assignees`); a picker without
+    /// tabs moves its selection instead.
+    ListPickerTabNext,
+    ListPickerTabPrev,
+    /// Mouse route onto the Filter / View picker's painted tab row.
+    SelectListPickerTab(crate::ui::board::FilterTab),
+    /// Apply the highlighted list-picker option.
+    ConfirmListPicker,
     /// Close the list picker without applying anything.
     CancelListPicker,
     /// Type into the open list picker's search query.
@@ -248,11 +290,17 @@ pub enum BoardIntent {
     /// Paste into the open list picker's search query.
     ListPickerQueryInsertText(String),
     ListPickerQueryBackspace,
+    ListPickerQueryDeleteWord,
+    /// Task picker `Enter`: pin the highlighted match, or unpin the highlighted pinned task.
+    AfterPickerPin,
+    /// Task picker `ctrl+x`: unpin every task.
+    AfterPickerClear,
     /// Type into the active lens's search.
     SearchQueryInsert(char),
     /// Paste into the active lens's search.
     SearchQueryInsertText(String),
     SearchQueryBackspace,
+    SearchQueryDeleteWord,
     /// Move the task page's step cursor onto one steps step by its painted absolute
     /// index (mouse click on an step row; AC-21). A click selects — it never toggles the
     /// step, opens the editor, or arms the delete mark; no key produces it.
@@ -270,7 +318,7 @@ pub enum BoardIntent {
     ConfirmCommand,
     /// Select command-surface row by index and confirm it in one step (mouse click on a
     /// palette/action-sheet row; G-7,,,). The mouse-only counterpart of
-    /// `SelectIndex` for the task list and `SelectFormScopeOption` for the scope dropdown:
+    /// `SelectIndex` for the task list and `SelectFormDropdownOption` for the scope dropdown:
     /// `map_board_mouse` takes `&BoardModel`, so a click cannot set `command_selected` itself,
     /// and a click names a row directly rather than stepping `CommandNext`/`CommandPrev` to it
     /// first. Resolved by `resolve_board_command` exactly the way `ConfirmCommand` is, so a
@@ -286,12 +334,95 @@ pub enum BoardIntent {
     /// The query is one search line, so the reducer folds each pasted break to a space.
     CommandQueryInsertText(String),
     CommandQueryBackspace,
-    /// `ctrl+s` — state-mapped primary verb. Reducer lands in.
+    CommandQueryDeleteWord,
+    /// `ctrl+s` — start. An assigned task that was never dispatched dispatches; a dispatched
+    /// task whose agent is gone asks before relaunching; a marked set where any start would
+    /// launch opens the bulk start card.
     PrimaryVerb,
+    /// Palette-only explicit relaunch of an existing dispatch.
+    DispatchAgain,
+    /// Cleanup modal choices. y removes safely, n completes only, Esc cancels both.
+    ConfirmCleanup,
+    KeepCleanup,
+    CancelCleanup,
+    /// Cleanup card `m`, offered when a listed task has an open pull request into its base:
+    /// merge it with gh first, then done and clean up as `y` does.
+    MergeCleanup,
+    /// Start card choices: y launches every eligible task (or relaunches the gone agent) and
+    /// starts the rest, Esc changes nothing.
+    ConfirmDispatch,
+    CancelDispatch,
+    /// Relaunch card `n`: start the task without relaunching its agent.
+    StartWithoutRelaunch,
+    /// Scroll a decision card (cleanup or start) whose rows outgrow the frame.
+    CleanupScrollUp,
+    CleanupScrollDown,
+    /// Decision card `↑`/`↓`: move the option cursor, stopping at the ends.
+    CleanupSelectUp,
+    CleanupSelectDown,
+    /// Decision card `Enter`: run the option under the cursor.
+    CleanupRunSelected,
+    /// A click on a decision card's option line (its index): select it, or run it on a double
+    /// click.
+    CleanupClickOption(usize),
+    /// `ctrl+b` — block with the block card, or unblock a blocked task to ready.
+    ToggleBlock,
+    /// Block card: Enter blocks (or saves an edit), Esc cancels, Tab/Shift+Tab move fields.
+    BlockCardConfirm,
+    BlockCardCancel,
+    BlockCardNextField,
+    BlockCardPrevField,
+    /// Block card `←`/`→`: cycle the on choice on that field, move the caret elsewhere.
+    BlockCardLeft,
+    BlockCardRight,
+    /// Review card `shift+enter` in the check field: start the next check.
+    BlockCardNewline,
+    /// Task page `Enter` on a review check: cycle it open → passed → failed.
+    CycleCheck,
+    /// Task page `Enter` on the `N passed` line: unfold or fold the passed checks.
+    TogglePassedChecks,
+    /// A click on a review check on the task page: select it and cycle it.
+    ClickCheck(usize),
+    /// A click on the task page's `N passed` line: select it and unfold or fold the checks.
+    ClickPassedFold,
+    /// Task page `g`, or `Enter` on (a click on) the PAPER TRAIL heading: expand or collapse it.
+    ToggleTrail,
+    /// Task page `Enter` on a closed block or review round on the PAPER TRAIL (`None`), or a
+    /// click on one (its `past_blocks` index): expand it in place or fold it.
+    ToggleTrailRecord(Option<usize>),
+    /// Task page `r`: open the reply box under the last reply of the open block.
+    BeginReply,
+    /// Task page `Enter` on a block option: open the reply box prefilled with it.
+    ReplyWithOption,
+    /// Task page `1`…`9` on a blocked page: open the reply box prefilled with that option.
+    PickOption(usize),
+    /// Task page `ctrl+s` with the BLOCKED or REVIEW section showing: what the reply box's
+    /// `ctrl+s` does with an empty box (unblock, or send the review back). Resolved at the
+    /// keyboard boundary; the application boundary opens the box and saves it.
+    PageReplyUnblock,
+    /// Reply box `shift+enter`: store the reply.
+    ReplySave,
+    /// Reply box `ctrl+s`: store the reply and unblock the task to ready.
+    ReplySaveUnblock,
+    /// The application boundary's form of `ReplySaveUnblock` when the task's agent is still
+    /// running: store the reply and start the task instead of making it ready. No key maps here.
+    ReplySaveStart,
+    /// The application boundary's form of a review's `ctrl+s` when a dispatch or relaunch
+    /// starts the task after this save: store any feedback (an empty box needs a failed check)
+    /// and leave the status to the launch. No key maps here.
+    ReplySaveBeforeLaunch,
+    /// Feedback box `ctrl+d` on a review: store any feedback and approve (done).
+    ReplyApprove,
+    /// The application boundary's form of `ReplyApprove` once the feedback is stored and no
+    /// cleanup card applies: complete this one task. No key maps here.
+    ApproveReview(uuid::Uuid),
+    /// `ctrl+r` — put work up for review with the review card, or return a review to ready.
+    ToggleReview,
     /// Help card: edit its focused search query or scroll the filtered key list.
     HelpQueryInsert(char),
     HelpQueryInsertText(String),
     HelpQueryBackspace,
+    HelpQueryDeleteWord,
     HelpScrollUp,
     HelpScrollDown,
     /// Explicit mouse dismissal closes Help immediately, even with a nonempty query.
@@ -322,7 +453,8 @@ pub enum BoardIntent {
     PageWheelScrollDown,
     /// `z` — open/close the done drawer. Reducer lands in.
     ToggleDoneDrawer,
-    /// `ctrl+f` — the file verb: toggle the task's archived flag. No undo entry. Reducer lands in.
+    /// `ctrl+f` — the file verb: toggle the task's archived flag. Archiving or restoring
+    /// tasks records one undo entry. Reducer lands in.
     File,
     /// Launch card: unarchive the archived project the default pointed at.
     LaunchUnarchive,
@@ -331,7 +463,8 @@ pub enum BoardIntent {
     /// Expand/collapse the done drawer's archived group (Enter or click on its header,
     /// which the intent also selects). Session-only. Reducer lands in.
     ToggleArchivedGroup,
-    /// Expand/collapse the ON DECK inbox group (Enter or click on its header).
+    /// Expand/collapse the ON DECK inbox group and select its header. Like
+    /// [`BoardIntent::ToggleArchivedGroup`], a test fixture shortcut.
     ToggleInboxGroup,
     /// `?` — open the help card. Surface wiring lands in.
     OpenHelp,
@@ -349,6 +482,8 @@ pub enum BoardIntent {
     ConfirmParentPicker,
     /// Mouse: choose a visible parent-chooser row by index and apply it in one step.
     SelectParentOption(usize),
+    /// Mouse: choose a visible quick-picker row (assignee, waiting on, base, after) by index.
+    SelectListOption(usize),
     /// `Enter` or a click on a task-page parent or child row: open that task's page and
     /// retain the current page for `Esc`. A missing or deleted target refuses and keeps the
     /// stored link.
@@ -362,14 +497,17 @@ pub enum BoardIntent {
     /// `ctrl+l`, the top `↻ check` button, or the palette: hand the single live lead one
     /// stall check listing the stale Doing tasks and every Todo task. Writes nothing.
     RefreshAll,
+    /// `z` — hide or show every board row's `└─` message line. Session-only.
+    ToggleMessages,
+    /// List picker `←` / `→`: step to the previous (`false`) or next (`true`) tab; the
+    /// waiting-on picker cycles its choices.
+    SwitchListPickerTab(bool),
 }
 
-/// Bottom chrome: compact key legend for primary board actions.
-pub const BOARD_HELP_LINE: &str = "↑↓/jk  ·  shift+M multi-select  ·  shift+↑↓/space mark  ·  ctrl+s doing  ·  enter open  ·  h/l list/detail  ·  ctrl+d done  ·  ctrl+o todo  ·  + add  ·  ctrl+e title  ·  ctrl+x del  ·  ctrl+u undo  ·  ctrl+f archive  ·  d drawer  ·  g fold / unfold archived  ·  p scope  ·  S sort  ·  / search  ·  : palette  ·  ? help  ·  ctrl+q quit";
 /// Compact legend shown while the action sheet or command palette is open.
 pub const COMMAND_SURFACE_HELP_LINE: &str = "↑↓ select · type to filter · enter run · esc close";
 /// Compact legend shown while the help card is open.
-pub const HELP_SURFACE_HELP_LINE: &str = "type search · ↑↓ scroll · esc clear/close";
+pub const HELP_SURFACE_HELP_LINE: &str = "type search · ↑↓ scroll · esc clear / close";
 /// Compact legend shown while a failed board save is unresolved.
 pub const LAUNCH_CARD_HELP_LINE: &str = "y unarchive · n keep archived";
 pub const SAVE_RECOVERY_HELP_LINE: &str = "↑↓ · r retry · c cancel";
@@ -398,35 +536,35 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char('j'),
         intent: BoardIntent::SelectNext,
         help_chord: "↑↓ / jk",
-        help_label: "move",
+        help_label: "move up / down",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Down,
         intent: BoardIntent::SelectNext,
         help_chord: "↑↓ / jk",
-        help_label: "move",
+        help_label: "move up / down",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Char('k'),
         intent: BoardIntent::SelectPrev,
         help_chord: "↑↓ / jk",
-        help_label: "move",
+        help_label: "move up / down",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Up,
         intent: BoardIntent::SelectPrev,
         help_chord: "↑↓ / jk",
-        help_label: "move",
+        help_label: "move up / down",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Char('M'),
         intent: BoardIntent::ToggleMarkMode,
         help_chord: "shift+M",
-        help_label: "multi-select",
+        help_label: "start / stop multi-select",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
@@ -447,21 +585,21 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char(' '),
         intent: BoardIntent::MarkToggle,
         help_chord: "space",
-        help_label: "toggle mark (multi-select)",
+        help_label: "mark / unmark (multi-select)",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Enter,
         intent: BoardIntent::OpenTaskPage,
         help_chord: "enter",
-        help_label: "open",
+        help_label: "open task or group's board",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Esc,
         intent: BoardIntent::CloseLayer,
         help_chord: "esc",
-        help_label: "close / quit at board root",
+        help_label: "close, or quit from the board",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
@@ -471,11 +609,20 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "doing",
         modifier: NormalModifier::Ctrl,
     },
+    // `@` opens the assignee picker, an input surface like `t`: nothing changes until its
+    // Enter, so it stays bare rather than taking the verb modifier.
+    NormalKeyEntry {
+        code: KeyCode::Char('@'),
+        intent: BoardIntent::OpenAssigneePicker,
+        help_chord: "@",
+        help_label: "assign an agent, you, or a person",
+        modifier: NormalModifier::Bare,
+    },
     NormalKeyEntry {
         code: KeyCode::Char('d'),
         intent: BoardIntent::Complete,
         help_chord: "d",
-        help_label: "done",
+        help_label: "mark done",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
@@ -483,6 +630,20 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         intent: BoardIntent::Reopen,
         help_chord: "o",
         help_label: "todo",
+        modifier: NormalModifier::Ctrl,
+    },
+    NormalKeyEntry {
+        code: KeyCode::Char('b'),
+        intent: BoardIntent::ToggleBlock,
+        help_chord: "b",
+        help_label: "block / unblock",
+        modifier: NormalModifier::Ctrl,
+    },
+    NormalKeyEntry {
+        code: KeyCode::Char('r'),
+        intent: BoardIntent::ToggleReview,
+        help_chord: "r",
+        help_label: "send to review / back to todo",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
@@ -496,37 +657,37 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char('x'),
         intent: BoardIntent::SoftDelete,
         help_chord: "x / delete",
-        help_label: "delete",
+        help_label: "delete task (press twice)",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
         code: KeyCode::Delete,
         intent: BoardIntent::SoftDelete,
         help_chord: "x / delete",
-        help_label: "delete",
+        help_label: "delete task (press twice)",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
         code: KeyCode::Char('u'),
         intent: BoardIntent::Undo,
         help_chord: "u",
-        help_label: "undo",
+        help_label: "undo last change",
         modifier: NormalModifier::Ctrl,
     },
     NormalKeyEntry {
         code: KeyCode::Char('f'),
         intent: BoardIntent::File,
         help_chord: "f",
-        help_label: "archive / restore (archived: d drawer)",
+        help_label: "archive / restore (d drawer)",
         modifier: NormalModifier::Ctrl,
     },
-    // `+` opens an input surface, like bare `:` palette, `z` drawer, and `?` help. It is
+    // `+` opens an input surface, like bare `:` palette, `d` drawer, and `?` help. It is
     // not a task-mutating verb, so it does not take the configured verb modifier.
     NormalKeyEntry {
         code: KeyCode::Char('+'),
         intent: BoardIntent::OpenCapture,
         help_chord: "+",
-        help_label: "add",
+        help_label: "add task",
         modifier: NormalModifier::Bare,
     },
     // Bare `d` opens the done drawer; the same letter with Ctrl is the done verb. The
@@ -535,7 +696,7 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char('d'),
         intent: BoardIntent::ToggleDoneDrawer,
         help_chord: "d",
-        help_label: "done drawer",
+        help_label: "show / hide done drawer",
         modifier: NormalModifier::Bare,
     },
     // Bare `g` folds inbox, or archived while the drawer is open.
@@ -546,6 +707,14 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         help_label: "fold / unfold group",
         modifier: NormalModifier::Bare,
     },
+    // `z` hides the message lines under board rows: a view key like `v`, so bare.
+    NormalKeyEntry {
+        code: KeyCode::Char('z'),
+        intent: BoardIntent::ToggleMessages,
+        help_chord: "z",
+        help_label: "hide / show agent messages",
+        modifier: NormalModifier::Bare,
+    },
     NormalKeyEntry {
         code: KeyCode::Char('v'),
         intent: BoardIntent::ToggleStatusLines,
@@ -554,7 +723,7 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         modifier: NormalModifier::Bare,
     },
     // Asks Herdr agents; writes nothing to the store, but it sends prompts, so it takes Ctrl.
-    // Not `ctrl+r`: that retired status chord stays dead.
+    // Not `ctrl+r`: that chord is review.
     NormalKeyEntry {
         code: KeyCode::Char('l'),
         intent: BoardIntent::RefreshAll,
@@ -566,21 +735,21 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         code: KeyCode::Char('/'),
         intent: BoardIntent::FocusSearch,
         help_chord: "/",
-        help_label: "search",
+        help_label: "search board",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Char(':'),
         intent: BoardIntent::OpenCommandPalette,
         help_chord: ":",
-        help_label: "palette",
+        help_label: "open command palette",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
         code: KeyCode::Char('?'),
         intent: BoardIntent::OpenHelp,
         help_chord: "?",
-        help_label: "help",
+        help_label: "show all keys",
         modifier: NormalModifier::Bare,
     },
     NormalKeyEntry {
@@ -591,12 +760,13 @@ const NORMAL_KEYMAP: &[NormalKeyEntry] = &[
         modifier: NormalModifier::Ctrl,
     },
     // Navigation only: opens the cursor task's completion report, read-only, so it stays
-    // bare like `Enter`. No row with a report, or none at all, leaves a visible message.
+    // bare like `Enter`. A task with no report but an open block or review opens the reply
+    // (feedback) box under it instead. Nothing to open leaves a visible message.
     NormalKeyEntry {
         code: KeyCode::Char('r'),
         intent: BoardIntent::OpenTaskReport,
         help_chord: "r",
-        help_label: "open completion report",
+        help_label: "open completion report / reply",
         modifier: NormalModifier::Bare,
     },
 ];
@@ -652,7 +822,7 @@ enum HelpGroup {
     TaskActions,
     CreateEdit,
     ViewsFind,
-    SurfaceControls,
+    PickersEditing,
     AppControls,
 }
 
@@ -662,7 +832,7 @@ impl HelpGroup {
         Self::TaskActions,
         Self::CreateEdit,
         Self::ViewsFind,
-        Self::SurfaceControls,
+        Self::PickersEditing,
         Self::AppControls,
     ];
 
@@ -672,7 +842,7 @@ impl HelpGroup {
             Self::TaskActions => "TASK ACTIONS",
             Self::CreateEdit => "CREATE & EDIT",
             Self::ViewsFind => "VIEWS & FIND",
-            Self::SurfaceControls => "SURFACE CONTROLS",
+            Self::PickersEditing => "PICKERS & EDITING",
             Self::AppControls => "APP CONTROLS",
         }
     }
@@ -711,6 +881,7 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         | BoardIntent::MarkClear
         | BoardIntent::OpenTaskPage => HelpGroup::Navigation,
         BoardIntent::PrimaryVerb
+        | BoardIntent::OpenAssigneePicker
         | BoardIntent::SetStatus(_)
         | BoardIntent::Complete
         | BoardIntent::Reopen
@@ -722,12 +893,13 @@ fn board_help_group(intent: &BoardIntent) -> HelpGroup {
         BoardIntent::ToggleDoneDrawer
         | BoardIntent::ToggleAllGroups
         | BoardIntent::ToggleStatusLines
+        | BoardIntent::ToggleMessages
         | BoardIntent::FocusSearch
         | BoardIntent::OpenCommandPalette => HelpGroup::ViewsFind,
         BoardIntent::CloseLayer | BoardIntent::OpenHelp | BoardIntent::Quit => {
             HelpGroup::AppControls
         }
-        _ => HelpGroup::SurfaceControls,
+        _ => HelpGroup::PickersEditing,
     }
 }
 
@@ -770,6 +942,25 @@ fn help_bindings() -> Vec<HelpBinding> {
 
     bindings.extend([
         help_binding(
+            HelpGroup::Navigation,
+            "click",
+            "select row or header",
+            "mouse",
+        ),
+        help_binding(HelpGroup::Navigation, "double-click", "open task", "mouse"),
+        help_binding(
+            HelpGroup::Navigation,
+            "double-click (header)",
+            "open its board, or fold / unfold",
+            "mouse header group",
+        ),
+        help_binding(
+            HelpGroup::Navigation,
+            "← / → (header)",
+            "fold / unfold header",
+            "group inbox",
+        ),
+        help_binding(
             HelpGroup::ViewsFind,
             "1",
             "board tab, list focus",
@@ -794,49 +985,49 @@ fn help_bindings() -> Vec<HelpBinding> {
             "move list order detail",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "↑↓ / jk",
             "move the highlight (question)",
             "select answer option",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "enter",
             "pick · save · confirm (question)",
             "answer commit approve decide",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "1-9",
             "pick that choice (question)",
             "answer approve reject decide number",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "m",
             "comment on an approval (question)",
             "approval note",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "c",
             "correct as a new revision (question)",
             "answer correction",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "t",
             "open the question's task",
             "task navigate",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "r",
             "resend a finding's run request",
             "lead request herdr",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "pgup / pgdn",
             "scroll a question page",
             "read terms history",
@@ -871,7 +1062,12 @@ fn help_bindings() -> Vec<HelpBinding> {
             "next / previous task (task page)",
             "move list order detail",
         ),
-        help_binding(HelpGroup::AppControls, "ctrl+c", "quit", "exit close app"),
+        help_binding(
+            HelpGroup::AppControls,
+            "ctrl+c",
+            "quit (board, pages, Help, launch card)",
+            "exit close app",
+        ),
         help_binding(
             HelpGroup::CreateEdit,
             "ctrl+e",
@@ -887,7 +1083,7 @@ fn help_bindings() -> Vec<HelpBinding> {
         help_binding(
             HelpGroup::TaskActions,
             "alt+↑ / alt+↓",
-            "move selected step (task page)",
+            "move step up / down (task page)",
             "reorder checklist up down",
         ),
         help_binding(
@@ -905,7 +1101,7 @@ fn help_bindings() -> Vec<HelpBinding> {
         help_binding(
             HelpGroup::Navigation,
             "tab / ↓",
-            "select steps (task page)",
+            "go to steps (task page)",
             "move checklist",
         ),
         help_binding(
@@ -917,277 +1113,451 @@ fn help_bindings() -> Vec<HelpBinding> {
         help_binding(
             HelpGroup::TaskActions,
             "enter",
-            "toggle step (task page)",
+            "check / uncheck step (task page)",
             "check complete checklist",
         ),
         help_binding(
             HelpGroup::TaskActions,
             "ctrl+x",
-            "delete step / task (task page)",
+            "delete step / reply / task (task page)",
             "remove checklist",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "r",
+            "reply / give feedback (task page)",
+            "answer question blocked",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "enter (option)",
+            "reply with selected option (task page)",
+            "answer question blocked",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+x (assignee)",
+            "remove a person from the list",
+            "assign typo name hide forget",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "w (blocked / review)",
+            "change who it waits on (task page)",
+            "hand off waiting on blocked review",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "enter (top line)",
+            "change who it waits on (task page)",
+            "hand off waiting on blocked review",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "1-9 (blocked)",
+            "reply with option N (task page)",
+            "answer question blocked choose number",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "ctrl+s (blocked / review)",
+            "unblock / send back",
+            "answer blocked review send back",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "enter (check)",
+            "cycle check: open → passed → failed",
+            "review check pass fail",
+        ),
+        help_binding(
+            HelpGroup::TaskActions,
+            "enter (n passed)",
+            "show / hide passed checks (task page)",
+            "review check",
+        ),
+        help_binding(
+            HelpGroup::Navigation,
+            "g",
+            "show / hide paper trail (task page)",
+            "activity history who what",
+        ),
+        help_binding(
+            HelpGroup::Navigation,
+            "enter (paper trail)",
+            "expand trail or record (task page)",
+            "activity history",
+        ),
+        help_binding(
+            HelpGroup::CreateEdit,
+            "ctrl+e (blocked)",
+            "edit block reason / reply (task page)",
+            "block reason question",
+        ),
+        help_binding(
+            HelpGroup::CreateEdit,
+            "ctrl+e (review)",
+            "edit review / feedback (task page)",
+            "review check",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "shift+enter (reply)",
+            "save reply",
+            "answer blocked",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+s (reply)",
+            "save reply and unblock",
+            "answer blocked ready",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+s (feedback)",
+            "send back to agent",
+            "review send back started",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+d (feedback)",
+            "approve and mark done",
+            "review approve done",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "tab (block card)",
+            "next field (block card)",
+            "block reason question",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "tab (review card)",
+            "next field (review card)",
+            "review check",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "shift+enter (review card)",
+            "add check line",
+            "review check",
         ),
         help_binding(
             HelpGroup::Navigation,
             "↑↓ / jk",
-            "scroll (task page)",
+            "scroll page (task page)",
             "move view notes steps",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "enter (title)",
-            "next field",
+            "go to next field",
             "editing form",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "enter (notes)",
-            "new line",
+            "insert line break",
             "editing form",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "enter (step)",
-            "save step, next row",
+            "save step, add next",
             "editing form checklist",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "shift+enter",
-            "save edit",
+            "save changes",
             "editing form commit",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "tab",
-            "next field (editing)",
+            "go to next field (editing)",
             "form move",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "shift+tab",
-            "previous field (editing)",
+            "go to previous field (editing)",
             "form move",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "space / ← / →",
-            "cycle scope (editing)",
+            "cycle project / desk (editing)",
             "form project desk",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
-            "enter (scope)",
-            "open scope options",
+            HelpGroup::PickersEditing,
+            "enter (project)",
+            "choose project / desk (editing)",
             "editing form project desk",
         ),
         help_binding(
             HelpGroup::CreateEdit,
             "enter",
-            "save (quick-add)",
+            "add task (quick-add)",
             "capture create",
         ),
         help_binding(
             HelpGroup::CreateEdit,
             "shift+enter",
-            "save, keep open (quick-add)",
+            "add task, keep open (quick-add)",
             "capture create another",
         ),
         help_binding(
             HelpGroup::CreateEdit,
             "tab",
-            "expand to page (quick-add)",
+            "add notes and details (quick-add)",
             "capture details",
         ),
         help_binding(
             HelpGroup::CreateEdit,
             "!p name",
-            "choose project (quick-add)",
+            "set project (quick-add)",
             "capture scope",
         ),
         help_binding(
             HelpGroup::CreateEdit,
             "!p",
-            "choose desk (quick-add)",
+            "put on desk (quick-add)",
             "capture scope",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "↑↓ / jk",
             "move (picker)",
             "select navigation",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
+            "jk",
+            "move up / down (project picker)",
+            "select navigation",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
             "type",
-            "filter (picker / palette)",
+            "narrow list (picker / palette)",
             "search find query",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "type",
-            "search Help",
+            "search keys (Help)",
             "keys actions groups aliases",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "enter",
-            "choose (picker / palette)",
+            "choose / run (picker / palette)",
             "select run",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
+            "enter (after picker)",
+            "pin or unpin a task",
+            "after wait select tick",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+x (after picker)",
+            "unpin every task",
+            "after wait clear all",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "shift+enter (after picker)",
+            "save what it runs after",
+            "after wait apply",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
             "ctrl+f (picker)",
             "archive project",
             "hide file",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "ctrl+u (picker)",
             "unarchive project",
             "restore",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
+            "s (project picker)",
+            "next project order",
+            "sort projects name newest oldest",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
             "tab / ← / →",
-            "switch project-picker tab",
+            "switch tab (project picker)",
             "main archived view",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
+            "tab / ← / →",
+            "switch tab (filter / view picker)",
+            "filter threads projects view",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
             "tab",
-            "next option (list picker / palette)",
+            "next option (picker / palette)",
             "select move",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "ctrl+c",
             "cancel editing",
             "close form input",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "ctrl+a",
-            "line start (text input)",
+            "go to line start (text input)",
             "cursor home quick-add editing",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "ctrl+e",
-            "line end (text input)",
+            "go to line end (text input)",
             "cursor quick-add editing",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
-            "ctrl+←",
-            "word left (text input)",
-            "cursor editing quick-add",
+            HelpGroup::PickersEditing,
+            "ctrl+← / alt+←",
+            "move one word left (text input)",
+            "cursor editing quick-add option meta esc b",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
-            "ctrl+→",
-            "word right (text input)",
-            "cursor editing quick-add",
+            HelpGroup::PickersEditing,
+            "ctrl+→ / alt+→",
+            "move one word right (text input)",
+            "cursor editing quick-add option meta esc f",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
+            "alt+backspace / ctrl+w",
+            "delete word left (text, search)",
+            "erase editing quick-add option palette filter",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "ctrl+u / ctrl+k",
+            "delete to line start / end (text)",
+            "erase editing quick-add cmd backspace kill",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
+            "alt+delete / alt+d",
+            "delete word right (text)",
+            "erase editing quick-add option",
+        ),
+        help_binding(
+            HelpGroup::PickersEditing,
             "←",
-            "character left (text input)",
+            "move one character left (text input)",
             "cursor editing quick-add",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "→",
-            "character right (text input)",
+            "move one character right (text input)",
             "cursor editing quick-add",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "↑",
-            "wrapped row up (notes)",
+            "move up a line (notes)",
             "cursor editing text",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "↓",
-            "wrapped row down (notes)",
+            "move down a line (notes)",
             "cursor editing text",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "home",
-            "line start (text input)",
+            "go to line start (text input)",
             "cursor editing quick-add",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "end",
-            "line end (text input)",
+            "go to line end (text input)",
             "cursor editing quick-add",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "backspace",
-            "delete backward (text input)",
+            "delete previous character (text input)",
             "edit query filter",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "delete",
-            "delete forward (text input)",
+            "delete next character (text input)",
             "edit cursor",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "esc",
             "cancel editing",
             "close form input",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::PickersEditing,
             "shift+tab",
             "previous option (picker / palette)",
             "select move",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "y",
-            "unarchive launch project",
+            "unarchive this project (launch prompt)",
             "restore prompt",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "n",
-            "keep launch project archived",
+            "keep archived (launch prompt)",
             "cancel prompt desk",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "r / enter",
             "retry failed save",
             "recovery persistence",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "c / esc",
             "cancel failed save",
             "recovery persistence",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "↑↓ / jk",
-            "move during failed save",
+            "move up / down (failed save)",
             "recovery select",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "↑↓ / page keys",
-            "scroll Help",
+            "scroll (Help)",
             "search results",
         ),
         help_binding(
-            HelpGroup::SurfaceControls,
+            HelpGroup::AppControls,
             "esc",
-            "clear search / close Help",
+            "clear search / close (Help)",
             "query cancel",
         ),
     ]);
@@ -1260,10 +1630,17 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
             BoardInputMode::Normal
                 | BoardInputMode::TaskPage
                 | BoardInputMode::CapturePage
+                | BoardInputMode::SelectBase
+                | BoardInputMode::SelectAfter
                 | BoardInputMode::EditScope
-                | BoardInputMode::FormScopeDropdown
+                | BoardInputMode::EditAssignee
+                | BoardInputMode::FormDropdown
                 | BoardInputMode::LaunchCard
                 | BoardInputMode::ParentPicker
+                | BoardInputMode::ListPicker
+                | BoardInputMode::CleanupConfirm
+                | BoardInputMode::CleanupDirtyConfirm
+                | BoardInputMode::DispatchConfirm
                 | BoardInputMode::Help
         )
     {
@@ -1274,15 +1651,30 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
         BoardInputMode::TaskPage => map_task_page(key),
         BoardInputMode::CapturePage => map_capture_page(key),
         BoardInputMode::ParentPicker => map_parent_picker(key),
+        BoardInputMode::ListPicker => map_list_picker(key),
         BoardInputMode::Search => map_search(key),
         BoardInputMode::SaveRecovery => map_save_recovery(key),
         BoardInputMode::LaunchCard => map_launch_card(key),
+        BoardInputMode::CleanupConfirm => map_cleanup_confirm(key),
+        // Nothing on the card can be cleaned or merged: `n` and the cursor only.
+        BoardInputMode::CleanupDirtyConfirm => map_cleanup_confirm(key).filter(|intent| {
+            !matches!(
+                intent,
+                BoardIntent::ConfirmCleanup | BoardIntent::MergeCleanup
+            )
+        }),
+        BoardInputMode::DispatchConfirm => map_dispatch_confirm(key),
         BoardInputMode::Palette => map_palette(key),
         BoardInputMode::Help => map_help(key),
         BoardInputMode::QuickAdd => map_quick_add_key(key),
-        BoardInputMode::FormScopeDropdown => map_board_form_key(CaptureField::Scope, true, key),
+        BoardInputMode::FormDropdown => map_board_form_key(CaptureField::Scope, true, key),
         BoardInputMode::EditScope => map_board_form_key(CaptureField::Scope, false, key),
+        BoardInputMode::EditAssignee => map_board_form_key(CaptureField::Assignee, false, key),
+        BoardInputMode::SelectBase => map_selected_base_key(key),
+        BoardInputMode::SelectAfter => map_selected_after_key(key),
         BoardInputMode::EditTitle | BoardInputMode::EditNotes => map_edit(mode, key),
+        BoardInputMode::BlockCard => map_block_card(key),
+        BoardInputMode::EditReply => map_reply_edit(key),
         // A step edit belongs to the retained task form, not a modal editor. Enter saves one
         // independent add; Shift+Enter saves the session. Alt+Enter is not a save route on
         // the board.
@@ -1307,7 +1699,6 @@ pub fn map_key(mode: BoardInputMode, key: KeyEvent) -> Option<BoardIntent> {
                     .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
             {
                 match key.code {
-                    KeyCode::Char('a') => Some(BoardIntent::BeginAddStep),
                     KeyCode::Char('d') => Some(BoardIntent::Complete),
                     KeyCode::Char('o') => Some(BoardIntent::Reopen),
                     KeyCode::Char('x') | KeyCode::Delete => Some(BoardIntent::SoftDelete),
@@ -1373,6 +1764,54 @@ pub fn route_responsive_key(
     }
 }
 
+/// Map the selected task-page After footer. It is a chooser, never a text editor.
+fn map_selected_after_key(key: KeyEvent) -> Option<BoardIntent> {
+    if key.code == KeyCode::Char('?')
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return Some(BoardIntent::OpenHelp);
+    }
+    if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+        return Some(BoardIntent::OpenAfterPicker);
+    }
+    match map_form_edit_key(CaptureField::After, FormEditNavigation::Form, true, key) {
+        intent @ Some(
+            BoardIntent::BeginAddStep
+            | BoardIntent::ConfirmEdit
+            | BoardIntent::CancelEdit
+            | BoardIntent::FormFocusNext
+            | BoardIntent::FormFocusPrev,
+        ) => intent,
+        _ => None,
+    }
+}
+
+/// Map the selected task-page Base footer. It is a chooser, never a text editor.
+fn map_selected_base_key(key: KeyEvent) -> Option<BoardIntent> {
+    if key.code == KeyCode::Char('?')
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return Some(BoardIntent::OpenHelp);
+    }
+    if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+        return Some(BoardIntent::OpenBasePicker);
+    }
+    match map_form_edit_key(CaptureField::Base, FormEditNavigation::Form, true, key) {
+        intent @ Some(
+            BoardIntent::BeginAddStep
+            | BoardIntent::ConfirmEdit
+            | BoardIntent::CancelEdit
+            | BoardIntent::FormFocusNext
+            | BoardIntent::FormFocusPrev,
+        ) => intent,
+        _ => None,
+    }
+}
+
 /// Focus-navigation intents layered over the shared field editor map.
 ///
 /// A real board form uses `Form`; single-field edits have no focus navigation. Compatibility
@@ -1403,6 +1842,71 @@ fn altgr_text_char(key: &KeyEvent) -> Option<char> {
     }
 }
 
+/// A word chord every text field shares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordChord {
+    Left,
+    Right,
+    DeleteLeft,
+    DeleteRight,
+}
+
+/// Classify the word chords: `ctrl+←/→` and `alt+←/→` move, `alt+b` / `alt+f` are the Meta
+/// spelling of the same motion (`Esc b` / `Esc f`, which many macOS terminals send for
+/// Option+arrow and crossterm reports as Alt, so a lone Esc still arrives on its own),
+/// `alt+Backspace` and `ctrl+w` delete the word before the cursor, `alt+Delete` and `alt+d`
+/// the word after it.
+///
+/// Alt chords require Alt alone (Shift aside) and `ctrl+w` Ctrl alone: Windows reports AltGr
+/// as Ctrl+Alt, so `AltGr+b`, `AltGr+d`, `AltGr+w` must stay text ([`altgr_text_char`]).
+/// Only these exact keys match, so `alt+↑` / `alt+↓` keep their own routes.
+fn word_chord(key: &KeyEvent) -> Option<WordChord> {
+    let mods = key.modifiers;
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let super_key = mods.contains(KeyModifiers::SUPER);
+    let alt_only = alt && !ctrl && !super_key;
+    match key.code {
+        KeyCode::Left if ctrl || alt_only => Some(WordChord::Left),
+        KeyCode::Right if ctrl || alt_only => Some(WordChord::Right),
+        KeyCode::Char('b') if alt_only => Some(WordChord::Left),
+        KeyCode::Char('f') if alt_only => Some(WordChord::Right),
+        KeyCode::Backspace if alt_only => Some(WordChord::DeleteLeft),
+        KeyCode::Char('w') if ctrl && !alt && !super_key => Some(WordChord::DeleteLeft),
+        KeyCode::Delete | KeyCode::Char('d') if alt_only => Some(WordChord::DeleteRight),
+        _ => None,
+    }
+}
+
+/// Line deletes in a text field: `ctrl+u` to line start (what macOS terminals such as Ghostty
+/// send for Cmd+Backspace) and `ctrl+k` to line end. Ctrl alone, so AltGr (Ctrl+Alt) letters
+/// keep typing. Outside text fields `ctrl+u` stays undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineDelete {
+    ToStart,
+    ToEnd,
+}
+
+fn line_delete(key: &KeyEvent) -> Option<LineDelete> {
+    if !key.modifiers.contains(KeyModifiers::CONTROL)
+        || key
+            .modifiers
+            .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('u') => Some(LineDelete::ToStart),
+        KeyCode::Char('k') => Some(LineDelete::ToEnd),
+        _ => None,
+    }
+}
+
+/// A one-line search query has no cursor: only deleting its last word applies.
+fn query_deletes_word(key: &KeyEvent) -> bool {
+    word_chord(key) == Some(WordChord::DeleteLeft)
+}
+
 /// Map one key for either kind of board form.
 ///
 /// Unlike standalone quick capture, board capture and task editing emit [`BoardIntent`]s. They
@@ -1419,9 +1923,21 @@ pub fn map_quick_add_key(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Tab if mods.is_empty() => return Some(BoardIntent::ExpandQuickAdd),
         KeyCode::Char('a') if ctrl => return Some(BoardIntent::QuickAddMoveLineStart),
         KeyCode::Char('e') if ctrl => return Some(BoardIntent::QuickAddMoveLineEnd),
-        KeyCode::Left if ctrl => return Some(BoardIntent::QuickAddMoveWordLeft),
-        KeyCode::Right if ctrl => return Some(BoardIntent::QuickAddMoveWordRight),
         _ => {}
+    }
+    if let Some(delete) = line_delete(&key) {
+        return Some(match delete {
+            LineDelete::ToStart => BoardIntent::QuickAddDeleteToLineStart,
+            LineDelete::ToEnd => BoardIntent::QuickAddDeleteToLineEnd,
+        });
+    }
+    if let Some(chord) = word_chord(&key) {
+        return Some(match chord {
+            WordChord::Left => BoardIntent::QuickAddMoveWordLeft,
+            WordChord::Right => BoardIntent::QuickAddMoveWordRight,
+            WordChord::DeleteLeft => BoardIntent::QuickAddDeleteWordLeft,
+            WordChord::DeleteRight => BoardIntent::QuickAddDeleteWordRight,
+        });
     }
     if let Some(character) = altgr_text_char(&key) {
         return Some(BoardIntent::QuickAddInsert(character));
@@ -1454,7 +1970,7 @@ pub fn map_board_form_key(
         return None;
     }
     if dropdown_open {
-        return map_form_scope_dropdown_key(key);
+        return map_form_dropdown_key(key);
     }
     map_form_edit_key(focused, FormEditNavigation::Form, false, key)
 }
@@ -1466,15 +1982,14 @@ pub fn map_task_form_key(
     key: KeyEvent,
 ) -> Option<BoardIntent> {
     if dropdown_open {
-        map_form_scope_dropdown_key(key)
+        map_form_dropdown_key(key)
     } else {
         map_form_edit_key(focused, FormEditNavigation::Form, true, key)
     }
 }
 
-/// Scope dropdown keys are the one form-mode extra: it owns its temporary selection rather than
-/// an editable field.
-fn map_form_scope_dropdown_key(key: KeyEvent) -> Option<BoardIntent> {
+/// Form dropdown keys own a temporary selection rather than an editable field.
+fn map_form_dropdown_key(key: KeyEvent) -> Option<BoardIntent> {
     if key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -1483,10 +1998,10 @@ fn map_form_scope_dropdown_key(key: KeyEvent) -> Option<BoardIntent> {
     }
     match key.code {
         KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
-        KeyCode::Esc => Some(BoardIntent::CancelFormScopeDropdown),
-        KeyCode::Enter => Some(BoardIntent::ConfirmFormScopeDropdown),
-        KeyCode::Up | KeyCode::Char('k') => Some(BoardIntent::FormScopePrev),
-        KeyCode::Down | KeyCode::Char('j') => Some(BoardIntent::FormScopeNext),
+        KeyCode::Esc => Some(BoardIntent::CancelFormDropdown),
+        KeyCode::Enter => Some(BoardIntent::ConfirmFormDropdown),
+        KeyCode::Up | KeyCode::Char('k') => Some(BoardIntent::FormDropdownPrev),
+        KeyCode::Down | KeyCode::Char('j') => Some(BoardIntent::FormDropdownNext),
         _ => None,
     }
 }
@@ -1528,23 +2043,35 @@ fn map_form_edit_key(
         KeyCode::Char('j') if ctrl && !alt && !super_key => {
             return Some(BoardIntent::ShiftEnterAsCtrlJ)
         }
-        KeyCode::Char('a') if ctrl && task_steps => return Some(BoardIntent::BeginAddStep),
+        // A text cursor owns ctrl+a as line start: macOS terminals send Cmd+← as ctrl+a, the
+        // partner of ctrl+e (Cmd+→). Only the cursorless Scope row keeps it as add-step.
+        KeyCode::Char('a') if ctrl && task_steps && focused == CaptureField::Scope => {
+            return Some(BoardIntent::BeginAddStep)
+        }
         KeyCode::Char('a') if ctrl && focused != CaptureField::Scope => {
             return Some(BoardIntent::EditMoveLineStart)
         }
         KeyCode::Char('e') if ctrl && focused != CaptureField::Scope => {
             return Some(BoardIntent::EditMoveLineEnd)
         }
-        KeyCode::Left if ctrl && focused != CaptureField::Scope => {
-            return Some(BoardIntent::EditMoveWordLeft)
-        }
-        KeyCode::Right if ctrl && focused != CaptureField::Scope => {
-            return Some(BoardIntent::EditMoveWordRight)
-        }
         _ => {}
     }
 
     if focused != CaptureField::Scope {
+        if let Some(delete) = line_delete(&key) {
+            return Some(match delete {
+                LineDelete::ToStart => BoardIntent::EditDeleteToLineStart,
+                LineDelete::ToEnd => BoardIntent::EditDeleteToLineEnd,
+            });
+        }
+        if let Some(chord) = word_chord(&key) {
+            return Some(match chord {
+                WordChord::Left => BoardIntent::EditMoveWordLeft,
+                WordChord::Right => BoardIntent::EditMoveWordRight,
+                WordChord::DeleteLeft => BoardIntent::EditDeleteWordLeft,
+                WordChord::DeleteRight => BoardIntent::EditDeleteWordRight,
+            });
+        }
         if let Some(character) = altgr_text_char(&key) {
             return Some(BoardIntent::EditInsert(character));
         }
@@ -1558,10 +2085,30 @@ fn map_form_edit_key(
         CaptureField::Scope => match key.code {
             KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
             KeyCode::Esc => Some(BoardIntent::CancelEdit),
-            KeyCode::Enter => Some(BoardIntent::OpenFormScopeDropdown),
+            KeyCode::Enter => Some(BoardIntent::OpenFormDropdown(CaptureField::Scope)),
             KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
                 Some(BoardIntent::FormCycleScope)
             }
+            _ => None,
+        },
+        CaptureField::Assignee => match key.code {
+            KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
+            KeyCode::Esc => Some(BoardIntent::CancelEdit),
+            KeyCode::Enter => Some(BoardIntent::OpenFormDropdown(CaptureField::Assignee)),
+            KeyCode::Char(' ') | KeyCode::Right => Some(BoardIntent::FormAssigneeNext),
+            KeyCode::Left => Some(BoardIntent::FormAssigneePrev),
+            _ => None,
+        },
+        CaptureField::Base => match key.code {
+            KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
+            KeyCode::Esc => Some(BoardIntent::CancelEdit),
+            KeyCode::Enter => Some(BoardIntent::OpenBasePicker),
+            _ => None,
+        },
+        CaptureField::After => match key.code {
+            KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
+            KeyCode::Esc => Some(BoardIntent::CancelEdit),
+            KeyCode::Enter => Some(BoardIntent::OpenAfterPicker),
             _ => None,
         },
         CaptureField::Title | CaptureField::Notes => match key.code {
@@ -1597,6 +2144,9 @@ fn map_form_edit_key(
 }
 
 fn map_search(key: KeyEvent) -> Option<BoardIntent> {
+    if query_deletes_word(&key) {
+        return Some(BoardIntent::SearchQueryDeleteWord);
+    }
     if let Some(character) = altgr_text_char(&key) {
         return Some(BoardIntent::SearchQueryInsert(character));
     }
@@ -1624,15 +2174,23 @@ fn map_search(key: KeyEvent) -> Option<BoardIntent> {
 pub fn map_edit_paste(mode: BoardInputMode, text: &str) -> Option<BoardIntent> {
     match mode {
         BoardInputMode::QuickAdd => Some(BoardIntent::QuickAddInsertText(text.to_string())),
-        BoardInputMode::EditTitle | BoardInputMode::EditNotes | BoardInputMode::EditStep => {
-            Some(BoardIntent::EditInsertText(text.to_string()))
-        }
-        BoardInputMode::EditScope
-        | BoardInputMode::FormScopeDropdown
+        BoardInputMode::EditTitle
+        | BoardInputMode::EditNotes
+        | BoardInputMode::EditStep
+        | BoardInputMode::BlockCard
+        | BoardInputMode::EditReply => Some(BoardIntent::EditInsertText(text.to_string())),
+        BoardInputMode::SelectBase
+        | BoardInputMode::SelectAfter
+        | BoardInputMode::EditScope
+        | BoardInputMode::EditAssignee
+        | BoardInputMode::FormDropdown
         | BoardInputMode::LaunchCard
+        | BoardInputMode::CleanupConfirm
+        | BoardInputMode::CleanupDirtyConfirm
+        | BoardInputMode::DispatchConfirm
         | BoardInputMode::TaskPage
         | BoardInputMode::CapturePage => None,
-        BoardInputMode::ParentPicker => {
+        BoardInputMode::ParentPicker | BoardInputMode::ListPicker => {
             Some(BoardIntent::ListPickerQueryInsertText(text.to_string()))
         }
         BoardInputMode::Search => Some(BoardIntent::SearchQueryInsertText(text.to_string())),
@@ -1665,6 +2223,11 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::MarkClear
         | BoardIntent::BeginEditNotes
         | BoardIntent::BeginEditScope
+        | BoardIntent::OpenBasePicker
+        | BoardIntent::OpenAfterPicker
+        | BoardIntent::OpenBeforeTask(_)
+        | BoardIntent::OpenOnPicker
+        | BoardIntent::ChainAfter
         | BoardIntent::BeginAddStep
         | BoardIntent::BeginAppendStep
         | BoardIntent::Quit
@@ -1681,6 +2244,10 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::EditMoveLineEnd
         | BoardIntent::EditMoveWordLeft
         | BoardIntent::EditMoveWordRight
+        | BoardIntent::EditDeleteWordLeft
+        | BoardIntent::EditDeleteWordRight
+        | BoardIntent::EditDeleteToLineStart
+        | BoardIntent::EditDeleteToLineEnd
         | BoardIntent::ConfirmEdit
         | BoardIntent::ConfirmEditNext
         | BoardIntent::CancelEdit
@@ -1695,6 +2262,10 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::QuickAddMoveLineEnd
         | BoardIntent::QuickAddMoveWordLeft
         | BoardIntent::QuickAddMoveWordRight
+        | BoardIntent::QuickAddDeleteWordLeft
+        | BoardIntent::QuickAddDeleteWordRight
+        | BoardIntent::QuickAddDeleteToLineStart
+        | BoardIntent::QuickAddDeleteToLineEnd
         | BoardIntent::QuickAddSave
         | BoardIntent::QuickAddSaveNext
         | BoardIntent::ExpandQuickAdd
@@ -1706,25 +2277,38 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::FocusFormField(_)
         | BoardIntent::FocusFormCursor(_, _, _)
         | BoardIntent::FormCycleScope
-        | BoardIntent::OpenFormScopeDropdown
-        | BoardIntent::FormScopeNext
-        | BoardIntent::FormScopePrev
-        | BoardIntent::ConfirmFormScopeDropdown
-        | BoardIntent::CancelFormScopeDropdown
-        | BoardIntent::SelectFormScopeOption(_)
+        | BoardIntent::FormAssigneeNext
+        | BoardIntent::FormAssigneePrev
+        | BoardIntent::OpenFormDropdown(_)
+        | BoardIntent::FormDropdownNext
+        | BoardIntent::FormDropdownPrev
+        | BoardIntent::ConfirmFormDropdown
+        | BoardIntent::CancelFormDropdown
+        | BoardIntent::SelectFormDropdownOption(_)
         | BoardIntent::SelectNavTab(_)
         | BoardIntent::Question(_)
         | BoardIntent::Report(_)
         | BoardIntent::OpenTaskReport
+        | BoardIntent::OpenAssigneePicker
+        | BoardIntent::RemoveAssigneeName
+        | BoardIntent::ListPickerUndo
         | BoardIntent::ListPickerNext
         | BoardIntent::ListPickerPrev
+        | BoardIntent::ListPickerTabNext
+        | BoardIntent::ListPickerTabPrev
+        | BoardIntent::SelectListPickerTab(_)
+        | BoardIntent::ConfirmListPicker
         | BoardIntent::CancelListPicker
         | BoardIntent::ListPickerQueryInsert(_)
         | BoardIntent::ListPickerQueryInsertText(_)
         | BoardIntent::ListPickerQueryBackspace
+        | BoardIntent::ListPickerQueryDeleteWord
+        | BoardIntent::AfterPickerPin
+        | BoardIntent::AfterPickerClear
         | BoardIntent::SearchQueryInsert(_)
         | BoardIntent::SearchQueryInsertText(_)
         | BoardIntent::SearchQueryBackspace
+        | BoardIntent::SearchQueryDeleteWord
         | BoardIntent::FocusSearch
         | BoardIntent::PinSearch
         | BoardIntent::SelectStep(_)
@@ -1739,10 +2323,51 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::CommandQueryInsert(_)
         | BoardIntent::CommandQueryInsertText(_)
         | BoardIntent::CommandQueryBackspace
+        | BoardIntent::CommandQueryDeleteWord
         | BoardIntent::PrimaryVerb
+        | BoardIntent::DispatchAgain
+        | BoardIntent::ConfirmCleanup
+        | BoardIntent::KeepCleanup
+        | BoardIntent::CancelCleanup
+        | BoardIntent::MergeCleanup
+        | BoardIntent::ConfirmDispatch
+        | BoardIntent::CancelDispatch
+        | BoardIntent::StartWithoutRelaunch
+        | BoardIntent::CleanupScrollUp
+        | BoardIntent::CleanupScrollDown
+        | BoardIntent::CleanupSelectUp
+        | BoardIntent::CleanupSelectDown
+        | BoardIntent::CleanupRunSelected
+        | BoardIntent::CleanupClickOption(_)
+        | BoardIntent::ToggleBlock
+        | BoardIntent::BlockCardConfirm
+        | BoardIntent::BlockCardCancel
+        | BoardIntent::BlockCardNextField
+        | BoardIntent::BlockCardPrevField
+        | BoardIntent::BlockCardLeft
+        | BoardIntent::BlockCardRight
+        | BoardIntent::BlockCardNewline
+        | BoardIntent::CycleCheck
+        | BoardIntent::TogglePassedChecks
+        | BoardIntent::ClickCheck(_)
+        | BoardIntent::ClickPassedFold
+        | BoardIntent::ToggleTrail
+        | BoardIntent::PickOption(_)
+        | BoardIntent::PageReplyUnblock
+        | BoardIntent::ToggleTrailRecord(_)
+        | BoardIntent::BeginReply
+        | BoardIntent::ReplyWithOption
+        | BoardIntent::ReplySave
+        | BoardIntent::ReplySaveUnblock
+        | BoardIntent::ReplySaveStart
+        | BoardIntent::ReplySaveBeforeLaunch
+        | BoardIntent::ReplyApprove
+        | BoardIntent::ApproveReview(_)
+        | BoardIntent::ToggleReview
         | BoardIntent::HelpQueryInsert(_)
         | BoardIntent::HelpQueryInsertText(_)
         | BoardIntent::HelpQueryBackspace
+        | BoardIntent::HelpQueryDeleteWord
         | BoardIntent::HelpScrollUp
         | BoardIntent::HelpScrollDown
         | BoardIntent::CloseHelp
@@ -1774,9 +2399,12 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::ClearParent
         | BoardIntent::ConfirmParentPicker
         | BoardIntent::SelectParentOption(_)
+        | BoardIntent::SelectListOption(_)
         | BoardIntent::OpenRelatedTask(_)
         | BoardIntent::ListPickerScrollUp
-        | BoardIntent::ListPickerScrollDown => None,
+        | BoardIntent::ListPickerScrollDown
+        | BoardIntent::ToggleMessages
+        | BoardIntent::SwitchListPickerTab(_) => None,
     }
 }
 
@@ -1881,6 +2509,8 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char('q') if verb => Some(BoardIntent::Quit),
         KeyCode::Enter if !extra => Some(BoardIntent::OpenTaskPage),
         KeyCode::Char('s') if verb => Some(BoardIntent::PrimaryVerb),
+        KeyCode::Char('b') if verb => Some(BoardIntent::ToggleBlock),
+        KeyCode::Char('r') if verb => Some(BoardIntent::ToggleReview),
         KeyCode::Char('a') if verb => Some(BoardIntent::BeginAddStep),
         KeyCode::Char('d') if verb => Some(BoardIntent::Complete),
         KeyCode::Char('o') if verb => Some(BoardIntent::Reopen),
@@ -1894,6 +2524,11 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
         // Read-only navigation, like `Enter`: opens the page's own report, never mutates.
         KeyCode::Char('r') if !extra => Some(BoardIntent::OpenTaskReport),
         KeyCode::Char('?') if !extra => Some(BoardIntent::OpenHelp),
+        KeyCode::Char('@') if !extra => Some(BoardIntent::OpenAssigneePicker),
+        KeyCode::Char('g') if !extra => Some(BoardIntent::ToggleTrail),
+        KeyCode::Char(digit @ '1'..='9') if !extra => {
+            Some(BoardIntent::PickOption(digit as usize - '1' as usize))
+        }
         KeyCode::Char(':') if !extra => Some(BoardIntent::OpenCommandPalette),
         KeyCode::Char('J') if !extra => Some(BoardIntent::NextTask),
         KeyCode::Char('K') if !extra => Some(BoardIntent::PrevTask),
@@ -1914,8 +2549,96 @@ fn map_task_page(key: KeyEvent) -> Option<BoardIntent> {
     }
 }
 
-/// Launch card: `y` unarchives, `n`/`Esc` keep archived. No `Enter` default (gate F-1):
-/// the choice must be explicit.
+/// The block card: Enter blocks, Tab moves between why, on and needs, Esc cancels. The on
+/// field cycles you, task and other with `←`/`→`; every field takes typed text.
+fn map_block_card(key: KeyEvent) -> Option<BoardIntent> {
+    let mods = key.modifiers;
+    let extra = mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+    match key.code {
+        KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => {
+            Some(BoardIntent::BlockCardCancel)
+        }
+        KeyCode::Esc if !extra => Some(BoardIntent::BlockCardCancel),
+        KeyCode::Enter if !extra && mods.contains(KeyModifiers::SHIFT) => {
+            Some(BoardIntent::BlockCardNewline)
+        }
+        KeyCode::Enter if !extra => Some(BoardIntent::BlockCardConfirm),
+        KeyCode::Tab if !extra => Some(BoardIntent::BlockCardNextField),
+        KeyCode::BackTab if !extra => Some(BoardIntent::BlockCardPrevField),
+        KeyCode::Left if !extra => Some(BoardIntent::BlockCardLeft),
+        KeyCode::Right if !extra => Some(BoardIntent::BlockCardRight),
+        _ => map_form_edit_key(CaptureField::Title, FormEditNavigation::None, false, key),
+    }
+}
+
+/// The reply box: a multi-line draft. Shift+Enter stores the reply, Ctrl+S stores it and
+/// unblocks the task (sends a review back), Ctrl+D approves a review, Enter breaks the line,
+/// Esc cancels.
+fn map_reply_edit(key: KeyEvent) -> Option<BoardIntent> {
+    let mods = key.modifiers;
+    let only_ctrl = mods.contains(KeyModifiers::CONTROL)
+        && !mods.intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
+    match key.code {
+        KeyCode::Enter
+            if mods.contains(KeyModifiers::SHIFT)
+                && !mods.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                ) =>
+        {
+            Some(BoardIntent::ReplySave)
+        }
+        KeyCode::Char('s') if only_ctrl => Some(BoardIntent::ReplySaveUnblock),
+        KeyCode::Char('d') if only_ctrl => Some(BoardIntent::ReplyApprove),
+        _ => map_form_edit_key(CaptureField::Notes, FormEditNavigation::None, false, key),
+    }
+}
+
+/// Cleanup card: `m`/`y`/`n` run their option, `↑`/`↓` move the option cursor and `Enter`
+/// runs it, page keys scroll. Which keys act is the card's to say (`CleanupPrompt::accepts`).
+fn map_cleanup_confirm(key: KeyEvent) -> Option<BoardIntent> {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('y') => Some(BoardIntent::ConfirmCleanup),
+        KeyCode::Char('n') => Some(BoardIntent::KeepCleanup),
+        KeyCode::Char('m') => Some(BoardIntent::MergeCleanup),
+        KeyCode::Esc => Some(BoardIntent::CancelCleanup),
+        KeyCode::Up => Some(BoardIntent::CleanupSelectUp),
+        KeyCode::Down => Some(BoardIntent::CleanupSelectDown),
+        KeyCode::Enter => Some(BoardIntent::CleanupRunSelected),
+        KeyCode::PageUp => Some(BoardIntent::CleanupScrollUp),
+        KeyCode::PageDown => Some(BoardIntent::CleanupScrollDown),
+        _ => None,
+    }
+}
+
+/// Start cards (relaunch, start anyway, the bulk start card): `y` launches (or relaunches, or
+/// starts anyway), `n` on the relaunch card only starts, `↑`/`↓` move the option cursor and
+/// `Enter` runs it, page keys scroll, `Esc` cancels. Which keys act is the card's to say.
+fn map_dispatch_confirm(key: KeyEvent) -> Option<BoardIntent> {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('y') => Some(BoardIntent::ConfirmDispatch),
+        KeyCode::Char('n') => Some(BoardIntent::StartWithoutRelaunch),
+        KeyCode::Esc => Some(BoardIntent::CancelDispatch),
+        KeyCode::Up => Some(BoardIntent::CleanupSelectUp),
+        KeyCode::Down => Some(BoardIntent::CleanupSelectDown),
+        KeyCode::Enter => Some(BoardIntent::CleanupRunSelected),
+        KeyCode::PageUp => Some(BoardIntent::CleanupScrollUp),
+        KeyCode::PageDown => Some(BoardIntent::CleanupScrollDown),
+        _ => None,
+    }
+}
+
 fn map_launch_card(key: KeyEvent) -> Option<BoardIntent> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(BoardIntent::Quit);
@@ -1930,6 +2653,11 @@ fn map_launch_card(key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Char('?') => Some(BoardIntent::OpenHelp),
         KeyCode::Char('y') => Some(BoardIntent::LaunchUnarchive),
         KeyCode::Char('n') | KeyCode::Esc => Some(BoardIntent::LaunchKeepArchived),
+        KeyCode::Up => Some(BoardIntent::CleanupSelectUp),
+        KeyCode::Down => Some(BoardIntent::CleanupSelectDown),
+        KeyCode::Enter => Some(BoardIntent::CleanupRunSelected),
+        KeyCode::PageUp => Some(BoardIntent::CleanupScrollUp),
+        KeyCode::PageDown => Some(BoardIntent::CleanupScrollDown),
         _ => None,
     }
 }
@@ -1939,6 +2667,9 @@ fn map_launch_card(key: KeyEvent) -> Option<BoardIntent> {
 fn map_help(key: KeyEvent) -> Option<BoardIntent> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(BoardIntent::Quit);
+    }
+    if query_deletes_word(&key) {
+        return Some(BoardIntent::HelpQueryDeleteWord);
     }
     if let Some(character) = altgr_text_char(&key) {
         return Some(BoardIntent::HelpQueryInsert(character));
@@ -1961,9 +2692,12 @@ fn map_help(key: KeyEvent) -> Option<BoardIntent> {
     }
 }
 
-/// Searchable list picker (the parent chooser). Printable keys narrow the
+/// Searchable list picker (assignee, waiting on, base, after). Printable keys narrow the
 /// query, arrows move, Enter applies, Esc cancels — the palette's contract with counts.
 fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
+    if query_deletes_word(&key) {
+        return Some(BoardIntent::ListPickerQueryDeleteWord);
+    }
     if let Some(character) = altgr_text_char(&key) {
         return Some(BoardIntent::ListPickerQueryInsert(character));
     }
@@ -1975,12 +2709,14 @@ fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
     }
     match key.code {
         KeyCode::Esc => Some(BoardIntent::CancelListPicker),
-        KeyCode::Enter => Some(BoardIntent::ConfirmParentPicker),
+        KeyCode::Enter => Some(BoardIntent::ConfirmListPicker),
         KeyCode::Down => Some(BoardIntent::ListPickerNext),
         KeyCode::Up => Some(BoardIntent::ListPickerPrev),
+        KeyCode::Left => Some(BoardIntent::SwitchListPickerTab(false)),
+        KeyCode::Right => Some(BoardIntent::SwitchListPickerTab(true)),
         KeyCode::Backspace => Some(BoardIntent::ListPickerQueryBackspace),
-        KeyCode::Tab => Some(BoardIntent::ListPickerNext),
-        KeyCode::BackTab => Some(BoardIntent::ListPickerPrev),
+        KeyCode::Tab => Some(BoardIntent::ListPickerTabNext),
+        KeyCode::BackTab => Some(BoardIntent::ListPickerTabPrev),
         KeyCode::Char(character) if !character.is_control() => {
             Some(BoardIntent::ListPickerQueryInsert(character))
         }
@@ -1991,7 +2727,10 @@ fn map_list_picker(key: KeyEvent) -> Option<BoardIntent> {
 /// The parent chooser: the list picker's typing and movement, but Enter applies the chosen
 /// parent (a persisting verb) and Esc returns to the task page.
 fn map_parent_picker(key: KeyEvent) -> Option<BoardIntent> {
-    map_list_picker(key)
+    match map_list_picker(key) {
+        Some(BoardIntent::ConfirmListPicker) => Some(BoardIntent::ConfirmParentPicker),
+        intent => intent,
+    }
 }
 
 fn map_save_recovery(key: KeyEvent) -> Option<BoardIntent> {
@@ -2013,6 +2752,9 @@ fn map_save_recovery(key: KeyEvent) -> Option<BoardIntent> {
 
 /// Palette: printable keys type the query, so movement stays on arrows and Tab.
 fn map_palette(key: KeyEvent) -> Option<BoardIntent> {
+    if query_deletes_word(&key) {
+        return Some(BoardIntent::CommandQueryDeleteWord);
+    }
     if let Some(character) = altgr_text_char(&key) {
         return Some(BoardIntent::CommandQueryInsert(character));
     }
@@ -2154,6 +2896,7 @@ pub fn map_capture_key_state(
             KeyCode::Char('p') | KeyCode::Char('e') => Some(CaptureIntent::BeginScopePathEdit),
             _ => None,
         },
+        CaptureField::Assignee | CaptureField::Base | CaptureField::After => None,
     }
 }
 
@@ -2196,7 +2939,9 @@ pub fn map_capture_paste_state(
             Some(CaptureIntent::InsertText(text.to_string()))
         }
         CaptureField::Scope if path_editing => Some(CaptureIntent::InsertText(text.to_string())),
-        CaptureField::Scope => None,
+        CaptureField::Scope | CaptureField::Assignee | CaptureField::Base | CaptureField::After => {
+            None
+        }
     }
 }
 
@@ -2226,7 +2971,9 @@ pub fn intent_primary_capture_action(intent: &CaptureIntent) -> Option<PrimaryCa
             Some(PrimaryCaptureAction::EditField)
         }
         // Scope row click cycles; path edit and focusing scope are scope interaction.
-        CaptureIntent::FocusField(CaptureField::Scope)
+        CaptureIntent::FocusField(
+            CaptureField::Scope | CaptureField::Assignee | CaptureField::Base | CaptureField::After,
+        )
         | CaptureIntent::CycleScope
         | CaptureIntent::SelectScope(_)
         | CaptureIntent::BeginScopePathEdit => Some(PrimaryCaptureAction::ChangeScope),
