@@ -60,6 +60,18 @@ test("reports stay unread until opened and remain accessible after reading", asy
   const title = demo.getByRole("textbox", "title  ·  !p project");
   await title.fill("Sample acceptance !p website !t literal");
   await title.press("Enter");
-  await expect(demo.getByRole("button", "▸ T25 Sample acceptance !t literal")).toBeVisible();
+  await expect(
+    demo.getByRole("button", "▸ T25 Sample acceptance !t literal"),
+  ).toBeVisible();
   await app.screenshot("narrow-literal-title");
+  await demo.press("s");
+  await demo.press("Enter");
+  await expect(demo.getByRole("button", "PAPER TRAIL · 2 ▸")).toBeVisible();
+  await demo.press("g");
+  await expect(demo.getByRole("button", "PAPER TRAIL · 2 ▾")).toBeVisible();
+  await app.screenshot("narrow-paper-trail");
+  await demo.press("Escape");
+  await demo.press("Enter");
+  await expect(demo.getByRole("button", "PAPER TRAIL · 2 ▸")).toBeVisible();
+  await app.screenshot("narrow-trail-reopened");
 });

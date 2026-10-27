@@ -47,6 +47,35 @@ import { parseCapture } from "./capture.js";
   };
   const projectName = (task) => task.project || "desk";
 
+  function logStatus(task, status) {
+    const word = (value) =>
+      ({ todo: "open", doing: "started" })[value] || value;
+    const at = clock();
+    task.trail = [
+      ...(task.trail || []),
+      { text: `${word(task.status)} → ${word(status)}`, at },
+    ];
+    task.status = status;
+    task.updatedAt = at;
+    task.statusAt = at;
+  }
+
+  function paperTrail(task) {
+    const entries = [
+      ...(task.trail || []),
+      { text: "created", at: task.createdAt },
+    ].sort((a, b) => b.at - a.at);
+    const open = steps.trailOpen;
+    const selected = steps.selected === "trail" && !state.edit && !steps.editor;
+    const rows = open
+      ? entries.map(
+          (entry) =>
+            `<div class="tsk-trail-entry dim">${esc(`${entry.text} · you ${age(entry.at)}`)}</div>`,
+        )
+      : [];
+    return `<div class="tsk-trail"><button type="button" class="tsk-trail-heading dim" data-trail-toggle="main" aria-expanded="${open}" aria-selected="${selected}">${selected ? "▸ " : ""}PAPER TRAIL · ${entries.length} ${open ? "▾" : "▸"}</button>${rows.join("")}</div>`;
+  }
+
   // ── sample data ───────────────────────────────────────────────────────────
   const seed = () => {
     let n = 12;
@@ -1176,11 +1205,7 @@ import { parseCapture } from "./capture.js";
       skipped = tasks.filter((t) => t.status === "done").length;
     } else changed = tasks.filter((t) => t.status !== status);
     if (status === "done" && changed.length) rememberUndo(changed);
-    for (const task of changed) {
-      task.status = status;
-      task.updatedAt = clock();
-      task.statusAt = task.updatedAt;
-    }
+    for (const task of changed) logStatus(task, status);
     clearMarks();
     state.pendingDelete = null;
     state.message =
@@ -1236,8 +1261,11 @@ import { parseCapture } from "./capture.js";
       .slice()
       .sort((a, b) => a.index - b.index)) {
       const live = taskById(task.id);
-      if (live) Object.assign(live, task);
-      else state.tasks.splice(Math.min(index, state.tasks.length), 0, task);
+      if (live) {
+        for (const key of Object.keys(live))
+          if (!(key in task)) delete live[key];
+        Object.assign(live, task);
+      } else state.tasks.splice(Math.min(index, state.tasks.length), 0, task);
     }
     state.selectedId = state.undo.items[0]?.task.id || state.selectedId;
     state.undo = null;
@@ -1356,7 +1384,7 @@ import { parseCapture } from "./capture.js";
     }
   }
 
-  // The task page ring: parent line, steps, + step, children, questions, links.
+  // The task page ring: parent line, steps, + step, children, questions, links, trail.
   function linksOf(task) {
     const notes = task.notes || "";
     const threadLines = notes
@@ -1415,6 +1443,7 @@ import { parseCapture } from "./capture.js";
       ...children(task).map((c) => `child:${c.id}`),
       ...pageQuestions(task).map((q) => `q:${q.id}`),
       ...linksOf(task).map((_, i) => `link:${i}`),
+      "trail",
     ];
   }
   function moveRing(task, delta) {
@@ -1432,6 +1461,7 @@ import { parseCapture } from "./capture.js";
     const key = steps.selected;
     if (!key) return;
     if (key === "add") steps.begin(task);
+    else if (key === "trail") steps.trailOpen = !steps.trailOpen;
     else if (key === "parent") {
       if (!task.parent) openParentPicker();
       else openRelated(task.parent);
@@ -1781,7 +1811,13 @@ import { parseCapture } from "./capture.js";
     ["navigation", "r", "open this task's report", "completion markdown"],
     ["views & find", "z / D", "done drawer", "completed"],
     ["views & find", "g", "fold / unfold archived", "drawer"],
-    ["views & find", "v", "show / hide status lines", "board notes now blocked"],
+    ["views & find", "g", "show / hide paper trail (task page)", "history"],
+    [
+      "views & find",
+      "v",
+      "show / hide status lines",
+      "board notes now blocked",
+    ],
     ["views & find", "/", "search board", "find filter"],
     ["views & find", ":", "command palette", "find actions"],
     ["questions", "enter", "open · pick the highlighted choice", "answer"],
@@ -1861,11 +1897,12 @@ import { parseCapture } from "./capture.js";
         (tailWidth ? tailWidth + 1 : 0),
     );
     const statusRoom = width - 2 - prefix.length - id.length - 1;
-    const statusLines = state.showStatusLines && status
-      ? status.bold && !row.dim
-        ? `<b class="tsk-title-line tsk-row-status" style="max-width:${statusRoom}ch">${esc(status.text)}</b>`
-        : `<span class="tsk-title-line tsk-row-status dim" style="max-width:${statusRoom}ch">${esc(status.text)}</span>`
-      : "";
+    const statusLines =
+      state.showStatusLines && status
+        ? status.bold && !row.dim
+          ? `<b class="tsk-title-line tsk-row-status" style="max-width:${statusRoom}ch">${esc(status.text)}</b>`
+          : `<span class="tsk-title-line tsk-row-status dim" style="max-width:${statusRoom}ch">${esc(status.text)}</span>`
+        : "";
     const title =
       `<span class="tsk-title-line" style="max-width:${room}ch">${esc(task.title)}</span>` +
       statusLines;
@@ -2075,20 +2112,48 @@ import { parseCapture } from "./capture.js";
         );
       }
     }
-    const scopeField =
-      field === "scope"
-        ? `<span class="tsk-meta-selected" data-page-field="scope">${esc(scopeName)}</span>`
-        : esc(scopeName);
-    const meta = [
-      narrow || edit ? scopeField : "",
-      `created ${esc(age(task.createdAt))} ago`,
-      `updated ${esc(age(task.updatedAt))} ago`,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const base =
+      task.base || (task.project && !fixture ? "main (default)" : "default");
+    const parts = [
+      task.assignee && { field: "assignee", text: `@${task.assignee}` },
+      { field: "base", text: `⎇ ${base}` },
+      (narrow || edit) && { field: "scope", text: scopeName },
+    ].filter(Boolean);
+    let position = 0;
+    const fields = parts.map((part) => {
+      const start = position;
+      position += [...part.text].length;
+      const end = position;
+      position += 3;
+      return { ...part, start, end };
+    });
+    let offset = 0;
+    const meta = wrapText(parts.map((part) => part.text).join(" · "), width - 2)
+      .map((line) => {
+        const chars = [...line];
+        const end = offset + chars.length;
+        let painted = "";
+        let cursor = offset;
+        for (const part of fields) {
+          const left = Math.max(offset, part.start);
+          const right = Math.min(end, part.end);
+          if (right <= left) continue;
+          painted += esc(chars.slice(cursor - offset, left - offset).join(""));
+          const text = esc(chars.slice(left - offset, right - offset).join(""));
+          painted +=
+            field === part.field
+              ? `<span class="tsk-meta-selected" data-page-field="${part.field}">${text}</span>`
+              : text;
+          cursor = right;
+        }
+        painted += esc(chars.slice(cursor - offset).join(""));
+        offset = end;
+        return `<span class="tsk-meta-row">${painted}</span>`;
+      })
+      .join("");
     const editField = field?.startsWith("step:") ? "steps" : field || "";
     const editTarget = field?.startsWith("step:") ? field.slice(5) : "";
-    return `<div class="tsk-task-column tsk-surface ${narrow ? "is-narrow" : ""}" aria-label="T${task.number} task column" data-status="${esc(task.status)}" data-edit-state="${steps.editor ? "editing" : steps.dirty ? "unsaved" : edit ? "editing" : "view"}" data-edit-field="${esc(editField)}" data-edit-target="${esc(editTarget)}">${header}<div class="tsk-task-surface tsk-page">${notes}${relations.length ? `<div class="tsk-relations">${relations.join("")}</div>` : ""}${stepList}${after.length ? `<div class="tsk-relations tsk-after-steps">${after.join("")}</div>` : ""}</div><div class="tsk-page-meta dim">${meta}</div></div>`;
+    return `<div class="tsk-task-column tsk-surface ${narrow ? "is-narrow" : ""}" aria-label="T${task.number} task column" data-status="${esc(task.status)}" data-edit-state="${steps.editor ? "editing" : steps.dirty ? "unsaved" : edit ? "editing" : "view"}" data-edit-field="${esc(editField)}" data-edit-target="${esc(editTarget)}">${header}<div class="tsk-task-surface tsk-page">${notes}${relations.length ? `<div class="tsk-relations">${relations.join("")}</div>` : ""}${stepList}${after.length ? `<div class="tsk-relations tsk-after-steps">${after.join("")}</div>` : ""}${state.quickExpanded ? "" : paperTrail(task)}</div><div class="tsk-page-meta dim">${meta}</div></div>`;
   }
 
   function renderQuestionList(width, wide) {
@@ -2868,6 +2933,8 @@ import { parseCapture } from "./capture.js";
       activateRing(task);
     } else if (bare && e.key === "Enter" && isWide()) {
       state.page = false;
+    } else if (bare && e.key === "g" && !state.quickExpanded) {
+      steps.trailOpen = !steps.trailOpen;
     } else if (bare && e.key === "a") {
       steps.begin(task);
     } else if (bare && e.key === "e") {
@@ -3173,6 +3240,11 @@ import { parseCapture } from "./capture.js";
       const task = taskById(node.dataset.copyTask);
       if (task) copyTaskIdentifier(task);
       return;
+    } else if ((node = hit("[data-trail-toggle]"))) {
+      if (state.edit || steps.editor || steps.dirty) return;
+      state.page = true;
+      steps.selected = "trail";
+      steps.trailOpen = !steps.trailOpen;
     } else if ((node = hit("[data-ring]"))) {
       const task = shownTask();
       if (!task || hasUnsavedWork()) return;

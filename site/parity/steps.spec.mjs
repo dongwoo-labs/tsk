@@ -161,7 +161,7 @@ test("the paper trail stays painted while a field is edited", async ({
   await heading.click();
   await expect(heading).toHaveText(/PAPER TRAIL · \d+ ▾$/);
   await expect(page.locator(".tsk-trail-entry").first()).toContainText(
-    "ready → started · you",
+    "open → started · you",
   );
   await page.locator("#board-demo").focus();
   await page.keyboard.press("e");
@@ -180,7 +180,7 @@ test("landing project task page keeps its default base visible", async ({
   page,
 }) => {
   await page.goto("http://127.0.0.1:4180/");
-  await page.locator('[data-tab="project"]').click();
+  await page.locator('[data-tab="board"]').click();
   await page.locator("#board-demo").focus();
   await page.keyboard.press("Enter");
   await expect(page.locator(".tsk-page-meta")).toContainText(
@@ -218,15 +218,19 @@ test("Tab reaches the paper trail heading after + step and Enter expands it", as
   await expect(page.locator("[data-step]")).toHaveCount(2);
   await page.keyboard.press("Tab");
   await expect(heading).toHaveAttribute("aria-selected", "false");
+  await expect(page.locator('[data-ring="parent"]')).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Tab");
   await expect(page.locator("[data-step]").first()).toHaveAttribute(
     "aria-selected",
     "true",
   );
 });
 
-// The project preview's page behaves the same: Tab reaches the heading, and the trail resets
-// when another task's page opens and when the first one opens again.
-test("the project preview page's trail is a Tab stop and resets on reopen", async ({
+// The wide page keeps the fork's board tab and relation ring.
+test("the wide task page's trail is a Tab stop and resets on reopen", async ({
   page,
 }) => {
   await page.goto("/");
@@ -234,9 +238,6 @@ test("the project preview page's trail is a Tab stop and resets on reopen", asyn
     .locator("#tsk-demo")
     .evaluate((el, w) => (el.style.width = `${w}ch`), 110);
   await page.locator("#board-demo").focus();
-  await page.keyboard.press("3");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Enter");
   const heading = page.locator(".tsk-trail-heading");
   await expect(heading).toHaveText(/^PAPER TRAIL · \d+ ▸$/);
