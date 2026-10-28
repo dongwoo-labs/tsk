@@ -823,6 +823,14 @@ tsk secret-result Q1 --file - --state-dir /local/agent-board
 
 `--file -` reads the JSON input from stdin.
 
+By default, `questions` requires every private record in the selected scope to be readable. One unavailable record refuses the whole list with exit 1. Existing consumers keep that strict contract.
+
+Use `tsk questions --inventory --state-dir /local/agent-board --json` to inspect a shared board with missing private records. It returns an array in shared-reference order. Readable records keep their full shape. Unavailable records return only `{"reference": {...}, "unavailable": true}`, with a warning on stderr and exit 0. Missing, corrupt, unsupported, and mismatched private records use this marker.
+
+An unavailable record's answer state is unknown, not answered or absent. Keep its Task waiting until the private record is available. Consumers must handle the marker before opting in; no draft, answer, or approval evidence is supplied for it. `--task` also filters inventory entries. `--inventory` is list-only: a Q operand, `--file`, or a write verb refuses with exit 2.
+
+Inventory does not copy, repair, or change private records. An unreadable shared store still refuses the entire read. Individual reads and mutations retain their strict contract. Q-number lookup needs the scope's complete private list; a UUID reads only its target. The board's questions tab still requires every private record to be readable.
+
 `ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, `finding`, or `secret`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, `audience` (`user` or `lead`, required: a question without it is refused with exit 1 and nothing saved), and the optional `lead_recipient`, `secret`, and `permission_context`. Nullable fields can be `null`; options defaults to an empty array, and an `approval` or `secret` question takes none (refused with exit 1, nothing saved). Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record saved before this rule without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
 
 `permission_context` is optional private metadata for a permission ask. Its object has `tool_name` (string), `task_number` (unsigned integer), and nullable `cwd` (string), `tool_input` (JSON object), `task_scope` (string), and `holds` (array of strings). Nullable members may be omitted. For example:
