@@ -111,7 +111,7 @@ fn questions(dir: &TempDir) -> Value {
 }
 
 #[test]
-fn unavailable_private_questions_stay_in_lists_without_blocking_readable_targets() {
+fn inventory_keeps_unavailable_questions_visible_while_default_reads_stay_strict() {
     for damage in ["missing", "corrupt", "unsupported", "mismatch", "not-file"] {
         let dir = TempDir::new(damage);
         let task = task_id(&dir);
@@ -135,7 +135,7 @@ fn unavailable_private_questions_stay_in_lists_without_blocking_readable_targets
                 if damage == "unsupported" {
                     record["future_field"] = json!(true);
                 } else {
-                    record["reference"]["revision"] = json!(H);
+                    record["reference"]["revision"] = json!("00000000-0000-0000-0000-000000000001");
                 }
                 fs::write(&private, serde_json::to_vec(&record).unwrap()).unwrap();
             }
@@ -152,6 +152,10 @@ fn unavailable_private_questions_stay_in_lists_without_blocking_readable_targets
             let state = dir.state();
             args.push(&state);
             args.extend(filter);
+            let strict = cli(&args);
+            assert_eq!(strict.code, 1, "{damage}: {}", strict.stderr);
+            assert!(strict.stdout.is_empty());
+            args.push("--inventory");
             let listed = cli(&args);
             assert_eq!(listed.code, 0, "{damage}: {}", listed.stderr);
             assert!(listed.stderr.contains("unavailable"), "{}", listed.stderr);
@@ -162,7 +166,9 @@ fn unavailable_private_questions_stay_in_lists_without_blocking_readable_targets
                 ])
             );
         }
-        for address in ["Q2", healthy["reference"]["id"].as_str().unwrap()] {
+        let strict_number = cli(&["questions", "Q2", "--state-dir", &dir.state()]);
+        assert_eq!(strict_number.code, 1);
+        for address in [healthy["reference"]["id"].as_str().unwrap()] {
             let read = cli(&[
                 "questions",
                 address,
@@ -204,16 +210,78 @@ fn unavailable_private_questions_stay_in_lists_without_blocking_readable_targets
             shared_before
         );
         assert_eq!(fs::read(&healthy_file).unwrap(), healthy_before);
-        // A healthy target's number remains usable for mutations too.
+        // UUID access to a healthy target keeps the existing mutation path.
         let file = dir.write(
             "healthy-route.json",
             &json!({
                 "expected_revision": healthy["reference"]["revision"], "audience": "lead"
             }),
         );
-        let routed = cli(&["route", "Q2", "--file", &file, "--state-dir", &dir.state()]);
+        let routed = cli(&[
+            "route",
+            healthy["reference"]["id"].as_str().unwrap(),
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
         assert_eq!(routed.code, 0, "{damage}: {}", routed.stderr);
     }
+}
+
+#[test]
+fn inventory_is_list_only_filters_by_task_and_does_not_hide_shared_store_failures() {
+    let dir = TempDir::new("inventory-scope");
+    let task = task_id(&dir);
+    assert_eq!(
+        cli(&["add", "-t", "other", "--desk", "--state-dir", &dir.state()]).code,
+        0
+    );
+    let out = ask(&dir, &draft(&task, "question", Value::Null));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let normal = cli(&["questions", "--state-dir", &dir.state()]);
+    let inventory = cli(&["questions", "--inventory", "--state-dir", &dir.state()]);
+    assert_eq!(inventory.code, 0, "{}", inventory.stderr);
+    assert!(inventory.stderr.is_empty());
+    assert_eq!(inventory.stdout, normal.stdout);
+    let empty = cli(&[
+        "questions",
+        "--inventory",
+        "--task",
+        "T2",
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(empty.code, 0);
+    assert_eq!(stdout_json(&empty), json!([]));
+
+    let shared_before = fs::read(dir.0.join("state/tsk.json")).unwrap();
+    let file = dir.write("input.json", &json!({}));
+    for verb in ["ask", "answer", "route", "ui-answer", "secret-result"] {
+        let refused = cli(&[
+            verb,
+            "--inventory",
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(refused.code, 2, "{verb}: {}", refused.stderr);
+    }
+    for extra in [vec!["Q1"], vec!["--file", file.as_str()]] {
+        let state = dir.state();
+        let mut args = vec!["questions", "--inventory", "--state-dir", &state];
+        args.extend(extra);
+        assert_eq!(cli(&args).code, 2);
+    }
+    assert_eq!(
+        fs::read(dir.0.join("state/tsk.json")).unwrap(),
+        shared_before
+    );
+    fs::write(dir.0.join("state/tsk.json"), b"broken shared store").unwrap();
+    let refused = cli(&["questions", "--inventory", "--state-dir", &dir.state()]);
+    assert_eq!(refused.code, 1);
+    assert!(refused.stdout.is_empty());
 }
 
 #[test]

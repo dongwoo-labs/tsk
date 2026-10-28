@@ -204,7 +204,7 @@ pub fn questions_help() -> CliOutput {
             "tsk ask --file <question.json> --state-dir <Agent-dir>".into(),
             "tsk answer <Q-number|UUID> --file <answer.json> --state-dir <Agent-dir>".into(),
             "tsk route <Q-number|UUID> --file <route.json> --state-dir <Agent-dir>".into(),
-            "tsk questions [Q-number|UUID] [--task <T-number|UUID>] --state-dir <Agent-dir> [--json]".into(),
+            "tsk questions [Q-number|UUID] [--task <T-number|UUID>] [--inventory] --state-dir <Agent-dir> [--json]".into(),
             "tsk ui-answer <Q-number|UUID> --file <answer.json|-> --state-dir <Agent-dir>".into(),
             "tsk secret-result <Q-number|UUID> --file <result.json|-> --state-dir <Agent-dir>".into(),
         ],
@@ -213,7 +213,8 @@ pub fn questions_help() -> CliOutput {
             ("--file <path>", "Full JSON question, answer, or route input; no text truncation; - reads stdin"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
             ("--task <T-number|UUID>", "Filter question readback by Task"),
-            ("--json", "JSON array for lists: full records, or {reference, unavailable: true} with unknown answer state and a stderr warning; a single Q requires its full private record"),
+            ("--inventory", "List-only opt-in: include unavailable private records as {reference, unavailable: true}, warn on stderr, and exit 0; answer state stays unknown. Default reads stay strict"),
+            ("--json", "Full JSON readback (also the default for questions)"),
         ])],
         examples: vec!["tsk questions Q1 --state-dir /local/agent-board --json".into()],
         refusals: vec![

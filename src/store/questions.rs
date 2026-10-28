@@ -231,30 +231,6 @@ impl QuestionStore {
             .collect()
     }
 
-    /// Resolve a display address from shared references, not sibling private snapshots.
-    pub fn read_number(
-        &self,
-        number: u64,
-        task_id: Option<Uuid>,
-    ) -> Result<QuestionRecord, QuestionError> {
-        let _guard = self
-            .store
-            .lock_exclusive()
-            .map_err(|_| QuestionError::StoreUnavailable)?;
-        let state = self
-            .store
-            .load_unlocked()
-            .map_err(|_| QuestionError::StoreUnavailable)?;
-        let reference = state
-            .questions()
-            .iter()
-            .find(|reference| {
-                reference.number == number && task_id.is_none_or(|id| reference.task_id == id)
-            })
-            .ok_or(QuestionError::UnknownQuestion)?;
-        self.read_private(reference)
-    }
-
     pub fn read(&self, id: Uuid) -> Result<QuestionRecord, QuestionError> {
         let _guard = self
             .store

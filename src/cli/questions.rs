@@ -67,6 +67,7 @@ pub(super) struct Parsed {
     pub file: Option<PathBuf>,
     pub operand: Option<String>,
     pub task: Option<super::parser::TaskAddress>,
+    pub inventory: bool,
 }
 
 pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
@@ -77,10 +78,15 @@ pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
     let mut file = None;
     let mut operand = None;
     let mut task = None;
+    let mut inventory = false;
     let mut index = 2;
     while let Some(argument) = args.get(index) {
         match argument.as_str() {
             "--json" => index += 1,
+            "--inventory" => {
+                inventory = true;
+                index += 1;
+            }
             "--state-dir" | "--file" | "--task" => {
                 let value = args
                     .get(index + 1)
@@ -110,12 +116,16 @@ pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
             }
         }
     }
+    if inventory && (verb != "questions" || operand.is_some() || file.is_some()) {
+        return Err(("--inventory is only for questions lists".into(), 2));
+    }
     Ok(Parsed {
         verb,
         state_dir,
         file,
         operand,
         task,
+        inventory,
     })
 }
 
@@ -126,6 +136,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         file,
         operand,
         task,
+        inventory,
     } = parsed;
     let verb = verb.as_str();
     let state_dir =
@@ -338,7 +349,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                 let id = resolve(&store, &operand, task_id)?;
                 let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
                 Ok(json(&record, 0))
-            } else {
+            } else if inventory {
                 let entries = store
                     .list_entries(task_id)
                     .map_err(|error| (error.to_string(), 1))?;
@@ -353,6 +364,11 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                     );
                 }
                 Ok(output)
+            } else {
+                let records = store
+                    .list(task_id)
+                    .map_err(|error| (error.to_string(), 1))?;
+                Ok(json(&records, 0))
             }
         }
         _ => Err(("expected ask, answer, route, or questions".into(), 2)),
@@ -393,7 +409,12 @@ pub(super) fn lookup(
         .unwrap_or(operand)
         .parse::<u64>()
         .map_err(|_| Lookup::Syntax)?;
-    store.read_number(number, task_id).map_err(Lookup::Store)
+    store
+        .list(task_id)
+        .map_err(Lookup::Store)?
+        .into_iter()
+        .find(|record| record.reference.number == number)
+        .ok_or(Lookup::Store(QuestionError::UnknownQuestion))
 }
 
 fn resolve(
