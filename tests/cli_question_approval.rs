@@ -168,19 +168,17 @@ fn inventory_keeps_unavailable_questions_visible_while_default_reads_stay_strict
         }
         let strict_number = cli(&["questions", "Q2", "--state-dir", &dir.state()]);
         assert_eq!(strict_number.code, 1);
-        for address in [healthy["reference"]["id"].as_str().unwrap()] {
-            let read = cli(&[
-                "questions",
-                address,
-                "--task",
-                "T1",
-                "--state-dir",
-                &dir.state(),
-            ]);
-            assert_eq!(read.code, 0, "{damage}: {}", read.stderr);
-            assert!(read.stderr.is_empty());
-            assert_eq!(stdout_json(&read), *healthy);
-        }
+        let read = cli(&[
+            "questions",
+            healthy["reference"]["id"].as_str().unwrap(),
+            "--task",
+            "T1",
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(read.code, 0, "{damage}: {}", read.stderr);
+        assert!(read.stderr.is_empty());
+        assert_eq!(stdout_json(&read), *healthy);
         for address in ["Q1", unavailable["reference"]["id"].as_str().unwrap()] {
             let read = cli(&["questions", address, "--state-dir", &dir.state()]);
             assert_eq!(read.code, 1, "{damage}: {}", read.stderr);
