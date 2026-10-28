@@ -12,7 +12,7 @@ use crate::domain::{
 };
 use crate::store::{
     notify_question, question_problems, valid_secret_question, QuestionDurability, QuestionError,
-    QuestionStore, TaskStore, SECRET_SET,
+    QuestionListEntry, QuestionStore, TaskStore, SECRET_SET,
 };
 
 pub fn help() -> CliOutput {
@@ -339,10 +339,20 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                 let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
                 Ok(json(&record, 0))
             } else {
-                let records = store
-                    .list(task_id)
+                let entries = store
+                    .list_entries(task_id)
                     .map_err(|error| (error.to_string(), 1))?;
-                Ok(json(&records, 0))
+                let unavailable = entries
+                    .iter()
+                    .filter(|entry| matches!(entry, QuestionListEntry::Unavailable { .. }))
+                    .count();
+                let mut output = json(&entries, 0);
+                if unavailable > 0 {
+                    output.stderr = format!(
+                        "tsk questions: warning: {unavailable} private question record(s) unavailable; answer state unknown; direct reads and mutations remain refused\n"
+                    );
+                }
+                Ok(output)
             }
         }
         _ => Err(("expected ask, answer, route, or questions".into(), 2)),
@@ -383,12 +393,7 @@ pub(super) fn lookup(
         .unwrap_or(operand)
         .parse::<u64>()
         .map_err(|_| Lookup::Syntax)?;
-    store
-        .list(task_id)
-        .map_err(Lookup::Store)?
-        .into_iter()
-        .find(|record| record.reference.number == number)
-        .ok_or(Lookup::Store(QuestionError::UnknownQuestion))
+    store.read_number(number, task_id).map_err(Lookup::Store)
 }
 
 fn resolve(

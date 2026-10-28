@@ -91,6 +91,17 @@ impl std::fmt::Display for QuestionError {
 }
 impl std::error::Error for QuestionError {}
 
+/// CLI inventory keeps unreadable questions visible without inventing their answer state.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum QuestionListEntry {
+    Record(Box<QuestionRecord>),
+    Unavailable {
+        reference: QuestionRef,
+        unavailable: bool,
+    },
+}
+
 /// Capability for an explicitly selected Agent board, never an implicit personal board.
 /// This is an isolation boundary, not authentication against the same OS account.
 #[derive(Debug)]
@@ -187,6 +198,61 @@ impl QuestionStore {
             .filter(|reference| task_id.is_none_or(|id| reference.task_id == id))
             .map(|reference| self.read_private(reference))
             .collect()
+    }
+
+    /// A missing snapshot on another machine is unknown, never an absent question.
+    /// Keep `list` strict for callers that require a complete private feed.
+    pub fn list_entries(
+        &self,
+        task_id: Option<Uuid>,
+    ) -> Result<Vec<QuestionListEntry>, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        state
+            .questions()
+            .iter()
+            .filter(|reference| task_id.is_none_or(|id| reference.task_id == id))
+            .map(|reference| match self.read_private(reference) {
+                Ok(record) => Ok(QuestionListEntry::Record(Box::new(record))),
+                Err(QuestionError::PrivateRecordUnavailable) => {
+                    Ok(QuestionListEntry::Unavailable {
+                        reference: reference.clone(),
+                        unavailable: true,
+                    })
+                }
+                Err(error) => Err(error),
+            })
+            .collect()
+    }
+
+    /// Resolve a display address from shared references, not sibling private snapshots.
+    pub fn read_number(
+        &self,
+        number: u64,
+        task_id: Option<Uuid>,
+    ) -> Result<QuestionRecord, QuestionError> {
+        let _guard = self
+            .store
+            .lock_exclusive()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let state = self
+            .store
+            .load_unlocked()
+            .map_err(|_| QuestionError::StoreUnavailable)?;
+        let reference = state
+            .questions()
+            .iter()
+            .find(|reference| {
+                reference.number == number && task_id.is_none_or(|id| reference.task_id == id)
+            })
+            .ok_or(QuestionError::UnknownQuestion)?;
+        self.read_private(reference)
     }
 
     pub fn read(&self, id: Uuid) -> Result<QuestionRecord, QuestionError> {

@@ -213,7 +213,7 @@ pub fn questions_help() -> CliOutput {
             ("--file <path>", "Full JSON question, answer, or route input; no text truncation; - reads stdin"),
             ("--state-dir <dir>", "Explicit non-personal Agent board; TSK_STATE_DIR can supply it"),
             ("--task <T-number|UUID>", "Filter question readback by Task"),
-            ("--json", "Full JSON readback (also the default for questions)"),
+            ("--json", "JSON array for lists: full records, or {reference, unavailable: true} with unknown answer state and a stderr warning; a single Q requires its full private record"),
         ])],
         examples: vec!["tsk questions Q1 --state-dir /local/agent-board --json".into()],
         refusals: vec![
