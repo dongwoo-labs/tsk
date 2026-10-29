@@ -53,6 +53,7 @@ fn task(id: u128, title: &str, status: HumanStatus, scope: TaskScope, secs_ago: 
         revision: Uuid::from_u128(id),
         merge_base_revision: None,
         title: title.to_string(),
+        machine: None,
         notes: None,
         status,
         block: None,
@@ -3306,7 +3307,7 @@ fn task_page_caps_a_wrapped_header_inside_the_page_body() {
         rows.join("\n")
     );
     assert!(
-        rows[8].trim() == "all",
+        rows[8].trim() == "all · machine @local",
         "the status row was overwritten by the header:\n{}",
         rows.join("\n")
     );
@@ -3458,7 +3459,7 @@ fn overflowing_board_list_does_not_clip_task_rows_to_ellipsis() {
         .map(|i| {
             task(
                 7100 + i,
-                &format!("ScrollbarNoBreakTitleThatMustWrapNotEllipsize{i:02}XXXXXXXXXXXXXXXX"),
+                &format!("ScrollbarNoBreakTitleThatMustWrapNotEllipsize{i:02}XXXXXXXX"),
                 HumanStatus::Todo,
                 project("/repos/tsk"),
                 3600,

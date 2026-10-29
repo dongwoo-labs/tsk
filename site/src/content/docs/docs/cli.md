@@ -99,7 +99,7 @@ tsk add [--file <path|->] [--state-dir <dir>]
 | `--file <path>`, `--file -` | Read a JSON plan from a file, or from stdin |
 | `--json` | Print the result as one JSON object |
 
-An add is safe to repeat. A live task with the same title, project, thread, assignee, and base counts as already there, even when done or archived: the add changes nothing and reports `existing`. Adding into an archived project refuses with `project-archived`.
+New tasks record the [current machine](/docs/storage/#machines). An add is safe to repeat. A live task on this machine, or unspecified, with the same title, project, thread, assignee, and base counts as already there, even when done or archived: the add changes nothing and reports `existing`. Adding into an archived project refuses with `project-archived`.
 
 Output is `added <title>`, or `task already exists`. An assignee that is not a profile adds a line, so a typo shows: `assigned T12 to @dana (not an agent profile)`. With `--json`:
 
@@ -153,7 +153,7 @@ cat plan.json | tsk add
 Reads the tasks in a scope, or one task in full.
 
 ```text
-tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread] [--assignee <name>] [--open | --ready | --done | --deleted | --archived] [--group <by>] [--sort <by>] [--json] [--state-dir <dir>]
+tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread] [--assignee <name>] [--machine <range>] [--open | --ready | --done | --deleted | --archived] [--group <by>] [--sort <by>] [--json] [--state-dir <dir>]
 ```
 
 | Flag | Lists |
@@ -163,6 +163,7 @@ tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread
 | `--thread <name>` | Tasks on that thread. With `--all`, across every project and the desk |
 | `--no-thread` | Tasks without a thread |
 | `--assignee <name>` | Tasks assigned to that name. `me` lists yours |
+| `--machine <range>` | `@all` (default), `@local` (current and unspecified), `@current`, `@unspecified`, or a machine name |
 | `--open`, `--ready` | Only that status |
 | `--done` | Done tasks |
 | `--archived` | Archived tasks, and tasks in archived projects, in any status |
@@ -174,6 +175,8 @@ tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread
 `--group` and `--sort` arrange CLI output only. `project` needs `--all`. `thread` and `assignee` do not combine with a matching thread or assignee filter.
 
 These are usage errors (exit 2): `--group` or `--sort` with `--done`, `--archived`, or `--deleted`; two scope flags or two status filters; `--thread` with `--no-thread`; a value flag given twice; and an unknown task address.
+
+Machine selectors start with `@`; names such as `all`, `current`, and `unspecified` remain literal machine names. A direct task address reads across machines and takes no machine filter. Human rows append `machine <name>` when assigned. Rows without that label are unspecified.
 
 **Refusals:** none. Bad flags and an unknown task address are usage errors, exit 2 ([exit contract](#exit-contract)).
 
@@ -202,6 +205,7 @@ tsk list --all --thread release --json
 | `title`, `status` | Title and status |
 | `project` | Project path, or `null` on the desk |
 | `thread`, `assignee`, `base` | Thread, assignee name, and explicit base branch, each `null` when unset. An assignee of `you` is you |
+| `machine` | Machine name, or `null` when unspecified |
 | `assignee_kind` | `agent` for an agent profile, `person` for you or a named person, `null` when unassigned |
 | `after` | Tasks this one runs after, in order, each `{"task": 202, "done": false}`. A task gone from the board reads as done |
 | `before` | Numbers of the tasks that run after this one |
@@ -382,7 +386,7 @@ tsk status T12 review --done "Opened PR #42" --check "tests pass" --next "docs"
 Changes a task's title, notes, assignee, dispatch base, the tasks it runs after, or who its open block or review waits on. Scope and thread stay as they are: to move a task, add it again in the right scope and archive the old one.
 
 ```text
-tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--after <task>]... [--clear-after] [--on <who>] [--state-dir <dir>]
+tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--after <task>]... [--clear-after] [--on <who>] [--machine <name> | --no-machine] [--state-dir <dir>]
 ```
 
 | Flag | Meaning |
@@ -397,6 +401,8 @@ tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--a
 | `--after <task>` | Run after this task; repeat for more. Replaces the list |
 | `--clear-after` | Run after nothing |
 | `--on <who>` | Change who the open block or review waits on, as for [block](#block) and [review](#review) `--on` |
+| `--machine <name>` | Set the machine name, or `@current` for this machine |
+| `--no-machine` | Clear the machine, leaving the task unspecified |
 
 - `--after` takes tasks in any project. It refuses the task itself, a task not on the board, or a done one (`invalid-after`), and a link that would close a loop (`after-loop`). There is no `--before`: set the other task's `--after`.
 - `--on` keeps the round, its text, checks, and replies. A task with no open block or review refuses with `not-blocked`.

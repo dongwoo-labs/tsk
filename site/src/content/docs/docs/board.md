@@ -9,7 +9,7 @@ Click to navigate, or use the keyboard. The footer shows actions for the cursor 
 
 The top row holds **1 board**, **2 questions**, and **3 reports**. Press `1` to return to the board tab and its list, `2` for the [questions tab](#questions), or `3` for [completion reports](#reports). Inside Herdr, the board tab's top row also shows a bold **↻ check** button at its right edge; see [stall checks](#stall-checks).
 
-The board always shows every live task: your desk and every live project. Launching inside a Git repository puts the cursor on that project's first row; it does not hide the rest. See [Projects](#projects) and [Rows](#rows).
+The board shows live tasks from the current machine and tasks without a machine: your desk and every live project. Launching inside a Git repository puts the cursor on that project's first row; it does not hide the rest. See [Projects](#projects) and [Rows](#rows).
 
 In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one is already open in another tab there, Herdr switches to that tab and focuses its pane, preserving its view and edits. Otherwise, it opens a board beside your work. Boards in other workspaces stay untouched; all boards share the same tasks.
 
@@ -18,6 +18,22 @@ In Herdr, `prefix+t` opens or focuses a board in the current workspace. If one i
 Press `ctrl+q` to quit from the board or a task view, including Help and pickers. While a text editor, board search, quick-add line, or palette query owns input, `ctrl+q` keeps its editing behavior instead. Unsaved drafts must be saved or cancelled before quitting, including a draft parked in the detail column while the list has focus. Save recovery must be resolved first; quit attempts leave its failure message intact.
 
 `Esc` leaves multi-select and clears its marked tasks before it closes the current layer. At the board root, with multi-select inactive and no page, popup, search, or header selection left to dismiss, it quits without confirmation. In the wide layout, `Esc` from the detail column returns focus to the list once any editor or overlay is dismissed; a task draft stays parked beside it. Quick capture's popup-close behavior is unchanged.
+
+## Machines
+
+The board shows its machine range as plain text. Open the palette with `:` and search for `machine` to change it, even when the list is empty.
+
+| Range | Tasks shown |
+| --- | --- |
+| `@local` | Current machine and unspecified tasks, the default |
+| `@current` | Current machine only |
+| `@all` | Every machine |
+| `@unspecified` | Tasks without a machine |
+| A saved machine name | That machine only |
+
+The range lasts for this session. It applies to counts, search, the done drawer, questions, reports, and stalled-task checks. Related tasks remain linked across machines. Opening a related task can show a task outside the range.
+
+Rows and task details name the task's machine, or `unspecified`. Change a task's machine with [`tsk edit`](/docs/cli/#edit). Machine names follow the [storage settings](/docs/storage/#machines).
 
 ## Projects
 

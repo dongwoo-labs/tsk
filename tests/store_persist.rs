@@ -45,7 +45,7 @@ fn platform_migrated_v5_fixture() -> Vec<u8> {
     let mut document: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/current_store_v5.json"))
             .expect("v5 fixture json");
-    document["format_version"] = serde_json::json!(16);
+    document["format_version"] = serde_json::json!(17);
     for task in document["tasks"].as_array_mut().expect("tasks") {
         if task["status"] == "open" {
             task["status"] = serde_json::json!("todo");
@@ -62,7 +62,7 @@ fn platform_integrated_v6_fixture() -> Vec<u8> {
     let mut document: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/current_store_v6.json"))
             .expect("upstream v6 fixture json");
-    document["format_version"] = serde_json::json!(16);
+    document["format_version"] = serde_json::json!(17);
     let state: DomainState = serde_json::from_value(document).expect("integrated v6 fixture");
     serde_json::to_vec_pretty(&state).expect("encode platform fixture")
 }
@@ -99,7 +99,7 @@ fn literal_current_v1_fixture_pins_the_complete_store_wire_shape() {
     .expect("install current fixture");
 
     let mut state = TaskStore::new(&dir).load().expect("load current fixture");
-    assert_eq!(state.format_version(), 16, "the v1 fixture loads migrated");
+    assert_eq!(state.format_version(), 17, "the v1 fixture loads migrated");
     assert!(state.projects().is_empty());
     assert_eq!(state.next_task_number, 8);
     assert_eq!(state.next_notice_number, 1);
@@ -173,7 +173,7 @@ fn v1_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v1_beside_
     let store = TaskStore::new(&dir);
 
     let state = store.load().expect("v1 document loads through the chain");
-    assert_eq!(state.format_version(), 16);
+    assert_eq!(state.format_version(), 17);
     assert!(state.projects().is_empty(), "v1 has no archived projects");
     assert!(state.tasks().iter().all(|task| !task.archived));
 
@@ -186,7 +186,7 @@ fn v1_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v1_beside_
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 16);
+    assert_eq!(live["format_version"], 17);
     assert_eq!(live["projects"], serde_json::json!({}));
     assert_eq!(live["next_notice_number"], 1);
 }
@@ -204,7 +204,7 @@ fn v2_document_loads_with_notice_counter_one_and_first_save_leaves_tsk_json_v2_b
     let store = TaskStore::new(&dir);
 
     let state = store.load().expect("v2 document loads through the chain");
-    assert_eq!(state.format_version(), 16);
+    assert_eq!(state.format_version(), 17);
     assert_eq!(state.next_notice_number, 1);
     assert!(state.tasks().iter().all(|task| !task.is_notice()));
     assert_eq!(state.tasks()[0].board_identifier().as_deref(), Some("T7"));
@@ -237,7 +237,7 @@ fn v3_document_loads_ready_as_open_and_first_save_leaves_tsk_json_v3_beside_the_
     let state = store
         .load()
         .expect("v3 document with ready tasks loads through the chain");
-    assert_eq!(state.format_version(), 16);
+    assert_eq!(state.format_version(), 17);
     let task = state.tasks().first().expect("fixture task");
     assert_eq!(task.status, HumanStatus::Todo, "ready migrates to open");
     assert_eq!(
@@ -262,7 +262,7 @@ fn v3_document_loads_ready_as_open_and_first_save_leaves_tsk_json_v3_beside_the_
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 16);
+    assert_eq!(live["format_version"], 17);
     assert_eq!(live["tasks"][0]["status"], "todo");
 }
 
@@ -278,7 +278,7 @@ fn v3_document_loads_through_the_chain_and_first_save_leaves_tsk_json_v3_beside_
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v3 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
     assert_eq!(
@@ -311,7 +311,7 @@ fn v4_document_migrates_to_v6_and_keeps_its_original_backup() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load v4 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
 
@@ -340,7 +340,7 @@ fn literal_v5_fixture_migrates_to_canonical_v6() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v5 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert!(loaded.projects().is_empty());
     assert_eq!(loaded.next_notice_number, 1);
     assert_eq!(loaded.tasks()[0].assignee, None);
@@ -363,7 +363,7 @@ fn literal_v6_fixture_migrates_and_round_trips() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v6 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert_eq!(loaded.tasks()[0].block, None);
     assert!(loaded.tasks()[0].past_blocks.is_empty());
 
@@ -392,7 +392,7 @@ fn literal_dev_v7_fixture_opens_as_v16_and_backs_up() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v7 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
         fs::read(dir.join("tsk.json.v7")).expect("read version backup"),
@@ -415,7 +415,7 @@ fn literal_dev_v8_fixture_opens_as_v16_and_backs_up() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v8 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
         fs::read(dir.join("tsk.json.v8")).expect("read version backup"),
@@ -438,7 +438,7 @@ fn literal_dev_v9_fixture_opens_as_v16_and_backs_up() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v9 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
         fs::read(dir.join("tsk.json.v9")).expect("read version backup"),
@@ -463,7 +463,7 @@ fn literal_dev_v10_fixture_opens_as_v16_backs_up_and_gains_after() {
     let store = TaskStore::new(&dir);
 
     let mut loaded = store.load().expect("load current v10 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert!(loaded.tasks().iter().all(|task| task.after.is_empty()));
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
@@ -515,7 +515,7 @@ fn literal_dev_v11_fixture_opens_as_v16_and_backs_up() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v11 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
         fs::read(dir.join("tsk.json.v11")).expect("read version backup"),
@@ -656,7 +656,7 @@ fn v5_batch_undo_round_trips_and_still_reverts_the_whole_completion() {
     let live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 16);
+    assert_eq!(live["format_version"], 17);
     assert!(live["undo_stack"][0].get("batch").is_some());
 
     let mut loaded = store.load().expect("load batch undo");
@@ -1100,13 +1100,13 @@ fn reload_merge_save_keeps_a_sibling_writers_project_record_and_applies_the_loca
 fn noncurrent_store_is_refused_without_rewriting_the_file() {
     let dir = temp_state_dir();
     let _guard = TempDirGuard(dir.clone());
-    let document = serde_json::json!({ "format_version": 17, "next_task_number": 2, "tasks": [], "undo_stack": [] });
+    let document = serde_json::json!({ "format_version": 18, "next_task_number": 2, "tasks": [], "undo_stack": [] });
     let bytes = serde_json::to_vec_pretty(&document).expect("json");
     fs::write(dir.join("tsk.json"), &bytes).expect("write noncurrent store");
     let error = TaskStore::new(&dir)
         .save(&DomainState::new())
         .expect_err("current writer refuses noncurrent store");
-    assert!(error.to_string().contains("expected 16"));
+    assert!(error.to_string().contains("expected 17"));
     assert_eq!(fs::read(dir.join("tsk.json")).expect("read"), bytes);
 }
 
@@ -1131,7 +1131,7 @@ fn v1_migration_strips_defensive_archived_keys() {
     let state = TaskStore::new(&dir)
         .load()
         .expect("load v1 through the chain");
-    assert_eq!(state.format_version(), 16);
+    assert_eq!(state.format_version(), 17);
     let task = state.tasks().first().expect("fixture task");
     assert!(
         !task.archived,
@@ -1153,7 +1153,7 @@ fn populated_upstream_v10_fixture_round_trips_losslessly_to_v16() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load populated v10 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     let task = loaded
         .tasks()
         .iter()
@@ -1171,7 +1171,7 @@ fn populated_upstream_v10_fixture_round_trips_losslessly_to_v16() {
     )
     .expect("json");
     let mut expected: serde_json::Value = serde_json::from_str(v10).expect("json");
-    expected["format_version"] = 16.into();
+    expected["format_version"] = 17.into();
     with_integrated_status_names(&mut expected);
     assert_eq!(
         saved, expected,
@@ -1230,7 +1230,7 @@ fn v11_replies_open_as_v16_as_not_yet_sent() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load v11");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     let replies: Vec<_> = loaded
         .tasks()
         .iter()
@@ -1266,7 +1266,7 @@ fn v11_replies_open_as_v16_as_not_yet_sent() {
     )
     .expect("json");
     let mut expected = document;
-    expected["format_version"] = 16.into();
+    expected["format_version"] = 17.into();
     with_integrated_status_names(&mut expected);
     assert_eq!(
         saved, expected,
@@ -1290,7 +1290,7 @@ fn literal_dev_v12_fixture_opens_as_v16_and_its_done_undoes_to_open() {
     let store = TaskStore::new(&dir);
 
     let loaded = store.load().expect("load current v12 fixture");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
         fs::read(dir.join("tsk.json.v12")).expect("read version backup"),
@@ -1385,7 +1385,7 @@ fn literal_dev_v14_fixture_opens_as_v16_and_a_hidden_name_round_trips() {
     let store = TaskStore::new(&dir);
 
     let mut loaded = store.load().expect("load v14");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert!(loaded.hidden_assignees().is_empty());
     store.save(&loaded).expect("save migrated state");
     assert_eq!(
@@ -1863,7 +1863,7 @@ fn a_populated_dev_v15_store_opens_as_v16_and_keeps_tsk_json_v15() {
     fs::write(dir.join("tsk.json"), &v15).expect("install dev v15");
 
     let mut loaded = store.load().expect("a dev v15 store opens");
-    assert_eq!(loaded.format_version(), 16);
+    assert_eq!(loaded.format_version(), 17);
     assert_eq!(loaded.tasks(), as_v6.tasks(), "opens with no transform");
     assert!(loaded.hidden_assignees().contains("dana"));
     store.save(&loaded).expect("first save");
@@ -1875,7 +1875,7 @@ fn a_populated_dev_v15_store_opens_as_v16_and_keeps_tsk_json_v15() {
     let mut live: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(dir.join("tsk.json")).expect("read live"))
             .expect("json");
-    assert_eq!(live["format_version"], 16);
+    assert_eq!(live["format_version"], 17);
     live["format_version"] = 15.into();
     assert_eq!(live, document, "nothing but the version changes");
 
@@ -1888,7 +1888,7 @@ fn a_populated_dev_v15_store_opens_as_v16_and_keeps_tsk_json_v15() {
 /// Every dev version opens as v6 and keeps its own copy; the first version past the dev range
 /// is refused without a write.
 #[test]
-fn dev_v7_and_v11_open_as_v16_and_v17_is_refused() {
+fn dev_v7_and_v11_open_as_v17_and_v18_is_refused() {
     for version in [7, 11] {
         let dir = temp_state_dir();
         let _guard = TempDirGuard(dir.clone());
@@ -1899,7 +1899,7 @@ fn dev_v7_and_v11_open_as_v16_and_v17_is_refused() {
         fs::write(dir.join("tsk.json"), &bytes).expect("install");
         let store = TaskStore::new(&dir);
         let loaded = store.load().expect("a dev store opens");
-        assert_eq!(loaded.format_version(), 16);
+        assert_eq!(loaded.format_version(), 17);
         store.save(&loaded).expect("save");
         assert_eq!(
             fs::read(dir.join(format!("tsk.json.v{version}"))).expect("version copy"),
@@ -1912,6 +1912,6 @@ fn dev_v7_and_v11_open_as_v16_and_v17_is_refused() {
     }
     let mut document: serde_json::Value =
         serde_json::from_slice(&platform_integrated_v6_fixture()).expect("json");
-    document["format_version"] = 17.into();
+    document["format_version"] = 18.into();
     assert_store_document_refused_without_rewrite(document);
 }

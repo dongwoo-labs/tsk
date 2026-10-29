@@ -5756,12 +5756,21 @@ fn build_list_rows_inner(model: &QueueFrameModel<'_>, geo: &TierGeometry) -> Bui
                 }
                 alert.push('×');
             }
+            let title = if task.is_notice() {
+                task.title.clone()
+            } else {
+                format!(
+                    "{} [{}]",
+                    task.title,
+                    super::terminal_text(task.machine.as_deref().unwrap_or("unspecified"))
+                )
+            };
             // The section names the status; notes need a second row only when requested.
             let lines = paint_task_row_lines(
                 &TaskRowPaint {
                     glyph: "",
                     identifier: identifier.as_deref(),
-                    title: &task.title,
+                    title: &title,
                     selected,
                     marked,
                     title_bold: false,

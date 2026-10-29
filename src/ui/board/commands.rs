@@ -132,6 +132,30 @@ impl BoardModel {
         // Always-available board commands, then selection-gated delete when present.
         // The status commands above are absolute, so `set status: open` replaces the old
         // done-only `reopen` entry and stays useful from every status.
+        use crate::machine::MachineFilter;
+        for filter in [
+            MachineFilter::Local,
+            MachineFilter::All,
+            MachineFilter::Unspecified,
+            MachineFilter::Current,
+        ] {
+            commands.push(command(
+                format!("machine: {}", filter.label()),
+                BoardIntent::SetMachineFilter(filter),
+            ));
+        }
+        let machines: std::collections::BTreeSet<_> = self
+            .tasks
+            .iter()
+            .chain(self.questions.moved.values())
+            .filter_map(|task| task.machine.clone())
+            .collect();
+        for name in machines {
+            commands.push(command(
+                format!("machine: {name}"),
+                BoardIntent::SetMachineFilter(MachineFilter::Named(name)),
+            ));
+        }
         commands.push(command("add task", BoardIntent::OpenCapture));
         if self.action_target_id().is_some() {
             commands.push(command("delete task", BoardIntent::SoftDelete));

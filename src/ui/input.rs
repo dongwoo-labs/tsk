@@ -499,6 +499,7 @@ pub enum BoardIntent {
     RefreshAll,
     /// `z` — hide or show every board row's `└─` message line. Session-only.
     ToggleMessages,
+    SetMachineFilter(crate::machine::MachineFilter),
     /// List picker `←` / `→`: step to the previous (`false`) or next (`true`) tab; the
     /// waiting-on picker cycles its choices.
     SwitchListPickerTab(bool),
@@ -2404,6 +2405,7 @@ pub fn intent_primary_action(intent: &BoardIntent) -> Option<PrimaryBoardAction>
         | BoardIntent::ListPickerScrollUp
         | BoardIntent::ListPickerScrollDown
         | BoardIntent::ToggleMessages
+        | BoardIntent::SetMachineFilter(_)
         | BoardIntent::SwitchListPickerTab(_) => None,
     }
 }

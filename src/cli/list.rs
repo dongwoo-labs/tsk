@@ -24,6 +24,7 @@ pub enum Projection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListInput {
     pub json: bool,
+    pub machine: Option<crate::machine::MachineFilter>,
     pub projection: Option<Projection>,
     pub project: Option<String>,
     pub global: bool,
@@ -78,6 +79,7 @@ pub(crate) struct ListRow {
     pub(crate) id: Uuid,
     pub(crate) number: u64,
     pub(crate) title: String,
+    pub(crate) machine: Option<String>,
     #[serde(serialize_with = "serialize_legacy_status")]
     pub(crate) status: HumanStatus,
     pub(crate) project: Option<String>,
@@ -165,6 +167,7 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
 
     let mut input = ListInput {
         json: false,
+        machine: None,
         projection: None,
         project: None,
         global: false,
@@ -202,6 +205,18 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
             _ => Err(format!("missing value for {name}")),
         };
         match flag {
+            "--machine" => {
+                once("--machine")?;
+                input.machine = Some(crate::machine::MachineFilter::parse(&value(flag)?)?);
+                index += 2;
+            }
+            flag if flag.starts_with("--machine=") => {
+                once("--machine")?;
+                input.machine = Some(crate::machine::MachineFilter::parse(
+                    &flag["--machine=".len()..],
+                )?);
+                index += 1;
+            }
             "--field" | "--note" => {
                 set_projection(&mut input, flag, &value(flag)?)?;
                 index += 2;
@@ -356,6 +371,9 @@ pub fn parse(args: &[String]) -> Result<ListInput, String> {
     }
     if input.task.is_some() && (input.done || input.deleted) {
         return Err("task operand cannot be used with --done or --deleted".into());
+    }
+    if input.task.is_some() && input.machine.is_some() {
+        return Err("task operand cannot be used with --machine".into());
     }
     if input.all && (input.global || input.project.is_some()) {
         return Err("--all cannot be used with --project or --desk".into());
@@ -584,21 +602,28 @@ pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     } else {
         ThreadFilter::All
     };
+    let machine_filter = input.machine.unwrap_or(crate::machine::MachineFilter::All);
+    let current = domain.creation_machine().unwrap_or_default();
     if view == ListView::Deleted {
-        return deleted_rows(
+        let mut result = deleted_rows(
             &store,
             &domain,
             &scope,
             &thread_filter,
             input.assignee.as_deref(),
             input.all,
-        );
+        )?;
+        result
+            .rows
+            .retain(|row| machine_filter.admits(row.machine.as_deref(), current));
+        return Ok(result);
     }
     let identities = PathIdentityCache::default();
     let mut tasks = domain
         .tasks()
         .iter()
         .filter(|task| !task.is_notice())
+        .filter(|task| machine_filter.admits(task.machine.as_deref(), current))
         .filter(|task| {
             scope
                 .as_ref()
@@ -769,6 +794,7 @@ fn row_for(task: &crate::domain::Task, domain: &DomainState) -> ListRow {
             .number
             .expect("loaded tasks receive a number before CLI presentation"),
         title: task.title.clone(),
+        machine: task.machine.clone(),
         status: task.status,
         project: match &task.scope {
             TaskScope::Global => None,

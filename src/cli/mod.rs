@@ -524,9 +524,10 @@ fn run_edit(args: Vec<String>) -> CliOutput {
         && input.base.is_none()
         && !input.clear_base
         && input.on.is_none()
+        && input.machine.is_none()
     {
         return presenter::edit_usage(
-            "title, notes, append-notes, assignee, base, after, on, --unassign, --clear-base, or --clear-after is required",
+            "title, notes, append-notes, assignee, base, after, on, machine, --no-machine, --unassign, --clear-base, or --clear-after is required",
         );
     }
     let assignee = if input.unassign {
@@ -545,6 +546,7 @@ fn run_edit(args: Vec<String>) -> CliOutput {
     match edit::run(
         task,
         edit::EditFields {
+            machine: input.machine,
             parent: input.parent,
             after: input.after,
             title: input.title,

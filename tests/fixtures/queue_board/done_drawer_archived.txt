@@ -4,19 +4,19 @@
 │                                                                               ▌│
 │ DOING ─────────────────────────────────────────────────────────────────────4  ▌│
 │                                                                               ▌│
-│▸  T1 Smoke-test worktree dispatch                                             ▌│
-│   T2 Edit target binding pin                                                  ▌│
-│   T5 Wire dispatch cleanup receipts                                           ▌│
-│   T6 Docs refresh pass after F9 ships                                         ▌│
+│▸  T1 Smoke-test worktree dispatch [unspecified]                               ▌│
+│   T2 Edit target binding pin [unspecified]                                    ▌│
+│   T5 Wire dispatch cleanup receipts [unspecified]                             ▌│
+│   T6 Docs refresh pass after F9 ships [unspecified]                           ▌│
 │                                                                               ▌│
 │ TODO · desk ───────────────────────────────────────────────────────────────1  ▌│
 │                                                                               ▌│
-│   T7 Global backlog note                                                      ▌│
+│   T7 Global backlog note [unspecified]                                        ▌│
 │                                                                               ▌│
 │ DONE ──────────────────────────────────────────────────────────────────────2  ▌│
 │                                                                               ▌│
-│   T8 Ship the queue board milestone                                           ▌│
-│   T9 Retire classic board chrome                                              ▌│
+│   T8 Ship the queue board milestone [unspecified]                             ▌│
+│   T9 Retire classic board chrome [unspecified]                                ▌│
 │                                                                               ▌│
 │ ▾ archived · 2                                                                ▌│
 │                                                                                │

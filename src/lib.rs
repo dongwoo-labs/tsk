@@ -16,6 +16,7 @@ pub mod fnox;
 pub(crate) mod fsperm;
 pub mod git_base;
 pub mod guides;
+pub mod machine;
 pub mod question_actions;
 pub mod report_actions;
 pub mod save_recovery;

@@ -1033,6 +1033,11 @@ struct BasePickerResult {
 /// id-pinned and reanchored via [`selection::reanchor`].
 #[derive(Debug, Clone)]
 pub struct BoardModel {
+    pub(super) machine_filter: crate::machine::MachineFilter,
+    pub(super) current_machine: String,
+    raw_questions: crate::ui::questions::QuestionFeed,
+    raw_reports: crate::ui::reports::ReportFeed,
+    machine_history: Result<Vec<Task>, String>,
     pub(super) tasks: Vec<Task>,
     /// Scope paths of archived projects, carried from domain state so the lens
     /// query can filter hidden tasks without re-deriving from records.
@@ -2198,6 +2203,14 @@ impl BoardModel {
     /// default; [`Self::from_domain`] applies directory-aware startup.
     pub fn from_tasks(tasks: Vec<Task>, this_repo: Option<PathBuf>) -> Self {
         let mut model = Self {
+            machine_filter: crate::machine::MachineFilter::Local,
+            // The live store refuses invalid overrides before building a board. Pure
+            // snapshots have no creation context and use the same identity resolver.
+            current_machine: crate::machine::current()
+                .unwrap_or_else(|_| crate::backup::hostname()),
+            raw_questions: Default::default(),
+            raw_reports: Default::default(),
+            machine_history: Ok(Vec::new()),
             clock: None,
             tasks,
             archived_projects: BTreeSet::new(),
@@ -3078,6 +3091,9 @@ impl BoardModel {
         start_in_project: bool,
     ) -> Self {
         let mut model = Self::from_tasks(state.tasks().to_vec(), this_repo);
+        if let Some(machine) = state.creation_machine() {
+            model.current_machine = machine.to_owned();
+        }
         model.archived_projects = state.archived_projects();
         model.hidden_assignees = state.hidden_assignees().clone();
         if let Some(repo) = model.this_repo.clone() {
@@ -3147,6 +3163,7 @@ impl BoardModel {
             }
         }
         self.tasks = state.tasks().to_vec();
+        self.refilter_feeds();
         self.archived_projects = state.archived_projects();
         self.hidden_assignees = state.hidden_assignees().clone();
         if self
@@ -3255,7 +3272,107 @@ impl BoardModel {
 
     /// Replace the questions snapshot (board open, store change, after a question action).
     pub fn set_question_feed(&mut self, feed: crate::ui::questions::QuestionFeed) {
-        self.questions.set_feed(feed);
+        self.raw_questions = feed;
+        self.refilter_feeds();
+    }
+
+    pub fn machine_admits(&self, task: &Task) -> bool {
+        self.machine_filter
+            .admits(task.machine.as_deref(), &self.current_machine)
+    }
+
+    pub fn machine_range_label(&self) -> String {
+        format!("machine {}", self.machine_filter.label())
+    }
+
+    pub fn set_machine_filter(&mut self, filter: crate::machine::MachineFilter) {
+        if self.has_unsaved_work() {
+            self.set_message("save or cancel the edit before changing machines");
+            return;
+        }
+        let previous = self.selection_id;
+        let visible = self.visible_ids();
+        self.machine_filter = filter;
+        self.clear_marks();
+        self.page_back.clear();
+        self.text_selection = None;
+        self.follow_list.set(true);
+        self.refilter_feeds();
+        self.reanchor_selection(previous, &visible);
+        // A range change is explicit navigation, not a disk refresh. Rebind a clean page
+        // to the surviving selection instead of leaving actions on the hidden task.
+        self.retarget_selection(self.selection_id, SelectionRetarget::Explicit);
+    }
+
+    /// Retained tasks are actual history records, not inferred machine assignments.
+    pub fn set_machine_history(&mut self, history: Result<Vec<Task>, String>) {
+        if let Ok(tasks) = &history {
+            self.questions.moved = tasks.iter().map(|task| (task.id, task.clone())).collect();
+        }
+        self.machine_history = history;
+        self.refilter_feeds();
+    }
+
+    fn feed_machine_admits(&self, id: Uuid) -> Result<bool, String> {
+        if self.machine_filter == crate::machine::MachineFilter::All {
+            return Ok(true);
+        }
+        let task = self.tasks.iter().find(|task| task.id == id);
+        let task = match task {
+            Some(task) => Some(task),
+            None => self
+                .machine_history
+                .as_ref()?
+                .iter()
+                .find(|task| task.id == id),
+        };
+        Ok(self.machine_filter.admits(
+            task.and_then(|task| task.machine.as_deref()),
+            &self.current_machine,
+        ))
+    }
+
+    fn refilter_feeds(&mut self) {
+        use crate::ui::questions::QuestionFeed;
+        use crate::ui::reports::ReportFeed;
+        let questions = match &self.raw_questions {
+            QuestionFeed::Loaded(records) => {
+                let filtered: Result<Vec<_>, String> = records
+                    .iter()
+                    .filter_map(
+                        |record| match self.feed_machine_admits(record.reference.task_id) {
+                            Ok(true) => Some(Ok(record.clone())),
+                            Ok(false) => None,
+                            Err(error) => Some(Err(error)),
+                        },
+                    )
+                    .collect();
+                match filtered {
+                    Ok(records) => QuestionFeed::Loaded(records),
+                    Err(error) => QuestionFeed::Unavailable(error),
+                }
+            }
+            feed => feed.clone(),
+        };
+        let reports = match &self.raw_reports {
+            ReportFeed::Loaded(records) => {
+                let filtered: Result<Vec<_>, String> = records
+                    .iter()
+                    .filter_map(|record| match self.feed_machine_admits(record.task_id) {
+                        Ok(true) => Some(Ok(record.clone())),
+                        Ok(false) => None,
+                        Err(error) => Some(Err(error)),
+                    })
+                    .collect();
+                match filtered {
+                    Ok(records) => ReportFeed::Loaded(records),
+                    Err(error) => ReportFeed::Unavailable(error),
+                }
+            }
+            feed => feed.clone(),
+        };
+        self.questions.set_feed(questions);
+        self.reports.set_feed(reports);
     }
 
     /// The questions tab's session state.
@@ -3269,7 +3386,8 @@ impl BoardModel {
 
     /// Replace the reports snapshot (board open, store change, after `mark_read`).
     pub fn set_report_feed(&mut self, feed: crate::ui::reports::ReportFeed) {
-        self.reports.set_feed(feed);
+        self.raw_reports = feed;
+        self.refilter_feeds();
     }
 
     /// The reports tab's session state.
@@ -3322,7 +3440,8 @@ impl BoardModel {
 
     /// Not deleted, not archived, and not in an archived project.
     fn on_working_board(&self, task: &Task) -> bool {
-        !task.soft_deleted
+        self.machine_admits(task)
+            && !task.soft_deleted
             && !task.archived
             && match &task.scope {
                 TaskScope::Project { path } => {
@@ -3696,13 +3815,14 @@ impl BoardModel {
 
     /// Queue sections + counts for the current session destination.
     pub fn queue_view(&self) -> QueueView {
-        queue::query_board_search(
+        queue::query_board_machine(
             &self.tasks,
             &self.archived_projects,
             self.effective_lens(),
             self.drawer_open,
             self.sort,
             &self.search_query,
+            &|task| self.machine_admits(task),
         )
     }
 

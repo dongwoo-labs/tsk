@@ -81,6 +81,7 @@ pub enum EditedField {
     Notes,
     Thread,
     Project,
+    Machine,
     After,
 }
 

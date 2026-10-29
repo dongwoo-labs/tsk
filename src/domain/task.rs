@@ -113,6 +113,9 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_base_revision: Option<Uuid>,
     pub title: String,
+    /// Creation machine. Missing values remain unspecified across load and restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
     pub notes: Option<String>,
     /// One direct parent by stable UUID; missing/deleted parents remain referenced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -292,6 +295,7 @@ impl Task {
 pub enum DomainError {
     /// Title was empty or whitespace-only after trim.
     EmptyTitle,
+    InvalidMachine(String),
     /// No task with this id exists in the domain state.
     UnknownId(Uuid),
     /// Command refused because the task is soft-deleted.
@@ -343,6 +347,7 @@ impl std::fmt::Display for DomainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DomainError::EmptyTitle => write!(f, "title must be non-empty after trim"),
+            DomainError::InvalidMachine(message) => write!(f, "{message}"),
             DomainError::UnknownId(id) => write!(f, "unknown task id {id}"),
             DomainError::SoftDeleted(id) => write!(f, "task {id} is soft-deleted"),
             DomainError::StaleUndo(id) => {
@@ -578,7 +583,7 @@ fn moved_to_done_file(task: &Task, disk: &DomainState) -> bool {
 }
 
 /// Document version written by this binary.
-pub const STORE_FORMAT_VERSION: u32 = 16;
+pub const STORE_FORMAT_VERSION: u32 = 17;
 
 /// A parent is unresolved when its UUID is absent or its task is deleted.
 #[derive(Debug, Clone, Copy)]
@@ -758,6 +763,9 @@ pub struct DomainState {
     /// from a store. Transient: a merge-save refuses a state loaded before a whole-store restore.
     #[serde(skip)]
     restore_token: Option<String>,
+    /// Injected only by TaskStore's common load boundary, never by deserialization.
+    #[serde(skip)]
+    creation_machine: Option<String>,
 }
 
 impl Default for DomainState {
@@ -782,7 +790,37 @@ impl DomainState {
             completed: Vec::new(),
             pending_launches: Vec::new(),
             restore_token: None,
+            creation_machine: None,
         }
+    }
+
+    pub(crate) fn set_creation_machine(&mut self, machine: String) {
+        self.creation_machine = Some(machine);
+    }
+
+    pub fn creation_machine(&self) -> Option<&str> {
+        self.creation_machine.as_deref()
+    }
+
+    /// Set a validated machine label through the ordinary edit/save boundary.
+    pub fn set_machine(&mut self, id: Uuid, machine: Option<String>) -> Result<bool, DomainError> {
+        let machine = machine
+            .map(|name| crate::machine::normalize(&name))
+            .transpose()
+            .map_err(DomainError::InvalidMachine)?;
+        let task = self.task_mut(id)?;
+        if task.machine == machine {
+            return Ok(false);
+        }
+        task.machine = machine;
+        record_event(
+            task,
+            TaskEventKind::Edited,
+            SystemTime::now(),
+            None,
+            edited_detail(vec![EditedField::Machine]),
+        );
+        Ok(true)
     }
 
     pub fn format_version(&self) -> u32 {
@@ -1109,6 +1147,7 @@ impl DomainState {
             revision: Uuid::new_v4(),
             merge_base_revision: None,
             title: title.to_string(),
+            machine: self.creation_machine.clone(),
             notes,
             parent_task_id,
             thread: None,
@@ -1194,6 +1233,7 @@ impl DomainState {
     ) -> Result<Uuid, DomainError> {
         let id = self.create(title, notes, scope, ProvenanceOrigin::Manual)?;
         let task = self.task_mut(id).expect("the notice was just pushed");
+        task.machine = None;
         task.notice = Some(Notice {
             catalog_id: catalog_id.into(),
             number: None,

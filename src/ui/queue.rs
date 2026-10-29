@@ -596,10 +596,38 @@ pub fn query_board_search(
     sort: BoardSort,
     query: &str,
 ) -> QueueView {
+    query_board_machine(
+        tasks,
+        archived_projects,
+        lens,
+        drawer_open,
+        sort,
+        query,
+        &|_| true,
+    )
+}
+
+/// Filter display candidates only. The full task slice still resolves blockers and relations.
+pub fn query_board_machine(
+    tasks: &[Task],
+    archived_projects: &BTreeSet<String>,
+    lens: BoardLens<'_>,
+    drawer_open: bool,
+    sort: BoardSort,
+    query: &str,
+    admits: &dyn Fn(&Task) -> bool,
+) -> QueueView {
     let identities = PathIdentityCache::default();
     let words = search_words(query);
     let mut view = match lens {
-        BoardLens::All => query_all(tasks, archived_projects, drawer_open, &identities, &words),
+        BoardLens::All => query_all(
+            tasks,
+            archived_projects,
+            drawer_open,
+            &identities,
+            &words,
+            admits,
+        ),
         BoardLens::Desk => query_desk(
             tasks,
             archived_projects,
@@ -607,6 +635,7 @@ pub fn query_board_search(
             &DeskFilter::default(),
             &identities,
             &words,
+            admits,
         ),
         BoardLens::Project(path) => query_project_focus(
             tasks,
@@ -615,6 +644,7 @@ pub fn query_board_search(
             drawer_open,
             &identities,
             &words,
+            admits,
         ),
         // AC-41/AC-45: the read-only focus is the only lens that paints an archived
         // project's tasks. It is the project focus computed as if the project were live.
@@ -625,6 +655,7 @@ pub fn query_board_search(
             drawer_open,
             &identities,
             &words,
+            admits,
         ),
     };
     if !words.is_empty() {
@@ -758,11 +789,13 @@ fn query_all(
     drawer_open: bool,
     identities: &PathIdentityCache,
     search: &[String],
+    admits: &dyn Fn(&Task) -> bool,
 ) -> QueueView {
     let live: Vec<&Task> = tasks
         .iter()
         .filter(|task| {
-            is_live(task, archived_projects, identities)
+            admits(task)
+                && is_live(task, archived_projects, identities)
                 && (task_matches(task, search)
                     || (!drawer_open && task.status == HumanStatus::Done))
         })
@@ -770,7 +803,8 @@ fn query_all(
     let archived_pool: Vec<&Task> = tasks
         .iter()
         .filter(|task| {
-            !task_owned_by_archived_project(task, archived_projects, identities)
+            admits(task)
+                && !task_owned_by_archived_project(task, archived_projects, identities)
                 && (!drawer_open || task_matches(task, search))
         })
         .collect();
@@ -823,11 +857,13 @@ fn query_desk(
     filter: &DeskFilter,
     identities: &PathIdentityCache,
     search: &[String],
+    admits: &dyn Fn(&Task) -> bool,
 ) -> QueueView {
     let live: Vec<&Task> = tasks
         .iter()
         .filter(|task| {
-            is_live(task, archived_projects, identities)
+            admits(task)
+                && is_live(task, archived_projects, identities)
                 && filter.admits(task, identities)
                 && (task_matches(task, search)
                     || (!drawer_open && task.status == HumanStatus::Done))
@@ -836,7 +872,8 @@ fn query_desk(
     let archived_pool: Vec<&Task> = tasks
         .iter()
         .filter(|task| {
-            !task_owned_by_archived_project(task, archived_projects, identities)
+            admits(task)
+                && !task_owned_by_archived_project(task, archived_projects, identities)
                 && filter.admits(task, identities)
                 && (!drawer_open || task_matches(task, search))
         })
@@ -890,11 +927,13 @@ fn query_project_focus(
     drawer_open: bool,
     identities: &PathIdentityCache,
     search: &[String],
+    admits: &dyn Fn(&Task) -> bool,
 ) -> QueueView {
     let live: Vec<&Task> = tasks
         .iter()
         .filter(|task| {
-            is_live(task, archived_projects, identities)
+            admits(task)
+                && is_live(task, archived_projects, identities)
                 && task_matches_scope(task, path, identities)
                 && (task_matches(task, search)
                     || (!drawer_open && task.status == HumanStatus::Done))
@@ -941,7 +980,7 @@ fn query_project_focus(
     append_done(&mut sections, &live, drawer_open, search);
     let in_scope: Vec<&Task> = tasks
         .iter()
-        .filter(|task| task_matches_scope(task, path, identities))
+        .filter(|task| admits(task) && task_matches_scope(task, path, identities))
         .filter(|task| !task_owned_by_archived_project(task, archived_projects, identities))
         .filter(|task| {
             let belongs_to_closed_drawer = task.status == HumanStatus::Done || task.archived;
@@ -1439,6 +1478,7 @@ mod tests {
             revision: Uuid::from_u128(id),
             merge_base_revision: None,
             title: format!("task-{id}"),
+            machine: None,
             notes: None,
             thread: None,
             assignee: None,
@@ -2339,6 +2379,7 @@ mod tests {
             filter,
             &PathIdentityCache::default(),
             &[],
+            &|_| true,
         )
     }
 
@@ -2452,6 +2493,7 @@ mod tests {
             &DeskFilter::default(),
             &PathIdentityCache::default(),
             &[],
+            &|_| true,
         );
         arrange_view(
             &mut view,

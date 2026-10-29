@@ -128,6 +128,151 @@ fn list_at_width(args: &[String], terminal_width: usize) -> tsk_tui::cli::CliOut
     )
 }
 
+// E2E cannot prove migration bytes, transient creation context, or cross-machine
+// retry identity. This existing CLI/store boundary owns those deterministic contracts.
+#[test]
+fn machine_creation_migration_and_retry_contract() {
+    let _env = env_lock();
+    let _machine = EnvironmentGuard::set("TSK_MACHINE", "alpha");
+    let dir = temp_state_dir("machine-contract");
+    let store = TaskStore::new(&dir);
+    let mut old = DomainState::new();
+    let legacy = old
+        .create("legacy", None, TaskScope::Global, ProvenanceOrigin::Manual)
+        .unwrap();
+    old.complete(legacy).unwrap();
+    store.save(&old).unwrap();
+    let mut document = serde_json::to_value(store.load().unwrap()).unwrap();
+    document["format_version"] = serde_json::json!(16);
+    let original = serde_json::to_vec_pretty(&document).unwrap();
+    std::fs::write(dir.join("tsk.json"), &original).unwrap();
+    let mut loaded = store.load().unwrap();
+    assert_eq!(
+        serde_json::to_value(loaded.get(legacy).unwrap())
+            .unwrap()
+            .get("machine"),
+        None
+    );
+    let created = loaded
+        .create("created", None, TaskScope::Global, ProvenanceOrigin::Manual)
+        .unwrap();
+    let notice = loaded
+        .create_notice(
+            "test",
+            "notice",
+            None,
+            HumanStatus::Todo,
+            TaskScope::Global,
+            vec![],
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(loaded.get(created).unwrap()).unwrap()["machine"],
+        "alpha"
+    );
+    assert!(serde_json::to_value(loaded.get(notice).unwrap()).unwrap()["machine"].is_null());
+    store.save(&loaded).unwrap();
+    assert_eq!(std::fs::read(dir.join("tsk.json.v16")).unwrap(), original);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("tsk.json")).unwrap()).unwrap();
+    assert_eq!(saved["format_version"], 17);
+    assert_eq!(saved["undo_stack"], document["undo_stack"]);
+    let mut raw: DomainState = serde_json::from_value(saved).unwrap();
+    let raw_id = raw
+        .create("raw", None, TaskScope::Global, ProvenanceOrigin::Manual)
+        .unwrap();
+    assert!(serde_json::to_value(raw.get(raw_id).unwrap()).unwrap()["machine"].is_null());
+
+    let command = |args: &[&str]| {
+        let mut argv: Vec<String> = vec!["tsk".into()];
+        argv.extend(args.iter().map(|s| s.to_string()));
+        argv.extend(["--state-dir".into(), state_dir_arg(&dir)]);
+        list(&argv)
+    };
+    let first = command(&["add", "--desk", "-t", "same", "--json"]);
+    assert_eq!(first.code, 0, "{first:?}");
+    let second = command(&["add", "--desk", "-t", "same", "--json"]);
+    assert!(second.stdout.contains("existing"), "{second:?}");
+    let _beta = EnvironmentGuard::set("TSK_MACHINE", "beta");
+    let other = command(&["add", "--desk", "-t", "same", "--json"]);
+    assert!(other.stdout.contains("created"), "{other:?}");
+    let plan = format!(r#"[{{"title":"same","project":null}}]"#);
+    let result = run_with(
+        &[
+            "tsk".into(),
+            "add".into(),
+            "--state-dir".into(),
+            state_dir_arg(&dir),
+        ],
+        Cursor::new(plan),
+        false,
+    );
+    assert_eq!(result.code, 0, "{result:?}");
+    let result: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(result["existing"].as_array().unwrap().len(), 1);
+    let json = command(&["list", "--all", "--json", "--machine", "@local"]);
+    assert_eq!(json.code, 0, "{json:?}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["machine"], "beta");
+    assert_eq!(rows[0]["status"], "todo");
+}
+
+#[test]
+fn machine_edit_and_selector_contract() {
+    let _env = env_lock();
+    let _machine = EnvironmentGuard::set("TSK_MACHINE", "current");
+    let dir = temp_state_dir("machine-edit");
+    let command = |args: &[&str]| {
+        let mut argv: Vec<String> = vec!["tsk".into()];
+        argv.extend(args.iter().map(|s| s.to_string()));
+        argv.extend(["--state-dir".into(), state_dir_arg(&dir)]);
+        list(&argv)
+    };
+    assert_eq!(command(&["add", "--desk", "-t", "task"]).code, 0);
+    for name in ["all", "current", "unspecified", "alpha"] {
+        let edit = command(&["edit", "T1", "--machine", name]);
+        assert_eq!(edit.code, 0, "{edit:?}");
+        let direct = command(&["list", "T1", "--json"]);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&direct.stdout).unwrap();
+        assert_eq!(rows[0]["machine"], name);
+        let exact = command(&["list", "--all", "--machine", name, "--json"]);
+        assert_eq!(
+            serde_json::from_str::<Vec<serde_json::Value>>(&exact.stdout)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    let before = TaskStore::new(&dir).load().unwrap().tasks()[0].revision;
+    assert_eq!(command(&["edit", "T1", "--machine", "@current"]).code, 0);
+    let state = TaskStore::new(&dir).load().unwrap();
+    assert_ne!(state.tasks()[0].revision, before);
+    assert_eq!(
+        state.tasks()[0].history.last().unwrap().kind,
+        tsk_tui::domain::TaskEventKind::Edited
+    );
+    assert_eq!(command(&["edit", "T1", "--no-machine"]).code, 0);
+    let unspecified = command(&["list", "--all", "--machine", "@unspecified", "--json"]);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&unspecified.stdout).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0]["machine"].is_null());
+    for bad in ["@unknown", "bad/name", "", " white", "a b", "é"] {
+        assert_eq!(
+            command(&["list", "--all", "--machine", bad]).code,
+            2,
+            "{bad}"
+        );
+        assert_eq!(command(&["edit", "T1", "--machine", bad]).code, 2, "{bad}");
+    }
+    assert_eq!(
+        command(&["edit", "T1", "--machine", "alpha", "--no-machine"]).code,
+        2
+    );
+    let _invalid = EnvironmentGuard::set("TSK_MACHINE", "bad/name");
+    assert_ne!(command(&["add", "--desk", "-t", "refuse"]).code, 0);
+}
+
 #[test]
 fn list_does_not_seed_agent_profiles() {
     let _env = env_lock();
@@ -725,6 +870,7 @@ fn list_all_groups_each_status_by_concise_scope_for_every_filter() {
                 "children_done",
                 "children_total",
                 "id",
+                "machine",
                 "number",
                 "parent_task_id",
                 "project",
@@ -1483,6 +1629,7 @@ fn list_equals_project_form_accepts_dash_leading_scope() {
             "id": state.tasks()[0].id,
             "number": 1,
             "title": "maintenance task",
+            "machine": null,
             "status": "todo",
             "project": "-maintenance",
             "parent_task_id": null,
@@ -1679,7 +1826,7 @@ fn list_task_prints_step_lines_with_state_and_short_id() {
     ]);
     assert_eq!(json.code, 0);
     let expected_json = format!(
-        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":\"release\",\"after\":[],\"before\":[],\"activity\":",
+        "[{{\"id\":\"{}\",\"number\":1,\"project\":null,\"status\":\"todo\",\"title\":\"steps target\",\"machine\":null,\"notes\":\"First note\\nSecond note\",\"steps\":[{{\"id\":\"{}\",\"done\":true,\"short_id\":\"aaa1\",\"text\":\"First step\"}},{{\"id\":\"aaa22222-0000-4000-8000-000000000002\",\"done\":false,\"short_id\":\"aaa2\",\"text\":\"Second step\"}}],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":\"release\",\"after\":[],\"before\":[],\"activity\":",
         task, first_step.id
     );
     assert_eq!(
@@ -1798,7 +1945,7 @@ fn list_task_without_steps_keeps_task_rows_and_rejects_conflicting_flags() {
     assert_eq!(rows[0]["thread"], serde_json::Value::Null);
     let raw = plain_json.stdout.as_str();
     assert!(
-        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"notes\":null,\"steps\":[],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":null"),
+        raw.contains("\"status\":\"todo\",\"title\":\"plain target\",\"machine\":null,\"notes\":null,\"steps\":[],\"parent_task_id\":null,\"parent\":null,\"children_done\":0,\"children_total\":0,\"children\":[],\"assignee\":null,\"assignee_kind\":null,\"base\":null,\"thread\":null"),
         "direct JSON keeps empty detail fields and their contract order: {raw}"
     );
 

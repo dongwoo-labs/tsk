@@ -18,7 +18,8 @@ The human uses the TUI; agents use the CLI. The fork keeps its board, questions,
 - A parent is an optional UUID relationship. Parent completion, archive, or deletion never changes children. Missing parents retain their unresolved link. After prerequisites use task numbers; waiting_for remains numeric.
 - Assignment, dispatch, block/review cards, replies, paper trail, and git backup/restore are available. Dispatch needs Herdr and an assigned project task; only an agent assignee dispatches.
 - Task labels are grouping metadata. Focusing a working Thread still requires its exact single four-token Thread: notes line; question origin does not imply task ownership.
-- The integrated store is v16 and reads fork v10 and upstream v6–v15. UUID after links migrate to task numbers. An unresolved link refuses migration instead of being lost. Back up the full directory and stop all writers before a shared-store upgrade; rollback restores that directory and the previous binary.
+- New tasks record the normalized hostname or validated TSK_MACHINE override. Existing tasks remain unspecified. The TUI defaults to current machine plus unspecified; its palette changes the session range. CLI list defaults to all machines; --machine accepts @all, @local, @current, @unspecified, or a literal name. edit --machine NAME or @current sets it; --no-machine clears it. Direct task addresses cross machine ranges. JSON includes machine, null when unspecified.
+- The integrated store is v17 and reads fork v10 and upstream v6–v16. UUID after links migrate to task numbers. An unresolved link refuses migration instead of being lost. Back up the full directory and stop all writers before a shared-store upgrade; rollback restores that directory and the previous binary.
 - Older done tasks move to dated done files. `tsk list --done --history`, direct task lookup, archived lookup, and task-linked question lookup retain access; historical tasks are read-only.
 
 ## For agents

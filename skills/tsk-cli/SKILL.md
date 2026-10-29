@@ -80,6 +80,7 @@ task's running agent, add `--send`: it sends only that reply and prints `sent to
     ([JSON plans](https://gettsk.sh/docs/cli.md#json-plans)).
 12. **A restored task may change number.** `tsk trash restore T12` prints the number it got; use that
     one from then on ([trash](https://gettsk.sh/docs/cli.md#trash)).
+13. **Machine ranges are filters, not authority.** New tasks record the current machine; existing tasks stay unspecified. List defaults to every machine. Add `--machine @local` to match the default board. Use `@current`, `@all`, `@unspecified`, or a literal name for another range. Direct task addresses cross ranges. `tsk edit T12 --machine NAME` or `@current` sets it; `--no-machine` clears it ([machines](https://gettsk.sh/docs/cli.md#list)).
 
 ### Agent-board notes
 

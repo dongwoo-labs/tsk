@@ -23,7 +23,7 @@ const BOARD_PINS = [
   {
     n: 1,
     title: 'One board, every project.',
-    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you, and <b>3 reports</b> keeps their Markdown completion documents until you open them. The board always shows your desk and every live project; opened inside a repo, the cursor starts on that project. The line below the tabs says what waits on you.',
+    body: 'The <b>1 board</b> tab is underlined; <b>2 questions</b> counts what agents left for you, and <b>3 reports</b> keeps their Markdown completion documents until you open them. The board shows current-machine and unspecified tasks, grouped by desk and project; opened inside a repo, the cursor starts on that project. Choose another machine range in the command palette. The line below the tabs says what waits on you.',
   },
   {
     n: 2,
@@ -421,8 +421,8 @@ const softwareApplication = {
             <span class="index">02 <span class="index-label">board</span></span>
             <h2 id="board-heading">One list, every project.</h2>
             <p class="band-lede">
-              The board shows every task: your <b>desk</b> first, then each project under its
-              own heading. Inside Git, the cursor starts on the repo’s project. Rows show
+              The board shows current-machine and unspecified tasks: your <b>desk</b> first,
+              then each project under its own heading. Choose another machine range in the command palette. Inside Git, the cursor starts on the repo’s project. Rows show
               one line per task, with checked steps as <code>✓2/5</code> and a bold
               <code>×</code> for a blocker. Press <kbd>v</kbd> to show or hide the notes’
               status line, or open the task for the full reason. Press <kbd>2</kbd> for the questions agents left for you.

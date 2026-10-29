@@ -319,6 +319,7 @@ import { parseCapture } from "./capture.js";
     // null: no Agent questions on this board (the parity fixture), as on a personal board.
     questions: fixture ? (fixture.questions ?? null) : seedQuestions(),
     tab: "board",
+    machineFilter: "@local",
     searchQuery: "",
     searchPinned: false,
     selectedId: null,
@@ -432,9 +433,30 @@ import { parseCapture } from "./capture.js";
     return words.every((word) => content.includes(word));
   }
 
+  // This disconnected demo uses a fixed machine identity, never the viewer's host.
+  function machineAdmits(task) {
+    const machine = task?.machine ?? null;
+    switch (state.machineFilter) {
+      case "@all":
+        return true;
+      case "@local":
+        return machine === null || machine === "demo";
+      case "@current":
+        return machine === "demo";
+      case "@unspecified":
+        return machine === null;
+      default:
+        return machine === state.machineFilter;
+    }
+  }
+  const visibleQuestions = () =>
+    (state.questions || []).filter((q) => machineAdmits(taskById(q.taskId)));
+  const visibleReports = () =>
+    state.reports.filter((r) => machineAdmits(taskById(r.taskId)));
+
   function buildRows() {
     const rows = [];
-    const live = state.tasks.filter((t) => !t.archived);
+    const live = state.tasks.filter((t) => !t.archived && machineAdmits(t));
     const match = (t) => taskMatchesSearch(t, state.searchQuery);
     // Always grouped by project: desk first, then each project, number order inside.
     // Every section uses it, the done drawer and its archived group included.
@@ -492,7 +514,7 @@ import { parseCapture } from "./capture.js";
         rows.push({ kind: "section", label: "DONE", count: done.length });
         pushGrouped(done, false);
       }
-      const archived = state.tasks.filter((t) => t.archived && match(t));
+      const archived = state.tasks.filter((t) => t.archived && machineAdmits(t) && match(t));
       if (archived.length) {
         rows.push({
           kind: "archived",
@@ -556,7 +578,7 @@ import { parseCapture } from "./capture.js";
     return GROUPS.map(([key, title]) => [
       key,
       title,
-      (state.questions || [])
+      visibleQuestions()
         .filter((q) => groupOf(q) === key)
         .sort((a, b) => a.number - b.number),
     ]).filter(([, , members]) => members.length);
@@ -602,7 +624,7 @@ import { parseCapture } from "./capture.js";
   }
   function waiting() {
     const out = { approval: 0, question: 0, finding: 0, unrouted: 0 };
-    for (const q of state.questions || []) {
+    for (const q of visibleQuestions()) {
       const g = groupOf(q);
       if (g === "approval") out.approval++;
       else if (g === "foryou") out.question++;
@@ -624,7 +646,7 @@ import { parseCapture } from "./capture.js";
   function taskMarks(task) {
     let approval = false,
       n = 0;
-    for (const q of state.questions || []) {
+    for (const q of visibleQuestions()) {
       if (q.taskId !== task.id) continue;
       const g = groupOf(q);
       if (g === "approval") approval = true;
@@ -964,6 +986,7 @@ import { parseCapture } from "./capture.js";
     const task = {
       id: `n${state.nextId++}`,
       number: state.nextNumber++,
+      machine: fixture ? null : "demo",
       title: q.summary,
       notes: "",
       steps: [],
@@ -1608,6 +1631,7 @@ import { parseCapture } from "./capture.js";
     const task = {
       id: `n${state.nextId++}`,
       number: state.nextNumber++,
+      machine: fixture ? null : "demo",
       title: parsed.title,
       notes: "",
       steps: [],
@@ -1631,6 +1655,7 @@ import { parseCapture } from "./capture.js";
     state.capture = {
       id: "capture-draft",
       number: state.nextNumber,
+      machine: fixture ? null : "demo",
       title: parsed.title,
       notes: "",
       steps: [],
@@ -1675,6 +1700,7 @@ import { parseCapture } from "./capture.js";
       ...capture,
       id: `n${state.nextId++}`,
       number: state.nextNumber++,
+      machine: fixture ? null : "demo",
       title,
       notes: state.edit.notes,
       project: state.edit.scope,
@@ -1729,6 +1755,33 @@ import { parseCapture } from "./capture.js";
         },
         { id: "done", label: "set status: done", run: () => setStatus("done") },
       );
+    const machines = [
+      "@local",
+      "@all",
+      "@unspecified",
+      "@current",
+      ...new Set(state.tasks.map((t) => t.machine).filter(Boolean)),
+    ];
+    for (const machine of machines)
+      all.push({
+        id: `machine:${machine}`,
+        label: `machine: ${machine}`,
+        run: () => {
+          if (hasUnsavedWork()) {
+            state.message = "save or cancel the edit before changing machines";
+            return;
+          }
+          state.machineFilter = machine;
+          clearMarks();
+          state.trail = [];
+          state.page = false;
+          state.q.page = null;
+          state.q.cursor = null;
+          state.reportPage = null;
+          state.reportCursor = 0;
+          ensureSelection();
+        },
+      });
     // Letters in order, as in the app: `ssd` finds `set status: doing`.
     const fuzzy = (label) => {
       let i = 0;
@@ -1747,6 +1800,7 @@ import { parseCapture } from "./capture.js";
     state.reportPage = null;
     Object.assign(state, {
       tab: "board",
+      machineFilter: "@local",
       searchQuery: "",
       searchPinned: false,
       selectedId: null,
@@ -1835,7 +1889,7 @@ import { parseCapture } from "./capture.js";
   function renderTabs(width) {
     const count = questionsLoaded() && forYou() ? ` ·${forYou()}` : "";
     const sep = "  ·  ";
-    const unread = state.reports.filter(
+    const unread = visibleReports().filter(
       (r) => r.readRevision !== r.revision,
     ).length;
     const reportCount = unread ? ` ·${unread}` : "";
@@ -1904,7 +1958,7 @@ import { parseCapture } from "./capture.js";
           : `<span class="tsk-title-line tsk-row-status dim" style="max-width:${statusRoom}ch">${esc(status.text)}</span>`
         : "";
     const title =
-      `<span class="tsk-title-line" style="max-width:${room}ch">${esc(task.title)}</span>` +
+      `<span class="tsk-title-line" style="max-width:${room}ch">${esc(`${task.title} [${task.machine || "unspecified"}]`)}</span>` +
       statusLines;
     const tail = tailWidth
       ? `<span class="tsk-row-tail">${[alert ? `<b class="tsk-alert">${esc(alert)}</b>` : "", reportMark ? `<span class="${unread ? "is-bold" : "dim"}">${reportMark}</span>` : "", badge ? `<span class="dim">${esc(badge)}</span>` : ""].filter(Boolean).join(" ")}</span>`
@@ -2118,6 +2172,7 @@ import { parseCapture } from "./capture.js";
       task.assignee && { field: "assignee", text: `@${task.assignee}` },
       { field: "base", text: `⎇ ${base}` },
       (narrow || edit) && { field: "scope", text: scopeName },
+      !edit && !state.quickExpanded && { text: `machine ${task.machine || "unspecified"}` },
     ].filter(Boolean);
     let position = 0;
     const fields = parts.map((part) => {
@@ -2141,7 +2196,7 @@ import { parseCapture } from "./capture.js";
           painted += esc(chars.slice(cursor - offset, left - offset).join(""));
           const text = esc(chars.slice(left - offset, right - offset).join(""));
           painted +=
-            field === part.field
+            part.field && field === part.field
               ? `<span class="tsk-meta-selected" data-page-field="${part.field}">${text}</span>`
               : text;
           cursor = right;
@@ -2215,7 +2270,7 @@ import { parseCapture } from "./capture.js";
   }
 
   const reportOrder = () =>
-    [...state.reports].sort(
+    visibleReports().sort(
       (a, b) =>
         Number(b.readRevision !== b.revision) -
           Number(a.readRevision !== a.revision) || b.taskNumber - a.taskNumber,
@@ -2318,7 +2373,7 @@ import { parseCapture } from "./capture.js";
       return "reports · sample documents · nothing is saved";
     if (state.tab === "questions") {
       if (!questionsLoaded()) return "questions · no Agent board here";
-      return `questions · ${forYou()} waiting on you · ${(state.questions || []).length} total · sample, nothing is sent`;
+      return `questions · ${forYou()} waiting on you · ${visibleQuestions().length} total · sample, nothing is sent`;
     }
     const base =
       state.searchPinned && state.searchQuery.trim()
@@ -2451,7 +2506,7 @@ import { parseCapture } from "./capture.js";
         ],
       )}</div>`;
     } else {
-      const context = state.message || contextLine();
+      const context = state.message || `${contextLine()} · machine ${state.machineFilter}`;
       body = `<div class="tsk-status-row"><button type="button" class="tsk-done-count foot" data-drawer="1">${esc(context)}</button><span class="foot dim tsk-stage-hint">${esc(hint)}</span></div><div class="foot dim tsk-verbs">${verbs}</div>${state.copyNotice ? `<div class="foot dim">${esc(state.copyNotice)}</div>` : ""}`;
     }
     return `<div class="tsk-foot"><div class="foot-rule" aria-hidden="true"></div>${body}</div>`;

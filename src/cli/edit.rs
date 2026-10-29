@@ -17,6 +17,7 @@ use uuid::Uuid;
 /// Parsed field values after the argv boundary. `None` means leave the stored value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditFields {
+    pub machine: Option<Option<String>>,
     pub parent: Option<Option<TaskAddress>>,
     pub after: Option<Vec<TaskAddress>>,
     pub title: Option<String>,
@@ -138,6 +139,7 @@ pub fn run(
         .as_ref()
         .map(|_| AgentProfiles::load(&state_dir).unwrap_or_default());
     let edit = Edit {
+        machine: fields.machine,
         title: fields.title,
         notes: fields.notes,
         append_notes: fields.append_notes,
@@ -171,6 +173,7 @@ pub fn run(
                     id: task.id,
                     number: task.number,
                     title: task.title.clone(),
+                    machine: task.machine.clone(),
                     notes: task.notes.clone(),
                     scope: task.scope.clone(),
                     thread: task.thread.clone(),
@@ -187,6 +190,7 @@ pub fn run(
 
 /// The edit after the boundary resolved its names.
 struct Edit {
+    machine: Option<Option<String>>,
     title: Option<String>,
     notes: Option<String>,
     append_notes: Option<String>,
@@ -199,6 +203,7 @@ struct Edit {
 }
 
 struct Found {
+    machine: Option<String>,
     id: Uuid,
     number: Option<u64>,
     title: String,
@@ -328,7 +333,12 @@ fn apply(
             .is_some_and(|block| block.on != *on)
     });
     let assignee = fields.assignee.clone().flatten();
-    if parent_task_id == found.parent_task_id
+    let next_machine = fields
+        .machine
+        .clone()
+        .unwrap_or_else(|| found.machine.clone());
+    if next_machine == found.machine
+        && parent_task_id == found.parent_task_id
         && next_scope == found.scope
         && next_title == found.title
         && next_notes == found.notes
@@ -361,36 +371,45 @@ fn apply(
         || next_notes != found.notes
         || next_assignee != found.assignee
         || next_base != found.base;
-    let edited = if fields_changed {
-        state.edit_with_assignee_and_base(
-            found.id,
-            &next_title,
-            next_notes,
-            next_scope,
-            found.thread,
-            next_assignee,
-            next_base,
-        )
-    } else {
-        Ok(())
-    };
-    let edited = edited.and_then(|()| {
-        if parent_task_id != found.parent_task_id {
-            state.set_parent(found.id, parent_task_id).map(|_| ())
+    let edited = state.as_one_change(found.id, |state| {
+        let edited = if fields_changed {
+            state.edit_with_assignee_and_base(
+                found.id,
+                &next_title,
+                next_notes,
+                next_scope,
+                found.thread,
+                next_assignee,
+                next_base,
+            )
         } else {
             Ok(())
-        }
-    });
-    let edited = edited.and_then(|()| {
-        if changed_after {
-            state.edit_after(found.id, &next_after).map(|_| ())
-        } else {
-            Ok(())
-        }
-    });
-    let edited = edited.and_then(|()| match on {
-        Some(on) if changed_on => state.set_on(found.id, on).map(|_| ()),
-        _ => Ok(()),
+        };
+        let edited = edited.and_then(|()| {
+            if parent_task_id != found.parent_task_id {
+                state.set_parent(found.id, parent_task_id).map(|_| ())
+            } else {
+                Ok(())
+            }
+        });
+        let edited = edited.and_then(|()| {
+            if changed_after {
+                state.edit_after(found.id, &next_after).map(|_| ())
+            } else {
+                Ok(())
+            }
+        });
+        let edited = edited.and_then(|()| match on {
+            Some(on) if changed_on => state.set_on(found.id, on).map(|_| ()),
+            _ => Ok(()),
+        });
+        edited.and_then(|()| {
+            if next_machine != found.machine {
+                state.set_machine(found.id, next_machine).map(|_| ())
+            } else {
+                Ok(())
+            }
+        })
     });
     match edited {
         Ok(()) => (

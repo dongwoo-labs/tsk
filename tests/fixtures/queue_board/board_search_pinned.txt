@@ -5,7 +5,7 @@
 │ DOING ───────────────────────────────────────────────────────────────────────1 │
 │                                                                                │
 │   tsk                                                                          │
-│▸  T1 Smoke-test worktree dispatch                                              │
+│▸  T1 Smoke-test worktree dispatch [unspecified]                                │
 │                                                                                │
 │                                                                                │
 │                                                                                │
@@ -21,6 +21,6 @@
 │                                                                                │
 │                                                                                │
 │────────────────────────────────────────────────────────────────────────────────│
-│ all · /worktree                                                                │
+│ all · machine @local · /worktree                                               │
 │ enter open · ctrl+o todo · ctrl+d done · ctrl+b block · : commands · ? help    │
 └────────────────────────────────────────────────────────────────────────────────┘

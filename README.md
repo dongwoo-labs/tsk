@@ -123,7 +123,7 @@ Press `3` on the board for the dedicated reports tab, then `Enter` to open a ren
 Run `tsk`, or press **prefix+t** in Herdr.
 
 **No project setup needed.** Inside Git, tsk opens the repository project. Outside
-Git, it opens every task: your desk and all your projects.
+Git, it opens your desk and all your projects within the current machine range.
 
 ### Add a task
 
@@ -136,8 +136,9 @@ the login timeout, with steps to reproduce the bug.”
 
 ## Usage
 
-The board shows every task at once, grouped by project: your desk first, then each
-project under its own heading. Run it inside a repo and the cursor starts on that
+The board shows tasks from this machine and unspecified tasks, grouped by project:
+your desk first, then each project under its own heading. Use the `:` palette's
+machine commands to show all machines or another range ([machines](https://gettsk.sh/docs/board/#machines)). Run it inside a repo and the cursor starts on that
 project. Each task uses one line: its number, title, and progress such as `✓2/5`.
 A bold `×` marks a task with a `Blocked:` notes line; open it to read the reason.
 Press `v` to show or hide the `Now:` or `Blocked:` line under the title for this session.

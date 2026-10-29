@@ -117,7 +117,7 @@ const ADD_USAGE: &[&str] = &[
     "tsk add [--file <path|->] [--state-dir <dir>]",
 ];
 const LIST_USAGE: &[&str] = &[
-    "tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread] [--assignee <name>] [--todo | --doing | --open | --ready | --done [--history] | --deleted | --archived] [--group <by>] [--sort <by>] [--field <name> | --note <prefix>] [--json] [--state-dir <dir>]",
+    "tsk list [<task>] [-p <project> | --desk | --all] [--thread <name> | --no-thread] [--assignee <name>] [--machine <range>] [--todo | --doing | --open | --ready | --done [--history] | --deleted | --archived] [--group <by>] [--sort <by>] [--field <name> | --note <prefix>] [--json] [--state-dir <dir>]",
 ];
 const STATUS_USAGE: &[&str] = &[
     "tsk status <task> <status> [--state-dir <dir>]",
@@ -127,7 +127,7 @@ const STATUS_USAGE: &[&str] = &[
     "tsk status <task> review [--done <text>] [--check <text>]... [--next <text>] [--on <who>]",
 ];
 const EDIT_USAGE: &[&str] = &[
-    "tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--parent <task> | --no-parent] [-p <project> | --desk] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--after <task>]... [--clear-after | --no-after] [--on <who>] [--state-dir <dir>]",
+    "tsk edit <task> [--title <title>] [--notes <notes> | --append-notes <text>] [--parent <task> | --no-parent] [-p <project> | --desk] [--assignee <name> | --unassign] [--base <branch> | --clear-base] [--after <task>]... [--clear-after | --no-after] [--on <who>] [--machine <name> | --no-machine] [--state-dir <dir>]",
 ];
 const STEPS_USAGE: &[&str] = &[
     "tsk steps <task> add <text> [<place>] [--state-dir <dir>]",
@@ -447,6 +447,7 @@ pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
                 &[
                     ("--thread <name>", "only tasks on this thread"),
                     ("--no-thread", "only tasks without a thread"),
+                    ("--machine <range>", "@all (default), @local, @current, @unspecified, or a machine name"),
                     (
                         "--assignee <name>",
                         "only tasks assigned to this agent profile or person; me for yours",
@@ -659,6 +660,7 @@ fn list_json(
             #[serde(serialize_with = "crate::cli::list::serialize_legacy_status")]
             status: HumanStatus,
             title: &'a str,
+            machine: &'a Option<String>,
             notes: &'a Option<String>,
             steps: &'a [StepLine],
             parent_task_id: Option<uuid::Uuid>,
@@ -694,6 +696,7 @@ fn list_json(
             project: &row.project,
             status: row.status,
             title: &row.title,
+            machine: &row.machine,
             notes: &direct.notes,
             steps: &direct.steps,
             parent_task_id: row.parent_task_id,
@@ -1197,6 +1200,10 @@ fn append_row(
         let list: Vec<String> = row.waiting_for.iter().map(|n| format!("T{n}")).collect();
         content.push_str(" · after ");
         content.push_str(&list.join(", "));
+    }
+    if let Some(machine) = row.machine.as_deref() {
+        content.push_str(" · machine ");
+        content.push_str(&terminal_text(machine));
     }
     let first_prefix = format!("{indent}- {} ", row.number);
     let continuation_prefix = " ".repeat(first_prefix.len());
@@ -2394,7 +2401,7 @@ pub fn status_rejected(error: StatusError, task: TaskAddress) -> CliOutput {
 pub fn edit_help() -> CliOutput {
     help(HelpDoc {
         usage: lines(EDIT_USAGE),
-        purpose: "Change a task's title, notes, assignee, dispatch base, the tasks it runs after, or who its open block or review waits on. Use --project or --desk to move its scope. Thread stays as it is.".into(),
+        purpose: "Change a task's title, notes, assignee, machine, dispatch base, the tasks it runs after, or who its open block or review waits on. Use --project or --desk to move its scope. Thread stays as it is.".into(),
         groups: vec![
             group("Arguments", &[("<task>", "a task number or UUID")]),
             group(
@@ -2416,6 +2423,8 @@ pub fn edit_help() -> CliOutput {
                         "assign an agent profile from config.toml, me, or a person's name",
                     ),
                     ("--unassign", "clear the assignee"),
+                    ("--machine <name>", "set the machine, or @current for this machine"),
+                    ("--no-machine", "clear the machine, leaving it unspecified"),
                     (
                         "--base <branch>",
                         "dispatch from this existing branch of the project",
