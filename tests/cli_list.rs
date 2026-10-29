@@ -196,7 +196,7 @@ fn machine_creation_migration_and_retry_contract() {
     let _beta = EnvironmentGuard::set("TSK_MACHINE", "beta");
     let other = command(&["add", "--desk", "-t", "same", "--json"]);
     assert!(other.stdout.contains("created"), "{other:?}");
-    let plan = format!(r#"[{{"title":"same","project":null}}]"#);
+    let plan = r#"[{"title":"same","project":null}]"#.to_string();
     let result = run_with(
         &[
             "tsk".into(),
