@@ -287,7 +287,11 @@ fn rows_paint_the_title_only() {
     let geometry = resolve_responsive(130, 24, WideStage::Board);
     let (rows, _) = render(&model, 130, 24);
     let row = column_text(&rows, geometry.board, 6);
-    assert_eq!(row.trim_end(), "▸  T12 Frame the wide task view", "{row}");
+    assert_eq!(
+        row.trim_end(),
+        "▸  T12 Frame the wide task view [unspecified]",
+        "{row}"
+    );
     assert!(!rows.iter().any(|row| row.contains("└─ tsk")));
 }
 

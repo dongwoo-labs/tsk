@@ -1099,6 +1099,15 @@ fn build_task_page_overlay<'a>(
     if !meta_scope.is_empty() {
         meta.push_str(&meta_scope);
     }
+    if !editing_session && bound_task.is_none_or(|task| !task.is_notice()) {
+        if !meta.is_empty() {
+            meta.push_str(" · ");
+        }
+        meta.push_str("machine ");
+        meta.push_str(&terminal_text(bound_task.map_or("current", |task| {
+            task.machine.as_deref().unwrap_or("unspecified")
+        })));
+    }
     // Header: indent + glyph + the WRAPPED title rows + right-aligned status word
     // on row 0. A long title wraps onto further bold rows indented under the
     // glyph instead of truncating; edit mode wraps the draft with its cursor.
@@ -2355,7 +2364,7 @@ fn status_idle(model: &BoardModel, surface: BoardSurface, has_message: bool) -> 
 }
 
 fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
-    match surface {
+    let scope = match surface {
         BoardSurface::All => " all".to_string(),
         BoardSurface::Desk => " desk".to_string(),
         BoardSurface::Project => {
@@ -2365,7 +2374,8 @@ fn footer_context(model: &BoardModel, surface: BoardSurface) -> String {
                 .unwrap_or_else(|| "desk".to_string());
             format!(" {name}")
         }
-    }
+    };
+    format!("{scope} · {}", model.machine_range_label())
 }
 
 /// The persistent navigation row's paint for this model: the board and questions tabs.

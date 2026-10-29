@@ -210,6 +210,8 @@ pub struct QuestionsState {
     pub cursor: Option<Uuid>,
     /// The open question: a full page below 110 columns, the focused detail at 110 and up.
     pub page: Option<Uuid>,
+    /// A draft's record when a refreshed machine range stops listing it.
+    detached_page: Option<QuestionRecord>,
     /// The highlighted row of each record's answer form, by index into [`form`].
     pub highlight: BTreeMap<Uuid, usize>,
     /// The approval terms the open page showed (see [`ApprovalCheck`]).
@@ -668,10 +670,19 @@ impl QuestionsState {
         };
     }
 
+    /// A drafted page keeps its binding without putting an off-range row into counts.
+    pub fn record(&self, id: Uuid) -> Option<&QuestionRecord> {
+        self.feed.get(id).or_else(|| {
+            self.detached_page
+                .as_ref()
+                .filter(|record| self.page == Some(id) && record.reference.id == id)
+        })
+    }
+
     /// The question the detail shows: the open page, else (wide only) the cursor's row.
     pub fn shown(&self, wide: bool) -> Option<&QuestionRecord> {
         let id = self.page.or(if wide { self.cursor } else { None })?;
-        self.feed.get(id)
+        self.record(id)
     }
 
     /// Keep the cursor on a listed row after a reload.
@@ -681,7 +692,7 @@ impl QuestionsState {
             self.cursor = order.first().copied();
         }
         if let Some(page) = self.page {
-            if self.feed.get(page).is_none() {
+            if self.record(page).is_none() {
                 self.page = None;
                 self.answer = None;
                 self.correcting = None;
@@ -694,20 +705,24 @@ impl QuestionsState {
     /// Replace the snapshot. The terms the page showed survive it, so a pick of Approve
     /// after the terms changed refuses instead of approving terms the user never read.
     pub fn set_feed(&mut self, feed: QuestionFeed) {
+        self.detached_page = self.page.and_then(|id| {
+            (self.has_unsaved_work() && feed.get(id).is_none())
+                .then(|| self.record(id).cloned())
+                .flatten()
+        });
         self.feed = feed;
         self.reanchor();
     }
 
     fn reset_stale_check(&mut self) {
         let keep = self.seen.as_ref().is_some_and(|seen| {
-            self.page == Some(seen.id) && self.feed.get(seen.id).is_some_and(|r| r.is_open())
+            self.page == Some(seen.id) && self.record(seen.id).is_some_and(|r| r.is_open())
         });
         if !keep {
             self.seen = None;
         }
         let keep_correction = self.correcting.is_some_and(|(id, revision)| {
-            self.feed
-                .get(id)
+            self.record(id)
                 .is_some_and(|record| record.reference.revision == revision)
         });
         if !keep_correction {
@@ -715,8 +730,13 @@ impl QuestionsState {
         }
         // A staged comment outlives a reload only while its approval is still open: once
         // decided or moved on, it is either saved already or no longer this record's wait.
-        self.comments
-            .retain(|id, _| self.feed.get(*id).is_some_and(QuestionRecord::is_open));
+        let detached = self.detached_page.as_ref();
+        self.comments.retain(|id, _| {
+            self.feed
+                .get(*id)
+                .or_else(|| detached.filter(|record| record.reference.id == *id))
+                .is_some_and(QuestionRecord::is_open)
+        });
     }
 
     /// Whether quitting would lose a typed answer, a staged comment, or an unresolved save.
@@ -757,11 +777,12 @@ impl QuestionsState {
 
     /// The highlighted row's choice on the open page, if it has a form.
     pub fn highlighted_choice(&self) -> Option<Choice> {
-        let record = self.page.and_then(|id| self.feed.get(id))?;
+        let record = self.page.and_then(|id| self.record(id))?;
         form(self, record).get(self.highlighted(record)).copied()
     }
 
     fn clear_page_state(&mut self) {
+        self.detached_page = None;
         self.seen = None;
         self.correcting = None;
         self.answer = None;
@@ -865,7 +886,7 @@ impl QuestionsState {
 
     /// `j`/`k` on a page: move the highlighted choice, else scroll.
     pub fn move_on_page(&mut self, forward: bool) {
-        let Some(record) = self.page.and_then(|id| self.feed.get(id)).cloned() else {
+        let Some(record) = self.page.and_then(|id| self.record(id)).cloned() else {
             return;
         };
         let rows = form(self, &record);
@@ -1468,7 +1489,7 @@ pub fn footer_hint(state: &QuestionsState, wide: bool) -> String {
         }
         .to_string();
     }
-    let Some(record) = state.page.and_then(|id| state.feed.get(id)) else {
+    let Some(record) = state.page.and_then(|id| state.record(id)) else {
         return if wide {
             "enter/→ open · j/k move · z closed · 1 board · ? keys"
         } else {
@@ -1550,8 +1571,7 @@ pub fn map_key(state: &QuestionsState, wide: bool, key: KeyEvent) -> Option<Boar
     // The open page's answer form: a digit picks its row at once, and on the highlighted
     // `Type something…` row a typed character opens the field with it. A lone field left
     // with `Esc` reopens on `Enter`, so its page keys (`t`, `J`/`K`) keep their meaning.
-    if let (Some(record), KeyCode::Char(c)) =
-        (state.page.and_then(|id| state.feed.get(id)), key.code)
+    if let (Some(record), KeyCode::Char(c)) = (state.page.and_then(|id| state.record(id)), key.code)
     {
         let rows = form(state, record);
         let lone = lone_field(&rows);
@@ -1611,7 +1631,7 @@ pub fn paste_target(state: &QuestionsState) -> Option<bool> {
     if let Some(input) = state.typing() {
         return Some(input.secret);
     }
-    let record = state.page.and_then(|id| state.feed.get(id))?;
+    let record = state.page.and_then(|id| state.record(id))?;
     (state.highlighted_choice() == Some(Choice::Text))
         .then_some(record.reference.kind == QuestionKind::Secret)
 }

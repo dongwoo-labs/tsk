@@ -6,8 +6,6 @@
 //! revision (or reads the record back first when the commit itself is unknown). Nothing
 //! here retries a write or recreates a task.
 
-use std::collections::BTreeSet;
-
 use uuid::Uuid;
 
 use crate::domain::{
@@ -32,7 +30,11 @@ pub(crate) const USER: &str = "user";
 
 /// Read the board's question records once.
 pub fn load_feed() -> QuestionFeed {
-    match QuestionStore::new(default_state_dir()) {
+    load_feed_at(&default_state_dir())
+}
+
+fn load_feed_at(state_dir: &std::path::Path) -> QuestionFeed {
+    match QuestionStore::new(state_dir.to_path_buf()) {
         Err(QuestionError::AgentStoreRequired) => QuestionFeed::Disabled,
         Err(error) => QuestionFeed::Unavailable(error.to_string()),
         Ok(store) => match store.list(None) {
@@ -46,32 +48,34 @@ fn reload(model: &mut BoardModel) {
     refresh_feed(model);
 }
 
-/// Re-read the question records, and the moved done tasks they name that the session has
-/// not read yet. Moved tasks never change, so the done files are read only for a new one.
+/// Refresh questions and actual retained tasks for the shared machine range.
+/// History failures stay explicit, rather than classifying unread tasks as unspecified.
 pub fn refresh_feed(model: &mut BoardModel) {
-    model.set_question_feed(load_feed());
-    let missing: BTreeSet<Uuid> = model
-        .questions()
-        .feed
-        .records()
-        .iter()
-        .map(|record| record.reference.task_id)
-        .filter(|id| {
-            !model.loaded_tasks().iter().any(|task| task.id == *id)
-                && !model.questions().moved.contains_key(id)
+    refresh_feed_at(model, &default_state_dir());
+}
+
+pub fn refresh_feed_at(model: &mut BoardModel, state_dir: &std::path::Path) {
+    let store = TaskStore::new(state_dir);
+    let history = store
+        .load_done_history()
+        .and_then(|history| {
+            store.load_trash().map(|trash| {
+                history
+                    .into_iter()
+                    .map(|line| line.task)
+                    .chain(trash.into_iter().map(|line| line.task))
+                    .collect()
+            })
         })
-        .collect();
-    if missing.is_empty() {
-        return;
-    }
-    let Ok(history) = TaskStore::new(default_state_dir()).load_done_history() else {
-        return;
-    };
-    let moved = &mut model.questions_mut().moved;
-    for line in history {
-        if missing.contains(&line.task.id) {
-            moved.insert(line.task.id, line.task);
-        }
+        .map_err(|error| format!("retained tasks cannot be read: {error}"));
+    model.set_machine_history(history);
+    match QuestionStore::new(state_dir.to_path_buf()) {
+        Err(QuestionError::AgentStoreRequired) => model.set_question_feed(QuestionFeed::Disabled),
+        Err(error) => model.set_question_feed(QuestionFeed::Unavailable(error.to_string())),
+        Ok(store) => match store.list_entries(None) {
+            Ok(entries) => model.set_question_inventory(entries),
+            Err(error) => model.set_question_feed(QuestionFeed::Unavailable(error.to_string())),
+        },
     }
 }
 
@@ -94,10 +98,7 @@ fn question_store(model: &mut BoardModel) -> Option<QuestionStore> {
 
 fn page_record(model: &BoardModel) -> Option<QuestionRecord> {
     let questions = model.questions();
-    questions
-        .page
-        .and_then(|id| questions.feed.get(id))
-        .cloned()
+    questions.page.and_then(|id| questions.record(id)).cloned()
 }
 
 fn draft(revision: Uuid, text: String) -> AnswerDraft {

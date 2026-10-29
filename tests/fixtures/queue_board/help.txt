@@ -4,7 +4,7 @@
 │                                                                                │
 │ DOING ───────────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸  T1 Smoke-test worktree dispatch                                              │
+│▸  T1 Smoke-test worktree dispatch [unspecified]                                │
 │   T2 Edi┌─ help ▼ ────────────────────────────────────────────── [x]─┐         │
 │   T5 Wir│                                                            │         │
 │   T6 Doc│  / search keys or actions…                                 │         │

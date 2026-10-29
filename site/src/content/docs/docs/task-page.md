@@ -13,7 +13,7 @@ At 110 usable columns or wider, the selected task's details always show beside t
 
 Press `J` / `K` on the page to open the next or previous task in the list's order. A draft with unsaved changes refuses to switch, and a task the list does not show (opened from a [related task](#related-tasks)) refuses with `this task is not in the list · esc back`.
 
-Click the task's `T` number to copy it. The page shows its status, notes, parent, steps, direct children, questions, findings, links, and paper trail. The footer shows assignee, base, waiting tasks, and scope when applicable. Dates and actions live in the paper trail. Long text wraps.
+Click the task's `T` number to copy it. The page shows its status, notes, parent, steps, direct children, questions, findings, links, and paper trail. The footer shows the machine or `unspecified`, assignee, base, waiting tasks, and scope when applicable. Dates and actions live in the paper trail. Long text wraps.
 
 ## Edit
 

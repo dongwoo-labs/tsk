@@ -5,7 +5,7 @@
 │ DOING ───────────────────────────────────────────────────────────────────────1 │
 │                                                                                │
 │   tsk                                                                          │
-│▸  T1 Smoke-test worktree dispatch                                              │
+│▸  T1 Smoke-test worktree dispatch [unspecified]                                │
 │                                                                                │
 │                                                                                │
 │                                                                                │

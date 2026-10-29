@@ -3016,6 +3016,10 @@ fn palette_lists_exactly_m1_commands_for_selection_filters_by_subsequence_and_di
         "set assignee",
         "set base",
         "set after (wait for)…",
+        "machine: @local",
+        "machine: @all",
+        "machine: @unspecified",
+        "machine: @current",
         "add task",
         "delete task",
         "undo",
@@ -3643,8 +3647,8 @@ fn project_scope_filters_all_visible_sections_matching_ac5() {
     let other_status = board_chrome_row(&model, (80, 24));
     assert_eq!(
         other_status.trim(),
-        "other",
-        "scoped status must name the project basename: {other_status:?}"
+        "other · machine @local",
+        "scoped status must name the project basename and machine range: {other_status:?}"
     );
     assert!(!model.visible_ids().contains(&motion_app));
     assert!(!model.visible_ids().contains(&deck_app));
@@ -3663,8 +3667,8 @@ fn project_scope_filters_all_visible_sections_matching_ac5() {
     let home_status = board_chrome_row(&model, (80, 24));
     assert_eq!(
         home_status.trim(),
-        "desk",
-        "home status must name the desk lens: {home_status:?}"
+        "desk · machine @local",
+        "home status must name the desk lens and machine range: {home_status:?}"
     );
 
     // Scoped project with zero open deck tasks → header + empty hint, no invented row.

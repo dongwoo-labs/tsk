@@ -40,6 +40,14 @@ Where tsk keeps your tasks and settings, how to configure it, and how to back it
 | `launchers/` | Dispatch launchers. Each one deletes itself once its agent starts |
 | `cleanups/` | Marks of worktree removals under way. After an interrupted removal, the next cleanup refuses and says how to finish by hand |
 
+## Machines
+
+New tasks record the current machine. Existing tasks without a machine stay unspecified, including after edits or restore. Common notices have no machine.
+
+The default name is the host name's first label, lowercased and limited to 32 characters. Non-ASCII letters and punctuation become hyphens. `TSK_MACHINE` overrides it with 1–63 ASCII letters, digits, dots, or hyphens, starting with a letter or digit. Names are lowercase.
+
+Machines with the same host name need distinct overrides. Renaming a host or changing the override does not move existing tasks. Use [`tsk edit --machine`](/docs/cli/#edit) to move them explicitly. The backup directory's `machine-id` is separate from task machine names.
+
 ## Configuration
 
 `config.toml` in the state directory holds agent profiles, project settings, the merge method, board defaults, and [backup targets](#settings).
@@ -303,7 +311,11 @@ tsk restore
 
 ## Store version
 
-The board, CLI, and Herdr plugin share one store. The integrated fork writes format v16. Fork v10 and upstream v6 (including upstream dev formats v7–v15) share version numbers but not schemas, so v16 accepts both histories. Existing `todo` and `doing` task values keep those wire spellings; upstream `open` and `started` read as aliases. `ready`, `blocked`, and `review` remain distinct. The legacy CLI JSON view keeps `todo`/`doing`/`done` for Agent consumers.
+The board, CLI, and Herdr plugin share one store. The integrated fork writes format v17, which adds optional machine names without assigning older tasks.
+
+Fork v10 and upstream v6 (including upstream dev formats v7–v15) share version numbers but not schemas. Both histories remain supported.
+
+Existing `todo` and `doing` task values keep those wire spellings; upstream `open` and `started` read as aliases. `ready`, `blocked`, and `review` remain distinct. The legacy CLI JSON view keeps `todo`/`doing`/`done` for Agent consumers.
 
 Fork UUID `after` references use the referenced task's store-global number from live tasks, trash, or dated done history. Numeric links stay numeric. A UUID absent from all three is treated as a deleted prerequisite and removed. Reads migrate in memory only and leave original bytes unchanged.
 
@@ -312,7 +324,7 @@ Fork UUID `after` references use the referenced task's store-global number from 
 - `<original-backup>.after-migration.json` records planned removals before replacement: each owning task's number and original UUID, or an empty list. It does not prove replacement succeeded.
 - Questions, private snapshots, reports, task UUIDs, revisions, history, steps, archive flags, and parent links are retained by migration.
 
-Stop every writer before upgrading a shared board. To roll back, stop writers again and restore the complete pre-upgrade state-directory copy with the previous binary. The previous fork cannot read v16. Do not publish a migrated shared store until every reader uses a compatible binary.
+Stop every writer before upgrading a shared board. To roll back, stop writers again and restore the complete pre-upgrade state-directory copy with the previous binary. Binaries that support only v16 cannot read v17. Do not publish a migrated shared store until every reader uses a compatible binary.
 
 Each task can store one optional `parent_task_id` UUID. Missing fields in older tasks and trash entries mean no parent. Relationships use the same locked, revision-checked atomic save path as other task fields; child counts are calculated and are not stored.
 
@@ -347,7 +359,7 @@ When the board opens, tsk asks GitHub for the latest release if its last check i
 
 ## Completion report documents
 
-`reports.json` is a separate versioned document (`format_version: 1`) beside `tsk.json`. It stores Task identifiers and display metadata, every Markdown revision, and the last revision opened on the board. It uses the same store lock as Tasks and atomic replacement with file and directory synchronization. A corrupt or unsupported report file refuses the operation instead of being replaced with an empty list. Question storage remains unchanged by the v16 task migration.
+`reports.json` is a separate versioned document (`format_version: 1`) beside `tsk.json`. It stores Task identifiers and display metadata, every Markdown revision, and the last revision opened on the board. It uses the same store lock as Tasks and atomic replacement with file and directory synchronization. A corrupt or unsupported report file refuses the operation instead of being replaced with an empty list. Task migrations leave question storage unchanged.
 
 Preserve `reports.json` in separate full state-directory copies; automatic `tsk backup` does not include it. Report documents are shareable and are not Git-excluded, unlike `questions-private/`. Never copy authentication secrets or private question originals into reports. A report keeps its Task number and title so it remains readable after the Task moves into dated done history. Existing report history survives changes and read acknowledgements. Older binaries ignore the separate report document and cannot display or register reports.
 

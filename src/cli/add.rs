@@ -517,6 +517,10 @@ fn existing_task<'a>(
     domain.tasks().iter().find(|task| {
         !task.soft_deleted
             && !task.is_notice()
+            && task
+                .machine
+                .as_deref()
+                .is_none_or(|name| Some(name) == domain.creation_machine())
             && task.title == title
             && &task.scope == scope
             && task.thread.as_deref() == thread

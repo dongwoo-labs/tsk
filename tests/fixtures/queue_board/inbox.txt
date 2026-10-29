@@ -4,10 +4,10 @@
 │                                                                                │
 │ TODO · desk ─────────────────────────────────────────────────────────────────4 │
 │                                                                                │
-│▸  T50 Ready planning pass                                                      │
-│   T51 Ready release check                                                      │
-│   T52 Inbox capture one                                                        │
-│   T53 Inbox capture two                                                        │
+│▸  T50 Ready planning pass [unspecified]                                        │
+│   T51 Ready release check [unspecified]                                        │
+│   T52 Inbox capture one [unspecified]                                          │
+│   T53 Inbox capture two [unspecified]                                          │
 │                                                                                │
 │                                                                                │
 │                                                                                │

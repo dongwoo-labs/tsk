@@ -693,6 +693,7 @@ fn parse_human_status(value: &str) -> Result<HumanStatus, String> {
 /// Parsed `edit` input. One positional task address, then title/notes flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagEdit {
+    pub machine: Option<Option<String>>,
     pub task: Option<TaskAddress>,
     pub parent: Option<Option<TaskAddress>>,
     /// `Some(vec![])` clears the wait list (`--no-after`).
@@ -748,6 +749,7 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
 
     let mut no_after = false;
     let mut parsed = FlagEdit {
+        machine: None,
         task: None,
         parent: None,
         after: None,
@@ -773,6 +775,26 @@ pub fn parse_flag_edit(args: &[String]) -> Result<FlagEdit, String> {
         match flag {
             flag if flag.starts_with("--title=") => {
                 parsed.title = Some(flag["--title=".len()..].to_owned());
+                index += 1;
+            }
+            "--machine" | "--no-machine" => {
+                if parsed.machine.is_some() {
+                    return Err("machine options cannot be combined or repeated".into());
+                }
+                parsed.machine = Some(if flag == "--no-machine" {
+                    None
+                } else {
+                    Some(crate::machine::edit_value(&value(flag)?)?)
+                });
+                index += if flag == "--no-machine" { 1 } else { 2 };
+            }
+            flag if flag.starts_with("--machine=") => {
+                if parsed.machine.is_some() {
+                    return Err("machine options cannot be combined or repeated".into());
+                }
+                parsed.machine = Some(Some(crate::machine::edit_value(
+                    &flag["--machine=".len()..],
+                )?));
                 index += 1;
             }
             flag if flag.starts_with("--on=") => {
@@ -1214,6 +1236,7 @@ mod tests {
         assert_eq!(
             parsed,
             FlagEdit {
+                machine: None,
                 parent: None,
                 after: None,
                 task: Some(TaskAddress::Number(12)),

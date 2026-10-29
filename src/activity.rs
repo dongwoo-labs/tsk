@@ -264,6 +264,7 @@ fn field_list(fields: &[EditedField]) -> String {
             EditedField::Notes => "notes",
             EditedField::Thread => "thread",
             EditedField::Project => "project",
+            EditedField::Machine => "machine",
             EditedField::After => "after",
         })
         .collect();

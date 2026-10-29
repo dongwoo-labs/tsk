@@ -233,7 +233,7 @@ for (const width of [40, 78, 109, 110]) {
     expect(appLines[0]).toMatch(/… ✓1\/2$/u);
     expect(lines[0].startsWith(appLines[0].split("…")[0])).toBe(true);
     expect(lines.join("")).toBe(
-      "Read every word of this long title before starting the task so the continuation must align beneath its title and retain the final boundary marker END",
+      "Read every word of this long title before starting the task so the continuation must align beneath its title and retain the final boundary marker END [unspecified]",
     );
     await page.keyboard.press("s");
     await expect(row(page, 13)).toHaveClass(/is-sel/);

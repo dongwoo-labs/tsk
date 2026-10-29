@@ -2503,6 +2503,10 @@ fn apply_board_intent(
             model.clear_message();
             return Ok(IntentOutcome::None);
         }
+        BoardIntent::SetMachineFilter(filter) => {
+            model.set_machine_filter(filter);
+            return Ok(IntentOutcome::None);
+        }
         BoardIntent::ToggleMessages => {
             if !model.task_list_owns_input() {
                 return Ok(IntentOutcome::None);

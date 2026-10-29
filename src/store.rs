@@ -77,6 +77,8 @@ const MIGRATIONS: &[MigrationStep] = &[
     migrate_optional_fields,
     migrate_optional_fields,
     migrate_v15_to_v16,
+    // v16 -> v17: optional machine fields stay absent, including undo snapshots.
+    migrate_optional_fields,
 ];
 
 // Upstream dev versions overlap the fork's shipped versions. Both migrate through
@@ -1021,7 +1023,12 @@ impl TaskStore {
     }
 
     fn load_unlocked(&self) -> Result<DomainState, StoreError> {
-        self.load_unlocked_supported(STORE_FORMAT_VERSION, migrate)
+        let mut state = self.load_unlocked_supported(STORE_FORMAT_VERSION, migrate)?;
+        let machine = crate::machine::current().map_err(|message| {
+            StoreError::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
+        })?;
+        state.set_creation_machine(machine);
+        Ok(state)
     }
 
     /// Load path parameterized for tests: `supported` is the target format and
@@ -2526,7 +2533,7 @@ mod tests {
     }
 
     #[test]
-    fn save_emits_format_version_sixteen() {
+    fn save_emits_format_version_seventeen() {
         let dir = temp_dir("format-stamp");
         let _guard = TempDirGuard(dir.clone());
         let store = TaskStore::new(&dir);
@@ -2535,7 +2542,7 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join(STATE_FILE)).expect("read"))
                 .expect("json");
-        assert_eq!(value["format_version"], 16);
+        assert_eq!(value["format_version"], 17);
         assert_eq!(value["next_notice_number"], 1);
     }
 
@@ -2553,7 +2560,7 @@ mod tests {
             error,
             StoreError::UnsupportedFormat {
                 found: 0,
-                supported: 16
+                supported: 17
             }
         ));
         let on_disk: serde_json::Value =
@@ -2564,7 +2571,7 @@ mod tests {
 
     #[test]
     fn load_refuses_noncurrent_format_without_rewriting() {
-        for format_version in [0, 17] {
+        for format_version in [0, 18] {
             let dir = temp_dir("format-noncurrent");
             let _guard = TempDirGuard(dir.clone());
             let document = serde_json::json!({
@@ -2582,7 +2589,7 @@ mod tests {
                     error,
                     StoreError::UnsupportedFormat {
                         found,
-                        supported: 16
+                        supported: 17
                     } if found == format_version
                 ),
                 "{error}"
@@ -2599,7 +2606,7 @@ mod tests {
         let dir = temp_dir("format-save-state");
         let _guard = TempDirGuard(dir.clone());
         let state: DomainState = serde_json::from_value(serde_json::json!({
-            "format_version": 17,
+            "format_version": 18,
             "next_task_number": 1,
             "tasks": [],
             "undo_stack": []
@@ -2612,8 +2619,8 @@ mod tests {
         assert!(matches!(
             error,
             StoreError::UnsupportedFormat {
-                found: 17,
-                supported: 16
+                found: 18,
+                supported: 17
             }
         ));
         assert!(!dir.join(STATE_FILE).exists());
@@ -2627,7 +2634,7 @@ mod tests {
         store.save(&DomainState::new()).expect("seed current store");
         let before = fs::read(dir.join(STATE_FILE)).expect("read current store");
         let mut local: DomainState = serde_json::from_value(serde_json::json!({
-            "format_version": 17,
+            "format_version": 18,
             "next_task_number": 1,
             "tasks": [],
             "undo_stack": []
@@ -2640,8 +2647,8 @@ mod tests {
         assert!(matches!(
             error,
             StoreError::UnsupportedFormat {
-                found: 17,
-                supported: 16
+                found: 18,
+                supported: 17
             }
         ));
         assert_eq!(
@@ -2655,7 +2662,7 @@ mod tests {
         let dir = temp_dir("format-save-newer");
         let _guard = TempDirGuard(dir.clone());
         let newer = serde_json::json!({
-            "format_version": 17,
+            "format_version": 18,
             "tasks": [],
             "undo_stack": []
         });
@@ -2668,8 +2675,8 @@ mod tests {
             matches!(
                 error,
                 StoreError::UnsupportedFormat {
-                    found: 17,
-                    supported: 16
+                    found: 18,
+                    supported: 17
                 }
             ),
             "{error}"
@@ -4122,7 +4129,7 @@ mod tests {
         fs::write(dir.join(STATE_FILE), &original_bytes).expect("seed v5 file");
 
         let mut state = store.load().expect("v5 file loads through v5 -> v6");
-        assert_eq!(state.format_version(), 16);
+        assert_eq!(state.format_version(), 17);
         assert_eq!(state.tasks()[0].assignee, None);
         assert_eq!(
             state.tasks()[0].title,
@@ -4139,7 +4146,7 @@ mod tests {
         let live: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join(STATE_FILE)).expect("read live"))
                 .expect("json");
-        assert_eq!(live["format_version"], 16);
+        assert_eq!(live["format_version"], 17);
         assert_eq!(live["tasks"][0]["title"], "migrate me");
         assert_eq!(
             fs::read(dir.join("tsk.json.1")).expect("last-good holds the v5 original"),
@@ -4187,7 +4194,7 @@ mod tests {
 
     #[test]
     fn load_refuses_a_higher_version_and_changes_nothing_in_the_state_dir() {
-        for (format_version, supported) in [(17u32, 15u32), (18, 16)] {
+        for (format_version, supported) in [(17u32, 16u32), (18, 17)] {
             let dir = temp_dir("format-higher");
             let _guard = TempDirGuard(dir.clone());
             let document = serde_json::json!({
@@ -4202,17 +4209,18 @@ mod tests {
             fs::write(dir.join("tsk.json.lock"), []).expect("pre-create lock file");
             let before = dir_listing_with_bytes(&dir);
 
-            let error = TaskStore::new(&dir)
-                .load()
-                .expect_err("a newer store must be refused");
-            assert!(
-                matches!(
-                    error,
-                    StoreError::UnsupportedFormat { found, supported: 16 } if found == format_version
-                ),
-                "{error}"
-            );
-
+            if format_version > STORE_FORMAT_VERSION {
+                let error = TaskStore::new(&dir)
+                    .load()
+                    .expect_err("a newer store must be refused");
+                assert!(
+                    matches!(
+                        error,
+                        StoreError::UnsupportedFormat { found, supported: 17 } if found == format_version
+                    ),
+                    "{error}"
+                );
+            }
             let error = TaskStore::new(&dir)
                 .load_unlocked_supported(supported, |document, from| {
                     migrate_with(document, from, &[])
@@ -4697,14 +4705,11 @@ mod tests {
         );
         assert_eq!(reads_as(*DEV_FORMAT_VERSIONS.start()), 7);
         assert_eq!(reads_as(*DEV_FORMAT_VERSIONS.end()), 15);
-        assert_eq!(
-            reads_as(DEV_FORMAT_VERSIONS.end() + 1),
-            STORE_FORMAT_VERSION
-        );
+        assert_eq!(reads_as(STORE_FORMAT_VERSION), STORE_FORMAT_VERSION);
     }
 
     #[test]
-    fn check_document_accepts_a_dev_v15_store_and_refuses_v17() {
+    fn check_document_accepts_a_dev_v15_store_and_refuses_v18() {
         let document = |version: u32| {
             let mut value =
                 serde_json::to_value(round_tripped_current_state("dev")).expect("encode state");
@@ -4713,10 +4718,10 @@ mod tests {
         };
         check_document(&document(15)).expect("a dev v15 store passes");
         assert!(matches!(
-            check_document(&document(17)),
+            check_document(&document(18)),
             Err(RestoreError::Unsupported {
-                found: 17,
-                supported: 16
+                found: 18,
+                supported: 17
             })
         ));
         assert!(matches!(

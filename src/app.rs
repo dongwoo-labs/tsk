@@ -168,7 +168,7 @@ fn load_board_inner(
     }
     if full_board_open {
         model.offer_launch_card(&state, &snapshot);
-        crate::question_actions::refresh_feed(&mut model);
+        crate::question_actions::refresh_feed_at(&mut model, store.path());
         model.set_report_feed(crate::report_actions::load_feed(store.path()));
         model.stall_mut().enabled = crate::stall::inside_herdr();
     }
@@ -1034,7 +1034,7 @@ pub fn revalidate_board_from_store(
     domain.merge_tasks_from_disk(&disk);
     model.sync_from_domain(domain);
     // Question writes move the shared references in the same file: re-read the snapshot.
-    crate::question_actions::refresh_feed(model);
+    crate::question_actions::refresh_feed_at(model, store.path());
     watch.record(signature);
     true
 }
@@ -4343,7 +4343,7 @@ fn handle_board_intent_with_host(
         match model.command_target_id() {
             Some(task_id) => {
                 model.set_report_feed(crate::report_actions::load_feed(store.path()));
-                let has_report = model.reports().feed.get(task_id).is_some();
+                let has_report = model.task_report(task_id).is_some();
                 let replyable = domain.get(task_id).is_some_and(|task| {
                     task.block.is_some()
                         && matches!(
@@ -4374,7 +4374,7 @@ fn handle_board_intent_with_host(
         return Ok(false);
     }
     if intent == BoardIntent::SelectNavTab(NavTab::Questions) && !save_recovery.is_pending() {
-        crate::question_actions::refresh_feed(model);
+        crate::question_actions::refresh_feed_at(model, store.path());
     }
     if intent == BoardIntent::SelectNavTab(NavTab::Reports) && !save_recovery.is_pending() {
         model.set_report_feed(crate::report_actions::load_feed(store.path()));
@@ -12583,7 +12583,10 @@ mod quick_assign_tests {
         };
         let (plain, _) = board_screen(&model, 100, 24);
         assert!(!plain.contains(message), "one line per row: {plain}");
-        assert!(row(&plain, "T1 mine").ends_with("mine"), "{plain}");
+        assert!(
+            row(&plain, "T1 mine").ends_with("mine [unspecified]"),
+            "{plain}"
+        );
 
         let v = key(&model, KeyCode::Char('v'), KeyModifiers::NONE);
         assert_eq!(v, BoardIntent::ToggleStatusLines);
@@ -12602,8 +12605,14 @@ mod quick_assign_tests {
         assert_eq!(model.message(), Some("agent messages hidden"));
         let (hidden, _) = board_screen(&model, 100, 24);
         assert!(!hidden.contains(message), "{hidden}");
-        assert!(row(&hidden, "T1 mine").ends_with("mine"), "{hidden}");
-        assert!(row(&hidden, "T3 plain").ends_with("plain"), "{hidden}");
+        assert!(
+            row(&hidden, "T1 mine").ends_with("mine [unspecified]"),
+            "{hidden}"
+        );
+        assert!(
+            row(&hidden, "T3 plain").ends_with("plain [unspecified]"),
+            "{hidden}"
+        );
         assert_eq!(palette(&model), "show agent messages");
 
         apply_intent(&mut domain, &mut model, intent, None).expect("z again");
@@ -12623,7 +12632,7 @@ mod quick_assign_tests {
         let (configured, _) = board_screen(&model, 100, 24);
         assert!(!configured.contains(message), "{configured}");
         assert!(
-            row(&configured, "T1 mine").ends_with("mine"),
+            row(&configured, "T1 mine").ends_with("mine [unspecified]"),
             "{configured}"
         );
     }
@@ -12671,8 +12680,11 @@ mod quick_assign_tests {
         };
         let (mine_at, theirs_at) = (row("T1 mine"), row("T2 theirs"));
         let (mine, theirs) = (lines[mine_at], lines[theirs_at]);
-        assert!(mine.trim_end().ends_with("mine"), "{mine}");
-        assert!(theirs.trim_end().ends_with("theirs"), "{theirs}");
+        assert!(mine.trim_end().ends_with("mine [unspecified]"), "{mine}");
+        assert!(
+            theirs.trim_end().ends_with("theirs [unspecified]"),
+            "{theirs}"
+        );
         assert!(
             !lines[mine_at + 1].contains("@claude"),
             "one line: {screen}"
@@ -19296,7 +19308,10 @@ mod quick_assign_tests {
             .lines()
             .find(|line| line.contains("second"))
             .expect("row painted");
-        assert!(row.trim_end().ends_with("second"), "one line: {screen}");
+        assert!(
+            row.trim_end().ends_with("second [unspecified]"),
+            "one line: {screen}"
+        );
         // The page's footer names what it waits on; the prerequisite's footer names what
         // runs after it.
         let second = number_of(&domain, ids[1]);
