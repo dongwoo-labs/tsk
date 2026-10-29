@@ -3667,8 +3667,8 @@ fn project_scope_filters_all_visible_sections_matching_ac5() {
     let home_status = board_chrome_row(&model, (80, 24));
     assert_eq!(
         home_status.trim(),
-        "desk",
-        "home status must name the desk lens: {home_status:?}"
+        "desk · machine @local",
+        "home status must name the desk lens and machine range: {home_status:?}"
     );
 
     // Scoped project with zero open deck tasks → header + empty hint, no invented row.
