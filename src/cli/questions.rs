@@ -12,7 +12,7 @@ use crate::domain::{
 };
 use crate::store::{
     notify_question, question_problems, valid_secret_question, QuestionDurability, QuestionError,
-    QuestionStore, TaskStore, SECRET_SET,
+    QuestionListEntry, QuestionStore, TaskStore, SECRET_SET,
 };
 
 pub fn help() -> CliOutput {
@@ -67,6 +67,7 @@ pub(super) struct Parsed {
     pub file: Option<PathBuf>,
     pub operand: Option<String>,
     pub task: Option<super::parser::TaskAddress>,
+    pub inventory: bool,
 }
 
 pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
@@ -77,10 +78,15 @@ pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
     let mut file = None;
     let mut operand = None;
     let mut task = None;
+    let mut inventory = false;
     let mut index = 2;
     while let Some(argument) = args.get(index) {
         match argument.as_str() {
             "--json" => index += 1,
+            "--inventory" => {
+                inventory = true;
+                index += 1;
+            }
             "--state-dir" | "--file" | "--task" => {
                 let value = args
                     .get(index + 1)
@@ -110,12 +116,16 @@ pub(super) fn parse(args: &[String]) -> Result<Parsed, (String, u8)> {
             }
         }
     }
+    if inventory && (verb != "questions" || operand.is_some() || file.is_some()) {
+        return Err(("--inventory is only for questions lists".into(), 2));
+    }
     Ok(Parsed {
         verb,
         state_dir,
         file,
         operand,
         task,
+        inventory,
     })
 }
 
@@ -126,6 +136,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         file,
         operand,
         task,
+        inventory,
     } = parsed;
     let verb = verb.as_str();
     let state_dir =
@@ -338,6 +349,21 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                 let id = resolve(&store, &operand, task_id)?;
                 let record = store.read(id).map_err(|error| (error.to_string(), 1))?;
                 Ok(json(&record, 0))
+            } else if inventory {
+                let entries = store
+                    .list_entries(task_id)
+                    .map_err(|error| (error.to_string(), 1))?;
+                let unavailable = entries
+                    .iter()
+                    .filter(|entry| matches!(entry, QuestionListEntry::Unavailable { .. }))
+                    .count();
+                let mut output = json(&entries, 0);
+                if unavailable > 0 {
+                    output.stderr = format!(
+                        "tsk questions: warning: {unavailable} private question record(s) unavailable; answer state unknown; direct reads and mutations remain refused\n"
+                    );
+                }
+                Ok(output)
             } else {
                 let records = store
                     .list(task_id)

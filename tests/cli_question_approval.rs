@@ -111,6 +111,178 @@ fn questions(dir: &TempDir) -> Value {
 }
 
 #[test]
+fn inventory_keeps_unavailable_questions_visible_while_default_reads_stay_strict() {
+    for damage in ["missing", "corrupt", "unsupported", "mismatch", "not-file"] {
+        let dir = TempDir::new(damage);
+        let task = task_id(&dir);
+        let saved = stdout_json(&ask(&dir, &draft(&task, "approval", terms(H))));
+        let unavailable = &saved["saved"]["record"];
+        let healthy = stdout_json(&ask(&dir, &draft(&task, "question", Value::Null)));
+        let healthy = &healthy["saved"]["record"];
+        let private = dir.0.join("state/questions-private").join(format!(
+            "{}.json",
+            unavailable["reference"]["revision"].as_str().unwrap()
+        ));
+        match damage {
+            "missing" => fs::remove_file(&private).unwrap(),
+            "corrupt" => fs::write(&private, b"not JSON").unwrap(),
+            "not-file" => {
+                fs::remove_file(&private).unwrap();
+                fs::create_dir(&private).unwrap();
+            }
+            _ => {
+                let mut record = unavailable.clone();
+                if damage == "unsupported" {
+                    record["future_field"] = json!(true);
+                } else {
+                    record["reference"]["revision"] = json!("00000000-0000-0000-0000-000000000001");
+                }
+                fs::write(&private, serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+        }
+        let shared_before = fs::read(dir.0.join("state/tsk.json")).unwrap();
+        let healthy_file = dir.0.join("state/questions-private").join(format!(
+            "{}.json",
+            healthy["reference"]["revision"].as_str().unwrap()
+        ));
+        let healthy_before = fs::read(&healthy_file).unwrap();
+
+        for filter in [vec![], vec!["--task", "T1"], vec!["--task", task.as_str()]] {
+            let mut args = vec!["questions", "--state-dir"];
+            let state = dir.state();
+            args.push(&state);
+            args.extend(filter);
+            let strict = cli(&args);
+            assert_eq!(strict.code, 1, "{damage}: {}", strict.stderr);
+            assert!(strict.stdout.is_empty());
+            args.push("--inventory");
+            let listed = cli(&args);
+            assert_eq!(listed.code, 0, "{damage}: {}", listed.stderr);
+            assert!(listed.stderr.contains("unavailable"), "{}", listed.stderr);
+            assert_eq!(
+                stdout_json(&listed),
+                json!([
+                    {"reference": unavailable["reference"], "unavailable": true}, healthy
+                ])
+            );
+        }
+        let strict_number = cli(&["questions", "Q2", "--state-dir", &dir.state()]);
+        assert_eq!(strict_number.code, 1);
+        let read = cli(&[
+            "questions",
+            healthy["reference"]["id"].as_str().unwrap(),
+            "--task",
+            "T1",
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(read.code, 0, "{damage}: {}", read.stderr);
+        assert!(read.stderr.is_empty());
+        assert_eq!(stdout_json(&read), *healthy);
+        for address in ["Q1", unavailable["reference"]["id"].as_str().unwrap()] {
+            let read = cli(&["questions", address, "--state-dir", &dir.state()]);
+            assert_eq!(read.code, 1, "{damage}: {}", read.stderr);
+            assert!(read.stdout.is_empty());
+            assert!(read.stderr.contains("missing or corrupt"));
+            for (verb, input) in [
+                (
+                    "route",
+                    json!({"expected_revision": unavailable["reference"]["revision"], "audience": "lead"}),
+                ),
+                (
+                    "answer",
+                    json!({"expected_revision": unavailable["reference"]["revision"], "text": "approved", "actor": "lead-a", "origin": "agent"}),
+                ),
+                (
+                    "ui-answer",
+                    json!({"expected_revision": unavailable["reference"]["revision"], "approve": true, "approval": terms(H)}),
+                ),
+            ] {
+                let file = dir.write("unavailable-input.json", &input);
+                let refused = cli(&[verb, address, "--file", &file, "--state-dir", &dir.state()]);
+                assert_eq!(refused.code, 1, "{damage} {verb}: {}", refused.stderr);
+            }
+        }
+        assert_eq!(
+            fs::read(dir.0.join("state/tsk.json")).unwrap(),
+            shared_before
+        );
+        assert_eq!(fs::read(&healthy_file).unwrap(), healthy_before);
+        // UUID access to a healthy target keeps the existing mutation path.
+        let file = dir.write(
+            "healthy-route.json",
+            &json!({
+                "expected_revision": healthy["reference"]["revision"], "audience": "lead"
+            }),
+        );
+        let routed = cli(&[
+            "route",
+            healthy["reference"]["id"].as_str().unwrap(),
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(routed.code, 0, "{damage}: {}", routed.stderr);
+    }
+}
+
+#[test]
+fn inventory_is_list_only_filters_by_task_and_does_not_hide_shared_store_failures() {
+    let dir = TempDir::new("inventory-scope");
+    let task = task_id(&dir);
+    assert_eq!(
+        cli(&["add", "-t", "other", "--desk", "--state-dir", &dir.state()]).code,
+        0
+    );
+    let out = ask(&dir, &draft(&task, "question", Value::Null));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let normal = cli(&["questions", "--state-dir", &dir.state()]);
+    let inventory = cli(&["questions", "--inventory", "--state-dir", &dir.state()]);
+    assert_eq!(inventory.code, 0, "{}", inventory.stderr);
+    assert!(inventory.stderr.is_empty());
+    assert_eq!(inventory.stdout, normal.stdout);
+    let empty = cli(&[
+        "questions",
+        "--inventory",
+        "--task",
+        "T2",
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(empty.code, 0);
+    assert_eq!(stdout_json(&empty), json!([]));
+
+    let shared_before = fs::read(dir.0.join("state/tsk.json")).unwrap();
+    let file = dir.write("input.json", &json!({}));
+    for verb in ["ask", "answer", "route", "ui-answer", "secret-result"] {
+        let refused = cli(&[
+            verb,
+            "--inventory",
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(refused.code, 2, "{verb}: {}", refused.stderr);
+    }
+    for extra in [vec!["Q1"], vec!["--file", file.as_str()]] {
+        let state = dir.state();
+        let mut args = vec!["questions", "--inventory", "--state-dir", &state];
+        args.extend(extra);
+        assert_eq!(cli(&args).code, 2);
+    }
+    assert_eq!(
+        fs::read(dir.0.join("state/tsk.json")).unwrap(),
+        shared_before
+    );
+    fs::write(dir.0.join("state/tsk.json"), b"broken shared store").unwrap();
+    let refused = cli(&["questions", "--inventory", "--state-dir", &dir.state()]);
+    assert_eq!(refused.code, 1);
+    assert!(refused.stdout.is_empty());
+}
+
+#[test]
 fn a_bad_approval_is_refused_with_every_field_at_once_and_saves_nothing() {
     let dir = TempDir::new("refuse");
     let task = task_id(&dir);
