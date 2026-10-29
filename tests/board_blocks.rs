@@ -847,7 +847,9 @@ fn tab_reaches_an_option_enter_prefills_the_reply_and_shift_enter_answers() {
         .position(|row| row.contains("pick a database"))
         .unwrap();
     assert!(
-        board[at].trim_end().ends_with("pick a database"),
+        board[at]
+            .trim_end()
+            .ends_with("pick a database [unspecified]"),
         "{}",
         board[at]
     );
@@ -887,7 +889,9 @@ fn an_agent_block_says_who_asks_on_the_live_line() {
         .unwrap();
     assert!(section_ids(&model, SectionKind::NeedsYou).contains(&id));
     assert!(
-        board[at].trim_end().ends_with("pick a database"),
+        board[at]
+            .trim_end()
+            .ends_with("pick a database [unspecified]"),
         "{}",
         board[at]
     );

@@ -276,6 +276,7 @@ Press `:` on the board or a task page and type to find an action. Use arrows or 
 | Available actions | When |
 | --- | --- |
 | Add task, undo, show / hide done drawer, show all keys, quit | Always |
+| Machine: @local, machine: @all, machine: @unspecified, machine: @current | Always |
 | Hide agent messages | A task list has focus |
 | Set todo/doing/done, edit notes, move to project / desk, set assignee, set base, set after (wait for)…, delete task | A task is selected |
 | Set waiting on… | A task with an open block or review is selected or marked |

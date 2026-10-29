@@ -468,9 +468,9 @@ fn set_projection(input: &mut ListInput, flag: &str, value: &str) -> Result<(), 
         match value {
             "id" | "number" | "project" | "status" | "title" | "notes" | "steps"
             | "parent_task_id" | "parent" | "children_done" | "children_total" | "children"
-            | "waiting_for" | "thread" | "assignee" | "assignee_kind" | "base" | "after"
-            | "before" | "dispatch" | "block" | "review" | "past_blocks" | "past_reviews"
-            | "activity" => Projection::Field(value.to_string()),
+            | "waiting_for" | "thread" | "assignee" | "assignee_kind" | "machine" | "base"
+            | "after" | "before" | "dispatch" | "block" | "review" | "past_blocks"
+            | "past_reviews" | "activity" => Projection::Field(value.to_string()),
             _ => return Err(format!("unknown list field {value}")),
         }
     });
