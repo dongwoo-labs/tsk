@@ -104,17 +104,16 @@ pub fn open_from_task(model: &mut BoardModel, state_dir: &Path, task_id: Uuid) {
 /// The testable half of [`open_from_task`]: assumes the feed is already loaded, so a test can
 /// seed it directly. Returns whether a page opened.
 fn open_from_task_with_feed(model: &mut BoardModel, task_id: Uuid) -> bool {
-    let Some(record) = model.reports().feed.get(task_id).cloned() else {
+    let Some(record) = model.task_report(task_id).cloned() else {
         model.set_message("no completion report on this task");
         return false;
     };
     if !model.enter_reports_tab() {
         return false;
     }
-    let id = record.task_id;
     let reports = model.reports_mut();
     reports.return_task = Some(task_id);
-    reports.open(id);
+    reports.open_record(record);
     true
 }
 

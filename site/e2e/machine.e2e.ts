@@ -11,7 +11,7 @@ test("machine ranges filter the disconnected sample without changing task identi
   await app.open("/");
   const demo = screen.getByRole("application", "tsk board live demo");
   await demo.getByRole("button", "full terminal").tap();
-  await expect(demo.getByRole("button", "all · machine @local")).toBeVisible();
+  await expect(demo.getByRole("button", "machine @local · all")).toBeVisible();
   await expect(demo.getByRole("button", "2 questions ·4")).toBeVisible();
   await expect(demo.getByRole("button", "3 reports ·1")).toBeVisible();
   await app.screenshot("machine-local-wide");
@@ -19,7 +19,7 @@ test("machine ranges filter the disconnected sample without changing task identi
   const scope = async (name: string) => {
     await demo.press(":");
     await demo.getByText(`machine: ${name}`).tap();
-    await expect(demo.getByRole("button", `all · machine ${name}`)).toBeVisible();
+    await expect(demo.getByRole("button", `machine ${name} · all`)).toBeVisible();
   };
   await scope("@current");
   await expect(demo.getByText("no task")).toBeVisible();
@@ -42,8 +42,8 @@ test("machine ranges filter the disconnected sample without changing task identi
   await expect(demo.getByRole("button", "3 reports ·1")).toBeVisible();
   await demo.press("2");
   await expect(demo.getByText("NEEDS APPROVAL 1")).toBeVisible();
-  await expect(demo.getByRole("button", "questions · 4 waiting on you · 7 total · sample, nothing is sent · machine @unspecified")).toBeVisible();
-  // Inspect this capture: the machine selector at the end of the footer must
+  await expect(demo.getByRole("button", "machine @unspecified · questions · 4 waiting · 7 total · sample")).toBeVisible();
+  // Inspect this capture: the machine selector at the start of the footer must
   // remain legible at 78 columns. DOM presence alone does not prove that.
   await app.screenshot("machine-unspecified-questions-narrow");
   await demo.press("3");

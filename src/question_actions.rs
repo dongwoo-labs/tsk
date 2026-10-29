@@ -55,12 +55,28 @@ pub fn refresh_feed(model: &mut BoardModel) {
 }
 
 pub fn refresh_feed_at(model: &mut BoardModel, state_dir: &std::path::Path) {
-    let history = TaskStore::new(state_dir)
+    let store = TaskStore::new(state_dir);
+    let history = store
         .load_done_history()
-        .map(|lines| lines.into_iter().map(|line| line.task).collect())
-        .map_err(|error| format!("task history cannot be read: {error}"));
+        .and_then(|history| {
+            store.load_trash().map(|trash| {
+                history
+                    .into_iter()
+                    .map(|line| line.task)
+                    .chain(trash.into_iter().map(|line| line.task))
+                    .collect()
+            })
+        })
+        .map_err(|error| format!("retained tasks cannot be read: {error}"));
     model.set_machine_history(history);
-    model.set_question_feed(load_feed_at(state_dir));
+    match QuestionStore::new(state_dir.to_path_buf()) {
+        Err(QuestionError::AgentStoreRequired) => model.set_question_feed(QuestionFeed::Disabled),
+        Err(error) => model.set_question_feed(QuestionFeed::Unavailable(error.to_string())),
+        Ok(store) => match store.list_entries(None) {
+            Ok(entries) => model.set_question_inventory(entries),
+            Err(error) => model.set_question_feed(QuestionFeed::Unavailable(error.to_string())),
+        },
+    }
 }
 
 fn reload_tasks(store: &TaskStore, domain: &mut DomainState, model: &mut BoardModel) {
@@ -82,10 +98,7 @@ fn question_store(model: &mut BoardModel) -> Option<QuestionStore> {
 
 fn page_record(model: &BoardModel) -> Option<QuestionRecord> {
     let questions = model.questions();
-    questions
-        .page
-        .and_then(|id| questions.feed.get(id))
-        .cloned()
+    questions.page.and_then(|id| questions.record(id)).cloned()
 }
 
 fn draft(revision: Uuid, text: String) -> AnswerDraft {

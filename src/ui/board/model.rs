@@ -1036,8 +1036,9 @@ pub struct BoardModel {
     pub(super) machine_filter: crate::machine::MachineFilter,
     pub(super) current_machine: String,
     raw_questions: crate::ui::questions::QuestionFeed,
+    unavailable_questions: Vec<Uuid>,
     raw_reports: crate::ui::reports::ReportFeed,
-    machine_history: Result<Vec<Task>, String>,
+    pub(super) machine_history: Result<Vec<Task>, String>,
     pub(super) tasks: Vec<Task>,
     /// Scope paths of archived projects, carried from domain state so the lens
     /// query can filter hidden tasks without re-deriving from records.
@@ -2209,6 +2210,7 @@ impl BoardModel {
             current_machine: crate::machine::current()
                 .unwrap_or_else(|_| crate::backup::hostname()),
             raw_questions: Default::default(),
+            unavailable_questions: Vec::new(),
             raw_reports: Default::default(),
             machine_history: Ok(Vec::new()),
             clock: None,
@@ -3272,8 +3274,30 @@ impl BoardModel {
 
     /// Replace the questions snapshot (board open, store change, after a question action).
     pub fn set_question_feed(&mut self, feed: crate::ui::questions::QuestionFeed) {
+        self.unavailable_questions.clear();
         self.raw_questions = feed;
         self.refilter_feeds();
+    }
+
+    /// Missing private records remain unknown only in the range that includes their task.
+    pub(crate) fn set_question_inventory(&mut self, entries: Vec<crate::store::QuestionListEntry>) {
+        let mut records = Vec::new();
+        self.unavailable_questions.clear();
+        for entry in entries {
+            match entry {
+                crate::store::QuestionListEntry::Record(record) => records.push(*record),
+                crate::store::QuestionListEntry::Unavailable { reference, .. } => {
+                    self.unavailable_questions.push(reference.task_id);
+                }
+            }
+        }
+        self.raw_questions = crate::ui::questions::QuestionFeed::Loaded(records);
+        self.refilter_feeds();
+    }
+
+    /// A direct task address is not constrained by the tab's machine range.
+    pub(crate) fn task_report(&self, id: Uuid) -> Option<&crate::store::ReportRecord> {
+        self.raw_reports.get(id)
     }
 
     pub fn machine_admits(&self, task: &Task) -> bool {
@@ -3304,10 +3328,14 @@ impl BoardModel {
         self.retarget_selection(self.selection_id, SelectionRetarget::Explicit);
     }
 
-    /// Retained tasks are actual history records, not inferred machine assignments.
+    /// Retained tasks carry history and trash identities, never inferred assignments.
     pub fn set_machine_history(&mut self, history: Result<Vec<Task>, String>) {
         if let Ok(tasks) = &history {
-            self.questions.moved = tasks.iter().map(|task| (task.id, task.clone())).collect();
+            self.questions.moved = tasks
+                .iter()
+                .filter(|task| !task.soft_deleted)
+                .map(|task| (task.id, task.clone()))
+                .collect();
         }
         self.machine_history = history;
         self.refilter_feeds();
@@ -3337,16 +3365,25 @@ impl BoardModel {
         use crate::ui::reports::ReportFeed;
         let questions = match &self.raw_questions {
             QuestionFeed::Loaded(records) => {
-                let filtered: Result<Vec<_>, String> = records
-                    .iter()
-                    .filter_map(
-                        |record| match self.feed_machine_admits(record.reference.task_id) {
-                            Ok(true) => Some(Ok(record.clone())),
-                            Ok(false) => None,
-                            Err(error) => Some(Err(error)),
-                        },
-                    )
-                    .collect();
+                let filtered = (|| -> Result<Vec<_>, String> {
+                    for id in &self.unavailable_questions {
+                        if self.feed_machine_admits(*id)? {
+                            return Err(
+                                crate::store::QuestionError::PrivateRecordUnavailable.to_string()
+                            );
+                        }
+                    }
+                    records
+                        .iter()
+                        .filter_map(|record| {
+                            match self.feed_machine_admits(record.reference.task_id) {
+                                Ok(true) => Some(Ok(record.clone())),
+                                Ok(false) => None,
+                                Err(error) => Some(Err(error)),
+                            }
+                        })
+                        .collect()
+                })();
                 match filtered {
                     Ok(records) => QuestionFeed::Loaded(records),
                     Err(error) => QuestionFeed::Unavailable(error),

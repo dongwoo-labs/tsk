@@ -147,7 +147,7 @@ impl BoardModel {
         let machines: std::collections::BTreeSet<_> = self
             .tasks
             .iter()
-            .chain(self.questions.moved.values())
+            .chain(self.machine_history.iter().flatten())
             .filter_map(|task| task.machine.clone())
             .collect();
         for name in machines {

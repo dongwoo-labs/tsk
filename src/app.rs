@@ -4343,7 +4343,7 @@ fn handle_board_intent_with_host(
         match model.command_target_id() {
             Some(task_id) => {
                 model.set_report_feed(crate::report_actions::load_feed(store.path()));
-                let has_report = model.reports().feed.get(task_id).is_some();
+                let has_report = model.task_report(task_id).is_some();
                 let replyable = domain.get(task_id).is_some_and(|task| {
                     task.block.is_some()
                         && matches!(

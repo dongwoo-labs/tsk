@@ -4,7 +4,8 @@
 Build first. Install scripts/parity-requirements.txt in a test-local venv.
 Run: <venv>/bin/python scripts/machine-pty-smoke.py <new-output-directory>
 This preserves sample roots, raw ANSI, decoded cells, CLI results and provenance.
-No personal state, Herdr calls, notification delivery, product edits or baselines.
+No personal state, real Herdr calls, notification delivery, product edits or baselines.
+Stalled-task checks use the existing HERDR_BIN_PATH seam and a local notification sink.
 Expected failures remain failures; independent cases continue after a failure.
 """
 import fcntl
@@ -14,7 +15,9 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import shutil
+import time
 import struct
 import subprocess
 import sys
@@ -204,7 +207,7 @@ def boundaries(sample, state):
         check("draft survives external machine reassignment", "Draft must survive machine reassignment" in s, s)
         sample.cli(state, "edit", "T1", "--machine", "alpha")
         j.idle("06-restored-machine", seconds=2)
-        s = j.key(b"k\r", "07-reopen-original-question", lambda s: "Q1 · question" in s and "options" in s)
+        s = j.key(b"\x1b\r", "07-reopen-original-question", lambda s: "Q1 · question" in s and "options" in s)
         check("original question retains draft after return", "Draft must survive machine reassignment" in s, s)
     finally:
         j.capture("final")
@@ -284,13 +287,72 @@ def clone(sample):
         j.close()
 
 
+def stalled(sample):
+    fixture = Sample(sample.output / "stall-fixture")
+    state = fixture.output / "state"
+    for number, machine in enumerate(("alpha", "beta", "alpha", "alpha", "beta", "alpha"), 1):
+        fixture.cli(state, "add", "--desk", "-t", f"Stall sample {number}", "--json", machine=machine)
+    for number in (3, 6):
+        fixture.cli(state, "edit", f"T{number}", "--no-machine")
+    agents = [{"name": "lead-sample", "agent_status": "idle", "pane_id": "wS:p0",
+               "workspace_id": "wS", "tab_id": "wS:t0"}]
+    for number in (1, 2, 3):
+        fixture.cli(state, "edit", f"T{number}", "--notes", f"Thread: sample-{number} wS wS:t1 wS:p{number}")
+        fixture.cli(state, "status", f"T{number}", "started")
+        agents.append({"name": f"sample-{number}", "agent_status": "idle",
+                       "pane_id": f"wS:p{number}", "workspace_id": "wS", "tab_id": "wS:t1"})
+    # Synthetic age is the only direct store setup; task identity, status and
+    # machine came from the real CLI. No time-dependent wait is needed.
+    path = state / "tsk.json"
+    data = json.loads(path.read_text())
+    for task in data["tasks"]:
+        task["updated_at"] = [int(time.time()) - 7200, 0]
+    path.write_text(json.dumps(data))
+    sink = fixture.output / "prompts.jsonl"
+    host = fixture.output / "fake-herdr.py"
+    host.write_text(f'''#!{sys.executable}
+import json
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+if args == ["agent", "list"]:
+    print({json.dumps({"result": {"agents": agents}})!r})
+elif args[:2] == ["agent", "prompt"] and len(args) == 4:
+    with Path({str(sink)!r}).open("a") as output:
+        output.write(json.dumps(args) + "\\n")
+    print("{{}}")
+else:
+    raise SystemExit(2)
+''')
+    host.chmod(0o700)
+    fixture.env.update(HERDR_ENV="1", HERDR_BIN_PATH=str(host), TSK_STALE_MINUTES="1")
+    for selector, expected, counts in (("@local", {1, 3, 4, 6}, "2 stale doing, 2 todo"),
+                                       ("@all", {1, 2, 3, 4, 5, 6}, "3 stale doing, 3 todo")):
+        j = Board(fixture, state, selector[1:])
+        try:
+            j.wait("01-board", lambda s: "machine @local" in s)
+            if selector != "@local":
+                j.scope(selector, "02-scope")
+            screen = j.key(b"\x0c", "03-check-all", lambda s: "asked lead-sample to check" in s)
+            prompt = json.loads(sink.read_text().splitlines()[-1])
+            numbers = {int(n) for n in re.findall(r"\bT(\d+)\b", prompt[3])}
+            check("stalled and todo candidates " + selector,
+                  numbers == expected and counts in screen and prompt[2] == "lead-sample",
+                  {"screen": screen, "captured_prompt": prompt, "numbers": sorted(numbers),
+                   "boundary": "HERDR_BIN_PATH fake list and notification sink; no real Herdr calls"})
+        finally:
+            j.capture("final")
+            j.close()
+
+
 def main():
     output = Path(sys.argv[1]).resolve()
     sample = Sample(output)
     result = {"binary": str(BINARY), "binary_sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest(),
               "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
-              "revision_kind": "uncommitted working tree; not a committed-revision attestation",
-              "data": "fresh synthetic roots; actual CLI, PTY, store, questions and reports; no host sends",
+              "revision_kind": "dirty working tree" if subprocess.check_output(
+                  ["git", "status", "--porcelain"], cwd=REPO) else "clean committed revision",
+              "data": "fresh synthetic roots; actual CLI, PTY, store, questions and reports; fake Herdr notification sink only",
               "command": sys.argv, "checks": CHECKS}
     paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=REPO).decode().split("\0")
     paths.append("src/machine.rs")
@@ -299,7 +361,8 @@ def main():
     try:
         state = sample.normal()
         for name, run in [("core", lambda: core(sample, state)), ("boundaries", lambda: boundaries(sample, state)),
-                          ("trash", lambda: trash(sample, state)), ("clone", lambda: clone(sample))]:
+                          ("trash", lambda: trash(sample, state)), ("clone", lambda: clone(sample)),
+                          ("stalled", lambda: stalled(sample))]:
             try:
                 run()
             except Exception as error:

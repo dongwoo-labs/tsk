@@ -31,7 +31,11 @@ The board shows its machine range as plain text. Open the palette with `:` and s
 | `@unspecified` | Tasks without a machine |
 | A saved machine name | That machine only |
 
-The range lasts for this session. It applies to counts, search, the done drawer, questions, reports, and stalled-task checks. Related tasks remain linked across machines. Opening a related task can show a task outside the range.
+The range lasts for this session. It applies to counts, search, the done drawer, questions, reports, and stalled-task checks. Retained questions and reports use their task's machine, including deleted tasks.
+
+Related tasks remain linked across machines. Opening a related task can show a task outside the range, and `r` still opens its report. An external machine change preserves a question answer being written.
+
+A missing private question outside the range does not block local questions. A missing private question inside the range keeps the feed unavailable, never empty.
 
 Rows and task details name the task's machine, or `unspecified`. Change a task's machine with [`tsk edit`](/docs/cli/#edit). Machine names follow the [storage settings](/docs/storage/#machines).
 

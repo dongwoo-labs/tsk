@@ -166,7 +166,7 @@ impl ReportsState {
             self.cursor = order.first().copied();
         }
         if let Some(page) = self.page {
-            if self.feed.get(page).is_none() {
+            if self.feed.get(page).is_none() && self.return_task != Some(page) {
                 self.close_page();
             }
         }
@@ -206,7 +206,12 @@ impl ReportsState {
             return;
         };
         self.cursor = Some(id);
-        self.page = Some(id);
+        self.open_record(record);
+    }
+
+    /// Direct task pages may open a document outside the filtered list.
+    pub fn open_record(&mut self, record: ReportRecord) {
+        self.page = Some(record.task_id);
         self.page_snapshot = Some(record);
         self.mark_read_failure = None;
         self.scroll.set(ScrollViewState::new());

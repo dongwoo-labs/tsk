@@ -2373,7 +2373,7 @@ import { parseCapture } from "./capture.js";
       return "reports · sample documents · nothing is saved";
     if (state.tab === "questions") {
       if (!questionsLoaded()) return "questions · no Agent board here";
-      return `questions · ${forYou()} waiting on you · ${visibleQuestions().length} total · sample, nothing is sent`;
+      return `questions · ${forYou()} waiting · ${visibleQuestions().length} total · sample`;
     }
     const base =
       state.searchPinned && state.searchQuery.trim()
@@ -2506,7 +2506,7 @@ import { parseCapture } from "./capture.js";
         ],
       )}</div>`;
     } else {
-      const context = state.message || `${contextLine()} · machine ${state.machineFilter}`;
+      const context = state.message || `machine ${state.machineFilter} · ${contextLine()}`;
       body = `<div class="tsk-status-row"><button type="button" class="tsk-done-count foot" data-drawer="1">${esc(context)}</button><span class="foot dim tsk-stage-hint">${esc(hint)}</span></div><div class="foot dim tsk-verbs">${verbs}</div>${state.copyNotice ? `<div class="foot dim">${esc(state.copyNotice)}</div>` : ""}`;
     }
     return `<div class="tsk-foot"><div class="foot-rule" aria-hidden="true"></div>${body}</div>`;
