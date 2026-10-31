@@ -532,7 +532,7 @@ fn windows_uses_localappdata_without_home_or_userprofile() {
     let root = temp_state_dir("windows-localappdata");
     let local = root.join("local");
     let output = Command::new(binary())
-        .args(["list", "--all"])
+        .args(["add", "-t", "Windows local state", "--desk"])
         .env_remove("HOME")
         .env_remove("USERPROFILE")
         .env_remove("TSK_STATE_DIR")
@@ -553,7 +553,7 @@ fn windows_falls_back_to_userprofile_without_localappdata() {
     let root = temp_state_dir("windows-userprofile");
     let profile = root.join("profile");
     let output = Command::new(binary())
-        .args(["list", "--all"])
+        .args(["add", "-t", "Windows profile state", "--desk"])
         .env_remove("HOME")
         .env_remove("LOCALAPPDATA")
         .env_remove("TSK_STATE_DIR")
