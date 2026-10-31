@@ -136,6 +136,9 @@ pub struct ReportsState {
     /// Whether the last paint of the open page showed the whole document (`Some(true)`) or
     /// refused it as past the display limit (`Some(false)`); `None` until painted.
     pub page_fits: Cell<Option<bool>>,
+    /// An earlier revision of the open snapshot shown read-only (`[` / `]`); `None` shows the
+    /// snapshot's own revision. An earlier revision is never acknowledged.
+    pub page_revision: Option<u64>,
 }
 
 impl ReportsState {
@@ -179,6 +182,7 @@ impl ReportsState {
         self.scroll.set(ScrollViewState::new());
         self.ack_pending = false;
         self.page_fits.set(None);
+        self.page_revision = None;
     }
 
     /// Move the list cursor; a no-op past either end.
@@ -217,6 +221,45 @@ impl ReportsState {
         self.scroll.set(ScrollViewState::new());
         self.ack_pending = true;
         self.page_fits.set(None);
+        self.page_revision = None;
+    }
+
+    /// `[` / `]` on the open page: step to an earlier or later stored revision of the
+    /// snapshot. Past the newest it shows the snapshot's own revision again; a no-op at
+    /// either end or with a single revision.
+    pub fn step_revision(&mut self, newer: bool) {
+        let Some(record) = self.page_snapshot.as_ref() else {
+            return;
+        };
+        let mut numbers: Vec<u64> = record.revisions.iter().map(|r| r.revision).collect();
+        numbers.sort_unstable();
+        let shown = self.page_revision.unwrap_or(record.revision);
+        let Some(index) = numbers.iter().position(|n| *n == shown) else {
+            return;
+        };
+        let next = if newer {
+            numbers.get(index + 1).copied()
+        } else {
+            index.checked_sub(1).map(|i| numbers[i])
+        };
+        let Some(next) = next else {
+            return;
+        };
+        self.page_revision = (next != record.revision).then_some(next);
+        self.scroll.set(ScrollViewState::new());
+    }
+
+    /// The revision number and Markdown the open page shows.
+    pub fn shown_revision(&self) -> Option<(u64, &str)> {
+        let record = self.page_snapshot.as_ref()?;
+        match self.page_revision {
+            None => Some((record.revision, record.markdown.as_str())),
+            Some(number) => record
+                .revisions
+                .iter()
+                .find(|r| r.revision == number)
+                .map(|r| (r.revision, r.markdown.as_str())),
+        }
     }
 
     /// `Esc` on the open page: back to the list (or the task page that opened it).
@@ -269,6 +312,8 @@ pub enum ReportIntent {
     /// revision.
     RetryMarkRead,
     Back,
+    /// `[` / `]` on an open page: an earlier or later stored revision, read-only.
+    Revision(bool),
 }
 
 /// Map one key while tab 3 owns the keyboard.
@@ -307,6 +352,8 @@ pub fn map_key(state: &ReportsState, key: KeyEvent) -> Option<BoardIntent> {
         KeyCode::Up | KeyCode::Char('k') => q(ReportIntent::ScrollLine(false)),
         KeyCode::PageDown => q(ReportIntent::Scroll(true)),
         KeyCode::PageUp => q(ReportIntent::Scroll(false)),
+        KeyCode::Char('[') => q(ReportIntent::Revision(false)),
+        KeyCode::Char(']') => q(ReportIntent::Revision(true)),
         KeyCode::Enter if state.page_failure().is_some() => q(ReportIntent::RetryMarkRead),
         _ => None,
     }
@@ -405,8 +452,18 @@ pub fn footer_hint(state: &ReportsState) -> String {
     if state.page_failure().is_some() {
         "enter retries \u{b7} j/k scroll \u{b7} esc back".to_string()
     } else if state.page.is_some() {
-        "j/k scroll \u{b7} pgup/pgdn page \u{b7} 1 board \u{b7} 2 questions \u{b7} esc back"
-            .to_string()
+        let revisions = state
+            .page_snapshot
+            .as_ref()
+            .map_or(0, |record| record.revisions.len());
+        format!(
+            "j/k scroll \u{b7} pgup/pgdn page{} \u{b7} 1 board \u{b7} 2 questions \u{b7} esc back",
+            if revisions > 1 {
+                " \u{b7} [/] revision"
+            } else {
+                ""
+            }
+        )
     } else {
         "enter open \u{b7} j/k move \u{b7} 1 board \u{b7} 2 questions \u{b7} ? keys".to_string()
     }
@@ -666,13 +723,24 @@ fn draw_page(out: &mut Frame<'_>, state: &ReportsState, rect: Rect, hits: &mut Q
     if rect.width == 0 || rect.height == 0 {
         return;
     }
-    let header = format!(
-        "T{} \u{b7} {} \u{b7} revision {} \u{b7} {}",
-        record.task_number,
-        record.task_title,
-        record.revision,
-        if record.unread() { "unread" } else { "read" }
-    );
+    let Some((shown, markdown)) = state.shown_revision() else {
+        return;
+    };
+    let header = if shown == record.revision {
+        format!(
+            "T{} \u{b7} {} \u{b7} revision {} \u{b7} {}",
+            record.task_number,
+            record.task_title,
+            record.revision,
+            if record.unread() { "unread" } else { "read" }
+        )
+    } else {
+        // The revision comes before the title: a long title truncates the header row.
+        format!(
+            "T{} \u{b7} earlier revision {} of {} \u{b7} ] newer \u{b7} {}",
+            record.task_number, shown, record.revision, record.task_title
+        )
+    };
     let mut y = rect.y;
     put(out, rect.x, y, rect.width, &header, true);
     y += 1;
@@ -701,7 +769,7 @@ fn draw_page(out: &mut Frame<'_>, state: &ReportsState, rect: Rect, hits: &mut Q
     // frame, and no line runs past the page's right edge.
     // One column stays free for the scroll view's own vertical scrollbar.
     let content_width = body_rect.width.saturating_sub(1).max(1);
-    let text = render_markdown(&safe_markdown_source(&record.markdown), content_width);
+    let text = render_markdown(&safe_markdown_source(markdown), content_width);
     let lines = wrap_markdown_text(text, content_width as usize);
     // `tui-scrollview` measures its canvas in `u16` rows. A document that wraps past that at
     // this width cannot be shown whole: say so on the page and leave it unread, rather than
@@ -886,6 +954,14 @@ mod tests {
         assert_eq!(
             map_key(&state, KeyEvent::from(KeyCode::Esc)),
             Some(BoardIntent::Report(ReportIntent::Back))
+        );
+        assert_eq!(
+            map_key(&state, KeyEvent::from(KeyCode::Char('['))),
+            Some(BoardIntent::Report(ReportIntent::Revision(false)))
+        );
+        assert_eq!(
+            map_key(&state, KeyEvent::from(KeyCode::Char(']'))),
+            Some(BoardIntent::Report(ReportIntent::Revision(true)))
         );
         assert_eq!(
             map_key(&state, KeyEvent::from(KeyCode::Char('1'))),
