@@ -145,7 +145,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
     let task_id = if let Some(address) = task {
         let tasks = TaskStore::new(&state_dir);
         let unavailable = |_| ("task store unavailable".to_string(), 1);
-        let live = tasks.load().map_err(unavailable)?;
+        let live = tasks.load_snapshot().map_err(unavailable)?;
         let found = live
             .tasks()
             .iter()
@@ -156,7 +156,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
         let found = match found {
             Some(id) => Some(id),
             None => tasks
-                .load_done_history()
+                .load_done_history_snapshot()
                 .map_err(unavailable)?
                 .into_iter()
                 .find(|line| address.matches(&line.task))

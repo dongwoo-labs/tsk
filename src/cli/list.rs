@@ -517,13 +517,13 @@ fn parse_sort(value: &str) -> Result<SortBy, String> {
 pub fn run(input: ListInput) -> Result<ListResult, ListError> {
     let store = TaskStore::new(input.state_dir.unwrap_or_else(default_state_dir));
     let live = store
-        .load()
+        .load_snapshot()
         .map_err(|error| ListError::Store(error.to_string()))?;
     // Direct lookup, `--history`, and `--archived` also read the dated done files,
     // so moved tasks, their relationships, and project names resolve like live ones.
     let domain = if input.task.is_some() || input.history || input.archived {
         let moved = store
-            .load_done_history()
+            .load_done_history_snapshot()
             .map_err(|error| ListError::Store(error.to_string()))?;
         live.with_moved_tasks(moved.into_iter().map(|line| line.task))
     } else {
@@ -735,7 +735,7 @@ fn deleted_rows(
     include_scope: bool,
 ) -> Result<ListResult, ListError> {
     let trash = store
-        .load_trash()
+        .load_trash_snapshot()
         .map_err(|error| ListError::Store(error.to_string()))?;
     let identities = PathIdentityCache::default();
     let in_view = |task: &crate::domain::Task| {

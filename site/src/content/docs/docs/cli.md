@@ -42,6 +42,7 @@ This fork also provides `tsk notes`, `tsk import linear`, `tsk ask`, `tsk questi
 - Every command that reads or writes tasks takes `--state-dir <dir>` to use another store. `setup`, `update`, and `guide` do not.
 - A flag value that starts with `-` needs the `=` form: `--title="-fix parser"`, `--notes="-5 degrees"`. [`tsk reply`](#reply) and [`tsk steps`](#steps) take `--` before such text instead.
 - Human output escapes terminal control characters stored in tasks. JSON keeps the text as stored.
+- For queries against a store without write access, see [read-only consumers](/docs/storage/#read-only-consumers).
 
 ## Statuses
 

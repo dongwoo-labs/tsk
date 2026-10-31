@@ -40,6 +40,21 @@ Where tsk keeps your tasks and settings, how to configure it, and how to back it
 | `launchers/` | Dispatch launchers. Each one deletes itself once its agent starts |
 | `cleanups/` | Marks of worktree removals under way. After an interrupted removal, the next cleanup refuses and says how to finish by hand |
 
+## Read-only consumers
+
+These queries work with a readable store that has no write access. They require no extra flag.
+
+| Command | Reads |
+| --- | --- |
+| `tsk list --all --json` | Live tasks across projects and the desk |
+| `tsk reports --json` | Completion reports |
+| `tsk report T12 --json` | One completion report |
+| `tsk questions --inventory --json --state-dir <Agent-dir>` | Questions, including markers for unavailable private records |
+
+Reads do not create files, change permissions, or acknowledge reports. Each query reads published snapshots; separate queries can observe different revisions. Writes still require write access.
+
+An unreadable store returns an error, not an empty result. A missing store returns an empty list; looking up a missing report refuses.
+
 ## Machines
 
 New tasks record the current machine. Existing tasks without a machine stay unspecified, including after edits or restore. Common notices have no machine.
