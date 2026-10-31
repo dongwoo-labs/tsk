@@ -603,6 +603,37 @@ impl TaskStore {
         self.load_unlocked()
     }
 
+    /// Read a published document without locks, chmod, temp cleanup, or directory creation.
+    /// Writers replace the whole document atomically. Mutations must keep using `load`
+    /// and the locked save paths; this snapshot is only for query consumers.
+    pub(crate) fn load_snapshot(&self) -> Result<DomainState, StoreError> {
+        self.validate_read_directory()?;
+        let mut state = self.load_document(STORE_FORMAT_VERSION, migrate)?;
+        let machine = crate::machine::current().map_err(|message| {
+            StoreError::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
+        })?;
+        state.set_creation_machine(machine);
+        Ok(state)
+    }
+
+    /// Keep the state-root validation of the writable path without changing permissions.
+    pub(crate) fn validate_read_directory(&self) -> Result<(), StoreError> {
+        #[cfg(windows)]
+        fsperm::reject_reparse_ancestors(&self.path)?;
+        match fs::symlink_metadata(&self.path) {
+            Ok(metadata) if !metadata.is_dir() || fsperm::is_reparse_or_symlink(&metadata) => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "state directory must be a real directory, not a symlink",
+                )
+                .into())
+            }
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Persist domain state with atomic write (unique temp in same dir + rename).
     ///
     /// Takes the exclusive lock for the write. Prefer [`Self::reload_merge_save`] when
@@ -791,6 +822,11 @@ impl TaskStore {
     /// after a crash). Takes the exclusive lock so a read never races a rewrite.
     pub fn load_trash(&self) -> Result<Vec<TrashLine>, StoreError> {
         let _guard = self.lock_exclusive()?;
+        self.load_trash_unlocked()
+    }
+
+    pub(crate) fn load_trash_snapshot(&self) -> Result<Vec<TrashLine>, StoreError> {
+        self.validate_read_directory()?;
         self.load_trash_unlocked()
     }
 
@@ -1488,6 +1524,11 @@ impl TaskStore {
     /// Takes the exclusive lock so a read never races a rewrite.
     pub fn load_done_history(&self) -> Result<Vec<DoneLine>, StoreError> {
         let _guard = self.lock_exclusive()?;
+        self.load_done_history_unlocked()
+    }
+
+    pub(crate) fn load_done_history_snapshot(&self) -> Result<Vec<DoneLine>, StoreError> {
+        self.validate_read_directory()?;
         self.load_done_history_unlocked()
     }
 

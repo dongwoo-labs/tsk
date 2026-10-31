@@ -103,8 +103,7 @@ impl ReportStore {
     }
 
     pub fn list(&self) -> Result<Vec<ReportRecord>, ReportError> {
-        let _guard = self.store.lock_exclusive().map_err(|_| ReportError::Io)?;
-        Ok(self.load_unlocked()?.reports)
+        Ok(self.load_snapshot()?.reports)
     }
 
     pub fn read(&self, task_id: Uuid) -> Result<ReportRecord, ReportError> {
@@ -237,6 +236,14 @@ impl ReportStore {
     }
 
     fn load_unlocked(&self) -> Result<ReportDocument, ReportError> {
+        fsperm::tighten_file(&self.store.path().join(REPORT_FILE));
+        self.load_snapshot()
+    }
+
+    fn load_snapshot(&self) -> Result<ReportDocument, ReportError> {
+        self.store
+            .validate_read_directory()
+            .map_err(|_| ReportError::Io)?;
         let path = self.store.path().join(REPORT_FILE);
         match fs::symlink_metadata(&path) {
             Ok(metadata) if !metadata.is_file() || fsperm::is_reparse_or_symlink(&metadata) => {
@@ -248,7 +255,7 @@ impl ReportStore {
             }
             Err(_) => return Err(ReportError::Io),
         }
-        fsperm::tighten_file(&path);
+        // Atomic replacement publishes either complete version to this single read.
         let data = fs::read(path).map_err(|_| ReportError::Io)?;
         let document: ReportDocument =
             serde_json::from_slice(&data).map_err(|_| ReportError::InvalidDocument)?;

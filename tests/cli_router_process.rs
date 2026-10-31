@@ -50,6 +50,238 @@ fn wait_with_output_before_deadline(mut child: Child, description: &str) -> Outp
     }
 }
 
+#[cfg(unix)]
+mod readonly_queries {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::Path;
+    use tsk_tui::cli::run_with;
+    use tsk_tui::store::{QuestionStore, ReportStore, TrashTarget};
+
+    const QUERIES: &[&[&str]] = &[
+        &["reports", "--json"],
+        &["report", "T1", "--json"],
+        &["questions", "--inventory", "--json"],
+        &["list", "--all", "--json"],
+    ];
+
+    fn seed() -> PathBuf {
+        let dir = temp_state_dir("readonly-queries");
+        let mut state = DomainState::new();
+        state
+            .create(
+                "read-only task",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+            )
+            .unwrap();
+        TaskStore::new(&dir).save(&state).unwrap();
+        let id = TaskStore::new(&dir).load().unwrap().tasks()[0].id;
+        let reports = ReportStore::new(&dir);
+        reports
+            .register(TrashTarget::Id(id), "first".into())
+            .unwrap();
+        reports.mark_read(id, 1).unwrap();
+        reports
+            .register(TrashTarget::Id(id), "second".into())
+            .unwrap();
+        let questions = QuestionStore::new(dir.clone()).unwrap();
+        // Isolated synthetic records exercise both complete and unavailable inventory entries.
+        for summary in ["available", "unavailable"] {
+            let saved = questions
+                .ask(
+                    serde_json::from_value(serde_json::json!({
+                        "task_id": id, "kind": "question", "summary": summary,
+                        "origin_thread": "test-thread", "recipient": "test-lead",
+                        "text": "Synthetic test question", "options": [],
+                        "recommendation": null, "impact": null, "blocking_scope": null,
+                        "approval": null, "finding": null, "source": null, "audience": "lead"
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            if summary == "unavailable" {
+                fs::remove_file(
+                    dir.join("questions-private")
+                        .join(format!("{}.json", saved.record.reference.revision)),
+                )
+                .unwrap();
+            }
+        }
+        dir
+    }
+
+    fn expected(dir: &Path, query: &[&str]) -> tsk_tui::cli::CliOutput {
+        let mut args: Vec<String> = std::iter::once("tsk")
+            .chain(query.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        args.push(format!("--state-dir={}", dir.display()));
+        let output = run_with(args, std::io::empty(), false);
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        output
+    }
+
+    fn inventory(dir: &Path) -> BTreeMap<PathBuf, (u32, Vec<u8>)> {
+        let mut result = BTreeMap::new();
+        result.insert(
+            PathBuf::new(),
+            (fs::metadata(dir).unwrap().permissions().mode(), vec![]),
+        );
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.strip_prefix(dir).unwrap().to_path_buf();
+            if path.is_dir() {
+                for (child, value) in inventory(&path) {
+                    result.insert(name.join(child), value);
+                }
+            } else {
+                result.insert(
+                    name,
+                    (
+                        fs::metadata(&path).unwrap().permissions().mode(),
+                        fs::read(path).unwrap(),
+                    ),
+                );
+            }
+        }
+        result
+    }
+
+    fn loosen(dir: &Path) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                loosen(&path);
+            } else {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        }
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn command(dir: &Path, query: &[&str], sandbox: bool) -> Command {
+        let mut command = if sandbox {
+            let mut command = Command::new("/usr/bin/sandbox-exec");
+            command.args(["-p", "(version 1)(allow default)(deny file-write*)"]);
+            command.arg(binary());
+            command
+        } else {
+            Command::new(binary())
+        };
+        command
+            .args(query)
+            .arg("--state-dir")
+            .arg(dir)
+            .env_clear()
+            .env("HOME", dir)
+            .env("HERDR_ENV", "0")
+            .env("TSK_MACHINE", "readonly-test")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+
+    fn check(query: &[&str], sandbox: bool) {
+        let dir = seed();
+        let expected = expected(&dir, query);
+        fs::remove_file(dir.join("tsk.json.lock")).unwrap();
+        loosen(&dir);
+        let before = inventory(&dir);
+        let output = wait_with_output_before_deadline(
+            command(&dir, query, sandbox).spawn().unwrap(),
+            "read-only query",
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{query:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.stdout,
+            expected.stdout.as_bytes(),
+            "{query:?}: JSON contract"
+        );
+        assert_eq!(
+            output.stderr,
+            expected.stderr.as_bytes(),
+            "{query:?}: warnings contract"
+        );
+        let after = inventory(&dir);
+        assert!(after == before, "{query:?}: no file or permission changes");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn queries_do_not_create_locks_or_chmod_without_a_sandbox() {
+        for query in QUERIES {
+            check(query, false);
+        }
+    }
+
+    #[test]
+    fn queries_reject_symlink_state_roots_without_changing_the_target() {
+        let dir = seed();
+        let root = temp_state_dir("readonly-symlink");
+        let link = root.join("state");
+        symlink(&dir, &link).unwrap();
+        let before = inventory(&dir);
+        for query in QUERIES {
+            let output = command(&link, query, false).output().unwrap();
+            assert!(!output.status.success(), "{query:?}: refuse symlink root");
+            assert!(output.stdout.is_empty());
+        }
+        assert_eq!(inventory(&dir), before);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_policy_actually_denies_writes() {
+        let dir = temp_state_dir("sandbox-deny-probe");
+        let probe = dir.join("denied-write");
+        let output = Command::new("/usr/bin/sandbox-exec")
+            .args([
+                "-p",
+                "(version 1)(allow default)(deny file-write*)",
+                "/usr/bin/touch",
+            ])
+            .arg(&probe)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!probe.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reports_survives_all_write_deny() {
+        check(QUERIES[0], true);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn report_survives_all_write_deny() {
+        check(QUERIES[1], true);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn questions_inventory_survives_all_write_deny() {
+        check(QUERIES[2], true);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn list_all_survives_all_write_deny() {
+        check(QUERIES[3], true);
+    }
+}
+
 #[test]
 fn top_level_help_names_subcommands_and_their_help() {
     let output = wait_with_output_before_deadline(

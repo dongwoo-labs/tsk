@@ -184,13 +184,11 @@ impl QuestionStore {
     }
 
     pub fn list(&self, task_id: Option<Uuid>) -> Result<Vec<QuestionRecord>, QuestionError> {
-        let _guard = self
-            .store
-            .lock_exclusive()
-            .map_err(|_| QuestionError::StoreUnavailable)?;
+        // The shared document is atomic; each referenced private revision is immutable
+        // and published before it. Keep this one reference snapshot for the whole read.
         let state = self
             .store
-            .load_unlocked()
+            .load_snapshot()
             .map_err(|_| QuestionError::StoreUnavailable)?;
         state
             .questions()
@@ -206,13 +204,11 @@ impl QuestionStore {
         &self,
         task_id: Option<Uuid>,
     ) -> Result<Vec<QuestionListEntry>, QuestionError> {
-        let _guard = self
-            .store
-            .lock_exclusive()
-            .map_err(|_| QuestionError::StoreUnavailable)?;
+        // The shared document is atomic; each referenced private revision is immutable
+        // and published before it. Keep this one reference snapshot for the whole read.
         let state = self
             .store
-            .load_unlocked()
+            .load_snapshot()
             .map_err(|_| QuestionError::StoreUnavailable)?;
         state
             .questions()
@@ -232,13 +228,11 @@ impl QuestionStore {
     }
 
     pub fn read(&self, id: Uuid) -> Result<QuestionRecord, QuestionError> {
-        let _guard = self
-            .store
-            .lock_exclusive()
-            .map_err(|_| QuestionError::StoreUnavailable)?;
+        // The shared document is atomic; each referenced private revision is immutable
+        // and published before it. Keep this one reference snapshot for the whole read.
         let state = self
             .store
-            .load_unlocked()
+            .load_snapshot()
             .map_err(|_| QuestionError::StoreUnavailable)?;
         let reference = state
             .questions()
