@@ -181,11 +181,12 @@ These bare keys save answers on purpose: the tab owns the keyboard, and a pick s
 | Select a document in the list | `↑` / `↓` or `k` / `j` |
 | Open the selected document and acknowledge its displayed revision | `Enter` |
 | Scroll an open document | `↑` / `↓`, `k` / `j`, `PgUp` / `PgDn`, or wheel |
+| Show an earlier or later revision of the open document | `[` / `]` |
 | Back to the list | `Esc` |
 | Board / questions / reports tab | `1` / `2` / `3` |
 | Quit outside text entry | `ctrl+q` |
 
-A new report revision is unread even if an earlier revision was opened. Selecting a row and CLI lookup do not acknowledge it.
+A new report revision is unread even if an earlier revision was opened. Selecting a row, showing an earlier revision, and CLI lookup do not acknowledge it.
 
 ## Quick-add
 

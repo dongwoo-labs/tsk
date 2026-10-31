@@ -38,6 +38,7 @@ pub fn handle(model: &mut BoardModel, state_dir: &Path, intent: ReportIntent) {
         ReportIntent::Row(id) => model.reports_mut().open(id),
         ReportIntent::Back => model.reports_mut().back(),
         ReportIntent::RetryMarkRead => acknowledge(model, &ReportStore::new(state_dir)),
+        ReportIntent::Revision(newer) => model.reports_mut().step_revision(newer),
     }
 }
 
@@ -46,7 +47,13 @@ pub fn handle(model: &mut BoardModel, state_dir: &Path, intent: ReportIntent) {
 /// so does a page no frame has painted yet.
 pub fn acknowledge_painted(model: &mut BoardModel, state_dir: &Path) {
     let reports = model.reports();
-    if !reports.active || !reports.ack_pending || reports.page_fits.get() != Some(true) {
+    // Only a paint of the snapshot's own revision acknowledges it: an earlier revision
+    // shown with `[` fitting the page says nothing about the current one.
+    if !reports.active
+        || !reports.ack_pending
+        || reports.page_revision.is_some()
+        || reports.page_fits.get() != Some(true)
+    {
         return;
     }
     model.reports_mut().ack_pending = false;
@@ -241,6 +248,66 @@ mod tests {
             model.reports().page_failure().is_none(),
             "a successful acknowledgement shows no failure"
         );
+    }
+
+    /// `[` shows an earlier revision read-only. A paint of it acknowledges nothing; only a
+    /// paint of the snapshot's own revision does, after `]` returns to it.
+    #[test]
+    fn an_earlier_revision_is_shown_without_acknowledging_the_current_one() {
+        let dir = seeded_dir();
+        let output = run_with(
+            [
+                "tsk",
+                "add",
+                "-t",
+                "revised task",
+                "--desk",
+                "--state-dir",
+                dir.to_str().unwrap(),
+            ],
+            io::empty(),
+            true,
+        );
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        let id = TaskStore::new(&dir).load().unwrap().tasks()[0].id;
+        let store = ReportStore::new(&dir);
+        for body in ["first body", "second body", "third body"] {
+            store
+                .register(crate::store::TrashTarget::Id(id), body.into())
+                .unwrap();
+        }
+        let mut model = BoardModel::from_tasks(Vec::new(), None);
+        model.set_report_feed(load_feed(&dir));
+        model.reports_mut().active = true;
+        handle(&mut model, &dir, ReportIntent::Open);
+
+        handle(&mut model, &dir, ReportIntent::Revision(false));
+        handle(&mut model, &dir, ReportIntent::Revision(false));
+        handle(&mut model, &dir, ReportIntent::Revision(false));
+        assert_eq!(
+            model.reports().shown_revision(),
+            Some((1, "first body")),
+            "[ stops at the oldest revision"
+        );
+        paint(&model, 110, 30);
+        acknowledge_painted(&mut model, &dir);
+        assert_eq!(
+            store.read(id).unwrap().read_revision,
+            None,
+            "a painted earlier revision acknowledges nothing"
+        );
+
+        handle(&mut model, &dir, ReportIntent::Revision(true));
+        handle(&mut model, &dir, ReportIntent::Revision(true));
+        handle(&mut model, &dir, ReportIntent::Revision(true));
+        assert_eq!(
+            model.reports().page_revision,
+            None,
+            "] ends on the current revision"
+        );
+        paint(&model, 110, 30);
+        acknowledge_painted(&mut model, &dir);
+        assert_eq!(store.read(id).unwrap().read_revision, Some(3));
     }
 
     fn paint(model: &BoardModel, width: u16, height: u16) {
