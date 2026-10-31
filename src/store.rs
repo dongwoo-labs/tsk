@@ -1097,11 +1097,11 @@ impl TaskStore {
         supported: u32,
         migrations: fn(serde_json::Value, u32) -> Result<serde_json::Value, StoreError>,
     ) -> Result<DomainState, StoreError> {
-        let file = self.state_file();
-        if !file.exists() {
-            return Ok(DomainState::new());
-        }
-        let data = fs::read_to_string(&file)?;
+        let data = match fs::read_to_string(self.state_file()) {
+            Ok(data) => data,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(DomainState::new()),
+            Err(error) => return Err(error.into()),
+        };
         let found = peek_format_version(&data)?;
         let opens_as = reads_as(found);
         // Pre-versioned (0) and newer-than-supported documents are both refused.

@@ -53,6 +53,8 @@ These queries work with a readable store that has no write access. They require 
 
 Reads do not create files, change permissions, or acknowledge reports. Each query reads published snapshots; separate queries can observe different revisions. Writes still require write access.
 
+An unreadable store returns an error, not an empty result. A missing store returns an empty list; looking up a missing report refuses.
+
 ## Machines
 
 New tasks record the current machine. Existing tasks without a machine stay unspecified, including after edits or restore. Common notices have no machine.

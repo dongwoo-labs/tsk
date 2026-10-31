@@ -188,14 +188,18 @@ mod readonly_queries {
 
     fn check(query: &[&str], sandbox: bool) {
         let dir = seed();
-        let expected = expected(&dir, query);
         fs::remove_file(dir.join("tsk.json.lock")).unwrap();
+        fs::write(dir.join(".tsk.json.tmp.1.1"), b"orphan retained by reads").unwrap();
         loosen(&dir);
         let before = inventory(&dir);
         let output = wait_with_output_before_deadline(
             command(&dir, query, sandbox).spawn().unwrap(),
             "read-only query",
         );
+        let after = inventory(&dir);
+        assert!(after == before, "{query:?}: no file or permission changes");
+        // Compute output only after the subprocess and its side effects were observed.
+        let expected = expected(&dir, query);
         assert_eq!(
             output.status.code(),
             Some(0),
@@ -212,8 +216,6 @@ mod readonly_queries {
             expected.stderr.as_bytes(),
             "{query:?}: warnings contract"
         );
-        let after = inventory(&dir);
-        assert!(after == before, "{query:?}: no file or permission changes");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -222,6 +224,38 @@ mod readonly_queries {
         for query in QUERIES {
             check(query, false);
         }
+    }
+
+    #[test]
+    fn queries_refuse_unsearchable_state_roots_instead_of_empty_success() {
+        let dir = seed();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).unwrap();
+        let results: Vec<_> = QUERIES
+            .iter()
+            .map(|query| {
+                let output = wait_with_output_before_deadline(
+                    command(&dir, query, false).spawn().unwrap(),
+                    "unreadable state query",
+                );
+                (*query, output)
+            })
+            .collect();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let failures: Vec<_> = results
+            .iter()
+            .filter_map(|(query, output)| {
+                let code = if query[0] == "questions" { 1 } else { 3 };
+                (output.status.code() != Some(code)
+                    || !output.stdout.is_empty()
+                    || output.stderr.is_empty())
+                .then(|| (query, output.status.code()))
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "unreadable stores must refuse, not return empty success: {failures:?}"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
