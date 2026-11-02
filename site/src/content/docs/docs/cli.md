@@ -100,6 +100,8 @@ tsk add [--file <path|->] [--state-dir <dir>]
 | `--file <path>`, `--file -` | Read a JSON plan from a file, or from stdin |
 | `--json` | Print the result as one JSON object |
 
+The title always takes `-t`. A bare title, such as `tsk add "Draft release notes"`, refuses with exit 2 and shows the form to use: `tsk add -t 'Draft release notes'`.
+
 New tasks record the [current machine](/docs/storage/#machines). An add is safe to repeat. A live task on this machine, or unspecified, with the same title, project, thread, assignee, and base counts as already there, even when done or archived: the add changes nothing and reports `existing`. Adding into an archived project refuses with `project-archived`.
 
 Output is `added <title>`, or `task already exists`. An assignee that is not a profile adds a line, so a typo shows: `assigned T12 to @dana (not an agent profile)`. With `--json`:
@@ -119,7 +121,7 @@ tsk add -t "Fix login timeout" -n "Reproduce on a slow connection" -p atlas --th
 
 ### JSON plans
 
-A plan is a JSON array of task objects, read from `--file` or piped to `tsk add`.
+A plan is a JSON array of task objects, read from `--file` or piped to `tsk add`. `tsk help add` shows the same shape.
 
 ```json
 [
@@ -839,6 +841,14 @@ An unavailable record's answer state is unknown, not answered or absent. Keep it
 Inventory does not copy, repair, or change private records. An unreadable shared store still refuses the entire read. Individual reads and mutations retain their strict contract. Q-number lookup needs the scope's complete private list; a UUID reads only its target. The board's questions tab still requires every private record to be readable.
 
 `ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, `finding`, or `secret`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, `audience` (`user` or `lead`, required: a question without it is refused with exit 1 and nothing saved), and the optional `lead_recipient`, `secret`, and `permission_context`. Nullable fields can be `null`; options defaults to an empty array, and an `approval` or `secret` question takes none (refused with exit 1, nothing saved). Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record saved before this rule without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
+
+A minimal question, and the answer and route that follow it. `tsk help ask` prints the same shapes. Take `task_id` from `tsk list T12 --field id`, and `expected_revision` from `reference.revision` in `tsk questions Q1 --json`:
+
+```json
+{"task_id": "<task UUID>", "kind": "question", "audience": "lead", "summary": "Cache choice", "text": "Which cache should T12 use?", "origin_thread": "thr-a", "recipient": "lead-a", "options": ["redis", "memory"]}
+{"expected_revision": "<revision UUID>", "text": "Use redis", "actor": "lead-a", "origin": "agent"}
+{"expected_revision": "<revision UUID>", "audience": "user"}
+```
 
 `permission_context` is optional private metadata for a permission ask. Its object has `tool_name` (string), `task_number` (unsigned integer), and nullable `cwd` (string), `tool_input` (JSON object), `task_scope` (string), and `holds` (array of strings). Nullable members may be omitted. For example:
 

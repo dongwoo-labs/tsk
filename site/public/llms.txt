@@ -24,7 +24,7 @@ The human uses the TUI; agents use the CLI. The fork keeps its board, questions,
 
 ## For agents
 
-- Run `tsk guide` for the workflow and `tsk help <command>` for syntax. Read with `tsk list --json`; direct lookup includes notes, steps, parents/children, block/review, dispatch, and activity.
+- Run `tsk guide` for the workflow and `tsk help <command>` for syntax; `tsk help add` and `tsk help ask` show the JSON plan, question, answer, and route shapes. Read with `tsk list --json`; direct lookup includes notes, steps, parents/children, block/review, dispatch, and activity.
 - Write with add/edit/status/steps. `tsk notes T12 set Now: "Running CI"` updates one card line under the lock; remove clears a prefix and append adds a line. Read back uncertain writes before retrying non-idempotent actions.
 - Use `tsk list T12 --field id` or `--note Now:` for one value; --json returns a scalar/object or null instead of the normal task array.
 - `tsk import linear --dry-run` previews one-way import. Parent references are linked only when already imported or created in the same batch. User notes and parent links survive --update.

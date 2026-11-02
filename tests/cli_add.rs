@@ -2668,3 +2668,41 @@ fn adds_from_an_aliased_launch_repo_keep_the_stored_project_spelling() {
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_bare_title_refuses_with_the_flag_form_and_persists_nothing() {
+    let dir = temp_state_dir("bare-title");
+    let state = state_dir_arg(&dir);
+    for (args, reason) in [
+        (
+            vec!["견적서 검토"],
+            "tsk add: unknown add argument 견적서 검토 · a title goes after -t: tsk add -t '견적서 검토'\n",
+        ),
+        (
+            vec!["-t", "견적서", "검토"],
+            "tsk add: unknown add argument 검토 · quote the whole title: tsk add -t '견적서 검토'\n",
+        ),
+        (
+            vec!["it's late"],
+            "tsk add: unknown add argument it's late · a title goes after -t: tsk add -t <title>\n",
+        ),
+    ] {
+        let mut argv = vec!["tsk".to_string(), "add".into()];
+        argv.extend(args.iter().map(|arg| arg.to_string()));
+        argv.extend(["--state-dir".to_string(), state.clone()]);
+        let output = add(&argv, true);
+        assert_eq!(output.code, 2, "{args:?}");
+        assert!(output.stdout.is_empty());
+        assert!(
+            output.stderr.starts_with(reason),
+            "{args:?}: {:?}",
+            output.stderr
+        );
+        assert!(output.stderr.contains("usage: tsk add -t <title>"));
+    }
+    assert!(
+        !dir.join("tsk.json").exists(),
+        "a refused add saves nothing"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
