@@ -43,8 +43,15 @@ struct HelpGroup {
     options: Vec<(String, String)>,
 }
 
+/// A JSON input shape: a heading line, then lines printed as written (each fits 80 columns), so
+/// an example copies as valid JSON. Shown before the examples.
+struct HelpFormat {
+    heading: &'static str,
+    lines: &'static [&'static str],
+}
+
 impl HelpDoc {
-    fn render(self) -> String {
+    fn render_with(self, formats: &[HelpFormat]) -> String {
         const WIDTH: usize = 80;
         let mut output = String::new();
         // A wrapped form hangs deeper than the next form starts, so each form reads as one.
@@ -73,6 +80,17 @@ impl HelpDoc {
             output.push('\n');
         }
 
+        for format in formats {
+            output.push_str(format.heading);
+            output.push('\n');
+            for line in format.lines {
+                output.push_str("  ");
+                output.push_str(line);
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+
         if !self.examples.is_empty() {
             output.push_str("Examples:\n");
             for example in &self.examples {
@@ -94,8 +112,12 @@ impl HelpDoc {
 }
 
 fn help(doc: HelpDoc) -> CliOutput {
+    help_with_formats(doc, &[])
+}
+
+fn help_with_formats(doc: HelpDoc, formats: &[HelpFormat]) -> CliOutput {
     CliOutput {
-        stdout: doc.render(),
+        stdout: doc.render_with(formats),
         stderr: String::new(),
         code: 0,
     }
@@ -198,8 +220,32 @@ fn exit_line(success: &str, refusal: Option<&str>, store_io: bool) -> String {
     clauses.join(" · ")
 }
 
+const QUESTION_FORMATS: &[HelpFormat] = &[
+    HelpFormat {
+        heading: "ask JSON (task_id: tsk list T12 --field id):",
+        lines: &[
+            r#"{"task_id": "<task UUID>", "kind": "question", "audience": "lead","#,
+            r#" "summary": "Cache choice", "text": "Which cache should T12 use?","#,
+            r#" "origin_thread": "thr-a", "recipient": "lead-a","#,
+            r#" "options": ["redis", "memory"]}"#,
+            "kind: question, approval, finding, or secret. audience: user or lead.",
+        ],
+    },
+    HelpFormat {
+        heading: "answer JSON (expected_revision: reference.revision from tsk questions Q1):",
+        lines: &[
+            r#"{"expected_revision": "<revision UUID>", "text": "Use redis","#,
+            r#" "actor": "lead-a", "origin": "agent"}"#,
+        ],
+    },
+    HelpFormat {
+        heading: "route JSON:",
+        lines: &[r#"{"expected_revision": "<revision UUID>", "audience": "user"}"#],
+    },
+];
+
 pub fn questions_help() -> CliOutput {
-    help(HelpDoc {
+    help_with_formats(HelpDoc {
         usage: vec![
             "tsk ask --file <question.json> --state-dir <Agent-dir>".into(),
             "tsk answer <Q-number|UUID> --file <answer.json> --state-dir <Agent-dir>".into(),
@@ -224,7 +270,7 @@ pub fn questions_help() -> CliOutput {
             "secret-result: invalid-input (exit 2); stale-revision, secret-required, already-answered, invalid-secret, secret-not-found, fnox-check-failed (exit 1)".into(),
         ],
         exit: "0 saved/read; notification failure remains separate from save success. 1 refused/not saved/commit unknown/durability uncertain: read back before retrying. 2 usage or invalid JSON. A notified hint proves submission only, not receiver application.".into(),
-    })
+    }, QUESTION_FORMATS)
 }
 
 pub fn reports_help() -> CliOutput {
@@ -358,69 +404,83 @@ pub fn help_usage(reason: &str) -> CliOutput {
     }
 }
 
+const PLAN_FORMAT: HelpFormat = HelpFormat {
+    heading: "JSON plan (an array of tasks; only title is required):",
+    lines: &[
+        r#"[{"title": "Reproduce login timeout", "project": "atlas", "thread": "auth"},"#,
+        r#" {"title": "Draft release notes", "assignee": "me", "after": ["T202"]}]"#,
+        "Fields: title, notes, project, thread, assignee, base, after.",
+    ],
+};
+
 pub fn add_help() -> CliOutput {
-    help(HelpDoc {
-        usage: lines(ADD_USAGE),
-        purpose: "Create one task, or every task in a JSON plan.".into(),
-        groups: vec![
-            group(
-                "Scope",
-                &[
-                    (
-                        "-p, --project <project>",
-                        "a project on the board, or an absolute path",
-                    ),
-                    ("--desk", "the desk"),
-                ],
+    help_with_formats(
+        HelpDoc {
+            usage: lines(ADD_USAGE),
+            purpose: "Create one task, or every task in a JSON plan.".into(),
+            groups: vec![
+                group(
+                    "Scope",
+                    &[
+                        (
+                            "-p, --project <project>",
+                            "a project on the board, or an absolute path",
+                        ),
+                        ("--desk", "the desk"),
+                    ],
+                ),
+                group(
+                    "Options",
+                    &[
+                        ("-t, --title <title>", "the title (required without a plan)"),
+                        ("-n, --notes <notes>", "notes"),
+                        ("--parent <task>", "direct parent task number or UUID"),
+                        ("--after <task>", "run after this task; repeat for more"),
+                        ("--thread <name>", "a thread label"),
+                        (
+                            "--assignee <name>",
+                            "an agent profile from config.toml, me, or a person's name",
+                        ),
+                        ("--unassign", "create without an assignee"),
+                        (
+                            "--base <branch>",
+                            "dispatch from this existing branch of the project",
+                        ),
+                        ("--clear-base", "dispatch from the project's default branch"),
+                        (
+                            "--file <path|->",
+                            "read a JSON plan from a file, or - for stdin",
+                        ),
+                        ("--state-dir <dir>", "use another board store"),
+                        ("--flag=<value>", "use = for a value that starts with -"),
+                    ],
+                ),
+                group(
+                    "Output",
+                    &[("--json", "print the result as JSON (a plan always does)")],
+                ),
+            ],
+            examples: vec![
+                "tsk add -t \"Draft release notes\"".into(),
+                "tsk add -t \"Buy milk\" --desk".into(),
+                "tsk add -t \"Fix login timeout\" -p atlas --thread auth".into(),
+                "tsk add --file plan.json".into(),
+                "cat plan.json | tsk add".into(),
+            ],
+            refusals: vec![
+                "empty-title, invalid-title, unknown-project, project-archived, unknown-base"
+                    .into(),
+                "in a plan item: invalid-item, invalid-thread, invalid-assignee, invalid-after"
+                    .into(),
+            ],
+            exit: exit_line(
+                "every item created or already there",
+                Some("an item refused; retry only the failed items"),
+                true,
             ),
-            group(
-                "Options",
-                &[
-                    ("-t, --title <title>", "the title (required without a plan)"),
-                    ("-n, --notes <notes>", "notes"),
-                    ("--parent <task>", "direct parent task number or UUID"),
-                    ("--after <task>", "run after this task; repeat for more"),
-                    ("--thread <name>", "a thread label"),
-                    (
-                        "--assignee <name>",
-                        "an agent profile from config.toml, me, or a person's name",
-                    ),
-                    ("--unassign", "create without an assignee"),
-                    (
-                        "--base <branch>",
-                        "dispatch from this existing branch of the project",
-                    ),
-                    ("--clear-base", "dispatch from the project's default branch"),
-                    (
-                        "--file <path|->",
-                        "read a JSON plan from a file, or - for stdin",
-                    ),
-                    ("--state-dir <dir>", "use another board store"),
-                    ("--flag=<value>", "use = for a value that starts with -"),
-                ],
-            ),
-            group(
-                "Output",
-                &[("--json", "print the result as JSON (a plan always does)")],
-            ),
-        ],
-        examples: vec![
-            "tsk add -t \"Draft release notes\"".into(),
-            "tsk add -t \"Buy milk\" --desk".into(),
-            "tsk add -t \"Fix login timeout\" -p atlas --thread auth".into(),
-            "tsk add --file plan.json".into(),
-            "cat plan.json | tsk add".into(),
-        ],
-        refusals: vec![
-            "empty-title, invalid-title, unknown-project, project-archived, unknown-base".into(),
-            "in a plan item: invalid-item, invalid-thread, invalid-assignee, invalid-after".into(),
-        ],
-        exit: exit_line(
-            "every item created or already there",
-            Some("an item refused; retry only the failed items"),
-            true,
-        ),
-    })
+        },
+        &[PLAN_FORMAT],
+    )
 }
 
 pub fn list_help(_terminal_width: Option<usize>) -> CliOutput {
@@ -3454,7 +3514,7 @@ mod tests {
             refusals: Vec::new(),
             exit: "0 completed · 2 usage, nothing persisted".into(),
         }
-        .render();
+        .render_with(&[]);
 
         assert!(output.lines().all(|line| line.len() <= 80));
         assert!(output.lines().all(|line| line == line.trim_end()));

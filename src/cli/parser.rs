@@ -1706,6 +1706,20 @@ pub fn parse_flag_add(args: &[String]) -> Result<FlagAdd, String> {
                 parsed.file = Some(PathBuf::from(file_value(flag)?));
                 index += 2;
             }
+            // A title is a flag value, never a positional: show the fix. After -t, a
+            // bare word is most likely the rest of an unquoted title.
+            word if !word.starts_with('-') => {
+                let (hint, title) = match &parsed.title {
+                    Some(first) => ("quote the whole title", format!("{first} {word}")),
+                    None => ("a title goes after -t", word.to_owned()),
+                };
+                let example = if title.contains('\'') {
+                    "tsk add -t <title>".to_owned()
+                } else {
+                    format!("tsk add -t '{title}'")
+                };
+                return Err(format!("unknown add argument {word} · {hint}: {example}"));
+            }
             _ => return Err(format!("unknown add argument {flag}")),
         }
     }

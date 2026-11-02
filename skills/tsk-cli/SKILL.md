@@ -76,8 +76,9 @@ task's running agent, add `--send`: it sends only that reply and prints `sent to
    ([after](https://gettsk.sh/docs/board.md#after)).
 10. **Steps are the user's plan.** Add them only when the user wants order of work tracked, never
     for your own bookkeeping ([steps](https://gettsk.sh/docs/cli.md#steps)).
-11. **Many tasks at once:** `cat plan.json | tsk add`; on exit 1, retry only the `failed` items
-    ([JSON plans](https://gettsk.sh/docs/cli.md#json-plans)).
+11. **Many tasks at once:** `cat plan.json | tsk add`, where the file is an array such as
+    `[{"title": "Draft release notes"}, {"title": "Ship it", "after": ["T202"]}]`; on exit 1,
+    retry only the `failed` items ([JSON plans](https://gettsk.sh/docs/cli.md#json-plans)).
 12. **A restored task may change number.** `tsk trash restore T12` prints the number it got; use that
     one from then on ([trash](https://gettsk.sh/docs/cli.md#trash)).
 13. **Machine ranges are filters, not authority.** New tasks record the current machine; existing tasks stay unspecified. List defaults to every machine. Add `--machine @local` to match the default board. Use `@current`, `@all`, `@unspecified`, or a literal name for another range. Direct task addresses cross ranges. `tsk edit T12 --machine NAME` or `@current` sets it; `--no-machine` clears it ([machines](https://gettsk.sh/docs/cli.md#list)).
@@ -164,7 +165,9 @@ dispatched, a message saying `the agent may still run` means it may run without 
 ## Agent questions and related tasks
 
 **Questions.** Run `tsk help ask`, `tsk help questions`, `tsk help answer`, and `tsk help route`
-first. These commands
+first: `tsk help ask` prints a minimal question, answer, and route JSON. A question needs at least
+`task_id` (from `tsk list T12 --field id`), `kind`, `audience`, `summary`, `text`, `origin_thread`,
+and `recipient`; an answer needs `expected_revision`, `text`, `actor`, and `origin: "agent"`. These commands
 require an explicitly selected non-personal Agent state directory. They never fall back to the
 personal board. Read the current Q revision before answering; pass it as `expected_revision`.
 Corrections append and name the current answer revision. Question writes report saved durability and

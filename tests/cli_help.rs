@@ -478,3 +478,123 @@ fn version_flags_print_the_package_version() {
         );
     }
 }
+
+/// The JSON block under a help heading, as one string with the indent removed.
+fn help_json(output: &str, heading: &str) -> String {
+    output
+        .lines()
+        .skip_while(|line| !line.starts_with(heading))
+        .skip(1)
+        .take_while(|line| {
+            line.starts_with("  [") || line.starts_with("  {") || line.starts_with("   ")
+        })
+        .map(|line| &line[2..])
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+static HELP_TEMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn help_temp_dir(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let seq = HELP_TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("tsk-cli-help-{label}-{nanos}-{seq}"));
+    std::fs::create_dir_all(&dir).expect("create state directory");
+    dir
+}
+
+fn run_stdin(args: &[&str], stdin: String) -> tsk_tui::cli::CliOutput {
+    run_with(args, Cursor::new(stdin.into_bytes()), false)
+}
+
+/// A first user copies the JSON shapes from help: each one must be accepted as shown.
+#[test]
+fn help_json_shapes_are_accepted_as_written() {
+    let dir = help_temp_dir("json-shapes");
+    let state = dir.to_string_lossy().into_owned();
+
+    let plan = help_json(&help(&["tsk", "help", "add"]).stdout, "JSON plan");
+    let items: serde_json::Value = serde_json::from_str(&plan).expect("plan example is JSON");
+    assert_eq!(items.as_array().map(Vec::len), Some(2), "{plan}");
+    // Only the canonical project and task the example names are missing on an empty board.
+    let added = run_stdin(&["tsk", "add", "--state-dir", &state], plan);
+    let result: serde_json::Value = serde_json::from_str(&added.stdout).expect("plan result");
+    let codes: Vec<&str> = result["failed"]
+        .as_array()
+        .expect("failed array")
+        .iter()
+        .map(|item| item["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(
+        codes,
+        ["unknown-project", "invalid-after"],
+        "{}",
+        added.stdout
+    );
+
+    let questions = help(&["tsk", "help", "ask"]).stdout;
+    for heading in ["ask JSON", "answer JSON", "route JSON"] {
+        let block = questions
+            .lines()
+            .skip_while(|line| !line.starts_with(heading))
+            .take_while(|line| !line.is_empty());
+        for line in block {
+            assert!(
+                line.chars().count() <= 80,
+                "wider than 80 columns: {line:?}"
+            );
+        }
+    }
+    let created = run_with(
+        [
+            "tsk",
+            "add",
+            "-t",
+            "Cache work",
+            "--desk",
+            "--state-dir",
+            &state,
+        ],
+        Cursor::new(Vec::<u8>::new()),
+        true,
+    );
+    assert_eq!(created.code, 0, "{}", created.stderr);
+    let id = run_with(
+        ["tsk", "list", "T1", "--field", "id", "--state-dir", &state],
+        Cursor::new(Vec::<u8>::new()),
+        true,
+    )
+    .stdout
+    .trim()
+    .to_owned();
+    let ask = help_json(&questions, "ask JSON").replace("<task UUID>", &id);
+    let asked = run_stdin(&["tsk", "ask", "--file", "-", "--state-dir", &state], ask);
+    assert_eq!(asked.code, 0, "{}", asked.stderr);
+
+    let revision = |output: &str| {
+        let value: serde_json::Value = serde_json::from_str(output).expect("question JSON");
+        value["saved"]["record"]["reference"]["revision"]
+            .as_str()
+            .expect("revision")
+            .to_owned()
+    };
+    let route =
+        help_json(&questions, "route JSON").replace("<revision UUID>", &revision(&asked.stdout));
+    let routed = run_stdin(
+        &["tsk", "route", "Q1", "--file", "-", "--state-dir", &state],
+        route,
+    );
+    assert_eq!(routed.code, 0, "{}", routed.stderr);
+    let answer =
+        help_json(&questions, "answer JSON").replace("<revision UUID>", &revision(&routed.stdout));
+    let answered = run_stdin(
+        &["tsk", "answer", "Q1", "--file", "-", "--state-dir", &state],
+        answer,
+    );
+    assert_eq!(answered.code, 0, "{}", answered.stderr);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
