@@ -12,7 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +30,7 @@ const DIR: &str = "evoloop";
 const MAP_FILE: &str = "map.json";
 const PENDING_FILE: &str = "pending.json";
 const LOCK_FILE: &str = "mirror.lock";
+#[cfg(unix)]
 const TIMEOUT_SECS: u32 = 5;
 
 /// One HTTP call to EvoLoop: POST a JSON body to a path under the base URL and return
@@ -35,6 +39,7 @@ pub trait Transport {
     fn post(&self, path: &str, body: &Value) -> Option<Value>;
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct MirrorConfig {
     pub url: String,
@@ -42,6 +47,7 @@ pub struct MirrorConfig {
     pub organization: Option<String>,
 }
 
+#[cfg(unix)]
 impl MirrorConfig {
     /// `TSK_EVOLOOP_URL` (an `https://` base), `TSK_EVOLOOP_TOKEN_FILE` (a file holding
     /// the Bearer token) and optional `TSK_EVOLOOP_ORG`. Anything missing turns the copy off.
@@ -77,15 +83,18 @@ impl MirrorConfig {
 
 /// The real transport: the hardened system curl, configured through stdin so the token
 /// and the body never appear in the process arguments.
+#[cfg(unix)]
 pub struct CurlTransport {
     pub config: MirrorConfig,
     pub curl: PathBuf,
 }
 
+#[cfg(unix)]
 fn curl_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+#[cfg(unix)]
 impl Transport for CurlTransport {
     fn post(&self, path: &str, body: &Value) -> Option<Value> {
         let mut config = format!(
@@ -119,19 +128,12 @@ impl Transport for CurlTransport {
     }
 }
 
-/// The configured transport, if the copy is on and this platform has the hardened curl.
+/// The configured transport, if the copy is on. macOS and Linux only, like the update check.
+#[cfg(unix)]
 pub fn configured_transport() -> Option<CurlTransport> {
     let config = MirrorConfig::from_env()?;
-    #[cfg(unix)]
-    {
-        let curl = crate::cli::update::curl_path().ok()?;
-        Some(CurlTransport { config, curl })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = config;
-        None
-    }
+    let curl = crate::cli::update::curl_path().ok()?;
+    Some(CurlTransport { config, curl })
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,9 +359,16 @@ fn sync_record(
 impl QuestionStore {
     /// Copy `saved` and every earlier pending question to EvoLoop. Never fails the
     /// caller: a failed copy is kept pending. `None` when the copy is off.
+    #[cfg(unix)]
     pub fn mirror_saved(&self, saved: Uuid) -> Option<MirrorOutcome> {
         let transport = configured_transport()?;
         self.mirror_with(&transport, saved).ok()
+    }
+
+    /// The copy runs on macOS and Linux only.
+    #[cfg(not(unix))]
+    pub fn mirror_saved(&self, _saved: Uuid) -> Option<MirrorOutcome> {
+        None
     }
 
     pub fn mirror_with(
@@ -571,6 +580,7 @@ mod tests {
         assert_eq!(order, vec![question.routes[0].revision, first.revision]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn curl_config_quotes_values() {
         assert_eq!(curl_quote(r#"a"b\c"#), r#""a\"b\\c""#);
