@@ -22,6 +22,7 @@ use crate::fsperm;
 
 mod questions;
 pub use questions::*;
+pub mod evoloop;
 mod reports;
 pub use reports::*;
 
@@ -3374,6 +3375,80 @@ mod tests {
         assert!(board.get(old).is_none(), "the board forgets the moved task");
         assert!(store.load().expect("reload").get(old).is_none());
         assert_eq!(store.load_done_history().expect("history").len(), 1);
+    }
+
+    #[test]
+    fn evoloop_copy_keeps_a_failed_question_pending_until_it_lands() {
+        use crate::domain::{Audience, QuestionDraft, QuestionKind};
+        use crate::store::evoloop::Transport;
+        use serde_json::{json, Value};
+        use std::cell::{Cell, RefCell};
+        struct Flaky {
+            up: Cell<bool>,
+            sent: RefCell<Vec<Value>>,
+        }
+        impl Transport for Flaky {
+            fn post(&self, _path: &str, body: &Value) -> Option<Value> {
+                if !self.up.get() {
+                    return None;
+                }
+                self.sent.borrow_mut().push(body.clone());
+                Some(json!({"questionId": "r", "headRevision": "h", "events": [{"revision": "h"}]}))
+            }
+        }
+        let dir = temp_dir("evoloop-copy");
+        let _guard = TempDirGuard(dir.clone());
+        let store = TaskStore::new(&dir);
+        let mut seed = DomainState::new();
+        let task = seed
+            .create(
+                "asks a question",
+                None,
+                TaskScope::Global,
+                ProvenanceOrigin::Manual,
+            )
+            .expect("create");
+        store.save(&seed).expect("seed");
+        let questions = QuestionStore::new(dir.clone()).expect("agent store");
+        let saved = questions
+            .ask(QuestionDraft {
+                task_id: task,
+                kind: QuestionKind::Question,
+                summary: "which one".into(),
+                origin_thread: "thr-a".into(),
+                recipient: "lead-a".into(),
+                text: "Which one?".into(),
+                options: Vec::new(),
+                recommendation: None,
+                impact: None,
+                blocking_scope: None,
+                approval: None,
+                finding: None,
+                source: None,
+                audience: Some(Audience::User),
+                lead_recipient: None,
+                secret: None,
+                permission_context: None,
+            })
+            .expect("the local save never waits on EvoLoop")
+            .record;
+        let flaky = Flaky {
+            up: Cell::new(false),
+            sent: RefCell::new(Vec::new()),
+        };
+        let id = saved.reference.id;
+        assert_eq!(questions.mirror_with(&flaky, id).expect("pass").pending, 1);
+        flaky.up.set(true);
+        assert_eq!(questions.mirror_with(&flaky, id).expect("pass").pending, 0);
+        assert_eq!(flaky.sent.borrow().len(), 1);
+        assert_eq!(flaky.sent.borrow()[0]["requestId"], json!(id));
+        assert_eq!(flaky.sent.borrow()[0]["externalRef"]["task"], json!("T1"));
+        assert_eq!(questions.mirror_with(&flaky, id).expect("pass").pending, 0);
+        assert_eq!(
+            flaky.sent.borrow().len(),
+            1,
+            "a landed question is not sent again"
+        );
     }
 
     #[test]

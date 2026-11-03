@@ -396,6 +396,21 @@ For deployment or irreversible changes, approval binds to the exact target, acti
 A secret question's snapshot holds only its fnox target (key, profile, config path) and the answer `set`. The value the user types goes from the board to `fnox set` on standard input and is never written under the state directory. [Secret questions](/docs/cli/#secret).
 
 
+### Copy to EvoLoop
+
+Questions can be copied to an EvoLoop work-question ledger, so EvoLoop shows them beside its own decisions. The copy is off unless these are set.
+
+| Variable | Meaning |
+| --- | --- |
+| `TSK_EVOLOOP_URL` | The EvoLoop base address. Only `https://` is accepted |
+| `TSK_EVOLOOP_TOKEN_FILE` | A file holding the EvoLoop Bearer token. The token is passed to curl on standard input, never as an argument |
+| `TSK_EVOLOOP_ORG` | Optional organization id sent as `X-Organization-ID` |
+
+- The local save comes first and never waits on the copy or fails because of it. The Agent store stays the record that commands read.
+- A question, its answers, corrections, and routes are copied in the order they happened. A failed copy stays pending in the Agent directory and is sent on the next question write.
+- A secret question sends its fnox target name and the answer `set` or `rejected`, never a value.
+- Copies run on macOS and Linux with the same curl as the update check.
+
 ## Older done tasks
 
 A done task stays in `tsk.json` for one day after it is finished. The next save after that moves it to `done/YYYY-MM-DD.jsonl`, one file per UTC completion date, so the live file holds recent work only. Set `TSK_DONE_KEEP_DAYS` to keep done tasks longer (whole days; `0` moves them on the next save). A done task stays live while dispatch cleanup is pending, an undo entry or open question names it, or a live task names it as parent. Answered and closed questions do not hold it: their records stay readable and still name the moved task (a record that cannot be read counts as open). Its number is never reused.
