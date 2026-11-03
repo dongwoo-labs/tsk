@@ -523,6 +523,262 @@ fn an_approval_record_saved_with_options_before_the_rule_stays_readable() {
     );
 }
 
+// CLI round trips own the serialization, validation, and authorization contracts.
+// A live TUI run cannot exercise forged origins or a partial stored answer safely.
+#[test]
+fn multiple_approval_terms_are_atomic_exact_and_keep_their_original_shape() {
+    let dir = TempDir::new("multiple-terms");
+    let task = task_id(&dir);
+    let first = terms(H);
+    let mut second = terms(&"f".repeat(64));
+    second["target"] = json!("T202");
+    let all = json!([first, second]);
+    let out = ask(&dir, &draft(&task, "approval", all.clone()));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let initial = stdout_json(&out)["saved"]["record"].clone();
+    assert_eq!(initial["draft"]["approval"], all);
+    let revision = initial["reference"]["revision"].clone();
+    let shared = fs::read(dir.0.join("state/tsk.json")).unwrap();
+
+    let mut wrong = vec![
+        Value::Null,
+        first.clone(),
+        json!([first]),
+        json!([second, first]),
+    ];
+    for field in ["target", "action", "h", "scope", "rollback"] {
+        let mut changed = all.clone();
+        changed[1][field] = json!("changed");
+        wrong.push(changed);
+    }
+    wrong.push(json!([first, second, terms(&"a".repeat(40))]));
+    for approval in wrong {
+        let file = dir.write(
+            "answer.json",
+            &json!({
+                "expected_revision": revision, "approve": true, "approval": approval
+            }),
+        );
+        let out = cli(&[
+            "ui-answer",
+            "Q1",
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert!(out.stderr.contains("approval-refused"), "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([initial]));
+        assert_eq!(fs::read(dir.0.join("state/tsk.json")).unwrap(), shared);
+    }
+    for origin in ["agent", "imported", "lead_user_chat"] {
+        let file = dir.write(
+            "answer.json",
+            &json!({
+                "expected_revision": revision, "text": "approved", "actor": "lead-a",
+                "origin": origin, "approve": true, "confirmed": true, "approval": all
+            }),
+        );
+        let out = cli(&["answer", "Q1", "--file", &file, "--state-dir", &dir.state()]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([initial]));
+    }
+    let file = dir.write(
+        "answer.json",
+        &json!({
+            "expected_revision": "00000000-0000-0000-0000-000000000001",
+            "approve": true, "approval": all
+        }),
+    );
+    let out = cli(&[
+        "ui-answer",
+        "Q1",
+        "--file",
+        &file,
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("stale-revision"));
+
+    let file = dir.write("answer.json", &json!({
+        "expected_revision": revision, "approve": true, "approval": all, "comment": "both checked"
+    }));
+    let out = cli(&[
+        "ui-answer",
+        "Q1",
+        "--file",
+        &file,
+        "--state-dir",
+        &dir.state(),
+    ]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let read = questions(&dir)[0].clone();
+    assert_eq!(read["answers"][0]["approval"], all);
+    assert_eq!(read["answers"][0]["comment"], "both checked");
+    assert_ne!(read["reference"]["revision"], revision);
+    let record: tsk_tui::domain::QuestionRecord = serde_json::from_value(read.clone()).unwrap();
+    for value in [&first, &second] {
+        let terms = serde_json::from_value(value.clone()).unwrap();
+        assert!(record.approval_for(&terms).is_some());
+    }
+    let unrelated = serde_json::from_value(terms(&"a".repeat(40))).unwrap();
+    assert!(record.approval_for(&unrelated).is_none());
+    // One matching term cannot confer authority when the full saved set differs.
+    let mut partial = read.clone();
+    partial["answers"][0]["approval"] = json!([first]);
+    let partial: tsk_tui::domain::QuestionRecord = serde_json::from_value(partial).unwrap();
+    let first_terms = serde_json::from_value(first.clone()).unwrap();
+    assert!(partial.approval_for(&first_terms).is_none());
+
+    // Route revisions preserve the entire answer and its per-action authority.
+    let file = dir.write(
+        "route.json",
+        &json!({
+            "expected_revision": read["reference"]["revision"], "audience": "lead"
+        }),
+    );
+    let out = cli(&["route", "Q1", "--file", &file, "--state-dir", &dir.state()]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(questions(&dir)[0]["answers"], read["answers"]);
+
+    // Object and singleton-array readback are distinct, compatible forms.
+    for (offset, approval) in [first.clone(), json!([first])].into_iter().enumerate() {
+        let out = ask(&dir, &draft(&task, "approval", approval.clone()));
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        let saved = stdout_json(&out)["saved"]["record"].clone();
+        assert_eq!(saved["draft"]["approval"], approval);
+        let other_form = if approval.is_array() {
+            first.clone()
+        } else {
+            json!([first])
+        };
+        let q = format!("Q{}", offset + 2);
+        let mut answer = json!({
+            "expected_revision": saved["reference"]["revision"], "text": "approved",
+            "actor": "lead-a", "origin": "lead_user_chat", "approve": true,
+            "confirmed": true, "approval": other_form,
+            "user_chat": {"original_user": "user", "original_text": "Approve the displayed terms",
+                "source": "test", "original_time": "2026-11-03T00:00:00Z", "original_verified": true}
+        });
+        let file = dir.write("answer.json", &answer);
+        assert_eq!(
+            cli(&["answer", &q, "--file", &file, "--state-dir", &dir.state()]).code,
+            1
+        );
+        answer["approval"] = approval.clone();
+        let file = dir.write("answer.json", &answer);
+        let out = cli(&["answer", &q, "--file", &file, "--state-dir", &dir.state()]);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        assert_eq!(
+            questions(&dir)[offset + 1]["answers"][0]["approval"],
+            approval
+        );
+    }
+}
+
+#[test]
+fn approval_terms_reject_duplicate_json_fields_in_both_forms() {
+    let dir = TempDir::new("duplicate-field");
+    let task = task_id(&dir);
+    for approval in [terms(H), json!([terms(H)])] {
+        let raw = serde_json::to_string(&draft(&task, "approval", approval))
+            .unwrap()
+            .replace(
+                "\"target\":\"prod\"",
+                "\"target\":\"other\",\"target\":\"prod\"",
+            );
+        let file = dir.0.join("duplicate.json");
+        fs::write(&file, raw).unwrap();
+        let out = cli(&[
+            "ask",
+            "--file",
+            file.to_str().unwrap(),
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(out.code, 2, "{}", out.stderr);
+        assert!(out.stderr.contains("duplicate field"), "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([]));
+    }
+}
+
+#[test]
+fn positional_approval_arrays_are_not_objects_or_object_sets() {
+    let dir = TempDir::new("positional");
+    let task = task_id(&dir);
+    let positional = json!(["prod", "deploy", H, "web", "redeploy previous"]);
+    for approval in [positional.clone(), json!([terms(H), positional])] {
+        let out = ask(&dir, &draft(&task, "approval", approval));
+        assert_eq!(out.code, 2, "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([]));
+    }
+}
+
+#[test]
+fn multiple_approval_shape_errors_save_nothing_and_plain_decisions_grant_nothing() {
+    let dir = TempDir::new("multiple-invalid");
+    let task = task_id(&dir);
+    let mut bad = terms(H);
+    bad["rollback"] = json!("");
+    for approval in [
+        json!([]),
+        json!([terms(H), terms(H)]),
+        json!([terms(H), bad]),
+    ] {
+        let out = ask(&dir, &draft(&task, "approval", approval));
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([]));
+    }
+    let mut unknown = terms(H);
+    unknown["future"] = json!(true);
+    let out = ask(&dir, &draft(&task, "approval", json!([unknown])));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    let all = json!([terms(H), terms(&"f".repeat(40))]);
+    for kind in ["question", "finding", "secret"] {
+        let out = ask(&dir, &draft(&task, kind, all.clone()));
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert_eq!(questions(&dir), json!([]));
+    }
+    for decision in [json!({"reject": true}), json!({"comment": "not yet"})] {
+        let saved = ask(&dir, &draft(&task, "approval", all.clone()));
+        assert_eq!(saved.code, 0, "{}", saved.stderr);
+        let record = stdout_json(&saved)["saved"]["record"].clone();
+        let mut input = decision;
+        input["expected_revision"] = record["reference"]["revision"].clone();
+        input["approval"] = all.clone();
+        let q = format!("Q{}", record["reference"]["number"]);
+        let file = dir.write("answer.json", &input);
+        assert_eq!(
+            cli(&[
+                "ui-answer",
+                &q,
+                "--file",
+                &file,
+                "--state-dir",
+                &dir.state()
+            ])
+            .code,
+            1
+        );
+        input.as_object_mut().unwrap().remove("approval");
+        let file = dir.write("answer.json", &input);
+        let out = cli(&[
+            "ui-answer",
+            &q,
+            "--file",
+            &file,
+            "--state-dir",
+            &dir.state(),
+        ]);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+    }
+    for record in questions(&dir).as_array().unwrap() {
+        assert_eq!(record["answers"][0]["approval"], Value::Null);
+    }
+}
+
 #[test]
 fn a_repeat_ask_is_a_new_record_and_never_inherits_the_earlier_approval() {
     let dir = TempDir::new("reask");

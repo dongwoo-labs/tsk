@@ -85,6 +85,58 @@ pub struct ApprovalTerms {
     pub rollback: String,
 }
 
+/// 기존 객체 형식과 복수 조건 배열을 구분하여 보존한다.
+/// 배열 순서와 단일 객체/배열의 차이도 전체 승인 비교에 포함한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum ApprovalSet {
+    One(ApprovalTerms),
+    Many(Vec<ApprovalTerms>),
+}
+
+impl ApprovalSet {
+    pub fn as_slice(&self) -> &[ApprovalTerms] {
+        match self {
+            Self::One(terms) => std::slice::from_ref(terms),
+            Self::Many(terms) => terms,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ApprovalSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{value::MapAccessDeserializer, Error, MapAccess, SeqAccess, Visitor};
+        struct ApprovalVisitor;
+        impl<'de> Visitor<'de> for ApprovalVisitor {
+            type Value = ApprovalSet;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an approval object or an array of approval objects")
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                // 객체 필드의 중복과 미지 필드는 기존 파서가 계속 거부한다.
+                ApprovalTerms::deserialize(MapAccessDeserializer::new(map)).map(ApprovalSet::One)
+            }
+
+            fn visit_seq<S: SeqAccess<'de>>(self, mut seq: S) -> Result<Self::Value, S::Error> {
+                let mut terms = Vec::new();
+                while let Some(item) = seq.next_element::<ApprovalSet>()? {
+                    match item {
+                        ApprovalSet::One(term) => terms.push(term),
+                        ApprovalSet::Many(_) => {
+                            return Err(S::Error::custom("approval terms must be an object"));
+                        }
+                    }
+                }
+                Ok(ApprovalSet::Many(terms))
+            }
+        }
+        // 구조체의 위치 기반 배열 해석을 막고 객체와 객체 배열만 받는다.
+        deserializer.deserialize_any(ApprovalVisitor)
+    }
+}
+
 /// Original identifiers are metadata, never authority for a new action.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,7 +214,7 @@ pub struct QuestionDraft {
     pub recommendation: Option<String>,
     pub impact: Option<String>,
     pub blocking_scope: Option<String>,
-    pub approval: Option<ApprovalTerms>,
+    pub approval: Option<ApprovalSet>,
     pub finding: Option<FindingDetails>,
     pub source: Option<QuestionSource>,
     /// Routing label; absent means unknown, never guessed from names or status.
@@ -212,7 +264,7 @@ pub struct AnswerDraft {
     pub approve: bool,
     #[serde(default)]
     pub confirmed: bool,
-    pub approval: Option<ApprovalTerms>,
+    pub approval: Option<ApprovalSet>,
     pub user_chat: Option<UserChatEvidence>,
     pub source: Option<QuestionSource>,
     /// Finding decision intent. Only findings accept it.
@@ -241,7 +293,7 @@ pub struct QuestionAnswer {
     pub origin: AnswerOrigin,
     #[serde(with = "super::time_serde")]
     pub at: std::time::SystemTime,
-    pub approval: Option<ApprovalTerms>,
+    pub approval: Option<ApprovalSet>,
     pub user_chat: Option<UserChatEvidence>,
     pub source: Option<QuestionSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -339,8 +391,13 @@ impl QuestionRecord {
             matches!(
                 answer.origin,
                 AnswerOrigin::UserUi | AnswerOrigin::LeadUserChat
-            ) && answer.approval.as_ref() == Some(terms)
-                && self.draft.approval.as_ref() == Some(terms)
+            ) && self.draft.kind == QuestionKind::Approval
+                && answer.approval == self.draft.approval
+                && self
+                    .draft
+                    .approval
+                    .as_ref()
+                    .is_some_and(|all| all.as_slice().contains(terms))
         })
     }
 }

@@ -818,7 +818,7 @@ Exit 0 means completed, 1 means a refused operation (including an unknown Task o
 
 Question commands run only with an explicit non-personal Agent state directory. `TSK_STATE_DIR` also supplies that selection. They do not open or write the personal default board.
 
-`tsk ask` checks the question before it saves anything. A kind `approval` needs `approval` with non-blank `target`, `action`, `scope`, and `rollback` and an `h` of 40 or 64 hex digits; every other kind takes no `approval`. A wrong shape exits 1 with every bad field in one line (`invalid question: approval.h: ...; approval.target: ...`) and creates no Q number, record, or notification. A JSON error (unknown `kind`, an unknown or missing field) exits 2 and names it. Whether the target, repo, or H make sense for your work is the caller's check; `tsk ask` checks only the shape.
+`tsk ask` checks the question before it saves anything. Kind `approval` needs an `approval` object or a nonempty array of approval objects. Each object needs non-blank `target`, `action`, `scope`, and `rollback` and an `h` of 40 or 64 hex digits. Duplicate objects are refused. Every other kind takes no `approval`. A wrong shape exits 1 with every bad field in one line (`invalid question: approval.h: ...; approval.target: ...`) and creates no Q number, record, or notification. A JSON error (unknown `kind`, an unknown or missing field) exits 2 and names it. Whether the target, repo, or H make sense for your work is the caller's check; `tsk ask` checks only the shape.
 
 ```sh
 tsk ask --file question.json --state-dir /local/agent-board
@@ -863,6 +863,19 @@ Tsk preserves this object in `draft.permission_context` in private snapshots and
 `answer` takes `expected_revision`, `text`, `actor`, `origin`, `corrects_revision`, `approve`, `confirmed`, `approval`, `user_chat`, `source`, and the optional `comment`. Ordinary answers use `origin: "agent"`, `approve: false`, and null approval/evidence. A correction names the current answer's revision in `corrects_revision`; it appends instead of replacing history. A stale expected revision refuses without applying another answer. Use `questions` after every uncertain result and before a retry.
 
 Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. `tsk answer` refuses `origin: "user_ui"`; the board's questions tab, [`ui-answer`](#ui-answer), and the fixed [`secret-result`](#secret-result) path record that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
+
+For several actions in one Q, set `approval` to an array. Each entry keeps its own five fields:
+
+```json
+{"approval": [
+  {"target": "T12", "action": "deploy", "h": "0123456789abcdef0123456789abcdef01234567", "scope": "web", "rollback": "redeploy previous"},
+  {"target": "T202", "action": "deploy", "h": "abcdef0123456789abcdef0123456789abcdef0123", "scope": "worker", "rollback": "redeploy previous"}
+]}
+```
+
+Approval is all-or-nothing. An approving answer repeats the complete stored `approval`, including array order and object-versus-array form. Missing, added, reordered, or changed entries refuse without saving. Reject and comment approve none of the entries. Readback preserves the input form, including a one-entry array.
+
+Existing object-shaped questions and answers keep their format and remain readable. Arrays affect private records only; the shared board format stays unchanged. Upgrade every reader and reopen running boards before writing arrays. Older binaries refuse array records as unavailable, which can block lists, Q-number lookups, and the questions tab. Keep the supporting binary for a store containing arrays; do not delete records to downgrade. Consumers must handle both forms before enabling array writers.
 
 `comment` is free text beside an approval's `approve`/`reject` decision: non-null only on an approval question, and refused if blank. It is never itself an approval, never checked against the stored approval terms, and never weakens `approve`'s requirements. It is saved with whichever decision the same answer carries and shown in the record's history beside `approved` or `rejected`.
 

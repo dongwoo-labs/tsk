@@ -229,6 +229,8 @@ const QUESTION_FORMATS: &[HelpFormat] = &[
             r#" "origin_thread": "thr-a", "recipient": "lead-a","#,
             r#" "options": ["redis", "memory"]}"#,
             "kind: question, approval, finding, or secret. audience: user or lead.",
+            "approval: one {target, action, h, scope, rollback} object, or a nonempty array of distinct objects.",
+            "Approve repeats the complete approval value, including array order and form; one decision covers all entries.",
         ],
     },
     HelpFormat {
