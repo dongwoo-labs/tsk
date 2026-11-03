@@ -1539,13 +1539,15 @@ mod tests {
         shown.reference.kind = QuestionKind::Approval;
         shown.draft.kind = QuestionKind::Approval;
         shown.draft.audience = Some(crate::domain::Audience::User);
-        shown.draft.approval = Some(crate::domain::ApprovalTerms {
-            target: "prod".into(),
-            action: "deploy".into(),
-            h: "a".repeat(40),
-            scope: "web".into(),
-            rollback: "redeploy".into(),
-        });
+        shown.draft.approval = Some(crate::domain::ApprovalSet::One(
+            crate::domain::ApprovalTerms {
+                target: "prod".into(),
+                action: "deploy".into(),
+                h: "a".repeat(40),
+                scope: "web".into(),
+                rollback: "redeploy".into(),
+            },
+        ));
         let seen = ApprovalCheck {
             id: shown.reference.id,
             revision: shown.reference.revision,
@@ -1561,7 +1563,7 @@ mod tests {
         moved.reference.revision = Uuid::from_u128(77);
         assert!(approval_draft(Some(&seen), &shown, &moved).is_none());
         let mut retargeted = shown.clone();
-        if let Some(terms) = retargeted.draft.approval.as_mut() {
+        if let Some(crate::domain::ApprovalSet::One(terms)) = retargeted.draft.approval.as_mut() {
             terms.target = "prod\u{200b}".into();
         }
         assert!(approval_draft(Some(&seen), &shown, &retargeted).is_none());
@@ -1570,6 +1572,44 @@ mod tests {
         closed.answers.push(answer_for_approval());
         closed.reference.revision = shown.reference.revision;
         assert!(approval_draft(Some(&seen), &shown, &closed).is_none());
+    }
+
+    #[test]
+    fn multiple_approval_draft_refuses_a_changed_or_partial_fresh_set() {
+        // Fresh-read safety cannot be demonstrated reliably with a live disk race.
+        let mut shown = finding(Vec::new(), Vec::new());
+        shown.reference.kind = QuestionKind::Approval;
+        shown.draft.kind = QuestionKind::Approval;
+        let first = serde_json::json!({
+            "target": "T12", "action": "deploy", "h": "a".repeat(40),
+            "scope": "web", "rollback": "redeploy"
+        });
+        let mut second = first.clone();
+        second["target"] = serde_json::json!("T202");
+        let all = serde_json::json!([first, second]);
+        shown.draft.approval = Some(serde_json::from_value(all.clone()).expect("array terms"));
+        let seen = ApprovalCheck {
+            id: shown.reference.id,
+            revision: shown.reference.revision,
+            terms: shown.draft.approval.clone().unwrap(),
+        };
+        let answer = approval_draft(Some(&seen), &shown, &shown).expect("all terms match");
+        assert_eq!(serde_json::to_value(answer.approval).unwrap(), all);
+        let mut variants = vec![
+            serde_json::json!([first]),
+            serde_json::json!([second, first]),
+        ];
+        for field in ["target", "action", "h", "scope", "rollback"] {
+            let mut changed = all.clone();
+            changed[1][field] = serde_json::json!("changed");
+            variants.push(changed);
+        }
+        for changed in variants {
+            let mut fresh = shown.clone();
+            fresh.draft.approval = Some(serde_json::from_value(changed).unwrap());
+            assert!(approval_draft(Some(&seen), &shown, &fresh).is_none());
+            assert!(approval_draft(Some(&seen), &fresh, &shown).is_none());
+        }
     }
 
     fn answer_for_approval() -> QuestionAnswer {

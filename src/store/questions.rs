@@ -714,9 +714,25 @@ fn draft_problems(draft: &QuestionDraft) -> Vec<(bool, String)> {
                     "approval: required for kind approval (target, action, h, scope, rollback)"
                         .into(),
                 ),
-                Some(terms) => {
-                    for message in terms_problems(terms) {
-                        note(false, message);
+                Some(approval) => {
+                    let terms = approval.as_slice();
+                    if terms.is_empty() {
+                        note(false, "approval: array must not be empty".into());
+                    }
+                    for (index, term) in terms.iter().enumerate() {
+                        if terms[..index].contains(term) {
+                            note(false, format!("approval[{index}]: duplicate terms"));
+                        }
+                        for message in terms_problems(term) {
+                            note(
+                                false,
+                                if matches!(approval, ApprovalSet::Many(_)) {
+                                    message.replacen("approval.", &format!("approval[{index}]."), 1)
+                                } else {
+                                    message
+                                },
+                            );
+                        }
                     }
                 }
             }

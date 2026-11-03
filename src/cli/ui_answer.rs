@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::questions::{lookup, parse, read_file, Lookup};
 use super::CliOutput;
-use crate::domain::{AnswerDraft, AnswerOrigin, ApprovalTerms, QuestionKind, QuestionRecord};
+use crate::domain::{AnswerDraft, AnswerOrigin, ApprovalSet, QuestionKind, QuestionRecord};
 use crate::question_actions::USER;
 use crate::store::{
     notify_question, QuestionDurability, QuestionError, QuestionNotification, QuestionStore,
@@ -37,7 +37,7 @@ struct UiAnswerInput {
     reject: bool,
     /// The approval terms the user saw. Must equal the stored terms exactly.
     #[serde(default)]
-    approval: Option<ApprovalTerms>,
+    approval: Option<ApprovalSet>,
     /// The current answer's revision when this answer corrects it.
     #[serde(default)]
     corrects_revision: Option<Uuid>,

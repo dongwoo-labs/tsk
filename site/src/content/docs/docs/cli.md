@@ -818,7 +818,9 @@ Exit 0 means completed, 1 means a refused operation (including an unknown Task o
 
 Question commands run only with an explicit non-personal Agent state directory. `TSK_STATE_DIR` also supplies that selection. They do not open or write the personal default board.
 
-`tsk ask` checks the question before it saves anything. A kind `approval` needs `approval` with non-blank `target`, `action`, `scope`, and `rollback` and an `h` of 40 or 64 hex digits; every other kind takes no `approval`. A wrong shape exits 1 with every bad field in one line (`invalid question: approval.h: ...; approval.target: ...`) and creates no Q number, record, or notification. A JSON error (unknown `kind`, an unknown or missing field) exits 2 and names it. Whether the target, repo, or H make sense for your work is the caller's check; `tsk ask` checks only the shape.
+`tsk ask` checks the question before it saves anything. Kind `approval` needs an `approval` object or a nonempty array of approval objects. Each object needs non-blank `target`, `action`, `scope`, and `rollback` and an `h` of 40 or 64 hex digits. Duplicate objects are refused. Every other kind takes no `approval`.
+
+A wrong shape exits 1 with every bad field in one line (`invalid question: approval.h: ...; approval.target: ...`) and creates no Q number, record, or notification. A JSON error (unknown `kind`, an unknown or missing field) exits 2 and names it. Whether the target, repo, or H make sense for your work is the caller's check; `tsk ask` checks only the shape.
 
 ```sh
 tsk ask --file question.json --state-dir /local/agent-board
@@ -864,6 +866,23 @@ Tsk preserves this object in `draft.permission_context` in private snapshots and
 
 Approval terms contain `target`, `action`, `h`, `scope`, and `rollback`. `h` is the exact 40-digit Git SHA or 64-digit plan digest. An ordinary Agent or imported reply cannot issue approval. `tsk answer` refuses `origin: "user_ui"`; the board's questions tab, [`ui-answer`](#ui-answer), and the fixed [`secret-result`](#secret-result) path record that origin. A `lead_user_chat` approval also requires `confirmed: true`, exact current terms, and `user_chat` with the verified `original_user`, `original_text`, `source`, `original_time`, and `original_verified: true`. This attestation preserves the original user evidence; it does not authenticate another process using the same OS account.
 
+For several actions in one Q, set `approval` to an array. Each entry keeps its own five fields:
+
+```json
+{"approval": [
+  {"target": "T12", "action": "deploy", "h": "0123456789abcdef0123456789abcdef01234567", "scope": "web", "rollback": "redeploy previous"},
+  {"target": "T202", "action": "deploy", "h": "abcdef0123456789abcdef0123456789abcdef01", "scope": "worker", "rollback": "redeploy previous"}
+]}
+```
+
+Approval is all-or-nothing. An approving answer repeats the complete stored `approval`, including array order and object-versus-array form. Missing, added, reordered, or changed entries refuse without saving. Reject and comment approve none of the entries. Readback preserves the input form, including a one-entry array.
+
+Existing object-shaped questions and answers keep their format and remain readable. Arrays affect private records only; the shared board format stays unchanged.
+
+Upgrade every reader and reopen running boards before writing arrays. Older binaries refuse array records as unavailable, which can block lists, Q-number lookups, and the questions tab.
+
+Keep the supporting binary for a store containing arrays; do not delete records to downgrade. Consumers must handle both forms before enabling array writers.
+
 `comment` is free text beside an approval's `approve`/`reject` decision: non-null only on an approval question, and refused if blank. It is never itself an approval, never checked against the stored approval terms, and never weakens `approve`'s requirements. It is saved with whichever decision the same answer carries and shown in the record's history beside `approved` or `rejected`.
 
 <span id="secret"></span>**Secret questions.** When an agent needs a secret value, it asks with `kind: "secret"`, `audience: "user"`, no options, approval, or finding, and `secret: {"key", "profile", "config"}`: the fnox key (`[A-Za-z_][A-Za-z0-9_]*`), the fnox profile (`[A-Za-z0-9_-]+`, or `null` for the default), and `config` (an absolute path to an existing regular `fnox.toml`, not a symlink, or `null` for the global config). Anything else refuses with exit 1 and nothing saved, and `secret` on another kind refuses the same way. The user types the value in the board's [questions tab](/docs/board/#questions); tsk runs `fnox set [-g | -c <config>] [--profile <profile>] <key>` itself, with the value on fnox's standard input only, then records the answer `set` (origin `user_ui`). The value is never in `tsk.json`, the private snapshots, answer history, arguments, the environment, or any output, so no command can read it back; read it in your own process with `fnox get` or `fnox exec`. A secret no longer needed closes with no value the same way, as the user-only answer `rejected`: its form's **2. Reject** row on the board, or `ui-answer`'s `reject: true`. `tsk answer` always refuses a secret question with `secret-needs-board`, even a reject-shaped body; `route` refuses to move it to the lead; there is no correction. Once set or rejected, it stays closed.
@@ -896,7 +915,7 @@ The external interface must use the exact stored key, config, and an explicit pr
 | --- | --- | --- |
 | `choice` | a question with options | the zero-based option's text |
 | `text` | a question | the trimmed text |
-| `approve: true` with `approval` | an approval | `approved`, with the terms, only when `approval` equals the stored target, action, `h`, scope, and rollback exactly |
+| `approve: true` with `approval` | an approval | `approved`, only when the complete `approval` value matches, including every field, array order, and object-versus-array form |
 | `reject: true` | an approval | `rejected` |
 | `comment` alone | an approval | `commented`, with the comment; nothing approved |
 | `reject: true` | an open secret | `rejected`, with no value and no `fnox set` call |

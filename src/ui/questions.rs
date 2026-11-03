@@ -17,7 +17,7 @@ use ratatui::Frame;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApprovalTerms, Audience, FindingAction, FindingKind, FindingLink, QuestionKind, QuestionRecord,
+    ApprovalSet, Audience, FindingAction, FindingKind, FindingLink, QuestionKind, QuestionRecord,
     Task,
 };
 use crate::ui::input::BoardIntent;
@@ -60,7 +60,7 @@ impl QuestionFeed {
 pub struct ApprovalCheck {
     pub id: Uuid,
     pub revision: Uuid,
-    pub terms: ApprovalTerms,
+    pub terms: ApprovalSet,
 }
 
 /// A free-text answer being typed for a question without options, a secret's value, or an
@@ -1169,19 +1169,29 @@ pub fn page_rows(
         page.markdown_field("impact  ", impact, RowStyle::Plain);
     }
 
-    if let Some(terms) = draft.approval.as_ref() {
+    if let Some(approval) = draft.approval.as_ref() {
         page.blank();
         page.push(
             "hard to undo · check the target, scope, and revision",
             RowStyle::Bold,
             false,
         );
-        // What is being approved reads bold; how far it reaches and how to undo it, plain.
-        page.markdown_field("action    ", &terms.action, RowStyle::Bold);
-        page.markdown_field("target    ", &terms.target, RowStyle::Bold);
-        page.markdown_field("scope     ", &terms.scope, RowStyle::Plain);
-        page.field("revision  ", &terms.h, RowStyle::Bold);
-        page.markdown_field("undo      ", &terms.rollback, RowStyle::Plain);
+        let all = approval.as_slice();
+        for (index, terms) in all.iter().enumerate() {
+            if matches!(approval, ApprovalSet::Many(_)) {
+                page.blank();
+                page.push(
+                    &format!("terms {} / {}", index + 1, all.len()),
+                    RowStyle::Bold,
+                    false,
+                );
+            }
+            page.markdown_field("action    ", &terms.action, RowStyle::Bold);
+            page.markdown_field("target    ", &terms.target, RowStyle::Bold);
+            page.markdown_field("scope     ", &terms.scope, RowStyle::Plain);
+            page.field("revision  ", &terms.h, RowStyle::Bold);
+            page.markdown_field("undo      ", &terms.rollback, RowStyle::Plain);
+        }
     }
 
     let rows = form(state, record);
@@ -1412,7 +1422,12 @@ fn form_choices(
                 Some(input) if !input.text.is_empty() => input.text.clone(),
                 _ => "Type something…".to_string(),
             },
-            Choice::Approve => "Approve these exact terms".to_string(),
+            Choice::Approve => match draft.approval.as_ref() {
+                Some(ApprovalSet::Many(terms)) => {
+                    format!("Approve all exact terms ({})", terms.len())
+                }
+                _ => "Approve these exact terms".to_string(),
+            },
             Choice::Reject => "Reject".to_string(),
             Choice::Comment => match input.filter(|input| input.comment) {
                 Some(input) => {
@@ -2372,13 +2387,13 @@ mod tests {
                 recommendation: None,
                 impact: None,
                 blocking_scope: None,
-                approval: Some(ApprovalTerms {
+                approval: Some(ApprovalSet::One(ApprovalTerms {
                     target: "prod".into(),
                     action: "deploy".into(),
                     h: "0".repeat(40),
                     scope: "web".into(),
                     rollback: "redeploy previous".into(),
-                }),
+                })),
                 finding: None,
                 source: None,
                 audience: Some(Audience::User),
@@ -2401,7 +2416,7 @@ mod tests {
                              | env | state |\n|---|---|\n| prod | `red` |"
                 .into();
         record.draft.impact = Some("users see ~~old~~ **new** pages".into());
-        if let Some(terms) = record.draft.approval.as_mut() {
+        if let Some(ApprovalSet::One(terms)) = record.draft.approval.as_mut() {
             terms.rollback = "run `deploy --previous`".into();
             terms.h = "a_b_c".into();
         }
@@ -2590,7 +2605,7 @@ mod tests {
         // new terms, but the binding still names the old ones, so a pick of 1 refuses.
         let mut moved = record.clone();
         moved.reference.revision = Uuid::from_u128(4);
-        if let Some(terms) = moved.draft.approval.as_mut() {
+        if let Some(ApprovalSet::One(terms)) = moved.draft.approval.as_mut() {
             terms.target = "prod-eu".into();
         }
         state.set_feed(QuestionFeed::Loaded(vec![moved.clone()]));
@@ -2600,7 +2615,7 @@ mod tests {
         assert!(state.seen_matches(&moved));
         // Same revision, changed terms: still refused.
         let mut swapped = moved.clone();
-        if let Some(terms) = swapped.draft.approval.as_mut() {
+        if let Some(ApprovalSet::One(terms)) = swapped.draft.approval.as_mut() {
             terms.scope = "everything".into();
         }
         assert!(!state.seen_matches(&swapped));
