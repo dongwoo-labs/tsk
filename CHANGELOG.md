@@ -22,6 +22,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- With `TSK_EVOLOOP_URL` and `TSK_EVOLOOP_TOKEN_FILE` set, every question, answer, correction, and route is also copied to an EvoLoop work-question ledger. Local saves never wait on it; failed copies retry on the next question write.
 - Tasks record their creation machine. The board defaults to current-machine and unspecified tasks; machine filters and CLI assignment expose other machines without changing existing tasks.
 - Permission questions can carry optional private `permission_context` metadata (working directory, tool input, Task scope snapshot, and explicit notes Holds). `tsk questions --json` preserves it; existing questions without it stay readable. It grants no approval authority, and callers must keep authentication values out of question text and metadata.
 - `tsk notes T12 set Now: "Running CI"`, `remove Blocked:`, and `append "PR: <URL>"` update notes one line at a time under the store lock without overwriting other lines. Set replaces the first matching prefix and removes duplicates; remove deletes every match; append adds a line and is not safe to repeat blindly. `tsk list T12 --field id` and `--note Now:` return one value without a Task-row array; `--json` returns a single JSON value, with `null` for an absent value. Existing unprojected list output is unchanged. When the saved notes pass 4 KB, `tsk notes` and `tsk edit --notes` still save and exit 0, and print `tsk <command>: warning: T<n> notes are <size> KB, over 4 KB; …` on stderr: notes are a status card, not a log.

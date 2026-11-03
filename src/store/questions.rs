@@ -243,6 +243,31 @@ impl QuestionStore {
     }
 
     pub fn ask(&self, draft: QuestionDraft) -> Result<QuestionSaveResult, QuestionError> {
+        let saved = self.ask_local(draft);
+        self.mirror_result(&saved);
+        saved
+    }
+
+    /// Copy a committed save to EvoLoop when that copy is on. Never changes the result.
+    fn mirror_result(&self, saved: &Result<QuestionSaveResult, QuestionError>) {
+        if let Ok(saved) = saved {
+            let _ = self.mirror_saved(saved.record.reference.id);
+        }
+    }
+
+    /// Task numbers by id, from one reference snapshot. Used only to label copies.
+    pub(super) fn task_numbers(&self) -> Option<std::collections::BTreeMap<Uuid, u64>> {
+        let state = self.store.load_snapshot().ok()?;
+        Some(
+            state
+                .tasks()
+                .iter()
+                .filter_map(|task| task.number.map(|number| (task.id, number)))
+                .collect(),
+        )
+    }
+
+    fn ask_local(&self, draft: QuestionDraft) -> Result<QuestionSaveResult, QuestionError> {
         validate_question(&draft)?;
         if draft.kind == QuestionKind::Secret && !valid_secret_question(&draft) {
             return Err(QuestionError::InvalidSecret);
@@ -345,6 +370,16 @@ impl QuestionStore {
     /// Q-ID. The text, terms, answers, and history move unchanged into a new immutable
     /// revision; an answered question stays answered.
     pub fn route(&self, id: Uuid, draft: RouteDraft) -> Result<QuestionSaveResult, QuestionError> {
+        let saved = self.route_local(id, draft);
+        self.mirror_result(&saved);
+        saved
+    }
+
+    fn route_local(
+        &self,
+        id: Uuid,
+        draft: RouteDraft,
+    ) -> Result<QuestionSaveResult, QuestionError> {
         if draft
             .lead_recipient
             .as_deref()
@@ -404,6 +439,17 @@ impl QuestionStore {
     /// D2701 owns the finding action. This boundary loans it the same store lock:
     /// create a task and append the answer in one shared replacement, or neither.
     pub fn answer_with_task(
+        &self,
+        id: Uuid,
+        draft: AnswerDraft,
+        create: impl FnOnce(&mut DomainState) -> Result<Option<Uuid>, String>,
+    ) -> Result<QuestionSaveResult, QuestionError> {
+        let saved = self.answer_with_task_local(id, draft, create);
+        self.mirror_result(&saved);
+        saved
+    }
+
+    fn answer_with_task_local(
         &self,
         id: Uuid,
         draft: AnswerDraft,
