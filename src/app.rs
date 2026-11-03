@@ -2257,7 +2257,7 @@ pub fn offer_bulk_cleanup_prompt_with_host(
             && matches!(task.scope, crate::domain::TaskScope::Project { .. })
             && task.dispatch.as_ref().is_some_and(|record| !record.cleaned)
     };
-    if !targets.iter().any(|id| domain.get(*id).is_some_and(&live)) {
+    if !targets.iter().any(|id| domain.get(*id).is_some_and(live)) {
         return Ok(BulkCleanupOffer::None);
     }
     if model.cleanup_running() {
