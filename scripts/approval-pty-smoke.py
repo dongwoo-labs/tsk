@@ -52,6 +52,7 @@ def run(output):
         # 각 PageDown은 한 화면 행을 이동한다. 마지막 조건을 실제로 읽는다.
         bottom = j.key(b"\x1b[6~" * 16, "04-terms-last",
                        lambda s: "restore sample scheduler" in s)
+        assert "Approve all exact terms (3)" in bottom
         for field in ["terms 3 / 3", "deploy sample", "T205", "scheduler", "3" * 40]:
             assert field in bottom, field
         j.key(b"m", "05-comment-field", lambda s: "comment" in s.lower())

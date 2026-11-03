@@ -1422,7 +1422,12 @@ fn form_choices(
                 Some(input) if !input.text.is_empty() => input.text.clone(),
                 _ => "Type something…".to_string(),
             },
-            Choice::Approve => "Approve these exact terms".to_string(),
+            Choice::Approve => match draft.approval.as_ref() {
+                Some(ApprovalSet::Many(terms)) => {
+                    format!("Approve all exact terms ({})", terms.len())
+                }
+                _ => "Approve these exact terms".to_string(),
+            },
             Choice::Reject => "Reject".to_string(),
             Choice::Comment => match input.filter(|input| input.comment) {
                 Some(input) => {
