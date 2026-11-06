@@ -1898,7 +1898,10 @@ fn refresh_task(model: &mut BoardModel, id: Uuid) -> String {
     }
     let now = SystemTime::now();
     let hint = crate::stall::task_hint(&identifier, id, crate::stall::quiet_minutes(&task, now));
-    match crate::threads::herdr::prompt(&row.name, &hint) {
+    let Some(number) = task.number else {
+        return format!("{identifier} check not sent: task has no number");
+    };
+    match crate::threads::herdr::prompt_task(number, row, &hint) {
         Ok(()) => {
             model.stall_mut().asked.insert(id, now);
             format!("asked {} about {identifier}", row.name)
@@ -2029,7 +2032,8 @@ pub fn offer_cleanup_prompt_with_host(
     let merge_check = begin_cleanup_merge_check(task, record, host);
     // Cached refs only: the card opens at once and the background check fills merged status.
     let preview = dispatch::inspect_cleanup_cached_with_host(domain, id, in_herdr, host)?;
-    if !preview.inspection.worktree_exists {
+    if !preview.inspection.worktree_exists && !preview.record.herdr_workspace_id.starts_with("hc:")
+    {
         let workspace = dispatch::untouched_workspace(in_herdr, &preview.inspection);
         let close_workspace = in_herdr && preview.inspection.workspace_exists;
         domain
@@ -2283,7 +2287,10 @@ pub fn offer_bulk_cleanup_prompt_with_host(
         // two still has a check left to refresh the row.
         let merge_check = begin_cleanup_merge_check(task, record, host);
         match dispatch::inspect_cleanup_cached_with_host(domain, id, in_herdr, host) {
-            Ok(preview) if !preview.inspection.worktree_exists => {
+            Ok(preview)
+                if !preview.inspection.worktree_exists
+                    && !preview.record.herdr_workspace_id.starts_with("hc:") =>
+            {
                 if in_herdr && preview.inspection.workspace_exists {
                     workspaces.push(preview.record.herdr_workspace_id.clone());
                     bulk.missing_panes.push(identifier.clone());
@@ -19846,6 +19853,20 @@ mod bulk_cleanup_tests {
     }
 
     impl DispatchHost for BulkHost {
+        fn inspect_dispatch_cleanup(
+            &mut self,
+            _: u64,
+            project: &Path,
+            record: &Dispatch,
+            in_herdr: bool,
+            cached: bool,
+        ) -> Result<CleanupInspection, String> {
+            if cached {
+                self.inspect_cleanup_cached(project, record, in_herdr)
+            } else {
+                self.inspect_cleanup(project, record, in_herdr)
+            }
+        }
         fn is_git_repo(&mut self, _: &Path) -> Result<bool, String> {
             Ok(true)
         }
@@ -20105,6 +20126,61 @@ mod bulk_cleanup_tests {
             .as_ref()
             .unwrap()
             .cleaned
+    }
+
+    #[test]
+    fn missing_hc_worktrees_keep_single_and_marked_tasks_on_the_cleanup_path() {
+        for marked in [false, true] {
+            let mut board = marked_board("hc-missing");
+            let id = board.ids[0];
+            let task = board.domain.get(id).unwrap().clone();
+            let mut record = task.dispatch.unwrap();
+            record.herdr_workspace_id = "hc:example".into();
+            board.domain.record_dispatch(id, record).unwrap();
+            board
+                .domain
+                .edit(
+                    id,
+                    task.title,
+                    Some("Owner lead: lead-a\nThread: thr-a hc:example - hc:example:t7".into()),
+                    task.scope,
+                )
+                .unwrap();
+            let mut host = host();
+            host.missing.insert("/tmp/tsk-bulk-clean".into());
+            if marked {
+                assert!(matches!(
+                    offer_bulk_cleanup_prompt_with_host(
+                        &mut board.domain,
+                        &mut board.model,
+                        false,
+                        &mut host
+                    )
+                    .unwrap(),
+                    BulkCleanupOffer::Prompted
+                ));
+            } else {
+                board.model.clear_marks();
+                assert!(matches!(
+                    super::offer_cleanup_prompt_with_host(
+                        &mut board.domain,
+                        &mut board.model,
+                        id,
+                        false,
+                        &mut host
+                    )
+                    .unwrap(),
+                    super::CleanupOffer::Prompted
+                ));
+            }
+            let prompt = board.model.cleanup_prompt().expect("hc cleanup card");
+            assert!(
+                prompt.rows.iter().any(|row| row.task_id == id),
+                "marked={marked}"
+            );
+            assert!(!cleaned(&board, 0), "runtime cleanup has not run");
+            assert_eq!(board.domain.get(id).unwrap().status, HumanStatus::Started);
+        }
     }
 
     #[test]

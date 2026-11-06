@@ -468,7 +468,7 @@ tsk reply <task> <text> [--send] [--state-dir <dir>]
 - Output is `replied T12 as <author> <title>`.
 - `<author>` is your [`[board] me`](/docs/storage/#board-defaults) name, `you` by default, or the agent profile's name.
 - With `--send`, a second line says `sent to @claude` or `not sent: <reason>`. The reply is stored either way and the exit is 0. A reply that was not sent goes out later, when you unblock the task or send the review back.
-- `--send` only sends your own replies, inside Herdr, to the agent tsk dispatched for the task. To answer and unblock in one step, use the board's [reply box](/docs/board/#block-review-reply).
+- `--send` only sends your own replies to the dispatched agent, through its [recorded runtime](/docs/dispatch/#runtime-selection). To answer and unblock in one step, use the board's [reply box](/docs/board/#block-review-reply).
 
 **Refusals:** codes and exits in the [exit contract](#exit-contract).
 
@@ -478,7 +478,7 @@ tsk reply T12 "Use postgres" --send
 
 ## dispatch
 
-Launches an assigned task's agent in its own Git worktree and Herdr workspace, then sets the task `started`. [Dispatch](/docs/dispatch/#dispatch) explains names, prompts, and what the agent gets.
+Launches an assigned task's agent in its own Git worktree through the selected runtime, then sets the task `started`. [Dispatch](/docs/dispatch/#dispatch) explains names, prompts, and what the agent gets.
 
 ```text
 tsk dispatch <task> [--again] [--base <branch>] [--state-dir <dir>]
@@ -491,7 +491,7 @@ tsk dispatch <task> --show-prompt [--base <branch>] [--state-dir <dir>]
 | `--again` | Relaunch a dispatched task. Keeps the recorded base and recreates a cleaned worktree |
 | `--show-prompt` | Print the command and [prompt](/docs/storage/#prompt-and-placeholders) a dispatch would send. Launches nothing and saves nothing |
 
-- Dispatch needs Herdr, a task in a project that is a Git repository, and an assignee with a profile in [`config.toml`](/docs/storage/#configuration).
+- Dispatch needs the [selected runtime](/docs/dispatch/#runtime-selection), a Git project task, and an assignee with a profile in [`config.toml`](/docs/storage/#configuration).
 - The base is `--base`, else the task's base, else the repository's default branch. Never the branch you run the command in. [Base branch](/docs/dispatch/#base-branch).
 - A dispatched task refuses with `already-dispatched`. Use `--again` to relaunch on purpose.
 - Output is `dispatched T12 to @claude in <worktree>`.
@@ -511,7 +511,7 @@ tsk dispatch T12 --base main
 
 - A dispatched task shows its recorded worktree, branch, and base. `--base` does not change them.
 - Any other task shows the branch, worktree, and base a first dispatch would pick, and says so. It picks them the same way, skipping branch names already taken, but from what was last fetched: the preview never fetches.
-- The worktree path assumes Herdr keeps worktrees in its default folder.
+- The Herdr worktree path assumes its default folder. hc worktrees stay under the selected state directory.
 - A desk task keeps `{worktree}`, `{branch}`, and `{base}` as written, and says so.
 - `env` values never print, only their names.
 
@@ -526,7 +526,7 @@ You were dispatched to T12 (Fix the parser) in worktree …
 
 ## clean
 
-Removes a dispatched task's worktree, and inside Herdr its workspace, without changing its status. To finish and clean in one step, use `tsk status T12 done --clean`.
+Removes a dispatched task's worktree without changing its status. It closes its Herdr workspace when available, or stops its verified hc terminal. To finish and clean in one step, use `tsk status T12 done --clean`.
 
 ```text
 tsk clean <task> [--merge] [--json] [--state-dir <dir>]
@@ -842,7 +842,7 @@ An unavailable record's answer state is unknown, not answered or absent. Keep it
 
 Inventory does not copy, repair, or change private records. An unreadable shared store still refuses the entire read. Individual reads and mutations retain their strict contract. Q-number lookup needs the scope's complete private list; a UUID reads only its target. The board's questions tab still requires every private record to be readable.
 
-`ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, `finding`, or `secret`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, `audience` (`user` or `lead`, required: a question without it is refused with exit 1 and nothing saved), and the optional `lead_recipient`, `secret`, and `permission_context`. Nullable fields can be `null`; options defaults to an empty array, and an `approval` or `secret` question takes none (refused with exit 1, nothing saved). Origin and recipient use Herdr agent names. Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record saved before this rule without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
+`ask` takes a JSON object with `task_id` (the full Task UUID), `kind` (`question`, `approval`, `finding`, or `secret`), `summary`, `origin_thread`, `recipient`, `text`, `options`, `recommendation`, `impact`, `blocking_scope`, `approval`, `finding`, `source`, `audience` (`user` or `lead`, required: a question without it is refused with exit 1 and nothing saved), and the optional `lead_recipient`, `secret`, and `permission_context`. Nullable fields can be `null`; options defaults to an empty array, and an `approval` or `secret` question takes none (refused with exit 1, nothing saved). Origin and recipient use live session names from the [selected runtime](/docs/dispatch/#runtime-selection). Q UUID is the connection key; Q number is a display address within this store. Full readback includes every original character. A shareable summary must contain no sensitive text. A record saved before this rule without an `audience` shows as *target unknown* on the board's questions tab: it is never guessed or answered there, and the tab number and row marks leave it out.
 
 A minimal question, and the answer and route that follow it. `tsk help ask` prints the same shapes. Take `task_id` from `tsk list T12 --field id`, and `expected_revision` from `reference.revision` in `tsk questions Q1 --json`:
 
@@ -893,7 +893,7 @@ Keep the supporting binary for a store containing arrays; do not delete records 
 
 Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullable `path`. A finding's answer can carry an `action`: `create_and_run`, `create_only`, or `close`; the board sets it. Optional private source metadata preserves original system, question UUID, comment ID, URL, answer ID, parent question ID, actor, time, revision and applied uncertainty. Historical source approvals never issue current authority.
 
-Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means Herdr accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
+Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means the selected runtime accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
 
 <span id="route"></span>`route` takes `expected_revision`, `audience` (`user` or `lead`), and an optional `lead_recipient` (a Herdr agent name; omitted or `null` keeps the current one). It writes a new revision under the same Q UUID and number and keeps the text, answers, and history; an answered question stays answered. A stale revision refuses and changes nothing. It sends no notification and returns `{ "saved": ... }`.
 

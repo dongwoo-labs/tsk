@@ -2073,11 +2073,33 @@ impl DomainState {
     pub fn record_dispatch_with_status(
         &mut self,
         id: Uuid,
+        dispatch: Dispatch,
+        start: bool,
+    ) -> Result<(), DomainError> {
+        self.record_dispatch_with_thread(id, dispatch, start, None)
+    }
+
+    pub(crate) fn record_dispatch_with_thread(
+        &mut self,
+        id: Uuid,
         mut dispatch: Dispatch,
         start: bool,
+        thread_link: Option<&str>,
     ) -> Result<(), DomainError> {
         let by = current_actor();
         let task = self.task_mut(id)?;
+        if let Some(link) = thread_link {
+            let mut lines: Vec<_> = task
+                .notes
+                .as_deref()
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("Thread:"))
+                .map(str::to_owned)
+                .collect();
+            lines.push(link.to_owned());
+            task.notes = Some(lines.join("\n"));
+        }
         dispatch.cleaned = false;
         let at = dispatch.at;
         let from = task.status;

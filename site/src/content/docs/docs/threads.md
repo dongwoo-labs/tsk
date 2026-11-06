@@ -7,6 +7,12 @@ The threads pane lists the coding-agent sessions running in your Herdr session, 
 
 Open it with the **Open tsk threads** plugin action, or run `tsk threads` in any Herdr pane. Bind the action to a key in your Herdr config if you want one; `tsk setup herdr` does not add a default chord.
 
+## hc sessions
+
+With [hc selected](/docs/dispatch/#runtime-selection), this view reads local live terminals from the explicit session. Rows require task, thread, worktree, lead, machine, and starting commit labels. Missing labels refuse the read rather than guessing an identity.
+
+hc has no focus operation. `Enter` and `tsk threads focus` return an explicit `HC_SESSION=… hc attach …` instruction instead. They never call Herdr. Terminal completion is not task completion.
+
 ## What it shows
 
 By default the pane shows sessions whose Herdr name starts with `lead-` or `thr-` (and the retired `ctl-` and `orch-` roles while one still runs). Press `a` to show every agent.

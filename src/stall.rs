@@ -36,7 +36,7 @@ pub fn threshold() -> Duration {
 
 /// Whether this session runs inside Herdr, the only place a check can be sent.
 pub fn inside_herdr() -> bool {
-    std::env::var("HERDR_ENV").as_deref() == Ok("1")
+    crate::dispatch::hc::enabled() || std::env::var("HERDR_ENV").as_deref() == Ok("1")
 }
 
 /// The board's session-only stall state.
@@ -239,7 +239,11 @@ fn no_lead_detail(agents: &[ThreadRow]) -> String {
         seen.push(format!("{unnamed} unnamed"));
     }
     if seen.is_empty() {
-        "no live lead: herdr agent list is empty".to_string()
+        if crate::dispatch::hc::enabled() {
+            "no live lead: hc session has no labeled live terminals".to_string()
+        } else {
+            "no live lead: herdr agent list is empty".to_string()
+        }
     } else {
         format!(
             "no live lead (no name or terminal title starts with lead-; agents: {})",
