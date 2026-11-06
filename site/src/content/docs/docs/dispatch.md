@@ -1,11 +1,39 @@
 ---
 title: Dispatch
-description: Hand a task to an agent in its own worktree and Herdr workspace, then merge and clean up.
+description: Hand a task to an agent in its own worktree through Herdr or hc, then merge and clean up.
 ---
 
-Dispatch hands a task to a coding agent. The agent gets its own Git branch, worktree, and Herdr workspace. When you complete the task, tsk tidies them up.
+Dispatch hands a task to a coding agent. The agent gets its own Git branch, worktree, and runtime session. When you complete the task, tsk tidies them up.
 
-Dispatch needs [Herdr](/docs/install/#add-to-herdr), a task in a project that is a Git repository, and an agent assignee. Assigning works everywhere. On Windows, dispatch is a [preview](#windows-preview).
+Dispatch needs a supported runtime, a task in a project that is a Git repository, and an agent assignee. Assigning works everywhere. On Windows, Herdr dispatch is a [preview](#windows-preview).
+
+## Runtime selection
+
+| Setting | Runtime |
+| --- | --- |
+| `TSK_THREAD_BACKEND` unset or `herdr` | [Herdr](/docs/install/#add-to-herdr), inside `HERDR_ENV=1` |
+| `TSK_THREAD_BACKEND=hc` | Local hc, with an explicit `HC_SESSION` |
+
+An invalid backend or missing hc session refuses. Session names start with a letter or digit and contain only letters, digits, `.`, `_`, and `-`. hc dispatch requires macOS or Linux and never falls back to Herdr. Threads, stall checks, and dispatch use the selected runtime.
+
+For hc dispatch, task notes must contain one `Owner lead:` line with exactly one lead handle. Add one `Thread:` line whose first token names the thread. A four-token hc Thread link is also accepted. Missing or ambiguous metadata refuses before launch.
+
+hc launches carry these labels:
+
+| Label | Value |
+| --- | --- |
+| `task` | Lowercase task address, such as `t12` |
+| `owner_lead` | Lead handle from `Owner lead:` |
+| `thread` | Thread name from `Thread:` |
+| `worktree` | Absolute worktree directory |
+| `machine` | Current machine name |
+| `sha` | Short starting HEAD commit |
+
+The thread outlives its parent. A live terminal with the same task label prevents another launch. Terminal operations require the recorded session and one live match for task and worktree; ambiguous matches refuse. Remote terminal addresses are unsupported.
+
+hc records a link shaped as `Thread: thr-example hc:example - hc:example:t7`. The terminal token is a reference, not permission to operate: tsk checks live labels again before sending. hc `finished`, `holder_lost`, and agent `done` never complete a task.
+
+Cleanup rechecks the terminal's identity, stops that terminal, then checks for uncommitted changes again before removing its worktree. A session mismatch, missing metadata, or uncertain runtime lookup keeps the worktree.
 
 Launched agents use the selected board through `TSK_STATE_DIR`. A profile or login shell cannot redirect their default tsk commands to another board.
 
@@ -53,11 +81,11 @@ The picker lists every person ever assigned, so a typo stays. In the picker, sel
 Start an assigned task to dispatch it: `ctrl+s`, palette **set status: started**, or [`tsk status T12 started`](/docs/cli/#status). A dispatch:
 
 1. creates a branch and worktree from the task's [base branch](#base-branch),
-2. opens a Herdr workspace in the worktree,
+2. prepares the selected runtime in the worktree,
 3. runs the assignee's profile command there,
 4. records the dispatch on the task and sets it to started, in one save.
 
-If the launch fails, the task stays unstarted with no dispatch, and the status row says why. tsk removes the worktree, workspace, and new branch that launch created. A worktree with changes stays, but its workspace still closes. The message names anything left. A started task with a live dispatch shows `◉` instead of `●`.
+If the launch fails, the task stays unstarted with no dispatch, and the status row says why. tsk removes only the resources it can safely undo. A worktree with changes stays. An uncertain hc launch keeps its checkout for inspection. The message names anything left. A started task with a live dispatch shows `◉` instead of `●`.
 
 The agent's instructions come from the profile's prompt. Without one, a default prompt asks it to open a pull request into the base and set the task to review. A profile's `prompt_append` adds your own lines to the default, and a project's settings can add more and name who gets the review. See [prompt and placeholders](/docs/storage/#prompt-and-placeholders) and [project settings](/docs/storage/#project-settings). `tsk dispatch T12 --show-prompt` prints what an agent would get.
 
@@ -76,10 +104,10 @@ start undone · T12 back to ready · @claude kept running
 | Assigned to an agent, never dispatched | Dispatches |
 | Dispatched, agent still running | Sets started |
 | Dispatched, agent gone | Asks first: [relaunch](#relaunch) |
-| Assigned, outside Herdr or on the desk | Sets started; the status row says why nothing launched |
+| Assigned, Herdr selected outside Herdr, or on the desk | Sets started; the status row says why nothing launched |
 | Done or archived | Sets started; never launches |
 
-When Herdr cannot say whether the agent still runs, the start is plain and launches nothing. Outside Herdr the status row reads `started · no launch: not in Herdr`. Other refusals leave the task unstarted: an unknown agent, a base that cannot be resolved, or a Git or Herdr failure.
+With Herdr selected, an uncertain agent lookup makes the start plain and launches nothing. Outside Herdr, its status row reads `started · no launch: not in Herdr`. Other refusals leave the task unstarted: an unknown agent, a base that cannot be resolved, or a Git or Herdr failure.
 
 ### Names
 
@@ -199,7 +227,8 @@ The task is marked done at once. Cleanup runs in the background while the board 
 
 - `ctrl+d` refuses while a cleanup runs.
 - Quitting waits for a running cleanup, up to 30 seconds.
-- A worktree that is already gone is marked cleaned without a card, and its branch is kept. Inside Herdr, its workspace closes.
+- With Herdr, a missing worktree is marked cleaned without a card, its branch stays, and its workspace closes when available.
+- With hc, a missing worktree still opens the cleanup card. Cleanup stops the verified terminal and keeps the branch.
 - Done tasks, archived tasks, and archived project views complete without a card.
 
 Completion is one save and one undo step, saved before any worktree is touched. `ctrl+u` reverts the status. It cannot un-merge a pull request or restore a removed worktree.

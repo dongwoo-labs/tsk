@@ -16,7 +16,7 @@ The human uses the TUI; agents use the CLI. The fork keeps its board, questions,
 - Legacy Agent commands accept todo/doing and --todo/--doing. Unprojected list/questions JSON remains an array; list status remains todo/doing/done, including direct lookup.
 - A project is a Git repository root. The desk holds tasks with no project. T12, 12, and a task UUID address the same task. N notices are human-only.
 - A parent is an optional UUID relationship. Parent completion, archive, or deletion never changes children. Missing parents retain their unresolved link. After prerequisites use task numbers; waiting_for remains numeric.
-- Assignment, dispatch, block/review cards, replies, paper trail, and git backup/restore are available. Dispatch needs Herdr and an assigned project task; only an agent assignee dispatches.
+- Assignment, dispatch, block/review cards, replies, paper trail, and git backup/restore are available. Dispatch needs a supported runtime and an assigned project task; only an agent assignee dispatches. TSK_THREAD_BACKEND defaults to herdr; hc requires explicit HC_SESSION and validated task metadata. No fallback. See /docs/dispatch/#runtime-selection.
 - Task labels are grouping metadata. Focusing a working Thread still requires its exact single four-token Thread: notes line; question origin does not imply task ownership.
 - New tasks record the normalized hostname or validated TSK_MACHINE override. Existing tasks remain unspecified. The TUI defaults to current machine plus unspecified; its palette changes the session range. CLI list defaults to all machines; --machine accepts @all, @local, @current, @unspecified, or a literal name. edit --machine NAME or @current sets it; --no-machine clears it. Direct task addresses cross machine ranges. JSON includes machine, null when unspecified.
 - Optional EvoLoop copy: with TSK_EVOLOOP_URL (https) and TSK_EVOLOOP_TOKEN_FILE set, each question, answer, correction, and route is also copied to an EvoLoop work-question ledger after the local save. Failed copies stay pending and retry on the next question write. Secrets send only set or rejected.
@@ -35,7 +35,7 @@ The human uses the TUI; agents use the CLI. The fork keeps its board, questions,
 - ui-answer is a user-input entrypoint, never an agent action. secret-result records only set after name-only fnox verification; neither command takes or prints secret values. Consume credentials inside a process with fnox exec. Full JSON and refusal contracts: https://gettsk.sh/docs/cli.md
 - `tsk report T12 --file completion.md --json` registers Markdown; report reads it back and reports --unread lists pending documents. Only opening the exact revision in the reports tab acknowledges it. Reports never change status or grant approval and contain no authentication secrets or private question originals.
 - For list --all, reports, report lookup, and questions --inventory without store write access, see https://gettsk.sh/docs/storage.md for read-only consumers. No extra flag is required.
-- `tsk threads` is a read-only Herdr session view. Runtime grouping does not imply a wait for the user and does not read or write task/question data.
+- `tsk threads` is a read-only view of the selected Herdr or hc runtime. hc focus returns an explicit attach instruction. Runtime grouping does not imply a wait for the user and does not read or write task/question data.
 - Guide: https://gettsk.sh/docs/agents.md
 - Coordinator: https://gettsk.sh/docs/coordinator.md
 

@@ -233,7 +233,7 @@ pub fn handle(
             if let Some(record) = page_record(model) {
                 model.set_message(focus_origin_thread(
                     &record.draft.origin_thread,
-                    std::env::var("HERDR_ENV").as_deref() == Ok("1"),
+                    crate::stall::inside_herdr(),
                     herdr::list_agents,
                     herdr::focus,
                 ));
@@ -1190,7 +1190,7 @@ fn request_lead(record: &QuestionRecord) -> String {
     let FindingLink::One(task) = record.finding_link() else {
         return "run request not sent: no single linked task".to_string();
     };
-    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+    if !crate::stall::inside_herdr() {
         return format!("run request to {name} not sent: outside Herdr");
     }
     let rows = match herdr::list_agents() {
@@ -1224,7 +1224,7 @@ fn explain_prompt(record: &QuestionRecord) -> String {
 /// nothing to the question; the person answers it afterwards.
 fn explain(record: &QuestionRecord) -> String {
     let number = record.reference.number;
-    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+    if !crate::stall::inside_herdr() {
         return format!("Q{number} explain not sent: outside Herdr");
     }
     let rows = match herdr::list_agents() {
@@ -1335,7 +1335,11 @@ fn focus_origin_thread(
 
 /// Focus the one live pane that matches the whole tuple, or say why not.
 fn focus_thread(reference: &ThreadRef) -> String {
-    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+    if reference.workspace_id.starts_with("hc:") || reference.pane_id.starts_with("hc:") {
+        return crate::dispatch::hc::attach_reference(&reference.workspace_id, &reference.pane_id)
+            .unwrap_or_else(|error| format!("focus failed: {error}"));
+    }
+    if !crate::stall::inside_herdr() {
         return format!("{} · outside Herdr · nothing focused", reference.name);
     }
     let rows = match herdr::list_agents() {

@@ -132,7 +132,9 @@ impl ThreadsView {
         if visible.is_empty() && self.error.is_none() {
             lines.push(Line::from(""));
             lines.push(Line::from(present_line(
-                if self.show_all {
+                if self.show_all && crate::dispatch::hc::enabled() {
+                    "No live terminals in this HC_SESSION."
+                } else if self.show_all {
                     "No live agents in this Herdr session."
                 } else {
                     "No lead- or thr- sessions. Press a to show every agent."
@@ -169,7 +171,11 @@ impl ThreadsView {
         }
         lines.push(Line::from(Span::styled(
             present_line(
-                "enter focus · ↑↓ move · a all agents · r refresh · q quit",
+                if crate::dispatch::hc::enabled() {
+                    "enter attach help · ↑↓ move · a all agents · r refresh · q quit"
+                } else {
+                    "enter focus · ↑↓ move · a all agents · r refresh · q quit"
+                },
                 width,
             ),
             Style::default().add_modifier(Modifier::DIM),

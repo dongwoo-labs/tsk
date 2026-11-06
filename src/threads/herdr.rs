@@ -35,6 +35,9 @@ fn run(args: &[&str]) -> Result<String, String> {
 
 /// All live agents on the current Herdr server.
 pub fn list_agents() -> Result<Vec<ThreadRow>, String> {
+    if crate::dispatch::hc::selected()?.is_some() {
+        return crate::dispatch::hc::list();
+    }
     parse_agent_list(&run(&["agent", "list"])?)
 }
 
@@ -53,6 +56,10 @@ fn flag_safe(id: &str) -> bool {
 /// clients follow visible navigation, so the tab is activated through the public route
 /// first, the same order the board launcher uses before `plugin pane focus`.
 pub fn focus_commands(row: &ThreadRow) -> Result<Vec<Vec<String>>, String> {
+    if row.workspace_id.starts_with("hc:") || row.pane_id.starts_with("hc:") {
+        return Err(crate::dispatch::hc::attach_hint(row)?);
+    }
+    crate::dispatch::hc::selected()?;
     let target = row.focus_target();
     if !flag_safe(target) {
         return Err(format!("refusing unsafe agent target {target:?}"));
@@ -68,10 +75,24 @@ pub fn focus_commands(row: &ThreadRow) -> Result<Vec<Vec<String>>, String> {
 /// Submit an identifier-only hint to the live agent `name`. Exit 0 means Herdr accepted the
 /// prompt; it is not evidence that the agent ran a turn or started anything.
 pub fn prompt(name: &str, hint: &str) -> Result<(), String> {
+    if crate::dispatch::hc::selected()?.is_some() {
+        return crate::dispatch::hc::prompt_name(name, hint);
+    }
+    if name.starts_with("hc:") {
+        return Err("hc target requires explicit hc backend and HC_SESSION".into());
+    }
     if !flag_safe(name) {
         return Err(format!("refusing unsafe agent target {name:?}"));
     }
     run(&["agent", "prompt", name, hint]).map(|_| ())
+}
+
+/// Send a task hint to the exact row already matched with its Thread reference.
+pub fn prompt_task(number: u64, row: &ThreadRow, hint: &str) -> Result<(), String> {
+    if row.workspace_id.starts_with("hc:") || row.pane_id.starts_with("hc:") {
+        return crate::dispatch::hc::prompt_task(number, row, hint);
+    }
+    prompt(&row.name, hint)
 }
 
 /// Focus `row`'s pane. Stops at the first failing step and names it.
@@ -113,6 +134,15 @@ mod tests {
             focus_commands(&row("", "w1:t2")).unwrap()[1],
             vec!["agent", "focus", "w1:p9"]
         );
+    }
+
+    #[test]
+    fn hc_targets_never_generate_herdr_focus_commands() {
+        let mut target = row("thr-a", "-");
+        target.workspace_id = "hc:example".into();
+        target.pane_id = "hc:example:t7".into();
+        let error = focus_commands(&target).expect_err("hc cannot focus through Herdr");
+        assert!(error.contains("HC_SESSION=example hc attach t7"));
     }
 
     #[test]

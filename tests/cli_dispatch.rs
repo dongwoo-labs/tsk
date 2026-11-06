@@ -122,6 +122,462 @@ impl DispatchHost for FakeHost {
     }
 }
 
+/// Public CLI contract with real Git and isolated stores; only hc/Herdr are executable stubs.
+#[cfg(unix)]
+struct HcCli {
+    repo: CleanupRepo,
+    state_dir: PathBuf,
+    bin: PathBuf,
+}
+#[cfg(unix)]
+impl HcCli {
+    fn new() -> Self {
+        let repo = CleanupRepo::new();
+        let state_dir = repo.root.join("hc-state");
+        let bin = repo.root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let mut state = DomainState::new();
+        let id = state
+            .create_assigned(
+                "hc launch",
+                Some("Owner lead: lead-a default\nThread: thr-a".into()),
+                TaskScope::Project {
+                    path: repo.project.to_string_lossy().into(),
+                },
+                ProvenanceOrigin::Manual,
+                None,
+                Some("implementer".into()),
+            )
+            .unwrap();
+        state.set_base(id, Some("main".into())).unwrap();
+        TaskStore::new(&state_dir).save(&state).unwrap();
+        fs::write(
+            state_dir.join("config.toml"),
+            "[agent.implementer]\ncommand = [\"/bin/cat\"]\nprompt = \"\"\n",
+        )
+        .unwrap();
+        stub::write_stub(
+            &bin.join("herdr"),
+            "#!/bin/sh\nprintf called > \"$HC_TEST_ROOT/herdr-called\"\nexit 91\n",
+            0o700,
+        );
+        stub::write_stub(
+            &bin.join("hc"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['HC_TEST_ROOT'])
+args = sys.argv[1:]
+with (root / 'calls.jsonl').open('a') as f:
+    f.write(json.dumps({'session': os.environ.get('HC_SESSION'), 'args': args}) + '\n')
+state = root / 'terminal.json'
+value = json.loads(state.read_text()) if state.exists() else None
+mode = os.environ.get('HC_TEST_MODE', '')
+def emit(v):
+    print(json.dumps(v))
+if args[0] == 'run':
+    labels = dict(a.split('=', 1) for i, a in enumerate(args) if i and args[i-1] == '--label')
+    value = {'address':'t7', 'state':'live', 'reason':None, 'name':args[args.index('--name')+1],
+             'cwd':args[args.index('--cwd')+1], 'labels':labels, 'reported':False, 'status':None}
+    state.write_text(json.dumps(value))
+    emit({k:value[k] for k in ['address','name','state','cwd']})
+elif args[0] == 'ls':
+    rows = [] if value is None or value['state'] != 'live' else [value]
+    if mode == 'duplicate' and rows:
+        rows = rows + [dict(value, address='t8')]
+    if mode == 'retarget' and rows:
+        rows = [dict(value, address='t8')]
+    # Like hc 0.1.17, summaries omit labels. Server filters are part of the contract.
+    filters = [a for i, a in enumerate(args) if i and args[i-1] == '--label']
+    rows = [v for v in rows if all(v['labels'].get(k) == x for k,x in (f.split('=',1) for f in filters))]
+    emit({'terminals':[{k:v[k] for k in ['address','name','state','cwd']} for v in rows]})
+elif args[0] == 'get':
+    result = dict(value, address=args[1])
+    result['labels'] = dict(value['labels'])
+    if mode == 'wrong-task': result['labels']['task'] = 't999'
+    if mode == 'wrong-worktree': result['labels']['worktree'] = '/'
+    if mode == 'holder-lost': result['reason'] = 'holder_lost'
+    if mode == 'blocked': result['status'] = {'state':'blocked'}
+    emit(result)
+elif args[0] == 'send':
+    if mode == 'blocked': sys.exit(9)
+    emit({})
+elif args[0] == 'kill':
+    value['state'] = 'finished'
+    state.write_text(json.dumps(value))
+    emit({})
+else:
+    sys.exit(90)
+"#,
+            0o700,
+        );
+        Self {
+            repo,
+            state_dir,
+            bin,
+        }
+    }
+    fn command(&self, args: &[&str]) -> std::process::Command {
+        let path = std::env::join_paths(std::iter::once(self.bin.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .unwrap();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tsk"));
+        command
+            .args(args)
+            .current_dir(&self.repo.project)
+            .env("PATH", path)
+            .env("TSK_STATE_DIR", &self.state_dir)
+            .env("TSK_THREAD_BACKEND", "hc")
+            .env("HC_SESSION", "example")
+            .env("HC_TEST_ROOT", &self.repo.root)
+            .env_remove("HERDR_ENV")
+            .env_remove("TSK_AGENT");
+        command
+    }
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        self.command(args).output().unwrap()
+    }
+    fn launch(&self) {
+        let output = self.run(&["dispatch", "T1", "--base", "main"]);
+        assert!(output.status.success(), "{output:?}");
+    }
+    fn calls(&self) -> Vec<serde_json::Value> {
+        fs::read_to_string(self.repo.root.join("calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_dispatch_without_herdr_records_labels_thread_and_isolated_launcher() {
+    let hc = HcCli::new();
+    hc.launch();
+    let state = TaskStore::new(&hc.state_dir).load().unwrap();
+    let task = &state.tasks()[0];
+    assert_eq!(task.status, HumanStatus::Started);
+    let record = task.dispatch.as_ref().unwrap();
+    assert_eq!(record.herdr_workspace_id, "hc:example");
+    assert!(task
+        .notes
+        .as_deref()
+        .unwrap()
+        .contains("Thread: thr-a hc:example - hc:example:t7"));
+    let terminal: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(hc.repo.root.join("terminal.json")).unwrap())
+            .unwrap();
+    assert_eq!(terminal["labels"]["task"], "t1");
+    assert_eq!(terminal["labels"]["owner_lead"], "lead-a");
+    assert_eq!(terminal["labels"]["thread"], "thr-a");
+    assert_eq!(terminal["labels"]["worktree"], record.worktree);
+    assert_eq!(terminal["labels"].as_object().unwrap().len(), 6);
+    let calls = hc.calls();
+    let run = calls.iter().find(|v| v["args"][0] == "run").unwrap();
+    let args = run["args"].as_array().unwrap();
+    assert!(args.iter().any(|v| v == "--outlive-parent"));
+    assert_eq!(args[args.len() - 3], "--");
+    assert_eq!(args[args.len() - 2], "/bin/sh");
+    let script = fs::read_to_string(args.last().unwrap().as_str().unwrap()).unwrap();
+    assert!(script.contains("unset CLAUDECODE"));
+    assert!(script.contains(hc.state_dir.to_str().unwrap()));
+    assert!(args.last().unwrap().as_str().unwrap().contains("t1"));
+    let again = hc.run(&["dispatch", "T1", "--again"]);
+    assert!(!again.status.success());
+    assert_eq!(
+        hc.calls().iter().filter(|v| v["args"][0] == "run").count(),
+        1
+    );
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_identity_failures_never_send_kill_or_remove_the_worktree() {
+    let hc = HcCli::new();
+    hc.launch();
+    let worktree = task_on_disk(&hc.state_dir).dispatch.unwrap().worktree;
+    for mode in ["duplicate", "wrong-task", "wrong-worktree"] {
+        let output = hc
+            .command(&["clean", "T1", "--json"])
+            .env("HC_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{mode}: {output:?}");
+        assert!(Path::new(&worktree).exists());
+    }
+    let mismatch = hc
+        .command(&["clean", "T1"])
+        .env("HC_SESSION", "other")
+        .output()
+        .unwrap();
+    assert!(!mismatch.status.success());
+    let invalid = hc
+        .command(&["clean", "T1"])
+        .env("TSK_THREAD_BACKEND", "bad")
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success(), "{invalid:?}");
+    let missing = hc
+        .command(&["threads", "--json", "--all"])
+        .env_remove("HC_SESSION")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    let changed = hc.run(&[
+        "notes",
+        "T1",
+        "set",
+        "Thread:",
+        "thr-a hc:example - hc:example:t8",
+    ]);
+    assert!(changed.status.success(), "{changed:?}");
+    let stale = hc.run(&["clean", "T1"]);
+    assert!(!stale.status.success(), "stale Thread reference: {stale:?}");
+    assert!(Path::new(&worktree).exists());
+    assert!(!hc
+        .calls()
+        .iter()
+        .any(|v| v["args"][0] == "kill" || v["args"][0] == "send"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_threads_and_reply_requery_identity_without_herdr() {
+    let hc = HcCli::new();
+    hc.launch();
+    let listed = hc.run(&["threads", "--json", "--all"]);
+    assert!(listed.status.success(), "{listed:?}");
+    let rows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["workspace_id"], "hc:example");
+    assert_eq!(rows[0]["pane_id"], "hc:example:t7");
+    let focused = hc.run(&["threads", "focus", "thr-a"]);
+    assert!(!focused.status.success());
+    assert!(String::from_utf8_lossy(&focused.stderr).contains("HC_SESSION=example hc attach t7"));
+    let blocked = hc.run(&["status", "T1", "blocked"]);
+    assert!(blocked.status.success(), "{blocked:?}");
+    let reply = hc.run(&["reply", "T1", "sample reply", "--send"]);
+    assert!(reply.status.success(), "{reply:?}");
+    assert!(
+        String::from_utf8_lossy(&reply.stdout).contains("sent to @implementer"),
+        "{reply:?}"
+    );
+    let calls = hc.calls();
+    let send = calls
+        .iter()
+        .position(|v| v["args"][0] == "send")
+        .expect("reply sent");
+    assert_eq!(calls[send]["args"][1], "t7");
+    assert_eq!(calls[send - 1]["args"][0], "get");
+    assert_eq!(calls[send - 2]["args"][0], "ls");
+    let before = calls.iter().filter(|v| v["args"][0] == "send").count();
+    let failed = hc
+        .command(&["reply", "T1", "kept reply", "--send"])
+        .env("HC_TEST_MODE", "wrong-task")
+        .output()
+        .unwrap();
+    assert!(failed.status.success(), "reply remains saved: {failed:?}");
+    assert_eq!(
+        hc.calls().iter().filter(|v| v["args"][0] == "send").count(),
+        before
+    );
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_task_hint_never_adopts_a_replacement_terminal() {
+    if std::env::var_os("HC_TASK_HINT_CHILD").is_some() {
+        let raw = serde_json::json!({"result":{"agents":[{
+            "name":"thr-a", "agent_status":"idle", "workspace_id":"hc:example",
+            "tab_id":"-", "pane_id":"hc:example:t7",
+            "cwd":std::env::var("HC_EXPECTED_WORKTREE").unwrap()
+        }]}});
+        let row = tsk_tui::threads::parse_agent_list(&raw.to_string())
+            .unwrap()
+            .remove(0);
+        assert!(
+            tsk_tui::threads::herdr::prompt_task(1, &row, "task identifier only").is_err(),
+            "a same-name replacement terminal must not receive the original task hint"
+        );
+        return;
+    }
+    let hc = HcCli::new();
+    hc.launch();
+    let template = hc.command(&[]);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    for (key, value) in template.get_envs() {
+        match value {
+            Some(value) => {
+                child.env(key, value);
+            }
+            None => {
+                child.env_remove(key);
+            }
+        }
+    }
+    let result = child
+        .args([
+            "--exact",
+            "cli_dispatch::hc_task_hint_never_adopts_a_replacement_terminal",
+            "--nocapture",
+        ])
+        .env("HC_TASK_HINT_CHILD", "1")
+        .env(
+            "HC_EXPECTED_WORKTREE",
+            task_on_disk(&hc.state_dir).dispatch.unwrap().worktree,
+        )
+        .env("HC_TEST_MODE", "retarget")
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert!(!hc.calls().iter().any(|v| v["args"][0] == "send"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_question_notification_uses_the_selected_runtime_and_identifier_only_hint() {
+    let hc = HcCli::new();
+    hc.launch();
+    let task = task_on_disk(&hc.state_dir);
+    let payload = hc.repo.root.join("question.json");
+    fs::write(
+        &payload,
+        serde_json::to_vec(&serde_json::json!({
+            "task_id": task.id, "kind": "question", "audience": "lead",
+            "summary": "Sample question", "text": "sample question text",
+            "origin_thread": "thr-a", "recipient": "thr-a", "options": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = hc
+        .command(&[
+            "ask",
+            "--state-dir",
+            hc.state_dir.to_str().unwrap(),
+            "--file",
+            payload.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["notification"]["status"], "notified");
+    let calls = hc.calls();
+    let send = calls.iter().find(|call| call["args"][0] == "send").unwrap();
+    assert_eq!(send["args"][1], "t7");
+    assert!(send["args"][2]
+        .as_str()
+        .unwrap()
+        .starts_with("tsk question task="));
+    assert!(!send.to_string().contains("sample question text"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_start_and_released_start_work_without_herdr() {
+    let hc = HcCli::new();
+    let started = hc.run(&["status", "T1", "started"]);
+    assert!(started.status.success(), "{started:?}");
+    assert_eq!(
+        task_on_disk(&hc.state_dir)
+            .dispatch
+            .unwrap()
+            .herdr_workspace_id,
+        "hc:example"
+    );
+    let hc = HcCli::new();
+    let store = TaskStore::new(&hc.state_dir);
+    let mut state = store.load().unwrap();
+    let second = state
+        .create_assigned(
+            "released hc",
+            Some("Owner lead: dev-01 default lead-a\nThread: thr-b".into()),
+            TaskScope::Project {
+                path: hc.repo.project.to_string_lossy().into(),
+            },
+            ProvenanceOrigin::Manual,
+            None,
+            Some("implementer".into()),
+        )
+        .unwrap();
+    store.save(&state).unwrap();
+    let mut state = store.load().unwrap();
+    state.set_after(second, &[1]).unwrap();
+    state.set_base(second, Some("main".into())).unwrap();
+    state.set_status(second, HumanStatus::Ready).unwrap();
+    store.save(&state).unwrap();
+    let done = hc.run(&["status", "T1", "done"]);
+    assert!(done.status.success(), "{done:?}");
+    let saved = store.load().unwrap();
+    let task = saved.get(second).unwrap();
+    assert_eq!(
+        task.status,
+        HumanStatus::Started,
+        "released start: {done:?}"
+    );
+    assert_eq!(
+        task.dispatch.as_ref().unwrap().herdr_workspace_id,
+        "hc:example"
+    );
+    assert!(task
+        .notes
+        .as_deref()
+        .unwrap()
+        .contains("Thread: thr-b hc:example - hc:example:t7"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_invalid_configuration_refuses_before_any_runtime_or_worktree() {
+    for (backend, session) in [
+        ("bad", Some("example")),
+        ("hc", None),
+        ("hc", Some("../default")),
+    ] {
+        let hc = HcCli::new();
+        let mut command = hc.command(&["status", "T1", "started"]);
+        command.env("TSK_THREAD_BACKEND", backend);
+        match session {
+            Some(session) => {
+                command.env("HC_SESSION", session);
+            }
+            None => {
+                command.env_remove("HC_SESSION");
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(
+            !output.status.success(),
+            "{backend} {session:?}: {output:?}"
+        );
+        assert!(task_on_disk(&hc.state_dir).dispatch.is_none());
+        assert!(!hc.state_dir.join("worktrees").exists());
+        assert!(!hc.repo.root.join("calls.jsonl").exists());
+        assert!(!hc.repo.root.join("herdr-called").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_cli_cleanup_stops_the_verified_terminal_without_herdr() {
+    let hc = HcCli::new();
+    hc.launch();
+    let worktree = task_on_disk(&hc.state_dir).dispatch.unwrap().worktree;
+    let output = hc.run(&["clean", "T1", "--json"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(!Path::new(&worktree).exists());
+    assert!(task_on_disk(&hc.state_dir).dispatch.unwrap().cleaned);
+    assert!(hc.calls().iter().any(|v| v["args"][0] == "kill"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
 #[test]
 fn dispatch_requires_a_task_and_accepts_again() {
     let missing = run_with(["tsk", "dispatch"], Cursor::new(Vec::<u8>::new()), true);

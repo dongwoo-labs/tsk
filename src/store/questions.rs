@@ -941,7 +941,11 @@ pub fn notify_question(saved: &QuestionSaveResult, registration: bool) -> Questi
     if saved.durability != QuestionDurability::Durable {
         return QuestionNotification::NotAttempted;
     }
-    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+    let backend = match crate::dispatch::hc::selected() {
+        Ok(backend) => backend,
+        Err(_) => return QuestionNotification::Failed,
+    };
+    if backend.is_none() && std::env::var("HERDR_ENV").as_deref() != Ok("1") {
         return QuestionNotification::Failed;
     }
     let recipient = if registration {
@@ -952,6 +956,15 @@ pub fn notify_question(saved: &QuestionSaveResult, registration: bool) -> Questi
     let reference = &saved.record.reference;
     let hint = format!("tsk question task={} Q{} id={} revision={}; read back from the Agent state directory before acting.",
         reference.task_id, reference.number, reference.id, reference.revision);
+    if backend.is_some() {
+        return match crate::threads::herdr::prompt(recipient, &hint) {
+            Ok(()) => QuestionNotification::Notified,
+            Err(_) => QuestionNotification::Failed,
+        };
+    }
+    if recipient.starts_with("hc:") {
+        return QuestionNotification::Failed;
+    }
     match std::process::Command::new("herdr")
         .args(["agent", "prompt", recipient, &hint])
         .output()

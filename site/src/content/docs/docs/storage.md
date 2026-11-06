@@ -389,7 +389,7 @@ Full questions, options, recommendations, impact, blocking scope, origin Thread,
 
 The existing store lock serializes task and question writes. A new private snapshot and its directory entries are synced before the shared reference is replaced. Missing or corrupt referenced records refuse mutation. Replies and corrections use the expected question revision; corrections append a new answer linked by `corrects_revision`. A question does not change its task's status. A route (`tsk route`) changes only the audience and lead recipient under the same Q number, as a new revision checked against the expected one. A private record with fields an older binary does not support (such as audience, route, finding action, or permission context) is refused rather than read with fields dropped. One unsupported record makes an unfiltered question list, every Q-number lookup in that store, and the board's questions tab unavailable in that binary; direct UUID access to a supported record still works. Upgrade every CLI reader and quit and reopen every board using that Agent store before enabling a relay that writes permission context. A running board keeps its old binary until it is restarted. A record without an audience shows as target unknown and is never counted. Imported actors, history and approvals never issue current approval authority.
 
-A saved reply is separate from its Herdr notification. Registration notifies the recipient; answers and corrections notify the origin Thread. If that Thread ended or notification failed, the Lead can read and resolve the same Q UUID from the same Agent store. Read back the revision before acting; do not apply the same answer twice. A visible post-rename readback after a sync failure is **durability uncertain**, not durable success. Retry notification separately, without saving another answer. No delivery database, message server, or Linear comment replica is maintained.
+A saved reply is separate from its runtime notification. Registration notifies the recipient; answers and corrections notify the origin Thread. If that Thread ended or notification failed, the Lead can read and resolve the same Q UUID from the same Agent store. Read back the revision before acting; do not apply the same answer twice. A visible post-rename readback after a sync failure is **durability uncertain**, not durable success. Retry notification separately, without saving another answer. No delivery database, message server, or Linear comment replica is maintained.
 
 For deployment or irreversible changes, approval binds to the exact target, action, Git H (40 hexadecimal digits) or plan digest (64 hexadecimal digits), scope, and rollback description. Only a confirmed User UI choice or a Lead record that preserves and verifies the original user-chat approval issues authority. An ordinary Agent CLI reply does not approve an action.
 
@@ -423,9 +423,13 @@ tsk list T12
 The board's done drawer shows only the tasks still in `tsk.json`. `tsk list --done --history` adds the moved non-archived tasks in the usual done order. `tsk list --archived` includes moved tasks that are individually archived or belong to an archived project, without `--history`. `tsk list T<n>` finds a moved task by number with its parent and children. Project names and child counts include moved tasks. Moved tasks are read-only: reopening one is not supported yet. Each file is plain JSON lines (`done_at` and the task), written atomically before the live file loses the tasks.
 
 
+## Thread runtime
+
+`TSK_THREAD_BACKEND` selects the runtime; `HC_SESSION` names the explicit hc session. See [runtime selection](/docs/dispatch/#runtime-selection) for requirements and safety boundaries.
+
 ## Stall checks
 
-The board's [stall checks](/docs/board/#stall-checks) store nothing: the Herdr agent snapshot and when each task was last asked about live only in the open board session.
+The board's [stall checks](/docs/board/#stall-checks) store nothing. The selected runtime's agent snapshot and each task's last check time live only in the open board session.
 
 | Setting | Purpose |
 | --- | --- |

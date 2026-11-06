@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::agents::{AgentProfiles, MergeMethod, RenderContext};
 use crate::domain::{Dispatch, DomainState, HumanStatus, Task, TaskScope};
 
+pub(crate) mod hc;
 pub mod pr;
 
 pub use pr::{MergeError, MergeOutcome, MergeRow, PrLookup, PrLookupError, PrProbe, PullRequest};
@@ -734,6 +735,78 @@ pub trait DispatchHost {
     /// The workspace's root pane. Only Herdr's own `workspace_not_found` is
     /// [`RootPaneError::WorkspaceGone`].
     fn root_pane(&mut self, workspace_id: &str) -> Result<String, RootPaneError>;
+    fn dispatch_pane(&mut self, _number: u64, record: &Dispatch) -> Result<String, RootPaneError> {
+        if record.herdr_workspace_id.starts_with("hc:") {
+            return Err(RootPaneError::Failed(
+                "hc lookup is unsupported by this host".into(),
+            ));
+        }
+        self.root_pane(&record.herdr_workspace_id)
+    }
+    fn dispatch_agent(
+        &mut self,
+        _number: u64,
+        record: &Dispatch,
+        pane: &str,
+    ) -> Result<PaneAgent, String> {
+        if record.herdr_workspace_id.starts_with("hc:") || pane.starts_with("hc:") {
+            return Err("hc lookup is unsupported by this host".into());
+        }
+        self.pane_agent(pane)
+    }
+    fn dispatch_prompt(
+        &mut self,
+        _number: u64,
+        record: &Dispatch,
+        pane: &str,
+        text: &str,
+    ) -> Result<(), PromptError> {
+        if record.herdr_workspace_id.starts_with("hc:") || pane.starts_with("hc:") {
+            return Err(PromptError::Failed(
+                "hc prompt is unsupported by this host".into(),
+            ));
+        }
+        self.prompt_agent(pane, text)
+    }
+    fn launch_selected(
+        &mut self,
+        _eligible: &EligibleDispatch,
+        _base: Option<&str>,
+    ) -> Option<Result<Launched, DispatchError>> {
+        None
+    }
+    fn stop_hc(
+        &mut self,
+        _number: u64,
+        _record: &Dispatch,
+        _expected: &str,
+    ) -> Result<bool, String> {
+        Err("hc stop is unsupported by this host".into())
+    }
+    fn undo_hc(&mut self, record: &Dispatch, _undo: &LaunchUndo) -> Option<Leftover> {
+        Some(Leftover {
+            what: format!("hc worktree {} (hc rollback unsupported)", record.worktree),
+            workspace_open: true,
+        })
+    }
+    fn inspect_dispatch_cleanup(
+        &mut self,
+        number: u64,
+        project: &Path,
+        record: &Dispatch,
+        in_herdr: bool,
+        cached: bool,
+    ) -> Result<CleanupInspection, String> {
+        let _ = number;
+        if record.herdr_workspace_id.starts_with("hc:") {
+            return Err("hc cleanup is unsupported by this host".into());
+        }
+        if cached {
+            self.inspect_cleanup_cached(project, record, in_herdr)
+        } else {
+            self.inspect_cleanup(project, record, in_herdr)
+        }
+    }
     fn run_in_pane(&mut self, pane_id: &str, command: &str) -> Result<(), String>;
     /// The platform whose launch line and cleanup rules apply. Test hosts default to Unix.
     fn platform(&self) -> HostPlatform {
@@ -1162,6 +1235,78 @@ fn windows_absolute(path: &str) -> bool {
 }
 
 impl DispatchHost for SystemDispatchHost {
+    fn stop_hc(&mut self, number: u64, record: &Dispatch, expected: &str) -> Result<bool, String> {
+        hc::stop(number, record, Some(expected))
+    }
+    fn undo_hc(&mut self, record: &Dispatch, undo: &LaunchUndo) -> Option<Leftover> {
+        hc::undo(self, record, undo)
+    }
+    fn launch_selected(
+        &mut self,
+        eligible: &EligibleDispatch,
+        base: Option<&str>,
+    ) -> Option<Result<Launched, DispatchError>> {
+        Some(hc::launch(self, eligible, base))
+    }
+    fn dispatch_pane(&mut self, number: u64, record: &Dispatch) -> Result<String, RootPaneError> {
+        if record.herdr_workspace_id.starts_with("hc:") {
+            return hc::resolve(number, record)
+                .map_err(RootPaneError::Failed)?
+                .ok_or_else(|| RootPaneError::WorkspaceGone("hc terminal is not live".into()));
+        }
+        self.root_pane(&record.herdr_workspace_id)
+    }
+    fn dispatch_agent(
+        &mut self,
+        number: u64,
+        record: &Dispatch,
+        pane: &str,
+    ) -> Result<PaneAgent, String> {
+        if record.herdr_workspace_id.starts_with("hc:") {
+            return hc::agent(number, record, Some(pane));
+        }
+        if pane.starts_with("hc:") {
+            return Err("hc pane does not match the Herdr record".into());
+        }
+        self.pane_agent(pane)
+    }
+    fn dispatch_prompt(
+        &mut self,
+        number: u64,
+        record: &Dispatch,
+        pane: &str,
+        text: &str,
+    ) -> Result<(), PromptError> {
+        if record.herdr_workspace_id.starts_with("hc:") {
+            return hc::send(number, record, pane, text);
+        }
+        if pane.starts_with("hc:") {
+            return Err(PromptError::Failed(
+                "hc pane does not match the Herdr record".into(),
+            ));
+        }
+        self.prompt_agent(pane, text)
+    }
+    fn inspect_dispatch_cleanup(
+        &mut self,
+        number: u64,
+        project: &Path,
+        record: &Dispatch,
+        in_herdr: bool,
+        cached: bool,
+    ) -> Result<CleanupInspection, String> {
+        if record.herdr_workspace_id.starts_with("hc:") {
+            let live = hc::resolve(number, record)?.is_some();
+            let mut inspection = system_inspect_cleanup(project, record, false, !cached)?;
+            inspection.workspace_exists = live;
+            return Ok(inspection);
+        }
+        if cached {
+            self.inspect_cleanup_cached(project, record, in_herdr)
+        } else {
+            self.inspect_cleanup(project, record, in_herdr)
+        }
+    }
     fn is_git_repo(&mut self, project: &Path) -> Result<bool, String> {
         crate::git_base::git_process_output(project, &["rev-parse", "--show-toplevel"])
             .map(|output| output.status.success())
@@ -1272,6 +1417,9 @@ impl DispatchHost for SystemDispatchHost {
         Some(check)
     }
     fn remove_herdr_worktree(&mut self, workspace_id: &str) -> Result<(), String> {
+        if workspace_id.starts_with("hc:") {
+            return Err("hc cleanup needs task/record context".into());
+        }
         let output = Command::new("herdr")
             .args(["worktree", "remove", "--workspace", workspace_id])
             .output()
@@ -1412,6 +1560,11 @@ impl DispatchHost for SystemDispatchHost {
     }
 
     fn root_pane(&mut self, workspace_id: &str) -> Result<String, RootPaneError> {
+        if workspace_id.starts_with("hc:") {
+            return Err(RootPaneError::Failed(
+                "hc lookup needs task/record context".into(),
+            ));
+        }
         let output = Command::new("herdr")
             .args(["pane", "list", "--workspace", workspace_id])
             .output()
@@ -1434,6 +1587,9 @@ impl DispatchHost for SystemDispatchHost {
     }
 
     fn run_in_pane(&mut self, pane_id: &str, command: &str) -> Result<(), String> {
+        if pane_id.starts_with("hc:") {
+            return Err("hc launch needs task/record context".into());
+        }
         let output = Command::new("herdr")
             .args(["pane", "run", pane_id])
             .arg(command)
@@ -1448,6 +1604,9 @@ impl DispatchHost for SystemDispatchHost {
     }
 
     fn pane_agent(&mut self, pane_id: &str) -> Result<PaneAgent, String> {
+        if pane_id.starts_with("hc:") {
+            return Err("hc lookup needs task/record context".into());
+        }
         let output = Command::new("herdr")
             .args(["agent", "get", pane_id])
             .output()
@@ -1456,6 +1615,11 @@ impl DispatchHost for SystemDispatchHost {
     }
 
     fn prompt_agent(&mut self, pane_id: &str, text: &str) -> Result<(), PromptError> {
+        if pane_id.starts_with("hc:") {
+            return Err(PromptError::Failed(
+                "hc prompt needs task/record context".into(),
+            ));
+        }
         let output = Command::new("herdr")
             .args(["agent", "prompt", pane_id])
             .arg(text)
@@ -1540,6 +1704,9 @@ impl DispatchHost for SystemDispatchHost {
     }
 
     fn close_herdr_workspace(&mut self, workspace_id: &str) -> Result<(), String> {
+        if workspace_id.starts_with("hc:") {
+            return Err("hc cleanup needs task/record context".into());
+        }
         let output = Command::new("herdr")
             .args(["workspace", "close", workspace_id])
             .output()
@@ -2280,6 +2447,8 @@ pub struct CleanupPlanRow {
     pub project: PathBuf,
     pub record: Dispatch,
     pub refs: CleanupRefs,
+    /// Reference captured from the task, compared with the live target before stopping it.
+    pub hc_pane: Option<String>,
 }
 
 /// Capture the task's live dispatch for cleanup, refusing what cleanup never touches.
@@ -2298,6 +2467,20 @@ pub fn cleanup_plan(
         TaskScope::Project { path } => PathBuf::from(path),
         TaskScope::Global => return Err(CleanupError::NotDispatched),
     };
+    let hc_pane = if record.herdr_workspace_id.starts_with("hc:") {
+        let pane = crate::ui::links::task_links(task.notes.as_deref())
+            .into_iter()
+            .find_map(|link| match link {
+                crate::ui::links::TaskLink::Thread(reference) => Some(reference.pane_id),
+                _ => None,
+            })
+            .ok_or_else(|| CleanupError::Herdr("hc cleanup requires a Thread: reference".into()))?;
+        hc::verify_reference(task.notes.as_deref(), &record.herdr_workspace_id, &pane)
+            .map_err(CleanupError::Herdr)?;
+        Some(pane)
+    } else {
+        None
+    };
     Ok(CleanupPlanRow {
         task_id: id,
         number,
@@ -2305,6 +2488,7 @@ pub fn cleanup_plan(
         project,
         record,
         refs,
+        hc_pane,
     })
 }
 
@@ -2326,12 +2510,15 @@ fn inspect_planned(
     {
         return Err(partly_removed(record, registered));
     }
-    let mut inspection = if plan.refs != CleanupRefs::Fetch {
-        host.inspect_cleanup_cached(project, record, in_herdr)
-    } else {
-        host.inspect_cleanup(project, record, in_herdr)
-    }
-    .map_err(CleanupError::Herdr)?;
+    let mut inspection = host
+        .inspect_dispatch_cleanup(
+            plan.number,
+            project,
+            record,
+            in_herdr,
+            plan.refs != CleanupRefs::Fetch,
+        )
+        .map_err(CleanupError::Herdr)?;
     if !inspection.target_matches {
         return Err(CleanupError::WorktreeMismatch);
     }
@@ -2380,6 +2567,29 @@ pub fn clean_planned_with_host(
     if preview.inspection.dirty {
         return Err(CleanupError::DirtyWorktree);
     }
+    let hc_record = preview.record.herdr_workspace_id.starts_with("hc:");
+    let hc_stopped = if hc_record {
+        let expected = plan
+            .hc_pane
+            .as_deref()
+            .ok_or_else(|| CleanupError::Herdr("hc cleanup requires a Thread: reference".into()))?;
+        let stopped = host
+            .stop_hc(plan.number, &preview.record, expected)
+            .map_err(CleanupError::Herdr)?;
+        // The process could write while exiting, after the preview's dirty check.
+        if preview.inspection.worktree_exists
+            && host
+                .worktree_dirty(Path::new(&preview.record.worktree))
+                .map_err(CleanupError::Herdr)?
+        {
+            return Err(CleanupError::DirtyWorktree);
+        }
+        stopped
+    } else {
+        false
+    };
+    // This bool remains the Herdr capability, never a synthetic hc capability.
+    let in_herdr = in_herdr && !hc_record;
 
     // The branch a PR merged into when it was not the recorded base.
     let mut merged_into = None;
@@ -2436,7 +2646,21 @@ pub fn clean_planned_with_host(
             workspace,
         )
     };
-    host.remove_launcher(&preview.record.herdr_workspace_id);
+    let workspace = if hc_record {
+        if hc_stopped {
+            WorkspaceCleanup::Removed
+        } else {
+            WorkspaceCleanup::Missing
+        }
+    } else {
+        workspace
+    };
+    let launcher_key = if hc_record {
+        format!("{}:t{}", preview.record.herdr_workspace_id, plan.number)
+    } else {
+        preview.record.herdr_workspace_id.clone()
+    };
+    host.remove_launcher(&launcher_key);
     host.mark_removal(&preview.record.herdr_workspace_id, false);
     let (branch, branch_reason) = match deletion {
         BranchDeletion::Removed => (BranchCleanup::Removed, None),
@@ -2897,7 +3121,11 @@ pub const NO_LAUNCH_DESK: &str = "desk task has no repository";
 /// refusal: tsk is outside Herdr, or the task is on the desk. Every other launch refusal
 /// (profile, base, git, Herdr failures) still leaves the task unstarted.
 pub fn launch_unavailable(task: &Task, in_herdr: bool) -> Option<&'static str> {
-    if !in_herdr {
+    let selected = hc::selected();
+    if selected.is_err() {
+        return None;
+    } // Let dispatch report invalid runtime settings.
+    if !in_herdr && matches!(selected, Ok(None)) {
         Some(NO_LAUNCH_NOT_IN_HERDR)
     } else if task.scope == TaskScope::Global {
         Some(NO_LAUNCH_DESK)
@@ -2975,17 +3203,25 @@ pub fn start_route_checked(
     if record.cleaned {
         return gone;
     }
-    if !in_herdr {
+    if !in_herdr && !record.herdr_workspace_id.starts_with("hc:") {
         return (StartRoute::Plain, AgentCheck::NotInHerdr);
     }
-    let pane = match host.root_pane(&record.herdr_workspace_id) {
+    let number = task.number.unwrap_or(0);
+    let pane = match host.dispatch_pane(number, record) {
         Ok(pane) => pane,
         Err(RootPaneError::WorkspaceGone(_)) => return gone,
         Err(RootPaneError::Failed(reason)) => {
             return (StartRoute::Plain, AgentCheck::Unreachable { reason })
         }
     };
-    match host.pane_agent(&pane) {
+    if record.herdr_workspace_id.starts_with("hc:") {
+        if let Err(reason) =
+            hc::verify_reference(task.notes.as_deref(), &record.herdr_workspace_id, &pane)
+        {
+            return (StartRoute::Plain, AgentCheck::Unreachable { reason });
+        }
+    }
+    match host.dispatch_agent(number, record, &pane) {
         Ok(PaneAgent::Absent) => gone,
         Ok(PaneAgent::Present { name }) => (StartRoute::Plain, AgentCheck::Running { pane, name }),
         Err(reason) => (StartRoute::Plain, AgentCheck::Unreachable { reason }),
@@ -3310,7 +3546,22 @@ pub fn deliver_reply(
     host: &mut impl DispatchHost,
 ) -> Option<Delivery> {
     let number = task.number?;
-    let expected = agent_name(number, task.agent_assignee()?);
+    let expected = if let Some(record) = task
+        .dispatch
+        .as_ref()
+        .filter(|r| r.herdr_workspace_id.starts_with("hc:"))
+    {
+        let session = match hc::record_session(&record.herdr_workspace_id) {
+            Ok(session) => session,
+            Err(error) => return Some(Delivery::Unreachable(error)),
+        };
+        match hc::metadata(task.notes.as_deref(), &session) {
+            Ok((_, thread)) => thread,
+            Err(error) => return Some(Delivery::Unreachable(error)),
+        }
+    } else {
+        agent_name(number, task.agent_assignee()?)
+    };
     match check {
         AgentCheck::NotChecked => None,
         AgentCheck::NotInHerdr => Some(Delivery::NotInHerdr),
@@ -3320,13 +3571,21 @@ pub fn deliver_reply(
         }
         AgentCheck::Running { pane, .. } => {
             // The route was read before the save: confirm the pane still holds this agent.
-            match host.pane_agent(pane) {
+            let record = task.dispatch.as_ref()?;
+            if record.herdr_workspace_id.starts_with("hc:") {
+                if let Err(reason) =
+                    hc::verify_reference(task.notes.as_deref(), &record.herdr_workspace_id, pane)
+                {
+                    return Some(Delivery::Unreachable(reason));
+                }
+            }
+            match host.dispatch_agent(number, record, pane) {
                 Ok(PaneAgent::Present { name: Some(name) }) if name == expected => {}
                 Ok(_) => return Some(Delivery::NotInPane),
                 Err(reason) => return Some(Delivery::Unreachable(reason)),
             }
             let text = delivery_text(number, label, reply);
-            Some(match host.prompt_agent(pane, &text) {
+            Some(match host.dispatch_prompt(number, record, pane, &text) {
                 Ok(()) => Delivery::Sent,
                 Err(PromptError::AgentBlocked) => Delivery::AgentWaiting,
                 Err(PromptError::Failed(reason)) => Delivery::Unreachable(reason),
@@ -3564,6 +3823,7 @@ impl EligibleDispatch {
 /// What one launch produced before it is recorded on the task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Launched {
+    pub thread_link: Option<String>,
     pub record: Dispatch,
     pub naming: Option<AgentNaming>,
     pub warning: Option<String>,
@@ -3574,6 +3834,7 @@ pub struct Launched {
 /// back ([`undo_launch`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchUndo {
+    hc_terminal: Option<(u64, String)>,
     project: PathBuf,
     created: Created,
 }
@@ -3608,6 +3869,9 @@ pub fn undo_launch(
     record: &Dispatch,
     undo: &LaunchUndo,
 ) -> Option<Leftover> {
+    if record.herdr_workspace_id.starts_with("hc:") {
+        return host.undo_hc(record, undo);
+    }
     let workspace = &record.herdr_workspace_id;
     let worktree = Path::new(&record.worktree);
     let branch_from = match &undo.created {
@@ -3724,7 +3988,7 @@ fn check_inner(
         .agent_assignee()
         .map(str::to_string)
         .ok_or(DispatchError::NoAssignee)?;
-    if !in_herdr {
+    if !hc::available(in_herdr).map_err(DispatchError::Herdr)? {
         return Err(DispatchError::NotInHerdr);
     }
     if task.soft_deleted {
@@ -3800,6 +4064,7 @@ pub fn preview_prompt(
     base_override: Option<&str>,
     host: &mut impl DispatchHost,
 ) -> Result<PromptPreview, DispatchError> {
+    let hc_session = hc::selected().map_err(DispatchError::Herdr)?;
     let task = state.get(id).ok_or(DispatchError::UnknownTask)?;
     let number = task.number.ok_or(DispatchError::UnknownTask)?;
     let assignee = task
@@ -3850,16 +4115,22 @@ pub fn preview_prompt(
                 let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
                     .filter(|home| !home.is_empty())
                     .map(PathBuf::from);
-                let worktree = home
-                    .zip(project.file_name())
-                    .map(|(home, repo)| {
-                        home.join(".herdr/worktrees")
-                            .join(repo)
-                            .join(herdr_worktree_directory(&branch))
-                            .to_string_lossy()
-                            .into_owned()
-                    })
-                    .unwrap_or_else(|| "{worktree}".into());
+                let worktree = if let Some(session) = &hc_session {
+                    hc::worktree_path(host, session, number, &branch)
+                        .map_err(DispatchError::Herdr)?
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    home.zip(project.file_name())
+                        .map(|(home, repo)| {
+                            home.join(".herdr/worktrees")
+                                .join(repo)
+                                .join(herdr_worktree_directory(&branch))
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_else(|| "{worktree}".into())
+                };
                 (worktree, branch, base)
             }
             None => ("{worktree}".into(), "{branch}".into(), "{base}".into()),
@@ -3898,6 +4169,26 @@ pub fn launch_with_host(
     base_override: Option<&str>,
     host: &mut impl DispatchHost,
 ) -> Result<Launched, DispatchError> {
+    let session = hc::selected().map_err(DispatchError::Herdr)?;
+    if session.is_some() {
+        return host
+            .launch_selected(eligible, base_override)
+            .unwrap_or_else(|| {
+                Err(DispatchError::Herdr(
+                    "hc launch is unsupported by this host".into(),
+                ))
+            });
+    }
+    if eligible
+        .task
+        .dispatch
+        .as_ref()
+        .is_some_and(|record| record.herdr_workspace_id.starts_with("hc:"))
+    {
+        return Err(DispatchError::Herdr(
+            "hc record requires the hc backend; no Herdr fallback".into(),
+        ));
+    }
     let EligibleDispatch {
         number,
         assignee,
@@ -4084,6 +4375,7 @@ pub fn launch_with_host(
         cleaned: false,
     };
     let undo = LaunchUndo {
+        hc_terminal: None,
         project: project.to_path_buf(),
         created: made,
     };
@@ -4102,6 +4394,7 @@ pub fn launch_with_host(
     }
 
     Ok(Launched {
+        thread_link: None,
         record,
         naming: name_launch.then(|| AgentNaming {
             pane_id,
@@ -4292,7 +4585,12 @@ pub fn commit_launch_with_status(
     start: bool,
 ) -> Result<DispatchResult, DispatchError> {
     state
-        .record_dispatch_with_status(eligible.id, launched.record.clone(), start)
+        .record_dispatch_with_thread(
+            eligible.id,
+            launched.record.clone(),
+            start,
+            launched.thread_link.as_deref(),
+        )
         .map_err(|error| DispatchError::Store(error.to_string()))?;
     Ok(DispatchResult {
         warning: launched.warning,
