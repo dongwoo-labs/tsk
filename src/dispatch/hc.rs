@@ -825,9 +825,10 @@ mod tests {
     }
     use super::*;
     fn terminal() -> Value {
-        json!({"address":"t7", "name":"thr-a", "state":"live", "reason":null, "cwd":"/tmp",
+        let directory = std::env::temp_dir().to_string_lossy().into_owned();
+        json!({"address":"t7", "name":"thr-a", "state":"live", "reason":null, "cwd":directory,
             "labels":{"task":"t12","owner_lead":"lead-a","thread":"thr-a",
-                "worktree":"/tmp","machine":"dev-01","sha":"abcdef1"},
+                "worktree":directory,"machine":"dev-01","sha":"abcdef1"},
             "status":null,"reported":false})
     }
     #[test]
@@ -898,21 +899,22 @@ mod tests {
     #[test]
     fn terminal_resolution_never_guesses_or_treats_finished_as_live() {
         let value = terminal();
+        let directory = field(&value, "cwd").unwrap().to_string();
         assert_eq!(
-            unique(std::slice::from_ref(&value), 12, "/tmp").unwrap(),
+            unique(std::slice::from_ref(&value), 12, &directory).unwrap(),
             Some("t7".into())
         );
-        assert!(unique(&[value.clone(), value.clone()], 12, "/tmp").is_err());
-        assert!(unique(std::slice::from_ref(&value), 13, "/tmp").is_err());
+        assert!(unique(&[value.clone(), value.clone()], 12, &directory).is_err());
+        assert!(unique(std::slice::from_ref(&value), 13, &directory).is_err());
         assert!(unique(std::slice::from_ref(&value), 12, "/").is_err());
         for (state, reason) in [("finished", Value::Null), ("live", json!("holder_lost"))] {
             let mut ended = value.clone();
             ended["state"] = json!(state);
             ended["reason"] = reason;
-            assert_eq!(unique(&[ended], 12, "/tmp").unwrap(), None);
+            assert_eq!(unique(&[ended], 12, &directory).unwrap(), None);
         }
         let mut malformed = value;
         malformed["state"] = json!("mystery");
-        assert!(unique(&[malformed], 12, "/tmp").is_err());
+        assert!(unique(&[malformed], 12, &directory).is_err());
     }
 }
