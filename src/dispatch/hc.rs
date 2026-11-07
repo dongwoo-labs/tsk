@@ -141,8 +141,19 @@ pub(crate) fn run(session: &str, args: &[String]) -> Result<Value, String> {
     if !token(session) || env::var("HC_SESSION").as_deref() != Ok(session) {
         return Err("hc requires the explicit matching HC_SESSION".into());
     }
+    run_saved(session, args)
+}
+
+// A saved recipient supplies its own endpoint. Launch/cleanup keep run's caller check.
+fn run_saved(session: &str, args: &[String]) -> Result<Value, String> {
+    if !token(session) {
+        return Err("invalid saved hc session".into());
+    }
     let mut command = Command::new("hc");
     command.env("HC_SESSION", session).args(args);
+    if env::var("HC_SESSION").as_deref() != Ok(session) {
+        command.env_remove("HC_TERMINAL_ID");
+    }
     let output = crate::git_base::bounded_process_output(command, "hc", Duration::from_secs(10))?;
     // Do not echo argv, stdout, stderr, or error messages: a command can contain a reply.
     if !output.status.success() {
@@ -162,7 +173,7 @@ fn terminals(session: &str, filters: &[String]) -> Result<Vec<Value>, String> {
     for filter in filters {
         args.extend(["--label".into(), filter.clone()]);
     }
-    let list = run(session, &args)?;
+    let list = run_saved(session, &args)?;
     let entries = list
         .get("terminals")
         .and_then(Value::as_array)
@@ -174,7 +185,7 @@ fn terminals(session: &str, filters: &[String]) -> Result<Vec<Value>, String> {
             return Err("remote hc terminals are unsupported".into());
         }
         // ls summaries omit labels; always fetch the authoritative terminal before use.
-        let value = run(session, &strings(&["get", address, "--json"]))?;
+        let value = run_saved(session, &strings(&["get", address, "--json"]))?;
         if field(&value, "address")? != address {
             return Err("hc get returned a different terminal".into());
         }
@@ -385,6 +396,46 @@ pub(crate) fn prompt_task(number: u64, target: &ThreadRow, text: &str) -> Result
         return Err("hc task hint target changed".into());
     }
     send(number, &record, &target.pane_id, text).map_err(|_| "hc prompt failed".into())
+}
+
+/// Resolve a question's saved Thread in its own session, without changing process env.
+pub(crate) fn prompt_saved(
+    task: &crate::domain::Task,
+    reference: &crate::ui::links::ThreadRef,
+    text: &str,
+) -> Result<(), String> {
+    attach_reference(&reference.workspace_id, &reference.pane_id)?;
+    let session = reference.workspace_id.strip_prefix("hc:").unwrap();
+    if reference.tab_id != "-" {
+        return Err("invalid hc Thread tab".into());
+    }
+    let number = task.number.ok_or("hc target has no task number")?;
+    let (lead, name) = metadata(task.notes.as_deref(), session)?;
+    if name != reference.name {
+        return Err("hc target name changed".into());
+    }
+    let id = reference.pane_id.rsplit(':').next().unwrap();
+    let value = run_saved(session, &strings(&["get", id, "--json"]))?;
+    identity(&value)?;
+    let worktree = label(&value, "worktree")?;
+    if task.dispatch.as_ref().is_some_and(|record| {
+        record.herdr_workspace_id != reference.workspace_id
+            || !same_directory(&record.worktree, worktree)
+    }) {
+        return Err("hc saved dispatch and Thread disagree".into());
+    }
+    let values = terminals(
+        session,
+        &[format!("task=t{number}"), format!("worktree={worktree}")],
+    )?;
+    if unique(&values, number, worktree)?.as_deref() != Some(id) {
+        return Err("hc saved Thread is stale or ambiguous".into());
+    }
+    let current = values.first().ok_or("hc target is gone")?;
+    if field(current, "name")? != name || label(current, "owner_lead")? != lead {
+        return Err("hc target labels changed".into());
+    }
+    run_saved(session, &strings(&["send", id, text, "--json"])).map(|_| ())
 }
 
 pub(crate) fn metadata(notes: Option<&str>, session: &str) -> Result<(String, String), String> {

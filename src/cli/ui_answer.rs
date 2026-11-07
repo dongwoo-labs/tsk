@@ -144,7 +144,7 @@ fn execute(args: &[String], stdin: &mut dyn Read) -> Result<CliOutput, Refusal> 
         .answer(record.reference.id, draft)
         .map_err(store_refusal)?;
     // Same hint as an ordinary answer: identifiers only, to the asking Thread.
-    let notification = notify_question(&saved, false);
+    let notification = notify_question(&store, &saved, false);
     let reference = &saved.record.reference;
     let output = UiAnswerOutput {
         question_id: reference.id,

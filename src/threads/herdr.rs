@@ -16,7 +16,18 @@ fn herdr_bin() -> String {
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(herdr_bin())
+    run_at(None, args)
+}
+
+fn run_at(session: Option<&str>, args: &[&str]) -> Result<String, String> {
+    let mut command = Command::new(herdr_bin());
+    if let Some(session) = session {
+        if !flag_safe(session) || session.contains(':') {
+            return Err("invalid Herdr session".into());
+        }
+        command.args(["--session", session]);
+    }
+    let output = command
         .args(args)
         .output()
         .map_err(|e| format!("could not run herdr {}: {e}", args.join(" ")))?;
@@ -38,7 +49,12 @@ pub fn list_agents() -> Result<Vec<ThreadRow>, String> {
     if crate::dispatch::hc::selected()?.is_some() {
         return crate::dispatch::hc::list();
     }
-    parse_agent_list(&run(&["agent", "list"])?)
+    list_agents_at(None)
+}
+
+/// Saved-recipient lookup, independent of the caller's launch backend.
+pub(crate) fn list_agents_at(session: Option<&str>) -> Result<Vec<ThreadRow>, String> {
+    parse_agent_list(&run_at(session, &["agent", "list"])?)
 }
 
 /// Ids and names reach the CLI as arguments: refuse anything that could read as a flag.
@@ -78,13 +94,18 @@ pub fn prompt(name: &str, hint: &str) -> Result<(), String> {
     if crate::dispatch::hc::selected()?.is_some() {
         return crate::dispatch::hc::prompt_name(name, hint);
     }
+    prompt_at(None, name, hint)
+}
+
+/// Send through the saved Herdr endpoint, never through a caller-selected hc session.
+pub(crate) fn prompt_at(session: Option<&str>, name: &str, hint: &str) -> Result<(), String> {
     if name.starts_with("hc:") {
         return Err("hc target requires explicit hc backend and HC_SESSION".into());
     }
     if !flag_safe(name) {
         return Err(format!("refusing unsafe agent target {name:?}"));
     }
-    run(&["agent", "prompt", name, hint]).map(|_| ())
+    run_at(session, &["agent", "prompt", name, hint]).map(|_| ())
 }
 
 /// Send a task hint to the exact row already matched with its Thread reference.

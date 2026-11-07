@@ -192,7 +192,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                 }
                 _ => (error.to_string(), 1),
             })?;
-            let notification = notify_question(&saved, true);
+            let notification = notify_question(&store, &saved, true);
             let code = if saved.durability == QuestionDurability::Uncertain {
                 1
             } else {
@@ -271,7 +271,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
                     QuestionError::StaleRevision => refuse("stale-revision"),
                     _ => (error.to_string(), 1),
                 })?;
-            let notification = notify_question(&saved, false);
+            let notification = notify_question(&store, &saved, false);
             let code = if saved.durability == QuestionDurability::Uncertain {
                 1
             } else {
@@ -314,7 +314,7 @@ fn execute(parsed: Parsed, stdin: &mut dyn Read) -> Result<CliOutput, (String, u
             let saved = store
                 .answer(id, draft)
                 .map_err(|error| (error.to_string(), 1))?;
-            let notification = notify_question(&saved, false);
+            let notification = notify_question(&store, &saved, false);
             let code = if saved.durability == QuestionDurability::Uncertain {
                 1
             } else {

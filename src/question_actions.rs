@@ -949,7 +949,7 @@ fn save(
             }
             match saved.durability {
                 QuestionDurability::Durable => {
-                    let report = follow_up(&saved, follow);
+                    let report = follow_up(&questions, &saved, follow);
                     record_report(model, id, format!("saved · {report}"));
                     model.set_message(format!("Q{number} saved · {report}"));
                     landed = true;
@@ -1066,7 +1066,7 @@ fn resolve_pending(store: &TaskStore, domain: &mut DomainState, model: &mut Boar
         } => match questions.confirm_durability(id, revision) {
             Ok(saved) => {
                 model.questions_mut().pending = None;
-                let report = follow_up(&saved, follow);
+                let report = follow_up(&questions, &saved, follow);
                 record_report(model, id, format!("durable · {report}"));
                 model.set_message(format!(
                     "Q{} durable · {report}",
@@ -1163,9 +1163,9 @@ fn notification_text(notification: QuestionNotification, to: &str) -> String {
 }
 
 /// What a durable save owes: the asking Thread's hint, then (create-and-run) the run request.
-fn follow_up(saved: &QuestionSaveResult, follow: FollowUp) -> String {
+fn follow_up(questions: &QuestionStore, saved: &QuestionSaveResult, follow: FollowUp) -> String {
     let origin = notification_text(
-        notify_question(saved, false),
+        notify_question(questions, saved, false),
         &saved.record.draft.origin_thread,
     );
     match follow {
