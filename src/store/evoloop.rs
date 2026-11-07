@@ -33,8 +33,8 @@ const LOCK_FILE: &str = "mirror.lock";
 #[cfg(unix)]
 const TIMEOUT_SECS: u32 = 5;
 
-/// One HTTP call to EvoLoop: POST a JSON body to a path under the base URL and return
-/// the JSON reply, or `None` on any failure (network, HTTP error, unreadable reply).
+/// POST a JSON body to a path under the EvoLoop base URL and return the JSON reply,
+/// or `None` on any failure (network, HTTP error, unreadable reply).
 pub trait Transport {
     fn post(&self, path: &str, body: &Value) -> Option<Value>;
 }
@@ -78,7 +78,8 @@ impl MirrorConfig {
             url,
             token,
             organization,
-            expected_user_id: std::env::var("EVOLOOP_USER_ID").ok(),
+            expected_user_id: std::env::var_os("EVOLOOP_USER_ID")
+                .map(|id| id.to_string_lossy().into_owned()),
         })
     }
 }
@@ -161,6 +162,10 @@ impl Transport for CurlTransport {
 /// The configured transport, if the copy is on. macOS and Linux only, like the update check.
 #[cfg(unix)]
 pub fn configured_transport() -> Option<CurlTransport> {
+    // Direct unit-test launches must not connect through ambient configuration either.
+    if cfg!(test) {
+        return None;
+    }
     let config = MirrorConfig::from_env()?;
     let curl = crate::cli::update::curl_path().ok()?;
     Some(CurlTransport { config, curl })
@@ -714,6 +719,66 @@ esac
             "identity failures must not send a protected POST"
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_test_process_has_no_shadow_environment() {
+        assert!(std::env::vars_os().all(|(key, _)| {
+            let key = key.to_string_lossy();
+            !key.starts_with("TSK_EVOLOOP_") && !key.starts_with("EVOLOOP_")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_unit_test_process_never_configures_live_transport() {
+        use std::os::unix::ffi::OsStringExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        const CHILD: &str = "TSK_MIRROR_CONFIG_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let config = MirrorConfig::from_env().expect("explicit fixture config");
+            assert!(
+                config.expected_user_id.is_some(),
+                "a set pin must not become absent"
+            );
+            assert!(
+                configured_transport().is_none(),
+                "unit tests must never auto-connect"
+            );
+            return;
+        }
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let token = std::env::temp_dir().join(format!(
+            "tsk-mirror-unit-token-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&token, b"fixture-bearer").unwrap();
+        let mut results = Vec::new();
+        for pin in [
+            std::ffi::OsString::from("fixture-user"),
+            std::ffi::OsString::from_vec(vec![0xff]),
+        ] {
+            // Bypass Cargo's runner deliberately: IDEs can launch the test binary directly.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "store::evoloop::tests::direct_unit_test_process_never_configures_live_transport"])
+                .env(CHILD, "1")
+                .env("TSK_EVOLOOP_URL", "https://must-not-contact.invalid")
+                .env("TSK_EVOLOOP_TOKEN_FILE", &token)
+                .env("EVOLOOP_USER_ID", pin)
+                .env_remove("TSK_UPDATE_CURL")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            results.push((
+                output.status.success() && stdout.contains("1 passed"),
+                stdout.into_owned(),
+            ));
+        }
+        fs::remove_file(token).unwrap();
+        assert!(results.iter().all(|(passed, _)| *passed), "{results:?}");
     }
 
     #[cfg(unix)]

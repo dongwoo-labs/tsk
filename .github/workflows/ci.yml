@@ -61,6 +61,9 @@ jobs:
 
       - name: Verify
         if: steps.changes.outputs.rust == 'true'
+        env:
+          TSK_EVOLOOP_URL: https://must-not-contact.invalid
+          EVOLOOP_USER_ID: test-isolation-canary
         run: cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release
 
       - name: Packaging contract tests
