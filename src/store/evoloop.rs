@@ -425,7 +425,7 @@ impl QuestionStore {
         let numbers: BTreeMap<Uuid, u64> = self.task_numbers().unwrap_or_default();
         let mut done = BTreeSet::new();
         for id in &pending {
-            let record = match self.read(*id) {
+            let mut record = match self.read(*id) {
                 Ok(record) => record,
                 Err(crate::store::QuestionError::UnknownQuestion) => {
                     done.insert(*id);
@@ -433,6 +433,12 @@ impl QuestionStore {
                 }
                 Err(_) => break,
             };
+            if !map.questions.contains_key(id) {
+                let Ok(original) = self.original_draft(&record) else {
+                    break;
+                };
+                record.draft = original;
+            }
             if !sync_record(
                 transport,
                 &record,

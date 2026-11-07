@@ -411,6 +411,7 @@ Before each copy request, tsk reads the authenticated user from EvoLoop's auth c
 
 - The local save comes first and never waits on the copy or fails because of it. The Agent store stays the record that commands read.
 - A question, its answers, corrections, and routes are copied in the order they happened. A failed copy stays pending in the Agent directory and is sent on the next question write.
+- A retry starts with the original question, then replays its route history. If that original question cannot be read, the copy stays pending.
 - A secret question sends its fnox target name and the answer `set` or `rejected`, never a value.
 - Copies run on macOS and Linux with the same curl as the update check.
 
