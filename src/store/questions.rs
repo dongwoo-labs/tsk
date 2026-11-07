@@ -557,6 +557,43 @@ impl QuestionStore {
         read_private(self.path(), reference)
     }
 
+    /// Routes change the current draft, but the initial immutable revision keeps the ask.
+    pub(super) fn original_draft(
+        &self,
+        record: &QuestionRecord,
+    ) -> Result<QuestionDraft, QuestionError> {
+        if record.routes.is_empty() {
+            return Ok(record.draft.clone());
+        }
+        // Scan only when an unmapped, routed question needs its original ask. No extra
+        // index or serialized field is needed for this uncommon recovery path.
+        let entries = fs::read_dir(self.private_directory()?)
+            .map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+        for entry in entries {
+            let entry = entry.map_err(|_| QuestionError::PrivateRecordUnavailable)?;
+            let Some(revision) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_suffix(".json"))
+                .and_then(|name| Uuid::parse_str(name).ok())
+            else {
+                continue;
+            };
+            let mut reference = record.reference.clone();
+            reference.revision = revision;
+            let Ok(initial) = self.read_private(&reference) else {
+                continue;
+            };
+            if initial.answers.is_empty()
+                && initial.routes.is_empty()
+                && initial.created_at == record.created_at
+            {
+                return Ok(initial.draft);
+            }
+        }
+        Err(QuestionError::PrivateRecordUnavailable)
+    }
+
     fn commit(
         &self,
         state: &mut DomainState,
