@@ -1,0 +1,7 @@
+# Cargo tests (including their child processes) must not use a developer's mirror.
+# CARGO_MANIFEST_DIR keeps the runner independent of the caller's working directory.
+[target.'cfg(unix)']
+runner = ["python3", "-I", "-c", "import os,runpy; runpy.run_path(os.path.join(os.environ['CARGO_MANIFEST_DIR'],'scripts','test-runner.py'),run_name='__main__')"]
+
+[target.'cfg(windows)']
+runner = ["python", "-I", "-c", "import os,runpy; runpy.run_path(os.path.join(os.environ['CARGO_MANIFEST_DIR'],'scripts','test-runner.py'),run_name='__main__')"]
