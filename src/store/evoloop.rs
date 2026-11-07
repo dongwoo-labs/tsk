@@ -45,6 +45,7 @@ pub struct MirrorConfig {
     pub url: String,
     token: String,
     pub organization: Option<String>,
+    pub expected_user_id: Option<String>,
 }
 
 #[cfg(unix)]
@@ -77,6 +78,7 @@ impl MirrorConfig {
             url,
             token,
             organization,
+            expected_user_id: std::env::var("EVOLOOP_USER_ID").ok(),
         })
     }
 }
@@ -95,8 +97,8 @@ fn curl_quote(value: &str) -> String {
 }
 
 #[cfg(unix)]
-impl Transport for CurlTransport {
-    fn post(&self, path: &str, body: &Value) -> Option<Value> {
+impl CurlTransport {
+    fn request(&self, path: &str, body: Option<&Value>, user_id: Option<&str>) -> Option<Value> {
         let mut config = format!(
             "url = {}\nheader = {}\nheader = \"Content-Type: application/json\"\n",
             curl_quote(&format!("{}{}", self.config.url, path)),
@@ -108,10 +110,18 @@ impl Transport for CurlTransport {
                 curl_quote(&format!("X-Organization-ID: {org}"))
             ));
         }
-        config.push_str(&format!(
-            "data-binary = {}\n",
-            curl_quote(&serde_json::to_string(body).ok()?)
-        ));
+        if let Some(user_id) = user_id {
+            config.push_str(&format!(
+                "header = {}\n",
+                curl_quote(&format!("X-QAI-Expected-User-ID: {user_id}"))
+            ));
+        }
+        if let Some(body) = body {
+            config.push_str(&format!(
+                "data-binary = {}\n",
+                curl_quote(&serde_json::to_string(body).ok()?)
+            ));
+        }
         let mut child = crate::cli::update::hardened_curl(&self.curl, TIMEOUT_SECS)
             .args(["-K", "-"])
             .stdin(Stdio::piped())
@@ -125,6 +135,26 @@ impl Transport for CurlTransport {
             return None;
         }
         serde_json::from_slice(&output.stdout).ok()
+    }
+}
+
+#[cfg(unix)]
+impl Transport for CurlTransport {
+    fn post(&self, path: &str, body: &Value) -> Option<Value> {
+        let context = self.request("/api/qai/auth/context", None, None)?;
+        let user_id = context["user_id"].as_str()?;
+        if user_id.is_empty()
+            || user_id.len() > 128
+            || !user_id.chars().all(|c| c.is_ascii_graphic())
+            || self
+                .config
+                .expected_user_id
+                .as_deref()
+                .is_some_and(|expected| expected != user_id)
+        {
+            return None;
+        }
+        self.request(path, Some(body), Some(user_id))
     }
 }
 
@@ -578,6 +608,112 @@ mod tests {
             })
             .collect();
         assert_eq!(order, vec![question.routes[0].revision, first.revision]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn curl_binds_protected_requests_to_authenticated_context() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "tsk-mirror-curl-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&dir).unwrap();
+        let curl = dir.join("curl");
+        fs::write(
+            &curl,
+            r##"#!/bin/sh
+root=$(dirname "$0")
+config=$(cat)
+case "$*" in *test-bearer*|*requestId*) exit 1 ;; esac
+case "$config" in *'header = "Authorization: Bearer test-bearer"'*) ;; *) exit 1 ;; esac
+case "$config" in *'header = "X-Organization-ID: test-org"'*) ;; *) exit 1 ;; esac
+case "$config" in
+  *'https://evo.example/api/qai/auth/context"'*)
+    case "$config" in *data-binary*|*X-QAI-Expected-User-ID*) exit 1 ;; esac
+    if test -f "$root/auth-failed"; then exit 22; fi
+    cat "$root/context.json" ;;
+  *)
+    printf 'sent\n' >> "$root/sent"
+    case "$config" in *data-binary*requestId*) ;; *) exit 1 ;; esac
+    case "$config" in
+      *'header = "X-QAI-Expected-User-ID: mirror-user"'*)
+        printf '%s' '{"accepted":true}' ;;
+      *) exit 22 ;;
+    esac ;;
+esac
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(dir.join("context.json"), r#"{"user_id":"mirror-user"}"#).unwrap();
+        let mut transport = CurlTransport {
+            config: MirrorConfig {
+                url: "https://evo.example".into(),
+                token: "test-bearer".into(),
+                organization: Some("test-org".into()),
+                expected_user_id: None,
+            },
+            curl,
+        };
+        for path in [
+            "/api/qai/work-questions",
+            "/api/qai/work-questions/remote/events",
+        ] {
+            assert_eq!(
+                transport.post(path, &json!({"requestId": "test-request"})),
+                Some(json!({"accepted": true})),
+                "the protected request must carry the authenticated identity"
+            );
+        }
+        transport.config.expected_user_id = Some("mirror-user".into());
+        assert!(transport
+            .post("/api/qai/work-questions", &json!({"requestId": "test"}))
+            .is_some());
+        let sent = fs::read_to_string(dir.join("sent")).unwrap();
+        assert_eq!(sent.lines().count(), 3);
+        transport.config.expected_user_id = Some("different-user".into());
+        assert!(transport
+            .post("/api/qai/work-questions", &json!({}))
+            .is_none());
+        transport.config.expected_user_id = None;
+        for context in [
+            json!({}),
+            json!({"user_id": null}),
+            json!({"user_id": 42}),
+            json!({"user_id": ""}),
+            json!({"user_id": "bad\r\nInjected: value"}),
+            json!({"user_id": "bad user"}),
+            json!({"user_id": "a".repeat(129)}),
+        ] {
+            fs::write(
+                dir.join("context.json"),
+                serde_json::to_vec(&context).unwrap(),
+            )
+            .unwrap();
+            assert!(transport
+                .post("/api/qai/work-questions", &json!({}))
+                .is_none());
+        }
+        fs::write(dir.join("context.json"), b"not json").unwrap();
+        assert!(transport
+            .post("/api/qai/work-questions", &json!({}))
+            .is_none());
+        fs::write(dir.join("context.json"), r#"{"user_id":"mirror-user"}"#).unwrap();
+        fs::write(dir.join("auth-failed"), b"").unwrap();
+        assert!(transport
+            .post("/api/qai/work-questions", &json!({}))
+            .is_none());
+        assert_eq!(
+            fs::read_to_string(dir.join("sent")).unwrap(),
+            sent,
+            "identity failures must not send a protected POST"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]
