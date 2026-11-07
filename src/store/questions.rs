@@ -974,16 +974,13 @@ pub enum QuestionNotification {
 
 /// Identifier-only resume hint. Never forwards private text or approval evidence.
 /// The Herdr command's submission success is not evidence of a completed agent turn.
-pub fn notify_question(saved: &QuestionSaveResult, registration: bool) -> QuestionNotification {
+pub fn notify_question(
+    store: &QuestionStore,
+    saved: &QuestionSaveResult,
+    registration: bool,
+) -> QuestionNotification {
     if saved.durability != QuestionDurability::Durable {
         return QuestionNotification::NotAttempted;
-    }
-    let backend = match crate::dispatch::hc::selected() {
-        Ok(backend) => backend,
-        Err(_) => return QuestionNotification::Failed,
-    };
-    if backend.is_none() && std::env::var("HERDR_ENV").as_deref() != Ok("1") {
-        return QuestionNotification::Failed;
     }
     let recipient = if registration {
         &saved.record.draft.recipient
@@ -993,20 +990,140 @@ pub fn notify_question(saved: &QuestionSaveResult, registration: bool) -> Questi
     let reference = &saved.record.reference;
     let hint = format!("tsk question task={} Q{} id={} revision={}; read back from the Agent state directory before acting.",
         reference.task_id, reference.number, reference.id, reference.revision);
-    if backend.is_some() {
-        return match crate::threads::herdr::prompt(recipient, &hint) {
-            Ok(()) => QuestionNotification::Notified,
-            Err(_) => QuestionNotification::Failed,
-        };
+    match prompt_recipient(store, reference.task_id, recipient, registration, &hint) {
+        Ok(()) => QuestionNotification::Notified,
+        Err(_) => QuestionNotification::Failed,
     }
-    if recipient.starts_with("hc:") {
-        return QuestionNotification::Failed;
+}
+
+fn prompt_recipient(
+    store: &QuestionStore,
+    task_id: Uuid,
+    recipient: &str,
+    registration: bool,
+    hint: &str,
+) -> Result<(), String> {
+    use crate::threads::herdr;
+    use crate::ui::links::{task_links, TaskLink};
+
+    let state = store
+        .store
+        .load_snapshot()
+        .map_err(|_| "cannot read target tasks")?;
+    let mut tasks = state.tasks().to_vec();
+    // Closing an old done task's last question can move it to history in this save.
+    if !tasks.iter().any(|task| task.id == task_id) {
+        if let Some(line) = store
+            .store
+            .load_done_history_snapshot()
+            .map_err(|_| "cannot read target task history")?
+            .into_iter()
+            .find(|line| line.task.id == task_id)
+        {
+            tasks.push(line.task);
+        }
     }
-    match std::process::Command::new("herdr")
-        .args(["agent", "prompt", recipient, &hint])
-        .output()
+    let source = tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .ok_or("question task is missing")?;
+    let mut target = None;
+    for task in tasks
+        .iter()
+        .filter(|task| !task.soft_deleted && (registration || task.id == task_id))
     {
-        Ok(output) if output.status.success() => QuestionNotification::Notified,
-        _ => QuestionNotification::Failed,
+        for link in task_links(task.notes.as_deref()) {
+            match link {
+                TaskLink::Thread(reference) if reference.name == recipient => {
+                    if target.replace((task, reference)).is_some() {
+                        return Err("ambiguous saved recipient".into());
+                    }
+                }
+                TaskLink::UnverifiableThread { text, .. }
+                    if text.split_whitespace().next() == Some(recipient) =>
+                {
+                    return Err("incomplete saved recipient".into());
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some((task, reference)) = target {
+        if reference.workspace_id.starts_with("hc:") || reference.pane_id.starts_with("hc:") {
+            return crate::dispatch::hc::prompt_saved(task, &reference, hint);
+        }
+        let host = saved_session(task.notes.as_deref(), "Thread host:")?;
+        herdr_hint_allowed(host.as_deref())?;
+        let rows = herdr::list_agents_at(host.as_deref())?;
+        if crate::stall::live_agent(&reference, &rows).is_none()
+            || !crate::stall::unique_name(recipient, &rows)
+        {
+            return Err("saved Herdr Thread is stale or ambiguous".into());
+        }
+        return herdr::prompt_at(host.as_deref(), recipient, hint);
+    }
+    if !registration
+        && task_links(source.notes.as_deref()).iter().any(|link| {
+            matches!(
+                link,
+                TaskLink::Thread(_) | TaskLink::UnverifiableThread { .. }
+            )
+        })
+    {
+        return Err("origin no longer matches the saved Thread".into());
+    }
+    let owners: Vec<_> = source
+        .notes
+        .as_deref()
+        .unwrap_or("")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Owner lead:"))
+        .collect();
+    if owners
+        .iter()
+        .any(|line| line.split_whitespace().any(|token| token == recipient))
+    {
+        let session = saved_session(source.notes.as_deref(), "Owner lead:")?;
+        herdr_hint_allowed(session.as_deref())?;
+        return herdr::prompt_at(session.as_deref(), recipient, hint);
+    }
+    // Legacy, unbound Herdr recipients retain their existing in-Herdr path.
+    herdr_hint_allowed(None)?;
+    herdr::prompt_at(None, recipient, hint)
+}
+
+fn saved_session(notes: Option<&str>, prefix: &str) -> Result<Option<String>, String> {
+    let lines: Vec<_> = notes
+        .unwrap_or("")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(prefix))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+        .collect();
+    let session = match lines.as_slice() {
+        [] => return Ok(None),
+        [tokens] => match tokens.as_slice() {
+            [name] if prefix == "Owner lead:" && agent_name(name) => return Ok(None),
+            [_, session] | [_, session, _] => *session,
+            _ => return Err("incomplete saved Herdr host".into()),
+        },
+        _ => return Err("ambiguous saved Herdr host".into()),
+    };
+    if session.is_empty()
+        || !session.as_bytes()[0].is_ascii_alphanumeric()
+        || !session
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err("invalid saved Herdr session".into());
+    }
+    Ok(Some(session.into()))
+}
+
+fn herdr_hint_allowed(session: Option<&str>) -> Result<(), String> {
+    match std::env::var("HERDR_ENV").as_deref() {
+        Ok("0") => Err("Herdr hints suppressed".into()),
+        Ok("1") => Ok(()),
+        _ if session.is_some() => Ok(()),
+        _ => Err("no saved Herdr endpoint outside Herdr".into()),
     }
 }

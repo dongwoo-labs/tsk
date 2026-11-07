@@ -230,6 +230,7 @@ else:
             .env("TSK_THREAD_BACKEND", "hc")
             .env("HC_SESSION", "example")
             .env("HC_TEST_ROOT", &self.repo.root)
+            .env("HERDR_BIN_PATH", self.bin.join("herdr"))
             .env(tsk_tui::git_base::STRETCH_DEADLINES_ENV, "1")
             .env_remove("HERDR_ENV")
             .env_remove("TSK_AGENT");
@@ -241,6 +242,20 @@ else:
     fn launch(&self) {
         let output = self.run(&["dispatch", "T1", "--base", "main"]);
         assert!(output.status.success(), "{output:?}");
+    }
+    fn question_command(&self, recipient: &str) -> std::process::Command {
+        let payload = self.repo.root.join("question.json");
+        fs::write(
+            &payload,
+            serde_json::to_vec(&serde_json::json!({
+                "task_id": task_on_disk(&self.state_dir).id,
+                "kind": "question", "audience": "lead", "summary": "Sample notice",
+                "text": "private sample text", "origin_thread": "thr-a", "recipient": recipient
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.command(&["ask", "--file", payload.to_str().unwrap()])
     }
     fn calls(&self) -> Vec<serde_json::Value> {
         fs::read_to_string(self.repo.root.join("calls.jsonl"))
@@ -440,7 +455,7 @@ fn hc_task_hint_never_adopts_a_replacement_terminal() {
 
 #[cfg(unix)]
 #[test]
-fn hc_cli_question_notification_uses_the_selected_runtime_and_identifier_only_hint() {
+fn hc_cli_question_notification_uses_the_saved_runtime_and_identifier_only_hint() {
     let hc = HcCli::new();
     hc.launch();
     let task = task_on_disk(&hc.state_dir);
@@ -476,6 +491,323 @@ fn hc_cli_question_notification_uses_the_selected_runtime_and_identifier_only_hi
         .unwrap()
         .starts_with("tsk question task="));
     assert!(!send.to_string().contains("sample question text"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+/// 실제 CLI와 disposable store를 사용한다. 두 runtime의 전송만 executable fixture다.
+#[cfg(unix)]
+#[test]
+fn hc_caller_notifies_the_saved_herdr_lead_for_questions_and_findings() {
+    let hc = HcCli::new();
+    hc.launch();
+    assert!(hc
+        .run(&[
+            "notes",
+            "T1",
+            "set",
+            "Owner lead:",
+            "fixture default lead-a"
+        ])
+        .status
+        .success());
+    stub::write_stub(
+        &hc.bin.join("herdr"),
+        r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['HC_TEST_ROOT'])
+with (root / 'herdr-calls.jsonl').open('a') as out:
+    out.write(json.dumps(sys.argv[1:]) + '\n')
+"#,
+        0o700,
+    );
+    let task = task_on_disk(&hc.state_dir);
+    let before = hc.calls().len();
+    for kind in ["question", "finding"] {
+        let payload = hc.repo.root.join("question.json");
+        fs::write(&payload, serde_json::to_vec(&serde_json::json!({
+            "task_id": task.id, "kind": kind, "audience": "lead",
+            "summary": "Sample notice", "text": "private sample text",
+            "origin_thread": "thr-a", "recipient": "lead-a",
+            "finding": if kind == "finding" { serde_json::json!({"kind":"issue", "detail":"sample finding"}) } else { serde_json::Value::Null }
+        })).unwrap()).unwrap();
+        let output = hc.run(&["ask", "--file", payload.to_str().unwrap()]);
+        assert!(output.status.success(), "{output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved["saved"]["durability"], "durable");
+        assert_eq!(saved["notification"]["status"], "notified", "{saved}");
+        let read = hc.run(&[
+            "questions",
+            saved["saved"]["record"]["reference"]["id"]
+                .as_str()
+                .unwrap(),
+        ]);
+        assert!(read.status.success(), "{read:?}");
+        let record: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+        assert_eq!(record["draft"]["kind"], kind);
+    }
+    let calls: Vec<serde_json::Value> = fs::read_to_string(hc.repo.root.join("herdr-calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(calls.len(), 2);
+    for call in calls {
+        assert_eq!(
+            call.as_array().unwrap()[..5],
+            serde_json::json!(["--session", "default", "agent", "prompt", "lead-a"])
+                .as_array()
+                .unwrap()[..]
+        );
+        assert!(call[5].as_str().unwrap().starts_with("tsk question task="));
+        assert!(!call.to_string().contains("private sample text"));
+    }
+    assert_eq!(hc.calls().len(), before, "호출자의 hc를 조회하지 않는다");
+}
+
+#[cfg(unix)]
+#[test]
+fn herdr_caller_answers_the_saved_hc_thread_without_inheriting_its_session() {
+    let hc = HcCli::new();
+    hc.launch();
+    let task = task_on_disk(&hc.state_dir);
+    let payload = hc.repo.root.join("question.json");
+    fs::write(
+        &payload,
+        serde_json::to_vec(&serde_json::json!({
+            "task_id": task.id, "kind": "question", "audience": "lead",
+            "summary": "Sample question", "text": "private sample text",
+            "origin_thread": "thr-a", "recipient": "thr-a"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let asked = hc.run(&["ask", "--file", payload.to_str().unwrap()]);
+    assert!(asked.status.success(), "{asked:?}");
+    let saved: serde_json::Value = serde_json::from_slice(&asked.stdout).unwrap();
+    let id = saved["saved"]["record"]["reference"]["id"]
+        .as_str()
+        .unwrap();
+    let mut revision = saved["saved"]["record"]["reference"]["revision"].clone();
+    // 누락되거나 다른 호출자 session에서도 저장된 example endpoint로 보낸다.
+    for caller_session in [None, Some("other")] {
+        fs::write(&payload, serde_json::to_vec(&serde_json::json!({
+            "expected_revision": revision, "text": "private sample answer",
+            "corrects_revision": if caller_session.is_some() { revision.clone() } else { serde_json::Value::Null },
+            "actor": "lead-a", "origin": "agent"
+        })).unwrap()).unwrap();
+        if caller_session.is_some() {
+            assert!(hc.run(&["status", "T1", "done"]).status.success());
+        }
+        let mut command = hc.command(&["answer", id, "--file", payload.to_str().unwrap()]);
+        command.env("TSK_DONE_KEEP_DAYS", "0");
+        command
+            .env("TSK_THREAD_BACKEND", "herdr")
+            .env("HERDR_ENV", "1");
+        match caller_session {
+            Some(session) => {
+                command.env("HC_SESSION", session);
+            }
+            None => {
+                command.env_remove("HC_SESSION");
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(answer["saved"]["durability"], "durable");
+        assert_eq!(answer["notification"]["status"], "notified", "{answer}");
+        revision = answer["saved"]["record"]["reference"]["revision"].clone();
+    }
+    let sends: Vec<_> = hc
+        .calls()
+        .into_iter()
+        .filter(|call| call["args"][0] == "send")
+        .collect();
+    assert_eq!(sends.len(), 3);
+    for call in sends {
+        assert_eq!(call["session"], "example");
+        assert_eq!(call["args"][1], "t7");
+        assert!(!call.to_string().contains("private sample"));
+    }
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn question_hints_preserve_legacy_herdr_and_explicit_suppression() {
+    for owner in [
+        None,
+        Some("lead-a"),
+        Some("lead-a default"),
+        Some("fixture default lead-a"),
+    ] {
+        let hc = HcCli::new();
+        match owner {
+            Some(owner) => assert!(hc
+                .run(&["notes", "T1", "set", "Owner lead:", owner])
+                .status
+                .success()),
+            None => assert!(hc
+                .run(&["notes", "T1", "remove", "Owner lead:"])
+                .status
+                .success()),
+        }
+        stub::write_stub(
+            &hc.bin.join("herdr"),
+            "#!/bin/sh\nprintf called > \"$HC_TEST_ROOT/herdr-called\"\nexit 0\n",
+            0o700,
+        );
+        let mut command = hc.question_command("lead-a");
+        let output = command
+            .env("HERDR_ENV", "1")
+            .env_remove("TSK_THREAD_BACKEND")
+            .env_remove("HC_SESSION")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            saved["notification"]["status"], "notified",
+            "owner={owner:?}: {saved}"
+        );
+        assert!(hc.repo.root.join("herdr-called").exists());
+    }
+    let hc = HcCli::new();
+    assert!(hc
+        .run(&[
+            "notes",
+            "T1",
+            "set",
+            "Owner lead:",
+            "fixture default lead-a"
+        ])
+        .status
+        .success());
+    let output = hc
+        .question_command("lead-a")
+        .env("HERDR_ENV", "0")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(saved["saved"]["durability"], "durable");
+    assert_eq!(saved["notification"]["status"], "failed");
+    assert!(!hc.repo.root.join("herdr-called").exists());
+    assert!(!hc.repo.root.join("calls.jsonl").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_caller_notifies_only_the_exact_saved_herdr_thread() {
+    for mode in ["valid", "stale", "duplicate", "incomplete"] {
+        let hc = HcCli::new();
+        let reference = if mode == "incomplete" {
+            "thr-a w1"
+        } else {
+            "thr-a w1 w1:t1 w1:p1"
+        };
+        assert!(hc
+            .run(&["notes", "T1", "set", "Thread:", reference])
+            .status
+            .success());
+        assert!(hc
+            .run(&["notes", "T1", "set", "Thread host:", "fixture default"])
+            .status
+            .success());
+        stub::write_stub(
+            &hc.bin.join("herdr"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['HC_TEST_ROOT'])
+args = sys.argv[1:]
+assert args[:2] == ['--session', 'default']
+if args[2:] == ['agent', 'list']:
+    row = dict(name='thr-a', agent_status='idle', workspace_id='w1', tab_id='w1:t1', pane_id='w1:p1')
+    if os.environ['HC_TEST_MODE'] == 'stale': row['pane_id'] = 'w1:p2'
+    rows = [row, row] if os.environ['HC_TEST_MODE'] == 'duplicate' else [row]
+    print(json.dumps(dict(result=dict(agents=rows))))
+else:
+    assert args[2:5] == ['agent', 'prompt', 'thr-a']
+    (root / 'herdr-called').write_text(json.dumps(args[5:]))
+"#,
+            0o700,
+        );
+        let output = hc
+            .question_command("thr-a")
+            .env("HC_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode}: {output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let expected = if mode == "valid" {
+            "notified"
+        } else {
+            "failed"
+        };
+        assert_eq!(saved["notification"]["status"], expected, "{mode}: {saved}");
+        assert_eq!(hc.repo.root.join("herdr-called").exists(), mode == "valid");
+        assert!(!hc.repo.root.join("calls.jsonl").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_hc_question_targets_fail_closed_without_fallback() {
+    for mode in [
+        "duplicate",
+        "wrong-task",
+        "wrong-worktree",
+        "retarget",
+        "holder-lost",
+        "blocked",
+    ] {
+        let hc = HcCli::new();
+        hc.launch();
+        let output = hc
+            .question_command("thr-a")
+            .env("TSK_THREAD_BACKEND", "herdr")
+            .env_remove("HC_SESSION")
+            .env("HERDR_ENV", "1")
+            .env("HC_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode}: {output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved["saved"]["durability"], "durable");
+        assert_eq!(saved["notification"]["status"], "failed", "{mode}: {saved}");
+        assert!(!hc.repo.root.join("herdr-called").exists(), "{mode}");
+        // blocked는 runtime이 send를 거부한다. 나머지는 전송 전에 identity에서 거부한다.
+        if mode != "blocked" {
+            assert!(
+                !hc.calls().iter().any(|call| call["args"][0] == "send"),
+                "{mode}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_hc_question_target_does_not_require_a_dispatch_record() {
+    let hc = HcCli::new();
+    hc.launch();
+    // AH의 Thread launcher는 Thread 노트와 labels를 저장하며 Dispatch는 만들지 않는다.
+    let path = hc.state_dir.join("tsk.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    document["tasks"][0]["dispatch"] = serde_json::Value::Null;
+    fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert!(task_on_disk(&hc.state_dir).dispatch.is_none());
+    let output = hc
+        .question_command("thr-a")
+        .env("TSK_THREAD_BACKEND", "herdr")
+        .env_remove("HC_SESSION")
+        .env("HERDR_ENV", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(saved["notification"]["status"], "notified", "{saved}");
     assert!(!hc.repo.root.join("herdr-called").exists());
 }
 
