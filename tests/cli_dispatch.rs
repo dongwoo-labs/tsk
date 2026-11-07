@@ -230,6 +230,7 @@ else:
             .env("TSK_THREAD_BACKEND", "hc")
             .env("HC_SESSION", "example")
             .env("HC_TEST_ROOT", &self.repo.root)
+            .env(tsk_tui::git_base::STRETCH_DEADLINES_ENV, "1")
             .env_remove("HERDR_ENV")
             .env_remove("TSK_AGENT");
         command
@@ -492,6 +493,23 @@ fn hc_cli_start_and_released_start_work_without_herdr() {
         "hc:example"
     );
     let hc = HcCli::new();
+    if cfg!(debug_assertions) {
+        // Model a metadata query delayed by parallel tests; keep real Git underneath.
+        let output = std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let real_git = String::from_utf8(output.stdout).unwrap();
+        stub::write_stub(
+            &hc.bin.join("git"),
+            format!(
+                "#!/bin/sh\ncase \"$3:$4\" in rev-parse:--show-toplevel) sleep 0.35;; esac\nexec \"{}\" \"$@\"\n",
+                real_git.trim()
+            ),
+            0o700,
+        );
+    }
     let store = TaskStore::new(&hc.state_dir);
     let mut state = store.load().unwrap();
     let second = state

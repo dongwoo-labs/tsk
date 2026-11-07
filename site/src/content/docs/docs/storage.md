@@ -405,6 +405,9 @@ Questions can be copied to an EvoLoop work-question ledger, so EvoLoop shows the
 | `TSK_EVOLOOP_URL` | The EvoLoop base address. Only `https://` is accepted |
 | `TSK_EVOLOOP_TOKEN_FILE` | A file holding the EvoLoop Bearer token. The token is passed to curl on standard input, never as an argument |
 | `TSK_EVOLOOP_ORG` | Optional organization id sent as `X-Organization-ID` |
+| `EVOLOOP_USER_ID` | Optional expected user id. A different authenticated user leaves the copy pending |
+
+Before each copy request, tsk reads the authenticated user from EvoLoop's auth context. It sends that identity as `X-QAI-Expected-User-ID`. An unavailable or invalid identity leaves the copy pending.
 
 - The local save comes first and never waits on the copy or fails because of it. The Agent store stays the record that commands read.
 - A question, its answers, corrections, and routes are copied in the order they happened. A failed copy stays pending in the Agent directory and is sent on the next question write.
