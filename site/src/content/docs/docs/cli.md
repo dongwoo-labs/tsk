@@ -895,9 +895,11 @@ Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullabl
 
 Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means the receiving runtime accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
 
-Hints use the recipient's saved `Thread:` link, including its hc session, or the linked task's `Owner lead:` Herdr session. hc targets are checked against live task labels before sending. Incomplete, conflicting, or stale saved bindings fail without trying another runtime.
+Hints use the recipient's saved `Thread:` link, including its hc session, or the linked task's `Owner lead:` Herdr session. hc targets are checked against live task labels before sending. An unnamed Herdr lead needs one exact session-title match and receives the hint by pane ID. Incomplete, conflicting, or stale saved bindings fail without trying another runtime.
 
-Without a saved binding, the existing Herdr path requires `HERDR_ENV=1`. `HERDR_ENV=0` suppresses Herdr hints, including saved targets. This does not add cross-machine delivery.
+When `TSK_MACHINE` is explicit, a saved `Owner lead:` or `Thread host:` machine must match that local label. A mismatch fails before any notification. Without `TSK_MACHINE`, the existing local routing stays compatible with saved host aliases; the saved machine is not checked. This does not add cross-machine delivery.
+
+Without a saved binding, the existing Herdr path requires `HERDR_ENV=1`. `HERDR_ENV=0` suppresses Herdr hints, including saved targets.
 
 <span id="route"></span>`route` takes `expected_revision`, `audience` (`user` or `lead`), and an optional `lead_recipient` (a Herdr agent name; omitted or `null` keeps the current one). It writes a new revision under the same Q UUID and number and keeps the text, answers, and history; an answered question stays answered. A stale revision refuses and changes nothing. It sends no notification and returns `{ "saved": ... }`.
 

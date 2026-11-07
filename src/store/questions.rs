@@ -1049,10 +1049,10 @@ fn prompt_recipient(
         }
     }
     if let Some((task, reference)) = target {
+        let host = saved_session(task.notes.as_deref(), "Thread host:")?;
         if reference.workspace_id.starts_with("hc:") || reference.pane_id.starts_with("hc:") {
             return crate::dispatch::hc::prompt_saved(task, &reference, hint);
         }
-        let host = saved_session(task.notes.as_deref(), "Thread host:")?;
         herdr_hint_allowed(host.as_deref())?;
         let rows = herdr::list_agents_at(host.as_deref())?;
         if crate::stall::live_agent(&reference, &rows).is_none()
@@ -1085,7 +1085,16 @@ fn prompt_recipient(
     {
         let session = saved_session(source.notes.as_deref(), "Owner lead:")?;
         herdr_hint_allowed(session.as_deref())?;
-        return herdr::prompt_at(session.as_deref(), recipient, hint);
+        if session.is_some() {
+            let rows = herdr::list_agents_at(session.as_deref())?;
+            let mut matches = rows.iter().filter(|row| row.session_name() == recipient);
+            let row = matches.next().ok_or("saved Herdr lead is not live")?;
+            if matches.next().is_some() {
+                return Err("ambiguous saved Herdr lead".into());
+            }
+            return herdr::prompt_at(session.as_deref(), row.focus_target(), hint);
+        }
+        return herdr::prompt_at(None, recipient, hint);
     }
     // Legacy, unbound Herdr recipients retain their existing in-Herdr path.
     herdr_hint_allowed(None)?;
@@ -1103,7 +1112,15 @@ fn saved_session(notes: Option<&str>, prefix: &str) -> Result<Option<String>, St
         [] => return Ok(None),
         [tokens] => match tokens.as_slice() {
             [name] if prefix == "Owner lead:" && agent_name(name) => return Ok(None),
-            [_, session] | [_, session, _] => *session,
+            [machine, session] if prefix == "Thread host:" => {
+                check_saved_machine(machine)?;
+                *session
+            }
+            [_, session] if prefix == "Owner lead:" => *session,
+            [machine, session, name] if prefix == "Owner lead:" && agent_name(name) => {
+                check_saved_machine(machine)?;
+                *session
+            }
             _ => return Err("incomplete saved Herdr host".into()),
         },
         _ => return Err("ambiguous saved Herdr host".into()),
@@ -1117,6 +1134,17 @@ fn saved_session(notes: Option<&str>, prefix: &str) -> Result<Option<String>, St
         return Err("invalid saved Herdr session".into());
     }
     Ok(Some(session.into()))
+}
+
+fn check_saved_machine(machine: &str) -> Result<(), String> {
+    // Existing callers can use a stable host alias that differs from the OS hostname.
+    // Compare only an explicit local label; remote delivery still needs its own transport.
+    if std::env::var_os("TSK_MACHINE").is_some()
+        && crate::machine::normalize(machine)? != crate::machine::current()?
+    {
+        return Err("saved recipient is on another machine".into());
+    }
+    Ok(())
 }
 
 fn herdr_hint_allowed(session: Option<&str>) -> Result<(), String> {

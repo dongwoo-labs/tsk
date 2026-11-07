@@ -228,6 +228,7 @@ else:
             .env("PATH", path)
             .env("TSK_STATE_DIR", &self.state_dir)
             .env("TSK_THREAD_BACKEND", "hc")
+            .env("TSK_MACHINE", "fixture")
             .env("HC_SESSION", "example")
             .env("HC_TEST_ROOT", &self.repo.root)
             .env("HERDR_BIN_PATH", self.bin.join("herdr"))
@@ -515,8 +516,12 @@ fn hc_caller_notifies_the_saved_herdr_lead_for_questions_and_findings() {
         r#"#!/usr/bin/env python3
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['HC_TEST_ROOT'])
-with (root / 'herdr-calls.jsonl').open('a') as out:
-    out.write(json.dumps(sys.argv[1:]) + '\n')
+args = sys.argv[1:]
+if args[-2:] == ['agent', 'list']:
+    print(json.dumps({'result': {'agents': [{'name':'lead-a', 'agent_status':'idle', 'pane_id':'w1:p1'}]}}))
+else:
+    with (root / 'herdr-calls.jsonl').open('a') as out:
+        out.write(json.dumps(args) + '\n')
 "#,
         0o700,
     );
@@ -562,6 +567,69 @@ with (root / 'herdr-calls.jsonl').open('a') as out:
         assert!(!call.to_string().contains("private sample text"));
     }
     assert_eq!(hc.calls().len(), before, "호출자의 hc를 조회하지 않는다");
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_caller_notifies_an_unnamed_herdr_lead_by_its_exact_title_and_pane() {
+    for mode in ["unnamed", "ambiguous", "blocked", "named", "named-other"] {
+        let hc = HcCli::new();
+        assert!(hc
+            .run(&[
+                "notes",
+                "T1",
+                "set",
+                "Owner lead:",
+                "fixture default lead-a"
+            ])
+            .status
+            .success());
+        stub::write_stub(
+            &hc.bin.join("herdr"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['HC_TEST_ROOT'])
+args = sys.argv[1:]
+mode = os.environ['HC_TEST_MODE']
+assert args[:2] == ['--session', 'default']
+if args[2:] == ['agent', 'list']:
+    row = dict(agent_status='idle', pane_id='w1:p1', terminal_title_stripped='lead-a')
+    if mode == 'named': row['name'] = 'lead-a'
+    if mode == 'named-other': row['name'] = 'other'
+    rows = [row, dict(row, pane_id='w1:p2')] if mode == 'ambiguous' else [row]
+    print(json.dumps(dict(result=dict(agents=rows))))
+else:
+    target = 'lead-a' if mode == 'named' else 'w1:p1'
+    assert args[2:5] == ['agent', 'prompt', target]
+    (root / 'herdr-attempted').write_text(mode)
+    if mode == 'blocked': sys.exit(1)
+    (root / 'herdr-called').write_text(mode)
+"#,
+            0o700,
+        );
+        let output = hc
+            .question_command("lead-a")
+            .env("HC_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode}: {output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let expected = if mode == "unnamed" || mode == "named" {
+            "notified"
+        } else {
+            "failed"
+        };
+        assert_eq!(saved["notification"]["status"], expected, "{mode}: {saved}");
+        assert_eq!(saved["saved"]["durability"], "durable");
+        if mode == "ambiguous" || mode == "named-other" {
+            assert!(!hc.repo.root.join("herdr-attempted").exists());
+        }
+        assert_eq!(
+            hc.repo.root.join("herdr-called").exists(),
+            expected == "notified"
+        );
+        assert!(!hc.repo.root.join("calls.jsonl").exists());
+    }
 }
 
 #[cfg(unix)]
@@ -654,7 +722,13 @@ fn question_hints_preserve_legacy_herdr_and_explicit_suppression() {
         }
         stub::write_stub(
             &hc.bin.join("herdr"),
-            "#!/bin/sh\nprintf called > \"$HC_TEST_ROOT/herdr-called\"\nexit 0\n",
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+if sys.argv[-2:] == ['agent', 'list']:
+    print(json.dumps({'result': {'agents': [{'name':'lead-a', 'agent_status':'idle', 'pane_id':'w1:p1'}]}}))
+else:
+    (pathlib.Path(os.environ['HC_TEST_ROOT']) / 'herdr-called').write_text('called')
+"#,
             0o700,
         );
         let mut command = hc.question_command("lead-a");
@@ -748,6 +822,101 @@ else:
         assert_eq!(hc.repo.root.join("herdr-called").exists(), mode == "valid");
         assert!(!hc.repo.root.join("calls.jsonl").exists());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn question_hints_reject_foreign_saved_hosts_when_local_machine_is_explicit() {
+    for target in ["lead", "herdr", "hc"] {
+        let hc = HcCli::new();
+        if target == "hc" {
+            hc.launch();
+        }
+        let recipient = if target == "lead" { "lead-a" } else { "thr-a" };
+        if target == "lead" {
+            assert!(hc
+                .run(&[
+                    "notes",
+                    "T1",
+                    "set",
+                    "Owner lead:",
+                    "remote-fixture default lead-a"
+                ])
+                .status
+                .success());
+        } else {
+            assert!(hc
+                .run(&[
+                    "notes",
+                    "T1",
+                    "set",
+                    "Thread host:",
+                    "remote-fixture default"
+                ])
+                .status
+                .success());
+            if target == "herdr" {
+                assert!(hc
+                    .run(&["notes", "T1", "set", "Thread:", "thr-a w1 w1:t1 w1:p1"])
+                    .status
+                    .success());
+            }
+        }
+        stub::write_stub(
+            &hc.bin.join("herdr"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+if sys.argv[-2:] == ['agent', 'list']:
+    print(json.dumps({'result': {'agents': [dict(name=n, agent_status='idle', pane_id='w1:p1', workspace_id='w1', tab_id='w1:t1') for n in ['lead-a', 'thr-a']]}}))
+else:
+    (pathlib.Path(os.environ['HC_TEST_ROOT']) / 'herdr-called').write_text('called')
+"#,
+            0o700,
+        );
+        let output = hc.question_command(recipient).output().unwrap();
+        assert!(output.status.success(), "{target}: {output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved["saved"]["durability"], "durable");
+        assert_eq!(
+            saved["notification"]["status"], "failed",
+            "{target}: {saved}"
+        );
+        assert!(!hc.repo.root.join("herdr-called").exists());
+        if target == "hc" {
+            assert!(!hc.calls().iter().any(|call| call["args"][0] == "send"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn question_hints_without_tsk_machine_keep_the_saved_host_alias_compatible() {
+    let hc = HcCli::new();
+    assert!(hc
+        .run(&["notes", "T1", "set", "Owner lead:", "dev-01 default lead-a"])
+        .status
+        .success());
+    stub::write_stub(
+        &hc.bin.join("herdr"),
+        r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+if sys.argv[-2:] == ['agent', 'list']:
+    print(json.dumps({'result': {'agents': [dict(agent_status='idle', pane_id='w1:p1', terminal_title_stripped='lead-a')]}}))
+else:
+    assert sys.argv[-2] == 'w1:p1'
+    (pathlib.Path(os.environ['HC_TEST_ROOT']) / 'herdr-called').write_text('called')
+"#,
+        0o700,
+    );
+    let output = hc
+        .question_command("lead-a")
+        .env_remove("TSK_MACHINE")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(saved["notification"]["status"], "notified", "{saved}");
+    assert!(hc.repo.root.join("herdr-called").exists());
 }
 
 #[cfg(unix)]
