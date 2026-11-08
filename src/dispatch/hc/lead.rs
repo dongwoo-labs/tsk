@@ -141,18 +141,21 @@ impl<'a> Binding<'a> {
             return Err("hc lead foreground is not Claude".into());
         }
         let mut ids = Vec::new();
-        for (i, arg) in argv.iter().enumerate() {
-            if matches!(*arg, "--resume" | "--session-id") {
-                ids.push(
-                    *argv
-                        .get(i + 1)
-                        .ok_or("hc lead session argument is missing")?,
-                );
-            } else if let Some(id) = arg
-                .strip_prefix("--resume=")
-                .or_else(|| arg.strip_prefix("--session-id="))
-            {
-                ids.push(id);
+        let mut args = argv.iter().skip(1);
+        // 현재 lead의 실제 구문만 허용한다. 값 안의 옵션 이름은 다시 해석하지 않는다.
+        while let Some(arg) = args.next() {
+            let (option, inline) = arg
+                .split_once('=')
+                .map_or((*arg, None), |(key, value)| (key, Some(value)));
+            if !matches!(option, "--settings" | "--resume" | "--session-id") {
+                return Err("unsupported hc lead foreground arguments".into());
+            }
+            let value = inline
+                .or_else(|| args.next().copied())
+                .filter(|value| !value.is_empty())
+                .ok_or("hc lead option value is missing")?;
+            if option != "--settings" {
+                ids.push(value);
             }
         }
         if ids.as_slice() != [self.uuid] {

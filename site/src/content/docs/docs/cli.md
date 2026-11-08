@@ -913,6 +913,8 @@ Owner lead runtime: hc example t7 12345678-1234-4234-8234-123456789abc example-h
 | Observed hostname | OS hostname's first DNS label, lowercase; independent of environment aliases |
 | Canonical directory | Absolute primary Git checkout; the remainder of the line supports spaces |
 
+Foreground argv accepts only `--settings <value>` and one `--resume <UUID>` or `--session-id <UUID>`. Each option also accepts `--option=value`. Other options, positional arguments, and duplicate session options refuse delivery. Option values are not interpreted as options.
+
 The lead terminal must have these labels:
 
 | Label | Value |

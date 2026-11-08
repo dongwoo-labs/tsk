@@ -122,6 +122,26 @@ impl DispatchHost for FakeHost {
     }
 }
 
+#[cfg(unix)]
+fn observed_test_hostname() -> String {
+    let mut buffer = [0u8; 256];
+    // SAFETY: gethostname에 buffer의 실제 길이를 전달한다.
+    assert_eq!(
+        unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) },
+        0
+    );
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    std::str::from_utf8(&buffer[..end])
+        .unwrap()
+        .split('.')
+        .next()
+        .unwrap()
+        .to_ascii_lowercase()
+}
+
 /// Public CLI contract with real Git and isolated stores; only hc/Herdr are executable stubs.
 #[cfg(unix)]
 struct HcCli {
@@ -279,7 +299,7 @@ else:
                 "Owner lead runtime:",
                 &format!(
                     "hc lead-core t7 {uuid} {} {canonical}",
-                    tsk_tui::backup::hostname()
+                    observed_test_hostname()
                 )
             ])
             .status
@@ -575,6 +595,26 @@ fn hc_lead_questions_and_findings_use_only_the_explicit_saved_binding() {
         for caller in [None, Some("sender-core")] {
             let hc = HcCli::new();
             hc.bind_lead();
+            let path = hc.repo.root.join("lead.json");
+            let mut lead: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            let uuid = "12345678-1234-4234-8234-123456789abc";
+            lead["foreground"]["argv"] = if caller.is_some() {
+                serde_json::json!([
+                    "claude",
+                    "--settings=/fixture/settings.json",
+                    format!("--session-id={uuid}")
+                ])
+            } else {
+                serde_json::json!([
+                    "claude",
+                    "--settings",
+                    "/fixture/settings.json",
+                    "--resume",
+                    uuid
+                ])
+            };
+            fs::write(path, serde_json::to_vec(&lead).unwrap()).unwrap();
             let mut command = hc.question_command("lead-a");
             let payload = hc.repo.root.join("question.json");
             let mut draft: serde_json::Value =
@@ -653,6 +693,10 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
         "send-failed",
         "non-primary",
         "copied-host",
+        "malformed-owner",
+        "fake-resume-value",
+        "unknown-option",
+        "positional",
     ] {
         let hc = HcCli::new();
         hc.bind_lead();
@@ -660,10 +704,46 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
         let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let runtime = format!(
             "hc lead-core t7 12345678-1234-4234-8234-123456789abc {} {}",
-            tsk_tui::backup::hostname(),
+            observed_test_hostname(),
             hc.repo.project.display()
         );
         match mode {
+            "malformed-owner" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead:",
+                        "fixture lead-core leader-a"
+                    ])
+                    .status
+                    .success());
+            }
+            "fake-resume-value" => {
+                v["foreground"]["argv"] = serde_json::json!([
+                    "claude",
+                    "--append-system-prompt",
+                    "--resume",
+                    "12345678-1234-4234-8234-123456789abc"
+                ])
+            }
+            "unknown-option" => {
+                v["foreground"]["argv"] = serde_json::json!([
+                    "claude",
+                    "--unknown-flag",
+                    "--resume",
+                    "12345678-1234-4234-8234-123456789abc"
+                ])
+            }
+            "positional" => {
+                v["foreground"]["argv"] = serde_json::json!([
+                    "claude",
+                    "--resume",
+                    "12345678-1234-4234-8234-123456789abc",
+                    "another-token"
+                ])
+            }
             "copied-host" => {
                 assert!(hc
                     .run(&[
@@ -671,7 +751,7 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
                         "T1",
                         "set",
                         "Owner lead runtime:",
-                        &runtime.replace(&tsk_tui::backup::hostname(), "other-physical-host")
+                        &runtime.replace(&observed_test_hostname(), "other-physical-host")
                     ])
                     .status
                     .success());
@@ -813,8 +893,13 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
             _ => {}
         }
         fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let recipient = if mode == "malformed-owner" {
+            "leader-a"
+        } else {
+            "lead-a"
+        };
         let output = hc
-            .question_command("lead-a")
+            .question_command(recipient)
             .env("HC_TEST_MODE", mode)
             .output()
             .unwrap();
@@ -822,10 +907,8 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
         let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(saved["saved"]["durability"], "durable", "{mode}");
         assert_eq!(saved["notification"]["status"], "failed", "{mode}: {saved}");
-        if mode != "send-failed" {
-            if hc.repo.root.join("calls.jsonl").exists() {
-                assert!(!hc.calls().iter().any(|c| c["args"][0] == "send"), "{mode}");
-            }
+        if mode != "send-failed" && hc.repo.root.join("calls.jsonl").exists() {
+            assert!(!hc.calls().iter().any(|c| c["args"][0] == "send"), "{mode}");
         }
         assert!(!hc.repo.root.join("herdr-called").exists(), "{mode}");
     }
