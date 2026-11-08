@@ -410,7 +410,8 @@ Questions can be copied to an EvoLoop work-question ledger, so EvoLoop shows the
 Before each copy request, tsk reads the authenticated user from EvoLoop's auth context. It sends that identity as `X-QAI-Expected-User-ID`. An unavailable or invalid identity leaves the copy pending.
 
 - The local save comes first and never waits on the copy or fails because of it. The Agent store stays the record that commands read.
-- A question, its answers, corrections, and routes are copied in the order they happened. A failed copy stays pending in the Agent directory and is sent on the next question write.
+- A question, its answers, corrections, and routes are copied in the order they happened. A failed copy stays pending in the Agent directory and is sent on the next question write. A copy cut off by a stopped process stays pending too.
+- The question just written is copied first. If EvoLoop then refuses one older pending question, the rest are still sent. If the first copy fails, the pass stops and everything stays pending.
 - A retry starts with the original question, then replays its route history. If that original question cannot be read, the copy stays pending.
 - A secret question sends its fnox target name and the answer `set` or `rejected`, never a value.
 - Copies run on macOS and Linux with the same curl as the update check.
