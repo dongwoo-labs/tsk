@@ -1027,6 +1027,12 @@ fn prompt_recipient(
         .iter()
         .find(|task| task.id == task_id)
         .ok_or("question task is missing")?;
+    // 명시적인 lead binding은 같은 이름의 Thread나 Herdr fallback보다 우선한다.
+    if recipient.starts_with("lead-")
+        && crate::dispatch::hc::lead::has_binding(source.notes.as_deref())
+    {
+        return crate::dispatch::hc::lead::prompt_saved(source.notes.as_deref(), recipient, hint);
+    }
     let mut target = None;
     for task in tasks
         .iter()

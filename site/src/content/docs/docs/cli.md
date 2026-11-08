@@ -895,7 +895,37 @@ Finding records contain `kind` (`issue` or `opportunity`), `detail`, and nullabl
 
 Writes return JSON `{ "saved": { "record": ..., "durability": "durable" | "uncertain" }, "notification": { "status": "notified" | "failed" | "not_attempted" } }`. A failed notification does not undo the saved answer. An uncertain commit exits 1 and is not notified; visible readback is not proof of durability. Registration hints go to recipient; answers/corrections go to origin Thread, with Task/Q/revision identifiers only. `notified` means the receiving runtime accepted submission, not that the receiver read or applied it. The Lead can query questions after the origin exits. No automatic resend or delivery database is used.
 
-Hints use the recipient's saved `Thread:` link, including its hc session, or the linked task's `Owner lead:` Herdr session. hc targets are checked against live task labels before sending. An unnamed Herdr lead needs one exact session-title match and receives the hint by pane ID. Incomplete, conflicting, or stale saved bindings fail without trying another runtime.
+Hints use the recipient's saved `Thread:` link or the linked task's `Owner lead:` binding. hc threads are checked against live task labels. An unnamed Herdr lead needs one exact session-title match and receives the hint by pane ID. Incomplete, conflicting, or stale bindings fail without trying another runtime.
+
+**hc lead notifications.** Keep `Owner lead: <machine> <session> <handle>` and add one explicit runtime line:
+
+```text
+Owner lead: dev-01 example lead-a
+Owner lead runtime: hc example t7 12345678-1234-4234-8234-123456789abc example-host /absolute/agent-home
+```
+
+| Field | Required value |
+| --- | --- |
+| Backend | `hc`; no automatic fallback |
+| Session | Same explicit session as `Owner lead:`; caller `HC_SESSION` is not used |
+| Terminal | Saved local hc address |
+| Claude UUID | One foreground `--resume` or `--session-id` UUID, as separate arguments or `--flag=UUID` |
+| Observed hostname | OS hostname's first DNS label, lowercase; independent of environment aliases |
+| Canonical directory | Absolute primary Git checkout; the remainder of the line supports spaces |
+
+The lead terminal must have these labels:
+
+| Label | Value |
+| --- | --- |
+| `role` | `lead` |
+| `owner_lead` | Saved lead handle |
+| `machine` | Saved machine, matching the local hostname or explicit `TSK_MACHINE` alias |
+| `canonical` | Saved canonical directory |
+| `claude_session` | Saved Claude UUID |
+
+Only one live lead may match that handle in the saved hc session. Its address, labels, foreground directory, Git identity, and Claude UUID must match. The terminal must report `claude-code`; finished, lost, unreported, blocked, and error terminals refuse delivery. Identity is checked again immediately before submission. Names, titles, launch directories, and shell PIDs do not identify the lead. Duplicate or incomplete runtime lines refuse delivery. Without a runtime line, the existing Herdr lead path remains unchanged. hc lead notification requires Unix host identity checks.
+
+Older binaries ignore the runtime line. Suppress their owner hints and preserve pending deliveries before activating an hc binding. Activate only after all affected notification callers have the supporting binary and the binding passes identity checks. On rollback, retain suppression, pending deliveries, and identity-dependent holds. Removing the runtime line is not a safe rollback.
 
 When `TSK_MACHINE` is explicit, a saved `Owner lead:` or `Thread host:` machine must match that local label. A mismatch fails before any notification. Without `TSK_MACHINE`, the existing local routing stays compatible with saved host aliases; the saved machine is not checked. This does not add cross-machine delivery.
 

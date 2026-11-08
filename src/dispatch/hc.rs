@@ -1,4 +1,5 @@
 //! Explicit local hc identities. Never consult hc's implicit default session.
+pub(crate) mod lead;
 use crate::threads::{AgentStatus, ThreadRow};
 use serde_json::Value;
 use std::{env, path::Path, process::Command, time::Duration};

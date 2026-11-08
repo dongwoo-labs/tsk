@@ -258,6 +258,79 @@ else:
         .unwrap();
         self.command(&["ask", "--file", payload.to_str().unwrap()])
     }
+    fn bind_lead(&self) {
+        let canonical = self.repo.project.to_str().unwrap();
+        let uuid = "12345678-1234-4234-8234-123456789abc";
+        assert!(self
+            .run(&[
+                "notes",
+                "T1",
+                "set",
+                "Owner lead:",
+                "fixture lead-core lead-a"
+            ])
+            .status
+            .success());
+        assert!(self
+            .run(&[
+                "notes",
+                "T1",
+                "set",
+                "Owner lead runtime:",
+                &format!(
+                    "hc lead-core t7 {uuid} {} {canonical}",
+                    tsk_tui::backup::hostname()
+                )
+            ])
+            .status
+            .success());
+        fs::write(
+            self.repo.root.join("lead.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "address":"t7", "state":"live", "reason":null, "name":null, "cwd":"/",
+                "labels":{"role":"lead", "owner_lead":"lead-a", "machine":"fixture",
+                    "canonical":canonical, "claude_session":uuid},
+                "reported":true, "status":{"app":"claude-code", "state":"working"},
+                "foreground":{"pid":1234, "cwd":canonical, "argv":["claude", "--resume", uuid]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        stub::write_stub(
+            &self.bin.join("hc"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['HC_TEST_ROOT'])
+a = sys.argv[1:]
+with (root / 'calls.jsonl').open('a') as out:
+    out.write(json.dumps({'session':os.environ.get('HC_SESSION'), 'args':a})+'\n')
+assert os.environ['HC_SESSION'] == 'lead-core'
+v = json.loads((root / 'lead.json').read_text())
+m = os.environ.get('HC_TEST_MODE','')
+if a[0] == 'ls':
+    assert a == ['ls','--json','--label','role=lead','--label','owner_lead=lead-a']
+    if m == 'invalid-list': print('{}'); sys.exit()
+    rows = [dict(address='t7')]
+    if m == 'duplicate': rows.append(dict(address='t8'))
+    if m == 'gone': rows = []
+    print(json.dumps(dict(terminals=rows)))
+elif a[0] == 'get':
+    count = root / 'get-count'
+    n = int(count.read_text())+1 if count.exists() else 1
+    count.write_text(str(n))
+    if m == 'changed-pid' and n > 1: v['foreground']['pid'] += 1
+    if m == 'changed-uuid' and n > 1: v['foreground']['argv'][-1] = '22345678-1234-4234-8234-123456789abc'
+    if m == 'changed-label' and n > 1: v['labels']['owner_lead'] = 'lead-b'
+    if m != 'wrong-address': v['address'] = a[1]
+    print(json.dumps(v))
+elif a[0] == 'send':
+    if m == 'send-failed': sys.exit(9)
+    print('{}')
+else: sys.exit(90)
+"#,
+            0o700,
+        );
+    }
     fn calls(&self) -> Vec<serde_json::Value> {
         fs::read_to_string(self.repo.root.join("calls.jsonl"))
             .unwrap()
@@ -493,6 +566,269 @@ fn hc_cli_question_notification_uses_the_saved_runtime_and_identifier_only_hint(
         .starts_with("tsk question task="));
     assert!(!send.to_string().contains("sample question text"));
     assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_lead_questions_and_findings_use_only_the_explicit_saved_binding() {
+    for kind in ["question", "finding"] {
+        for caller in [None, Some("sender-core")] {
+            let hc = HcCli::new();
+            hc.bind_lead();
+            let mut command = hc.question_command("lead-a");
+            let payload = hc.repo.root.join("question.json");
+            let mut draft: serde_json::Value =
+                serde_json::from_slice(&fs::read(&payload).unwrap()).unwrap();
+            draft["kind"] = serde_json::json!(kind);
+            if kind == "finding" {
+                draft["finding"] =
+                    serde_json::json!({"kind":"issue", "detail":"private finding detail"});
+            }
+            fs::write(&payload, serde_json::to_vec(&draft).unwrap()).unwrap();
+            command.env("TSK_THREAD_BACKEND", "herdr");
+            if let Some(session) = caller {
+                command.env("HC_SESSION", session);
+            } else {
+                command.env_remove("HC_SESSION");
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+            let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(saved["saved"]["durability"], "durable");
+            assert_eq!(saved["notification"]["status"], "notified", "{saved}");
+            let calls = hc.calls();
+            let sent: Vec<_> = calls.iter().filter(|v| v["args"][0] == "send").collect();
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0]["session"], "lead-core");
+            assert_eq!(sent[0]["args"][1], "t7");
+            let hint = sent[0]["args"][2].as_str().unwrap();
+            assert!(hint.starts_with("tsk question task="));
+            assert!(hint.contains(
+                saved["saved"]["record"]["reference"]["revision"]
+                    .as_str()
+                    .unwrap()
+            ));
+            assert!(!hint.contains("private"));
+            assert!(!hc.repo.root.join("herdr-called").exists());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
+    for mode in [
+        "duplicate",
+        "gone",
+        "invalid-list",
+        "changed-pid",
+        "changed-uuid",
+        "changed-label",
+        "wrong-address",
+        "session",
+        "backend",
+        "incomplete",
+        "duplicate-runtime",
+        "duplicate-owner",
+        "machine",
+        "canonical",
+        "uuid",
+        "role",
+        "owner_lead",
+        "label-machine",
+        "label-canonical",
+        "claude_session",
+        "foreground-cwd",
+        "foreground-uuid",
+        "ambiguous-uuid",
+        "no-foreground",
+        "shell",
+        "pid",
+        "unreported",
+        "wrong-app",
+        "blocked",
+        "error",
+        "finished",
+        "holder-lost",
+        "send-failed",
+        "non-primary",
+        "copied-host",
+    ] {
+        let hc = HcCli::new();
+        hc.bind_lead();
+        let path = hc.repo.root.join("lead.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let runtime = format!(
+            "hc lead-core t7 12345678-1234-4234-8234-123456789abc {} {}",
+            tsk_tui::backup::hostname(),
+            hc.repo.project.display()
+        );
+        match mode {
+            "copied-host" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replace(&tsk_tui::backup::hostname(), "other-physical-host")
+                    ])
+                    .status
+                    .success());
+            }
+            "session" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replacen("lead-core", "other", 1)
+                    ])
+                    .status
+                    .success());
+            }
+            "backend" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replacen("hc", "unknown", 1)
+                    ])
+                    .status
+                    .success());
+            }
+            "incomplete" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        "hc lead-core t7"
+                    ])
+                    .status
+                    .success());
+            }
+            "duplicate-runtime" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "append",
+                        &format!("Owner lead runtime: {runtime}")
+                    ])
+                    .status
+                    .success());
+            }
+            "duplicate-owner" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "append",
+                        "Owner lead: fixture lead-core lead-a"
+                    ])
+                    .status
+                    .success());
+            }
+            "machine" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead:",
+                        "other lead-core lead-a"
+                    ])
+                    .status
+                    .success());
+            }
+            "canonical" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replace(hc.repo.project.to_str().unwrap(), "relative")
+                    ])
+                    .status
+                    .success());
+            }
+            "uuid" => {
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replace("12345678-1234-4234-8234-123456789abc", "not-uuid")
+                    ])
+                    .status
+                    .success());
+            }
+            "role" | "owner_lead" | "claude_session" => {
+                v["labels"][mode] = serde_json::json!("wrong")
+            }
+            "label-machine" => v["labels"]["machine"] = serde_json::json!("other"),
+            "label-canonical" => v["labels"]["canonical"] = serde_json::json!("/"),
+            "foreground-cwd" => v["foreground"]["cwd"] = serde_json::json!("/"),
+            "foreground-uuid" => {
+                v["foreground"]["argv"][2] =
+                    serde_json::json!("22345678-1234-4234-8234-123456789abc")
+            }
+            "ambiguous-uuid" => v["foreground"]["argv"].as_array_mut().unwrap().extend([
+                serde_json::json!("--session-id"),
+                serde_json::json!("12345678-1234-4234-8234-123456789abc"),
+            ]),
+            "no-foreground" => v["foreground"] = serde_json::Value::Null,
+            "shell" => v["foreground"]["argv"][0] = serde_json::json!("sh"),
+            "pid" => v["foreground"]["pid"] = serde_json::json!(0),
+            "unreported" => v["reported"] = serde_json::json!(false),
+            "wrong-app" => v["status"]["app"] = serde_json::json!("shell"),
+            "blocked" | "error" => v["status"]["state"] = serde_json::json!(mode),
+            "finished" => v["state"] = serde_json::json!("finished"),
+            "holder-lost" => v["reason"] = serde_json::json!("holder_lost"),
+            "wrong-address" => v["address"] = serde_json::json!("t9"),
+            "non-primary" => {
+                let sub = hc.repo.project.join("sub");
+                fs::create_dir(&sub).unwrap();
+                let sub = sub.to_str().unwrap();
+                assert!(hc
+                    .run(&[
+                        "notes",
+                        "T1",
+                        "set",
+                        "Owner lead runtime:",
+                        &runtime.replace(hc.repo.project.to_str().unwrap(), sub)
+                    ])
+                    .status
+                    .success());
+                v["labels"]["canonical"] = serde_json::json!(sub);
+                v["foreground"]["cwd"] = serde_json::json!(sub);
+            }
+            _ => {}
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let output = hc
+            .question_command("lead-a")
+            .env("HC_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode}: {output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved["saved"]["durability"], "durable", "{mode}");
+        assert_eq!(saved["notification"]["status"], "failed", "{mode}: {saved}");
+        if mode != "send-failed" {
+            if hc.repo.root.join("calls.jsonl").exists() {
+                assert!(!hc.calls().iter().any(|c| c["args"][0] == "send"), "{mode}");
+            }
+        }
+        assert!(!hc.repo.root.join("herdr-called").exists(), "{mode}");
+    }
 }
 
 /// 실제 CLI와 disposable store를 사용한다. 두 runtime의 전송만 executable fixture다.
