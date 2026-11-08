@@ -929,7 +929,7 @@ Only one live lead may match that handle in the saved hc session. Its address, l
 
 Older binaries ignore the runtime line. Suppress their owner hints and preserve pending deliveries before activating an hc binding. Activate only after all affected notification callers have the supporting binary and the binding passes identity checks. On rollback, retain suppression, pending deliveries, and identity-dependent holds. Removing the runtime line is not a safe rollback.
 
-When `TSK_MACHINE` is explicit, a saved `Owner lead:` or `Thread host:` machine must match that local label. A mismatch fails before any notification. Without `TSK_MACHINE`, the existing local routing stays compatible with saved host aliases; the saved machine is not checked. This does not add cross-machine delivery.
+For notifications without an explicit hc lead binding, `TSK_MACHINE` enables machine matching on saved `Owner lead:` and `Thread host:` lines. A mismatch fails before any notification. Without `TSK_MACHINE`, these legacy paths retain host-alias compatibility and do not check the saved machine. This does not add cross-machine delivery.
 
 Without a saved binding, the existing Herdr path requires `HERDR_ENV=1`. `HERDR_ENV=0` suppresses Herdr hints, including saved targets.
 
