@@ -1027,6 +1027,22 @@ fn prompt_recipient(
         .iter()
         .find(|task| task.id == task_id)
         .ok_or("question task is missing")?;
+    let owners: Vec<_> = source
+        .notes
+        .as_deref()
+        .unwrap_or("")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Owner lead:"))
+        .collect();
+    let owner_recipient = owners
+        .iter()
+        .any(|line| line.split_whitespace().any(|token| token == recipient));
+    // 명시적인 lead binding은 같은 이름의 Thread나 Herdr fallback보다 우선한다.
+    if (owner_recipient || recipient.starts_with("lead-"))
+        && crate::dispatch::hc::lead::has_binding(source.notes.as_deref())
+    {
+        return crate::dispatch::hc::lead::prompt_saved(source.notes.as_deref(), recipient, hint);
+    }
     let mut target = None;
     for task in tasks
         .iter()
@@ -1072,17 +1088,7 @@ fn prompt_recipient(
     {
         return Err("origin no longer matches the saved Thread".into());
     }
-    let owners: Vec<_> = source
-        .notes
-        .as_deref()
-        .unwrap_or("")
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("Owner lead:"))
-        .collect();
-    if owners
-        .iter()
-        .any(|line| line.split_whitespace().any(|token| token == recipient))
-    {
+    if owner_recipient {
         let session = saved_session(source.notes.as_deref(), "Owner lead:")?;
         herdr_hint_allowed(session.as_deref())?;
         if session.is_some() {

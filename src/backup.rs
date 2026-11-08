@@ -1857,7 +1857,7 @@ pub fn hostname() -> String {
 }
 
 #[cfg(unix)]
-fn raw_hostname() -> Option<String> {
+pub(crate) fn raw_hostname() -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is writable for its full length, which is what we pass.
     let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
