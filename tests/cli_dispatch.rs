@@ -331,6 +331,14 @@ if a[0] == 'ls':
     assert a == ['ls','--json','--label','role=lead','--label','owner_lead=lead-a']
     if m == 'invalid-list': print('{}'); sys.exit()
     rows = [dict(address='t7')]
+    if m in ['mixed-remote', 'mixed-remote-late-duplicate', 'mixed-remote-wrong-local']:
+        rows = [dict(address='ah-fast/t1'), *rows, dict(address='ah-fast/t12')]
+    bad_addresses = {'bad-remote-machine':'-remote/t7', 'bad-remote-terminal':'remote/t1a',
+                     'nested-remote':'remote/other/t7', 'bad-local-address':'t1a',
+                     'overlong-remote-machine':'r'*65+'/t7'}
+    if m in bad_addresses: rows.insert(0, dict(address=bad_addresses[m]))
+    if m == 'missing-inventory-address': rows.insert(0, {})
+    if m == 'mixed-remote-late-duplicate' and (root / 'get-count').exists(): rows.append(dict(address='t8'))
     if m == 'duplicate': rows.append(dict(address='t8'))
     if m == 'gone': rows = []
     print(json.dumps(dict(terminals=rows)))
@@ -341,6 +349,7 @@ elif a[0] == 'get':
     if m == 'changed-pid' and n > 1: v['foreground']['pid'] += 1
     if m == 'changed-uuid' and n > 1: v['foreground']['argv'][-1] = '22345678-1234-4234-8234-123456789abc'
     if m == 'changed-label' and n > 1: v['labels']['owner_lead'] = 'lead-b'
+    if m == 'mixed-remote-wrong-local': v['labels']['owner_lead'] = 'lead-b'
     if m != 'wrong-address': v['address'] = a[1]
     print(json.dumps(v))
 elif a[0] == 'send':
@@ -656,6 +665,59 @@ fn hc_lead_questions_and_findings_use_only_the_explicit_saved_binding() {
 
 #[cfg(unix)]
 #[test]
+fn hc_lead_ignores_valid_remote_rows_without_querying_them() {
+    let hc = HcCli::new();
+    hc.bind_lead();
+    let output = hc
+        .question_command("lead-a")
+        .env("HC_TEST_MODE", "mixed-remote")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["saved"]["durability"], "durable");
+    assert_eq!(result["notification"]["status"], "notified", "{result}");
+    let calls = hc.calls();
+    assert_eq!(calls.iter().filter(|c| c["args"][0] == "send").count(), 1);
+    for call in calls
+        .iter()
+        .filter(|c| c["args"][0] == "get" || c["args"][0] == "send")
+    {
+        assert_eq!(call["session"], "lead-core");
+        assert_eq!(
+            call["args"][1], "t7",
+            "remote terminal must not be queried or sent input"
+        );
+    }
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn hc_lead_rejects_flag_like_option_values() {
+    let hc = HcCli::new();
+    hc.bind_lead();
+    let path = hc.repo.root.join("lead.json");
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["foreground"]["argv"] = serde_json::json!([
+        "claude",
+        "--settings",
+        "--unexpected",
+        "--resume",
+        "12345678-1234-4234-8234-123456789abc"
+    ]);
+    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let output = hc.question_command("lead-a").output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["saved"]["durability"], "durable");
+    assert_eq!(result["notification"]["status"], "failed", "{result}");
+    assert!(!hc.calls().iter().any(|c| c["args"][0] == "send"));
+    assert!(!hc.repo.root.join("herdr-called").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
     for mode in [
         "duplicate",
@@ -697,6 +759,14 @@ fn hc_lead_binding_refusals_keep_the_question_durable_and_never_fallback() {
         "fake-resume-value",
         "unknown-option",
         "positional",
+        "bad-remote-machine",
+        "bad-remote-terminal",
+        "nested-remote",
+        "overlong-remote-machine",
+        "bad-local-address",
+        "missing-inventory-address",
+        "mixed-remote-late-duplicate",
+        "mixed-remote-wrong-local",
     ] {
         let hc = HcCli::new();
         hc.bind_lead();

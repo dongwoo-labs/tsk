@@ -913,7 +913,7 @@ Owner lead runtime: hc example t7 12345678-1234-4234-8234-123456789abc example-h
 | Observed hostname | OS hostname's first DNS label, lowercase; independent of environment aliases |
 | Canonical directory | Absolute primary Git checkout; the remainder of the line supports spaces |
 
-Foreground argv accepts only `--settings <value>` and one `--resume <UUID>` or `--session-id <UUID>`. Each option also accepts `--option=value`. Other options, positional arguments, and duplicate session options refuse delivery. Option values are not interpreted as options.
+Foreground argv accepts only `--settings <value>` and one `--resume <UUID>` or `--session-id <UUID>`. Each option also accepts `--option=value`. Empty values and values starting with `-` are ambiguous and refuse delivery. Other options, positional arguments, and duplicate session options also refuse delivery. Option values are not interpreted as options.
 
 The lead terminal must have these labels:
 
@@ -924,6 +924,8 @@ The lead terminal must have these labels:
 | `machine` | Saved machine, matching the local hostname or explicit `TSK_MACHINE` alias |
 | `canonical` | Saved canonical directory |
 | `claude_session` | Saved Claude UUID |
+
+Well-formed remote inventory rows (`machine/terminal`) are excluded from local lead selection without querying the remote terminal. The machine prefix accepts 1–64 ASCII letters, digits, dots, underscores, or hyphens, starting with a letter or digit. The terminal suffix must be a valid local hc address. Malformed addresses and duplicate or mismatched local rows refuse delivery.
 
 Only one live lead may match that handle in the saved hc session. Its address, labels, foreground directory, Git identity, and Claude UUID must match. The terminal must report `claude-code`; finished, lost, unreported, blocked, and error terminals refuse delivery. Identity is checked again immediately before submission. Names, titles, launch directories, and shell PIDs do not identify the lead. Duplicate or incomplete runtime lines refuse delivery. Without a runtime line, the existing Herdr lead path remains unchanged. hc lead notification requires Unix host identity checks.
 

@@ -1,5 +1,5 @@
 //! 저장된 hc lead binding만 사용한다. 호출자의 runtime 선택은 사용하지 않는다.
-use super::{field, label, live, local, run_saved, same_directory, strings, terminals, token};
+use super::{field, label, live, local, run_saved, same_directory, strings, token};
 use serde_json::Value;
 use std::{path::Path, process::Command, time::Duration};
 
@@ -152,8 +152,8 @@ impl<'a> Binding<'a> {
             }
             let value = inline
                 .or_else(|| args.next().copied())
-                .filter(|value| !value.is_empty())
-                .ok_or("hc lead option value is missing")?;
+                .filter(|value| !value.is_empty() && !value.starts_with('-'))
+                .ok_or("hc lead option value is missing or ambiguous")?;
             if option != "--settings" {
                 ids.push(value);
             }
@@ -166,14 +166,44 @@ impl<'a> Binding<'a> {
     }
 
     fn resolve(&self) -> Result<u64, String> {
-        let rows = terminals(
+        let list = run_saved(
             self.session,
-            &["role=lead".into(), format!("owner_lead={}", self.handle)],
+            &strings(&[
+                "ls",
+                "--json",
+                "--label",
+                "role=lead",
+                "--label",
+                &format!("owner_lead={}", self.handle),
+            ]),
         )?;
-        let [row] = rows.as_slice() else {
+        let entries = list
+            .get("terminals")
+            .and_then(Value::as_array)
+            .ok_or("hc list has no terminals")?;
+        let mut locals = Vec::new();
+        for entry in entries {
+            let address = field(entry, "address")?;
+            // 원격은 조회하지 않는다. 정상 원격 주소만 로컬 후보에서 제외한다.
+            if let Some((machine, terminal)) = address.split_once('/') {
+                if !token(machine) || machine.len() > 64 || !local(terminal) {
+                    return Err("invalid hc lead inventory address".into());
+                }
+                continue;
+            }
+            if !local(address) {
+                return Err("invalid hc lead inventory address".into());
+            }
+            locals.push(address);
+        }
+        let [address] = locals.as_slice() else {
             return Err("hc lead needs exactly one live terminal".into());
         };
-        self.verify(row)
+        let value = run_saved(self.session, &strings(&["get", address, "--json"]))?;
+        if field(&value, "address")? != *address {
+            return Err("hc get returned a different terminal".into());
+        }
+        self.verify(&value)
     }
 }
 
