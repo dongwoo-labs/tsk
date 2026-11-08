@@ -3548,6 +3548,95 @@ mod tests {
     }
 
     #[test]
+    fn evoloop_copy_keeps_a_question_pending_when_the_pass_is_killed() {
+        // tsk-board#49 SM-1: the local save commits, then the copy pass waits on the network.
+        // A kill during that wait must not drop the question from automatic retry.
+        use crate::store::evoloop::Transport;
+        use serde_json::{json, Value};
+        use std::cell::RefCell;
+
+        struct Killed;
+        impl Transport for Killed {
+            fn post(&self, _path: &str, _body: &Value) -> Option<Value> {
+                panic!("process killed while waiting on EvoLoop");
+            }
+        }
+        struct Up(RefCell<Vec<Value>>);
+        impl Transport for Up {
+            fn post(&self, path: &str, body: &Value) -> Option<Value> {
+                self.0.borrow_mut().push(body.clone());
+                assert_eq!(path, "/api/qai/work-questions");
+                Some(
+                    json!({"questionId": format!("r{}", self.0.borrow().len()), "headRevision": "h", "events": [{"revision": "h"}]}),
+                )
+            }
+        }
+        let (_guard, questions, first) = evoloop_question();
+        let killed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            questions.mirror_with(&Killed, first.reference.id)
+        }));
+        assert!(killed.is_err());
+        let mut later = first.draft.clone();
+        later.summary = "a later question".into();
+        let second = questions.ask(later).unwrap().record;
+        let up = Up(RefCell::new(Vec::new()));
+        questions.mirror_with(&up, second.reference.id).unwrap();
+        let sent: Vec<Value> =
+            up.0.borrow()
+                .iter()
+                .map(|b| b["requestId"].clone())
+                .collect();
+        assert!(
+            sent.contains(&json!(first.reference.id)),
+            "the question whose copy was killed is never retried: sent {sent:?}"
+        );
+    }
+
+    #[test]
+    fn evoloop_copy_does_not_let_one_rejected_question_block_the_rest() {
+        // tsk-board#49 SM-2: EvoLoop rejects one question for good (validation, a ledger that
+        // does not hold the mapped id). Later questions must still be copied.
+        use crate::store::evoloop::Transport;
+        use serde_json::{json, Value};
+        use std::cell::RefCell;
+
+        struct RejectsOne(uuid::Uuid, RefCell<Vec<Value>>);
+        impl Transport for RejectsOne {
+            fn post(&self, _path: &str, body: &Value) -> Option<Value> {
+                if body["requestId"] == json!(self.0) {
+                    return None;
+                }
+                self.1.borrow_mut().push(body.clone());
+                Some(json!({"questionId": "r", "headRevision": "h", "events": [{"revision": "h"}]}))
+            }
+        }
+        let (_guard, questions, poison) = evoloop_question();
+        let transport = RejectsOne(poison.reference.id, RefCell::new(Vec::new()));
+        assert_eq!(
+            questions
+                .mirror_with(&transport, poison.reference.id)
+                .unwrap()
+                .pending,
+            1
+        );
+        let mut later = poison.draft.clone();
+        later.summary = "a later question".into();
+        let second = questions.ask(later).unwrap().record;
+        let outcome = questions
+            .mirror_with(&transport, second.reference.id)
+            .unwrap();
+        assert!(
+            transport
+                .1
+                .borrow()
+                .iter()
+                .any(|b| b["requestId"] == json!(second.reference.id)),
+            "a later question waits behind the rejected one forever (pending {})",
+            outcome.pending
+        );
+    }
+
+    #[test]
     fn only_an_open_question_keeps_an_old_done_task_live() {
         use crate::domain::{AnswerDraft, AnswerOrigin, Audience, QuestionDraft, QuestionKind};
         let dir = temp_dir("done-files-questions");
