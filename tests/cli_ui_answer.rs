@@ -559,3 +559,58 @@ fn ui_answer_rejects_a_secret_without_a_value_but_still_refuses_a_set_attempt() 
     assert_eq!(again.code, 1, "{}", again.stderr);
     assert!(again.stderr.contains("stale-revision"), "{}", again.stderr);
 }
+
+#[test]
+fn question_notify_replays_the_hint_for_a_record_saved_elsewhere() {
+    let board = TempDir::new("notify-board");
+    let (id, revision) = ask(&board, "question", Some("user"));
+    let record = cli(&["questions", &id, "--json", "--state-dir", &board.state()]);
+    assert_eq!(record.code, 0, "{}", record.stderr);
+
+    // The watcher's mirror holds the tasks; the record comes on stdin and is not stored.
+    let mirror = TempDir::new("notify-mirror");
+    fs::copy(board.0.join("tsk.json"), mirror.0.join("tsk.json")).expect("mirror tasks");
+    let sent = cli_stdin(
+        &[
+            "question-notify",
+            "asker",
+            "--file",
+            "-",
+            "--state-dir",
+            &mirror.state(),
+        ],
+        record.stdout.as_bytes(),
+    );
+    let out = stdout_json(&sent);
+    assert_eq!(out["question_id"], json!(id));
+    assert_eq!(out["revision"], json!(revision));
+    // No Herdr here: the hint is attempted and reported, never faked as sent.
+    assert_eq!(out["notification"]["status"], json!("failed"));
+    assert_eq!(sent.code, 1);
+    assert!(!mirror.0.join("questions-private").exists());
+
+    let wrong = cli_stdin(
+        &[
+            "question-notify",
+            "lead",
+            "--file",
+            "-",
+            "--state-dir",
+            &mirror.state(),
+        ],
+        record.stdout.as_bytes(),
+    );
+    assert_eq!(wrong.code, 2, "{}", wrong.stderr);
+    let garbled = cli_stdin(
+        &[
+            "question-notify",
+            "recipient",
+            "--file",
+            "-",
+            "--state-dir",
+            &mirror.state(),
+        ],
+        b"{}",
+    );
+    assert_eq!(garbled.code, 2, "{}", garbled.stderr);
+}

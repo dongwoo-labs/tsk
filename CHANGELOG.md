@@ -22,6 +22,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- `tsk question-notify asker|recipient --file -` sends the question hint for a record saved on another machine, so a local watcher can notify agents when the board is remote.
 - `TSK_THREAD_BACKEND=hc` selects labeled local hc dispatch and thread checks with explicit `HC_SESSION`; Herdr remains the default.
 - With `TSK_EVOLOOP_URL` and `TSK_EVOLOOP_TOKEN_FILE` set, every question, answer, correction, and route is also copied to an EvoLoop work-question ledger. Local saves never wait on it; failed copies retry on the next question write.
 - Tasks record their creation machine. The board defaults to current-machine and unspecified tasks; machine filters and CLI assignment expose other machines without changing existing tasks.
