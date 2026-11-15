@@ -510,16 +510,19 @@ pub fn task_marks(feed: &QuestionFeed) -> BTreeMap<Uuid, String> {
         .collect()
 }
 
-fn task_label(tasks: &[Task], id: Uuid) -> String {
+fn task_label<'a>(tasks: impl IntoIterator<Item = &'a Task>, id: Uuid) -> String {
     tasks
-        .iter()
+        .into_iter()
         .find(|task| task.id == id)
         .and_then(Task::board_identifier)
         .unwrap_or_else(|| "a missing task".to_string())
 }
 
 /// The closed state, or the open state's target, as one short label.
-pub fn state_label(record: &QuestionRecord, tasks: &[Task]) -> String {
+pub fn state_label<'a>(
+    record: &QuestionRecord,
+    tasks: impl IntoIterator<Item = &'a Task>,
+) -> String {
     let Some(answer) = record.current_answer() else {
         return match record.draft.audience {
             None => "open · target unknown".to_string(),
@@ -1092,7 +1095,7 @@ pub fn page_rows(
         "Q{} · {} · {}",
         record.reference.number,
         kind_word(record),
-        state_label(record, tasks)
+        state_label(record, tasks.iter().chain(state.moved.values()))
     );
     page.push(&header, RowStyle::Bold, false);
     let task_text = tasks
@@ -1223,7 +1226,11 @@ pub fn page_rows(
             page.markdown_field("comment ", comment, RowStyle::Plain);
         }
         if let FindingLink::One(id) = record.finding_link() {
-            page.field("task    ", &task_label(tasks, id), RowStyle::Plain);
+            page.field(
+                "task    ",
+                &task_label(tasks.iter().chain(state.moved.values()), id),
+                RowStyle::Plain,
+            );
         }
         if answer.action == Some(FindingAction::CreateAndRun) {
             let at = page.rows.len();
@@ -1777,7 +1784,10 @@ fn list_rows(frame: &QuestionsFrame<'_>, width: usize, wide: bool) -> Vec<(Optio
             let selected = state.cursor == Some(id);
             let marker = if selected { " ▸ " } else { "   " };
             let meta = match group {
-                QuestionGroup::Closed => format!(" · {}", state_label(record, frame.tasks)),
+                QuestionGroup::Closed => format!(
+                    " · {}",
+                    state_label(record, frame.tasks.iter().chain(state.moved.values())),
+                ),
                 QuestionGroup::Unrouted => " · target unknown".to_string(),
                 _ => String::new(),
             };

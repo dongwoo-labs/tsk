@@ -517,7 +517,9 @@ impl QuestionStore {
                 let created = create(&mut state).map_err(|_| QuestionError::InvalidInput)?;
                 if let Some(task_id) = created {
                     if record.draft.kind != QuestionKind::Finding
-                        || existing_ids.contains(&task_id)
+                        || (existing_ids.contains(&task_id)
+                            && (task_id != record.reference.task_id
+                                || draft.action != Some(FindingAction::CreateAndRun)))
                         || state
                             .get(task_id)
                             .is_none_or(|task| task.is_notice() || task.soft_deleted)
@@ -996,7 +998,7 @@ pub fn notify_question(
     }
 }
 
-fn prompt_recipient(
+pub(crate) fn prompt_recipient(
     store: &QuestionStore,
     task_id: Uuid,
     recipient: &str,
@@ -1105,6 +1107,34 @@ fn prompt_recipient(
     // Legacy, unbound Herdr recipients retain their existing in-Herdr path.
     herdr_hint_allowed(None)?;
     herdr::prompt_at(None, recipient, hint)
+}
+
+/// A missing Thread is different from an unreadable or ambiguous saved runtime.
+/// Only a proven missing/live result may choose between creating and reusing a task.
+pub(crate) fn finding_thread_live(task: &Task) -> Result<bool, String> {
+    let Some(reference) = crate::stall::thread_of(task) else {
+        return if task
+            .notes
+            .as_deref()
+            .unwrap_or("")
+            .lines()
+            .any(|line| line.trim_start().starts_with("Thread:"))
+        {
+            Err("the finding's saved Thread is incomplete or ambiguous".into())
+        } else {
+            Ok(false)
+        };
+    };
+    let host = saved_session(task.notes.as_deref(), "Thread host:")?;
+    if reference.workspace_id.starts_with("hc:") || reference.pane_id.starts_with("hc:") {
+        return crate::dispatch::hc::saved_thread_live(task, &reference);
+    }
+    herdr_hint_allowed(host.as_deref())?;
+    let rows = crate::threads::herdr::list_agents_at(host.as_deref())?;
+    if rows.iter().filter(|row| row.name == reference.name).count() > 1 {
+        return Err("the finding's saved Thread is ambiguous".into());
+    }
+    Ok(crate::stall::live_agent(&reference, &rows).is_some())
 }
 
 fn saved_session(notes: Option<&str>, prefix: &str) -> Result<Option<String>, String> {
