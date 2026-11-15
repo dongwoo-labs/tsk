@@ -147,7 +147,8 @@ def run_case(output, name, backend="hc", mode="live", choice=b"1", link="exact",
                     assert all(c["program"] == "hc" for c in calls)
                 # 완료된 finding을 닫는 correction도 연결과 notes를 보존한다.
                 j.key(b"z", "05-closed", lambda s: "Sample finding" in s)
-                j.key(b"\r", "06-answered", lambda s: "c corrects" in s)
+                shown = j.key(b"\r", "06-answered", lambda s: "c corrects" in s)
+                assert "→ T1" in shown and "a missing task" not in shown, "연결된 기존 Task 번호가 보여야 한다"
                 j.key(b"r", "06-resent", lambda s: "run request resent" in s)
                 assert json.loads(sample.cli(state, "list", "--all", "--json")) == after
                 assert json.loads(sample.cli(state, "questions", "--json"))[0] == answered
