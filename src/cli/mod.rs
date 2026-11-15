@@ -19,6 +19,7 @@ pub mod list;
 pub mod notes;
 pub mod parser;
 pub mod presenter;
+pub mod question_notify;
 pub mod questions;
 pub mod reply;
 pub mod reports;
@@ -128,6 +129,7 @@ fn run_verb<R: Read>(
         Some("ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result") => {
             questions::run(args, &mut stdin)
         }
+        Some("question-notify") => question_notify::run(&args, &mut stdin),
         verb @ (Some("archive") | Some("unarchive")) => {
             let (verb, archive) = if verb == Some("archive") {
                 ("archive", true)
@@ -178,6 +180,7 @@ fn run_help(args: Vec<String>) -> CliOutput {
             "ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result" => {
                 questions::help()
             }
+            "question-notify" => question_notify::help(),
             "report" | "reports" => presenter::reports_help(),
             "setup" => presenter::setup_help(),
             "update" => presenter::update_help(),

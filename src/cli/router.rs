@@ -131,9 +131,8 @@ pub fn route<S: AsRef<str>>(
             "unarchive" => Surface::Unarchive,
             "project" => Surface::Project,
             "import" => Surface::Import,
-            "ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result" => {
-                Surface::Questions
-            }
+            "ask" | "answer" | "route" | "questions" | "ui-answer" | "secret-result"
+            | "question-notify" => Surface::Questions,
             "report" | "reports" => Surface::Reports,
             "setup" => Surface::Setup,
             "update" => Surface::Update,
@@ -320,6 +319,10 @@ mod tests {
     fn guide_selects_guide_surface() {
         assert_eq!(route(["tsk", "guide"], None), Surface::Guide);
         assert_eq!(route(["tsk", "ui-answer", "Q1"], None), Surface::Questions);
+        assert_eq!(
+            route(["tsk", "question-notify", "asker"], None),
+            Surface::Questions
+        );
     }
 
     #[test]

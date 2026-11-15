@@ -4,6 +4,7 @@ One `## vX.Y.Z` section per release, newest first, with `## Unreleased` on top. 
 section the subsections are, in this order and only when non-empty: `### Breaking`,
 `### Added
 
+- `tsk question-notify asker|recipient --file -` sends the question hint for a record saved on another machine, so a local watcher can notify agents when the board is remote.
 - A title over 60 characters no longer needs shortening by hand: `tsk add`, `tsk edit --title`, and JSON plan items cut it at a word end, add `…` (60 characters at most), and keep the full title at the top of the notes. Nothing is refused.
 , `### Changed`, `### Fixed`. Every user-visible change lands here in the PR
 that makes it, written for a user, not a contributor: omit demo alignment, CI wiring,

@@ -12,7 +12,7 @@ tsk list
 
 ## Agent-board extensions
 
-This fork also provides `tsk notes`, `tsk import linear`, `tsk ask`, `tsk questions`, `tsk answer`, `tsk route`, `tsk ui-answer`, `tsk secret-result`, `tsk report`, and `tsk reports`. Their contracts follow below. Questions require an explicitly assigned non-personal Agent state directory.
+This fork also provides `tsk notes`, `tsk import linear`, `tsk ask`, `tsk questions`, `tsk answer`, `tsk route`, `tsk ui-answer`, `tsk secret-result`, `tsk question-notify`, `tsk report`, and `tsk reports`. Their contracts follow below. Questions require an explicitly assigned non-personal Agent state directory.
 
 ## Commands
 
@@ -969,6 +969,19 @@ It prints one JSON line, `{"question_id", "number", "task_id", "revision", "stat
 **Trust boundary.** `ui-answer` is a local entrypoint, not authentication. Any process running as the same OS user can call it, as it can run the board. Keep agents' tool calls away from it with a hook: a Claude Code `PreToolUse` hook that refuses `tsk answer` and `tsk ui-answer` in every session but the Lead's. The Claude Code mod that shows the ask prompt calls it from its own process, outside any agent's tools.
 
 `questions` returns full JSON even without `--json`; an optional Q address selects one record and `--task` filters by Task, including a done Task already moved to the dated done files (its questions were all answered or closed). Missing or corrupt private snapshots refuse reads and mutations. [Private storage and limitations](/docs/storage/#agent-questions-and-private-records).
+
+<span id="question-notify"></span>**Notify for a record saved elsewhere.** When the board lives on another machine, that machine cannot reach this machine's Herdr or hc sessions. A local watcher sends the hint instead:
+
+```sh
+tsk question-notify asker --file - --state-dir /local/board-mirror
+```
+
+| Operand | Use after | Hint goes to |
+| --- | --- | --- |
+| `asker` | an answer, correction, or route | the question's `origin_thread` |
+| `recipient` | an ask | the question's `recipient` |
+
+The question record, as `tsk questions <Q> --json` prints it, comes on stdin and is never stored. The state directory supplies only the tasks whose notes name the target. It prints `question_id`, `revision`, and `notification`, and exits 0 only when the hint was sent. Exit 1 means it failed or was not attempted; exit 2 means bad arguments or JSON.
 
 ## notes
 
