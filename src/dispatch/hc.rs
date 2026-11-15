@@ -405,6 +405,22 @@ pub(crate) fn prompt_saved(
     reference: &crate::ui::links::ThreadRef,
     text: &str,
 ) -> Result<(), String> {
+    let (session, id) =
+        saved_target(task, reference)?.ok_or("hc saved Thread is no longer live")?;
+    run_saved(&session, &strings(&["send", &id, text, "--json"])).map(|_| ())
+}
+
+pub(crate) fn saved_thread_live(
+    task: &crate::domain::Task,
+    reference: &crate::ui::links::ThreadRef,
+) -> Result<bool, String> {
+    saved_target(task, reference).map(|target| target.is_some())
+}
+
+fn saved_target(
+    task: &crate::domain::Task,
+    reference: &crate::ui::links::ThreadRef,
+) -> Result<Option<(String, String)>, String> {
     attach_reference(&reference.workspace_id, &reference.pane_id)?;
     let session = reference.workspace_id.strip_prefix("hc:").unwrap();
     if reference.tab_id != "-" {
@@ -418,6 +434,9 @@ pub(crate) fn prompt_saved(
     let id = reference.pane_id.rsplit(':').next().unwrap();
     let value = run_saved(session, &strings(&["get", id, "--json"]))?;
     identity(&value)?;
+    if label(&value, "task")? != format!("t{number}") {
+        return Err("hc saved Thread task identity changed".into());
+    }
     let worktree = label(&value, "worktree")?;
     if task.dispatch.as_ref().is_some_and(|record| {
         record.herdr_workspace_id != reference.workspace_id
@@ -429,14 +448,16 @@ pub(crate) fn prompt_saved(
         session,
         &[format!("task=t{number}"), format!("worktree={worktree}")],
     )?;
-    if unique(&values, number, worktree)?.as_deref() != Some(id) {
-        return Err("hc saved Thread is stale or ambiguous".into());
+    match unique(&values, number, worktree)? {
+        None => return Ok(None),
+        Some(current) if current == id => {}
+        Some(_) => return Err("hc saved Thread is stale or ambiguous".into()),
     }
     let current = values.first().ok_or("hc target is gone")?;
     if field(current, "name")? != name || label(current, "owner_lead")? != lead {
         return Err("hc target labels changed".into());
     }
-    run_saved(session, &strings(&["send", id, text, "--json"])).map(|_| ())
+    Ok(Some((session.to_owned(), id.to_owned())))
 }
 
 pub(crate) fn metadata(notes: Option<&str>, session: &str) -> Result<(String, String), String> {

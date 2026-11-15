@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     AnswerDraft, AnswerOrigin, DomainState, FindingAction, FindingLink, HumanStatus,
-    ProvenanceOrigin, QuestionKind, QuestionRecord, TaskScope,
+    ProvenanceOrigin, QuestionKind, QuestionRecord, QuestionRef, TaskScope,
 };
 use crate::store::{
     default_state_dir, notify_question, valid_secret_question, QuestionDurability, QuestionError,
@@ -906,8 +906,6 @@ fn save(
         return;
     };
     let id = record.reference.id;
-    let source_task = record.reference.task_id;
-    let title = record.reference.summary.clone();
     // Kept so a failed save can restore a decision's staged comment rather than lose it.
     let comment = answer.comment.clone();
     let attempt = AnswerAttempt {
@@ -923,7 +921,7 @@ fn save(
     let result = match create {
         None => questions.answer(id, answer),
         Some(run) => questions.answer_with_task(id, answer, |state| {
-            let created = create_finding_task(state, source_task, &title, run);
+            let created = create_finding_task(state, &record.reference, run);
             if let Err(reason) = &created {
                 refusal = Some(reason.clone());
             }
@@ -1016,19 +1014,18 @@ fn save(
     }
 }
 
-/// The finding's task, created inside the question store's lock: the source task's scope,
-/// refused like an ordinary add when that project is archived. Never falls back to the desk.
+/// Link a run to its live source Thread or create in the source scope, under the
+/// question store's lock. Unknown runtime identity refuses instead of duplicating work.
 fn create_finding_task(
     state: &mut DomainState,
-    source_task: Uuid,
-    title: &str,
+    reference: &QuestionRef,
     run: bool,
 ) -> Result<Option<Uuid>, String> {
-    let scope = state
-        .get(source_task)
-        .filter(|task| !task.soft_deleted)
-        .map(|task| task.scope.clone())
+    let source = state
+        .get(reference.task_id)
+        .filter(|task| !task.soft_deleted && !task.is_notice())
         .ok_or_else(|| "the finding's task is missing".to_string())?;
+    let scope = source.scope.clone();
     if let TaskScope::Project { path } = &scope {
         if state.is_project_archived(path) {
             return Err(format!(
@@ -1037,8 +1034,20 @@ fn create_finding_task(
             ));
         }
     }
+    if run && crate::store::finding_thread_live(source)? {
+        let marker = format!("Finding: Q{} id={}", reference.number, reference.id);
+        let notes = match source.notes.as_deref() {
+            Some(notes) if !notes.is_empty() => format!("{notes}\n{marker}"),
+            _ => marker,
+        };
+        let title = source.title.clone();
+        state
+            .edit(reference.task_id, title, Some(notes), scope)
+            .map_err(|error| error.to_string())?;
+        return Ok(Some(reference.task_id));
+    }
     let task = state
-        .create(title, None, scope, ProvenanceOrigin::Manual)
+        .create(&reference.summary, None, scope, ProvenanceOrigin::Manual)
         .map_err(|error| error.to_string())?;
     if run {
         state
@@ -1170,13 +1179,14 @@ fn follow_up(questions: &QuestionStore, saved: &QuestionSaveResult, follow: Foll
     );
     match follow {
         FollowUp::NotifyOrigin => origin,
-        FollowUp::NotifyOriginAndLead => format!("{origin} · {}", request_lead(&saved.record)),
+        FollowUp::NotifyOriginAndLead => {
+            format!("{origin} · {}", request_run(questions, &saved.record))
+        }
     }
 }
 
-/// Send the run request of a finding decided as create-and-run to its explicit Lead
-/// address, only when exactly one live agent carries that name.
-fn request_lead(record: &QuestionRecord) -> String {
+/// A reused task's run stays with its saved Thread. New tasks go to the explicit lead.
+fn request_run(questions: &QuestionStore, record: &QuestionRecord) -> String {
     // The record's own current answer decides, never the action this board meant to save.
     let decided_run = record
         .current_answer()
@@ -1184,33 +1194,49 @@ fn request_lead(record: &QuestionRecord) -> String {
     if !decided_run {
         return "run request not sent: the current answer is not create-and-run".to_string();
     }
-    let Some(name) = record.draft.lead_recipient.as_deref() else {
-        return "run request not sent: no lead address on this finding".to_string();
-    };
     let FindingLink::One(task) = record.finding_link() else {
         return "run request not sent: no single linked task".to_string();
     };
-    if !crate::stall::inside_herdr() {
-        return format!("run request to {name} not sent: outside Herdr");
-    }
-    let rows = match herdr::list_agents() {
-        Ok(rows) => rows,
-        Err(_) => return format!("run request to {name} not sent: cannot list live agents"),
+    let name = if task == record.reference.task_id {
+        let state = match TaskStore::new(questions.path()).load_snapshot() {
+            Ok(state) => state,
+            Err(_) => return "run request not sent: cannot read the linked task".into(),
+        };
+        let source = match state.get(task) {
+            Some(source) => Some(source.clone()),
+            None => match TaskStore::new(questions.path()).load_done_history_snapshot() {
+                Ok(history) => history
+                    .into_iter()
+                    .find(|line| line.task.id == task)
+                    .map(|line| line.task),
+                Err(_) => {
+                    return "run request not sent: cannot read the linked task history".into()
+                }
+            },
+        };
+        let Some(reference) = source.as_ref().and_then(crate::stall::thread_of) else {
+            return "run request not sent: no single saved Thread on the linked task".into();
+        };
+        reference.name
+    } else {
+        let Some(name) = record.draft.lead_recipient.as_ref() else {
+            return "run request not sent: no lead address on this finding".to_string();
+        };
+        name.clone()
     };
-    let live = rows.iter().filter(|row| row.name == name).count();
-    match live {
-        0 => format!("run request to {name} not sent: no live agent by that name"),
-        1 => {
-            let hint = format!(
-                "tsk finding Q{} id={} revision={} task={task} action=create_and_run; read back from the Agent state directory before acting.",
-                record.reference.number, record.reference.id, record.reference.revision
-            );
-            match herdr::prompt(name, &hint) {
-                Ok(()) => format!("run request submitted to {name} (not a started Thread)"),
-                Err(_) => format!("run request to {name} failed to send"),
-            }
-        }
-        n => format!("run request to {name} not sent: {n} live agents share that name"),
+    let hint = format!(
+        "tsk finding Q{} id={} revision={} task={task} action=create_and_run; read back from the Agent state directory before acting.",
+        record.reference.number, record.reference.id, record.reference.revision
+    );
+    match crate::store::prompt_recipient(
+        questions,
+        record.reference.task_id,
+        &name,
+        task != record.reference.task_id,
+        &hint,
+    ) {
+        Ok(()) => format!("run request submitted to {name} (not a started Thread)"),
+        Err(reason) => format!("run request to {name} not sent: {reason}"),
     }
 }
 
@@ -1269,7 +1295,7 @@ fn resend(model: &mut BoardModel) {
     }
     match questions.confirm_durability(fresh.reference.id, fresh.reference.revision) {
         Ok(saved) => {
-            let report = request_lead(&saved.record);
+            let report = request_run(&questions, &saved.record);
             record_report(
                 model,
                 saved.record.reference.id,
@@ -1475,8 +1501,10 @@ mod tests {
             .expect("source task");
         state.archive_project("/repos/old").expect("archive");
         let before = state.tasks().len();
+        let mut reference = finding(Vec::new(), Vec::new()).reference;
+        reference.task_id = source;
         for run in [false, true] {
-            let refused = create_finding_task(&mut state, source, "summary", run);
+            let refused = create_finding_task(&mut state, &reference, run);
             assert!(refused.is_err_and(|reason| reason.contains("archived")));
             assert_eq!(state.tasks().len(), before, "no task, run={run}");
         }
@@ -1488,7 +1516,8 @@ mod tests {
                 ProvenanceOrigin::Manual,
             )
             .expect("desk task");
-        let created = create_finding_task(&mut state, desk, "summary", false)
+        reference.task_id = desk;
+        let created = create_finding_task(&mut state, &reference, false)
             .expect("live scope creates")
             .expect("task id");
         assert_eq!(
@@ -1737,8 +1766,10 @@ mod tests {
         twice.reference.revision = twice.answers[1].revision;
         assert!(!readback_is_attempt(&twice, &attempt));
         // The run request checks the record's own current action.
+        let questions = QuestionStore::new(std::env::temp_dir().join(Uuid::new_v4().to_string()))
+            .expect("isolated Agent store path");
         assert_eq!(
-            request_lead(&closed),
+            request_run(&questions, &closed),
             "run request not sent: the current answer is not create-and-run"
         );
     }
