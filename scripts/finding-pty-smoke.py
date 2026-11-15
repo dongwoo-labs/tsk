@@ -173,7 +173,11 @@ def run_case(output, name, backend="hc", mode="live", choice=b"1", link="exact",
         (root / "readback.json").write_text(json.dumps({"source": current, "question": answered, "tasks": after}, indent=2))
     finally:
         j.capture("final")
-        j.close()
+        # PTY 출력을 읽지 않은 채 wait하면 macOS의 자식 종료가 멈출 수 있다.
+        os.close(j.master)
+        if j.child.poll() is None:
+            j.child.kill()
+        j.child.wait(timeout=10)
 
 
 def main(output):
