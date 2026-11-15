@@ -4,7 +4,6 @@ One `## vX.Y.Z` section per release, newest first, with `## Unreleased` on top. 
 section the subsections are, in this order and only when non-empty: `### Breaking`,
 `### Added
 
-- `tsk question-notify asker|recipient --file -` sends the question hint for a record saved on another machine, so a local watcher can notify agents when the board is remote.
 - A title over 60 characters no longer needs shortening by hand: `tsk add`, `tsk edit --title`, and JSON plan items cut it at a word end, add `…` (60 characters at most), and keep the full title at the top of the notes. Nothing is refused.
 , `### Changed`, `### Fixed`. Every user-visible change lands here in the PR
 that makes it, written for a user, not a contributor: omit demo alignment, CI wiring,
@@ -23,6 +22,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
+- `tsk question-notify asker|recipient --file -` sends the question hint for a record saved on another machine, so a local watcher can notify agents when the board is remote.
 - `TSK_THREAD_BACKEND=hc` selects labeled local hc dispatch and thread checks with explicit `HC_SESSION`; Herdr remains the default.
 - With `TSK_EVOLOOP_URL` and `TSK_EVOLOOP_TOKEN_FILE` set, every question, answer, correction, and route is also copied to an EvoLoop work-question ledger. Local saves never wait on it; failed copies retry on the next question write.
 - Tasks record their creation machine. The board defaults to current-machine and unspecified tasks; machine filters and CLI assignment expose other machines without changing existing tasks.
