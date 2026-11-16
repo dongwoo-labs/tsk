@@ -419,11 +419,16 @@ impl QuestionStore {
         lock.lock()?;
         let mut map: MirrorMap = read_json(&dir.join(MAP_FILE));
         let mut pending: Vec<Uuid> = read_json(&dir.join(PENDING_FILE));
-        if !pending.contains(&saved) {
-            pending.push(saved);
-        }
+        // The saved question goes first and is durably pending before any network wait:
+        // a kill during the copy keeps it for the next pass.
+        pending.retain(|id| *id != saved);
+        pending.insert(0, saved);
+        write_json(&dir, PENDING_FILE, &pending)?;
         let numbers: BTreeMap<Uuid, u64> = self.task_numbers().unwrap_or_default();
         let mut done = BTreeSet::new();
+        // Before anything lands, a failure may mean EvoLoop is down: stop and keep the rest.
+        // Once one copy landed, a failure belongs to that question: keep it and go on.
+        let mut landed = false;
         for id in &pending {
             let mut record = match self.read(*id) {
                 Ok(record) => record,
@@ -435,6 +440,9 @@ impl QuestionStore {
             };
             if !map.questions.contains_key(id) {
                 let Ok(original) = self.original_draft(&record) else {
+                    if landed {
+                        continue;
+                    }
                     break;
                 };
                 record.draft = original;
@@ -445,8 +453,12 @@ impl QuestionStore {
                 numbers.get(&record.draft.task_id).copied(),
                 &mut map,
             ) {
+                if landed {
+                    continue;
+                }
                 break;
             }
+            landed = true;
             done.insert(*id);
         }
         pending.retain(|id| !done.contains(id));
