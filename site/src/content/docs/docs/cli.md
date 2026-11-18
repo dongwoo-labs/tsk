@@ -981,7 +981,11 @@ tsk question-notify asker --file - --state-dir /local/board-mirror
 | `asker` | an answer, correction, or route | the question's `origin_thread` |
 | `recipient` | an ask | the question's `recipient` |
 
-The question record, as `tsk questions <Q> --json` prints it, comes on stdin and is never stored. The state directory supplies only the tasks whose notes name the target. It prints `question_id`, `revision`, and `notification`, and exits 0 only when the hint was sent. Exit 1 means it failed or was not attempted; exit 2 means bad arguments or JSON.
+Pass the record from `tsk questions <Q> --json` on stdin. Tsk uses the tasks in the state directory to find the target and does not save the question record.
+
+A verified task lead receives a question hint only for an open, lead-targeted record. Tsk attempts each such revision once and needs a writable state directory to track attempts. Thread replies and finding run requests are not subject to this filter.
+
+The command prints `question_id`, `revision`, and `notification`. Exit 0 means the hint was submitted (`notified`) or intentionally skipped (`not_attempted`). Exit 1 means delivery or lookup failed. Exit 2 means bad arguments or JSON.
 
 ## notes
 

@@ -244,16 +244,25 @@ fn verify_primary(cwd: &str, canonical: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn prompt_saved(notes: Option<&str>, recipient: &str, text: &str) -> Result<(), String> {
+pub(crate) fn prompt_saved(
+    notes: Option<&str>,
+    recipient: &str,
+    text: &str,
+    prepare_hint: impl FnOnce() -> Result<crate::store::LeadHint, String>,
+) -> Result<bool, String> {
     let binding = Binding::parse(notes.unwrap_or(""), recipient)?;
     let pid = binding.resolve()?;
+    let hint = prepare_hint()?;
     // 전송 경계에서 중복 terminal과 foreground 교체를 다시 확인한다.
     if binding.resolve()? != pid {
         return Err("hc lead foreground PID changed".into());
+    }
+    if !hint.reserve()? {
+        return Ok(false);
     }
     run_saved(
         binding.session,
         &strings(&["send", binding.address, text, "--json"]),
     )
-    .map(|_| ())
+    .map(|_| true)
 }
