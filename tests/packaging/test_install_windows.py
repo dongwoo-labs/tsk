@@ -66,7 +66,7 @@ class WindowsInstallerTests(unittest.TestCase):
 
     def test_download_is_bounded_pinned_and_checksum_verified_before_extract(self):
         checksum = self.source.index("$actual = Get-Sha256 $archive")
-        extract = self.source.index("Expand-Archive")
+        extract = self.source.index("ExtractToFile")
         publish = self.source.index("Move-Atomic $staged")
         self.assertLess(checksum, extract)
         self.assertLess(extract, publish)
@@ -87,7 +87,9 @@ class WindowsInstallerTests(unittest.TestCase):
         ]:
             self.assertIn(token, self.source)
         self.assertRegex(self.source, r"(?is)while\s*\(.+Read\(.+written.+MaxBytes")
-        self.assertRegex(self.source, r"(?is)Entries.+Length.+MaxExpandedBytes.+Expand-Archive")
+        self.assertRegex(self.source, r"(?is)Entries.+Length.+MaxExpandedBytes.+ExtractToFile")
+        # pwsh's Archive module breaks Expand-Archive under Windows PowerShell 5.1.
+        self.assertNotIn("Expand-Archive -", self.source)
         self.assertIn("AllowAutoRedirect = $false", self.source)
         self.assertRegex(self.source, r"(?is)Headers\['Location'\].+Scheme.+https")
         self.assertRegex(self.source, r"(?is)ResponseUri.+Scheme.+https")

@@ -838,7 +838,17 @@ function Main {
             $zip.Dispose()
         }
         $expanded = Join-Path $work 'expanded'
-        Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+        New-Item -ItemType Directory -Path $expanded -Force | Out-Null
+        # Extract with the .NET API, not Expand-Archive: Windows PowerShell started from pwsh can
+        # load pwsh's Archive module, whose Expand-Archive needs a .NET Core-only overload.
+        $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+        try {
+            foreach ($entry in $zip.Entries) {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $expanded $entry.FullName))
+            }
+        } finally {
+            $zip.Dispose()
+        }
         $executable = Join-Path $expanded 'tsk.exe'
         if (-not (Test-Path -LiteralPath $executable -PathType Leaf) -or (Get-Item -LiteralPath $executable).Length -eq 0) {
             Fail 'release executable is missing or empty'

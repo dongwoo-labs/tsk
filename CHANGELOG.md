@@ -76,6 +76,7 @@ the GitHub release notes verbatim.
 
 ### Fixed
 
+- The Windows installer and `tsk update` no longer fail with `Cannot find an overload for "ExtractToDirectory"` when Windows PowerShell is started from PowerShell 7.
 - Task, report, and question queries work without store write access, preserve permissions, and refuse unreadable stores instead of returning empty results.
 - `tsk list --archived` includes archived tasks already moved to dated `done/` files, including tasks in archived projects. They remain excluded from `tsk list --done --history`; direct lookup and stored tasks are unchanged.
 - `tsk ask` now refuses a question with no `audience` (`user` or `lead`): exit 1, nothing saved, and the error says to add it. Before, such a question reached the board with no target. Questions already saved without one are unchanged and still read and answer as before (route them with `tsk route`).
