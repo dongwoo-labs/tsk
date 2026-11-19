@@ -37,7 +37,8 @@ pub fn help() -> CliOutput {
         stdout: "Usage: tsk question-notify <asker|recipient> --file - --state-dir <dir>\n\n\
 Sends the question hint for a record saved on another board: `asker` after an answer or \
 route, `recipient` after an ask. The record is read from the file or stdin and not \
-stored.\n"
+stored. A verified lead receives only open lead questions, once per revision. Intentional \
+skips return not_attempted and exit 0.\n"
             .into(),
         stderr: String::new(),
         code: 0,
@@ -83,7 +84,7 @@ pub fn run(args: &[String], stdin: &mut dyn Read) -> CliOutput {
         durability: QuestionDurability::Durable,
     };
     let notification = notify_question(&store, &saved, registration);
-    let notified = notification == QuestionNotification::Notified;
+    let failed = notification == QuestionNotification::Failed;
     let output = NotifyOutput {
         question_id: saved.record.reference.id,
         revision: saved.record.reference.revision,
@@ -93,7 +94,7 @@ pub fn run(args: &[String], stdin: &mut dyn Read) -> CliOutput {
         Ok(line) => CliOutput {
             stdout: format!("{line}\n"),
             stderr: String::new(),
-            code: if notified { 0 } else { 1 },
+            code: u8::from(failed),
         },
         Err(_) => refused("output serialization failed", 1),
     }

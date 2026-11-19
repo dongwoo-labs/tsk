@@ -594,6 +594,46 @@ fn hc_cli_question_notification_uses_the_saved_runtime_and_identifier_only_hint(
         .unwrap()
         .starts_with("tsk question task="));
     assert!(!send.to_string().contains("sample question text"));
+
+    fs::write(
+        &payload,
+        serde_json::to_vec(&serde_json::json!({
+            "expected_revision": result["saved"]["record"]["reference"]["revision"],
+            "text": "sample answer text", "actor": "lead-a", "origin": "agent"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let answered = hc.run(&["answer", "Q1", "--file", payload.to_str().unwrap()]);
+    assert!(answered.status.success(), "{answered:?}");
+    let result: serde_json::Value = serde_json::from_slice(&answered.stdout).unwrap();
+    assert_eq!(result["notification"]["status"], "notified");
+    fs::write(
+        &payload,
+        serde_json::to_vec(&result["saved"]["record"]).unwrap(),
+    )
+    .unwrap();
+    let replay = hc.run(&[
+        "question-notify",
+        "asker",
+        "--file",
+        payload.to_str().unwrap(),
+    ]);
+    assert!(replay.status.success(), "{replay:?}");
+    let calls = hc.calls();
+    let replies: Vec<_> = calls
+        .iter()
+        .filter(|call| call["args"][0] == "send")
+        .collect();
+    assert_eq!(replies.len(), 3);
+    assert_eq!(replies[1], replies[2]);
+    assert_eq!(replies[2]["args"][1], "t7");
+    assert!(replies[2]["args"][2].as_str().unwrap().contains(
+        result["saved"]["record"]["reference"]["revision"]
+            .as_str()
+            .unwrap()
+    ));
+    assert!(!replies[2].to_string().contains("sample answer text"));
     assert!(!hc.repo.root.join("herdr-called").exists());
 }
 
@@ -661,6 +701,100 @@ fn hc_lead_questions_and_findings_use_only_the_explicit_saved_binding() {
             assert!(!hc.repo.root.join("herdr-called").exists());
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn question_notify_only_submits_actionable_revisions_once_to_the_verified_lead() {
+    use serde_json::{json, Value};
+    use uuid::Uuid;
+
+    let hc = HcCli::new();
+    // Prepare the record without sending a hint from the source board.
+    let asked = hc
+        .question_command("lead-a")
+        .env("HERDR_ENV", "0")
+        .output()
+        .unwrap();
+    assert!(asked.status.success(), "{asked:?}");
+    let mut question =
+        serde_json::from_slice::<Value>(&asked.stdout).unwrap()["saved"]["record"].clone();
+    question["draft"]["origin_thread"] = json!("lead-a");
+    hc.bind_lead();
+    let mirror = hc.repo.root.join("mirror");
+    fs::create_dir(&mirror).unwrap();
+    fs::copy(hc.state_dir.join("tsk.json"), mirror.join("tsk.json")).unwrap();
+    let input = hc.repo.root.join("notify.json");
+    let notify = |who: &str, record: &Value| {
+        fs::write(&input, serde_json::to_vec(record).unwrap()).unwrap();
+        let out = hc.run(&[
+            "question-notify",
+            who,
+            "--file",
+            input.to_str().unwrap(),
+            "--state-dir",
+            mirror.to_str().unwrap(),
+        ]);
+        let response: Value = serde_json::from_slice(&out.stdout).unwrap();
+        (
+            out.status.code(),
+            response["notification"]["status"].clone(),
+        )
+    };
+
+    let mut user = question.clone();
+    user["draft"]["audience"] = json!("user");
+    user["reference"]["revision"] = json!(Uuid::new_v4());
+    let mut answered = question.clone();
+    let answered_revision = Uuid::new_v4();
+    answered["reference"]["revision"] = json!(answered_revision);
+    answered["answers"] = json!([{
+        "revision": answered_revision, "at": question["created_at"],
+        "text": "sample answer", "actor": "lead-a", "origin": "agent"
+    }]);
+    let mut routed = question.clone();
+    let routed_revision = Uuid::new_v4();
+    routed["reference"]["revision"] = json!(routed_revision);
+    routed["routes"] = json!([{
+        "revision": routed_revision, "after_answers": 0, "audience": "lead",
+        "at": question["created_at"]
+    }]);
+
+    let results = [
+        notify("recipient", &user),
+        notify("asker", &answered),
+        notify("recipient", &question),
+        notify("asker", &routed),
+        // An old revision stays deduplicated even after another revision is submitted.
+        notify("asker", &question),
+    ];
+    assert_eq!(
+        results,
+        [
+            "not_attempted",
+            "not_attempted",
+            "notified",
+            "notified",
+            "not_attempted"
+        ]
+        .map(|status| (Some(0), json!(status)))
+    );
+    let calls = hc.calls();
+    let sent: Vec<_> = calls.iter().filter(|v| v["args"][0] == "send").collect();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0]["args"][2]
+        .as_str()
+        .unwrap()
+        .contains(question["reference"]["revision"].as_str().unwrap()));
+    assert!(sent[1]["args"][2]
+        .as_str()
+        .unwrap()
+        .contains(&routed_revision.to_string()));
+    assert!(sent
+        .iter()
+        .all(|v| v["session"] == "lead-core" && v["args"][1] == "t7"));
+    assert!(!mirror.join("questions-private").exists());
+    assert!(!hc.repo.root.join("herdr-called").exists());
 }
 
 #[cfg(unix)]
@@ -996,7 +1130,7 @@ fn hc_caller_notifies_the_saved_herdr_lead_for_questions_and_findings() {
             "T1",
             "set",
             "Owner lead:",
-            "fixture default lead-a"
+            "fixture lead-stage lead-a"
         ])
         .status
         .success());
@@ -1007,7 +1141,9 @@ import json, os, pathlib, sys
 root = pathlib.Path(os.environ['HC_TEST_ROOT'])
 args = sys.argv[1:]
 if args[-2:] == ['agent', 'list']:
-    print(json.dumps({'result': {'agents': [{'name':'lead-a', 'agent_status':'idle', 'pane_id':'w1:p1'}]}}))
+    agents = [{'name':name, 'agent_status':'idle', 'pane_id':pane}
+              for name, pane in [('lead-a', 'w1:p1'), ('lead-stage', 'w1:p2')]]
+    print(json.dumps({'result': {'agents': agents}}))
 else:
     with (root / 'herdr-calls.jsonl').open('a') as out:
         out.write(json.dumps(args) + '\n')
@@ -1039,16 +1175,29 @@ else:
         let record: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
         assert_eq!(record["draft"]["kind"], kind);
     }
+    // A lead-like session token is not the saved lead handle.
+    for (recipient, status) in [("lead-a", "not_attempted"), ("lead-stage", "notified")] {
+        let mut command = hc.question_command(recipient);
+        let payload = hc.repo.root.join("question.json");
+        let mut draft: serde_json::Value =
+            serde_json::from_slice(&fs::read(&payload).unwrap()).unwrap();
+        draft["audience"] = serde_json::json!("user");
+        fs::write(payload, serde_json::to_vec(&draft).unwrap()).unwrap();
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let saved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved["notification"]["status"], status, "{saved}");
+    }
     let calls: Vec<serde_json::Value> = fs::read_to_string(hc.repo.root.join("herdr-calls.jsonl"))
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(calls.len(), 2);
-    for call in calls {
+    assert_eq!(calls.len(), 3);
+    for (call, recipient) in calls.iter().zip(["lead-a", "lead-a", "lead-stage"]) {
         assert_eq!(
             call.as_array().unwrap()[..5],
-            serde_json::json!(["--session", "default", "agent", "prompt", "lead-a"])
+            serde_json::json!(["--session", "lead-stage", "agent", "prompt", recipient])
                 .as_array()
                 .unwrap()[..]
         );

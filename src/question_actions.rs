@@ -1234,8 +1234,10 @@ fn request_run(questions: &QuestionStore, record: &QuestionRecord) -> String {
         &name,
         task != record.reference.task_id,
         &hint,
+        || Ok(crate::store::LeadHint::Always),
     ) {
-        Ok(()) => format!("run request submitted to {name} (not a started Thread)"),
+        Ok(true) => format!("run request submitted to {name} (not a started Thread)"),
+        Ok(false) => format!("run request to {name} not sent"),
         Err(reason) => format!("run request to {name} not sent: {reason}"),
     }
 }

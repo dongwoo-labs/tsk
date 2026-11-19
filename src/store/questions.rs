@@ -970,7 +970,7 @@ fn validate_answer(record: &QuestionRecord, draft: &AnswerDraft) -> Result<(), Q
 pub enum QuestionNotification {
     Notified,
     Failed,
-    /// A visible but durability-uncertain commit must not invite the recipient to act.
+    /// The save is durability-uncertain, or the verified lead hint was skipped.
     NotAttempted,
 }
 
@@ -992,9 +992,54 @@ pub fn notify_question(
     let reference = &saved.record.reference;
     let hint = format!("tsk question task={} Q{} id={} revision={}; read back from the Agent state directory before acting.",
         reference.task_id, reference.number, reference.id, reference.revision);
-    match prompt_recipient(store, reference.task_id, recipient, registration, &hint) {
-        Ok(()) => QuestionNotification::Notified,
+    match prompt_recipient(
+        store,
+        reference.task_id,
+        recipient,
+        registration,
+        &hint,
+        || {
+            if saved.record.draft.audience != Some(Audience::Lead) || !saved.record.is_open() {
+                return Ok(LeadHint::Skip);
+            }
+            let state_dir = store.path();
+            let metadata = fs::symlink_metadata(state_dir).map_err(|error| error.to_string())?;
+            if !metadata.is_dir() || crate::fsperm::is_reparse_or_symlink(&metadata) {
+                return Err("question state directory must be a real directory".into());
+            }
+            let directory = state_dir.join("question-notify");
+            crate::fsperm::ensure_private_dir(&directory).map_err(|error| error.to_string())?;
+            Ok(LeadHint::Once(
+                directory.join(format!("{}.{}", reference.id, reference.revision)),
+            ))
+        },
+    ) {
+        Ok(true) => QuestionNotification::Notified,
+        Ok(false) => QuestionNotification::NotAttempted,
         Err(_) => QuestionNotification::Failed,
+    }
+}
+
+pub(crate) enum LeadHint {
+    Skip,
+    Once(PathBuf),
+    Always,
+}
+
+impl LeadHint {
+    pub(crate) fn reserve(self) -> Result<bool, String> {
+        let marker = match self {
+            Self::Skip => return Ok(false),
+            Self::Always => return Ok(true),
+            Self::Once(marker) => marker,
+        };
+        // Reserve before submission, including against concurrent processes. Keep the
+        // empty marker after an uncertain send: it records an attempt, not receipt.
+        match OpenOptions::new().write(true).create_new(true).open(marker) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -1004,7 +1049,8 @@ pub(crate) fn prompt_recipient(
     recipient: &str,
     registration: bool,
     hint: &str,
-) -> Result<(), String> {
+    prepare_lead_hint: impl FnOnce() -> Result<LeadHint, String>,
+) -> Result<bool, String> {
     use crate::threads::herdr;
     use crate::ui::links::{task_links, TaskLink};
 
@@ -1043,7 +1089,12 @@ pub(crate) fn prompt_recipient(
     if (owner_recipient || recipient.starts_with("lead-"))
         && crate::dispatch::hc::lead::has_binding(source.notes.as_deref())
     {
-        return crate::dispatch::hc::lead::prompt_saved(source.notes.as_deref(), recipient, hint);
+        return crate::dispatch::hc::lead::prompt_saved(
+            source.notes.as_deref(),
+            recipient,
+            hint,
+            prepare_lead_hint,
+        );
     }
     let mut target = None;
     for task in tasks
@@ -1069,7 +1120,7 @@ pub(crate) fn prompt_recipient(
     if let Some((task, reference)) = target {
         let host = saved_session(task.notes.as_deref(), "Thread host:")?;
         if reference.workspace_id.starts_with("hc:") || reference.pane_id.starts_with("hc:") {
-            return crate::dispatch::hc::prompt_saved(task, &reference, hint);
+            return crate::dispatch::hc::prompt_saved(task, &reference, hint).map(|()| true);
         }
         herdr_hint_allowed(host.as_deref())?;
         let rows = herdr::list_agents_at(host.as_deref())?;
@@ -1078,7 +1129,7 @@ pub(crate) fn prompt_recipient(
         {
             return Err("saved Herdr Thread is stale or ambiguous".into());
         }
-        return herdr::prompt_at(host.as_deref(), recipient, hint);
+        return herdr::prompt_at(host.as_deref(), recipient, hint).map(|()| true);
     }
     if !registration
         && task_links(source.notes.as_deref()).iter().any(|link| {
@@ -1100,13 +1151,21 @@ pub(crate) fn prompt_recipient(
             if matches.next().is_some() {
                 return Err("ambiguous saved Herdr lead".into());
             }
-            return herdr::prompt_at(session.as_deref(), row.focus_target(), hint);
+            let owner_terms: Vec<_> = owners[0].split_whitespace().collect();
+            let lead = match owner_terms.as_slice() {
+                [name, _] | [_, _, name] => *name == recipient,
+                _ => false,
+            };
+            if lead && !prepare_lead_hint()?.reserve()? {
+                return Ok(false);
+            }
+            return herdr::prompt_at(session.as_deref(), row.focus_target(), hint).map(|()| true);
         }
-        return herdr::prompt_at(None, recipient, hint);
+        return herdr::prompt_at(None, recipient, hint).map(|()| true);
     }
     // Legacy, unbound Herdr recipients retain their existing in-Herdr path.
     herdr_hint_allowed(None)?;
-    herdr::prompt_at(None, recipient, hint)
+    herdr::prompt_at(None, recipient, hint).map(|()| true)
 }
 
 /// A missing Thread is different from an unreadable or ambiguous saved runtime.

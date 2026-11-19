@@ -12,6 +12,8 @@ the GitHub release notes verbatim.
 
 ## Unreleased
 
+## v0.13.1
+
 ### Breaking
 
 - The board has one **board** tab that always shows every live project: Doing and Todo group their rows by project, desk first, then each project under a dim heading, in task-number order inside each group. The top row holds only `1 board` and `2 questions`. The scope picker (`p`), the **desk** / project / **projects** tabs, `3`, the Projects overview and its preview, the cross-project thread view (`v`), the narrow-pane peek, and the four-stage wide slider are gone, and there is no sort toggle (`S`) or sort control: grouping is permanent. `1` returns to the board tab and its list, and `2` opens the questions tab. Launching inside a Git repository no longer opens that project alone; the board shows everything and the cursor starts on that project's first row.
@@ -22,7 +24,7 @@ the GitHub release notes verbatim.
 
 ### Added
 
-- `tsk question-notify asker|recipient --file -` sends the question hint for a record saved on another machine, so a local watcher can notify agents when the board is remote.
+- `tsk question-notify asker|recipient --file -` relays hints from a remote board. Verified task leads receive only open, lead-targeted questions, once per revision.
 - `TSK_THREAD_BACKEND=hc` selects labeled local hc dispatch and thread checks with explicit `HC_SESSION`; Herdr remains the default.
 - With `TSK_EVOLOOP_URL` and `TSK_EVOLOOP_TOKEN_FILE` set, every question, answer, correction, and route is also copied to an EvoLoop work-question ledger. Local saves never wait on it; failed copies retry on the next question write.
 - Tasks record their creation machine. The board defaults to current-machine and unspecified tasks; machine filters and CLI assignment expose other machines without changing existing tasks.
